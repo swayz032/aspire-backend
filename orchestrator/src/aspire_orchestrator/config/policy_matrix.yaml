@@ -1,0 +1,359 @@
+# Aspire Policy Matrix — Single source of truth for action → risk tier mapping
+# Per policy_engine_spec.md: deterministic 9-step evaluation
+# Per CLAUDE.md Law #4: GREEN/YELLOW/RED risk tiers
+#
+# Schema per action:
+#   risk_tier: green | yellow | red
+#   tools: list of tool identifiers authorized for this action
+#   capability_scope: scope string for capability token
+#   approval:
+#     type: none | explicit | spend | legal
+#     binding_fields: fields bound to approval hash (approve-then-swap defense)
+#   params:
+#     required: list of required parameter keys
+#     constraints: validation rules
+#   redact_fields: fields to redact in receipts (PII/secrets)
+#   category: functional category
+#
+# Fail-closed defaults:
+#   deny_by_default: true
+#   require_receipt_for_all_outcomes: true
+#   capability_max_ttl_seconds: 60
+#   fail_closed_on_dlp_error: true
+#   unknown_action: deny
+#   unknown_tool: deny
+
+version: "1.0.0"
+updated_at: "2026-02-13"
+
+defaults:
+  deny_by_default: true
+  require_receipt_for_all_outcomes: true
+  capability_max_ttl_seconds: 60
+  fail_closed_on_dlp_error: true
+
+# ──────────────────────────────────────────────
+# GREEN tier — Safe automation, no approval needed
+# ──────────────────────────────────────────────
+
+actions:
+  # Calendar
+  calendar.read:
+    risk_tier: green
+    tools: [google.calendar.read]
+    capability_scope: calendar:read
+    category: calendar
+    approval:
+      type: none
+    redact_fields: []
+
+  calendar.list:
+    risk_tier: green
+    tools: [google.calendar.list]
+    capability_scope: calendar:list
+    category: calendar
+    approval:
+      type: none
+    redact_fields: []
+
+  # Contacts
+  contacts.search:
+    risk_tier: green
+    tools: [contacts.search]
+    capability_scope: contacts:search
+    category: contacts
+    approval:
+      type: none
+    redact_fields: [email, phone]
+
+  contacts.read:
+    risk_tier: green
+    tools: [contacts.read]
+    capability_scope: contacts:read
+    category: contacts
+    approval:
+      type: none
+    redact_fields: [email, phone, address]
+
+  # Receipts
+  receipts.search:
+    risk_tier: green
+    tools: [receipts.search]
+    capability_scope: receipts:search
+    category: receipts
+    approval:
+      type: none
+    redact_fields: []
+
+  receipts.read:
+    risk_tier: green
+    tools: [receipts.read]
+    capability_scope: receipts:read
+    category: receipts
+    approval:
+      type: none
+    redact_fields: []
+
+  # Research
+  research.search:
+    risk_tier: green
+    tools: [exa.search, brave.search]
+    capability_scope: research:search
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  # Domain (read-only)
+  domain.check:
+    risk_tier: green
+    tools: [domain.check]
+    capability_scope: domain:read
+    category: domain
+    approval:
+      type: none
+    redact_fields: []
+
+  domain.verify:
+    risk_tier: green
+    tools: [domain.verify]
+    capability_scope: domain:read
+    category: domain
+    approval:
+      type: none
+    redact_fields: []
+
+  # Mail (read-only)
+  mail.account.read:
+    risk_tier: green
+    tools: [polaris.account.read]
+    capability_scope: mail:account:read
+    category: mail
+    approval:
+      type: none
+    redact_fields: []
+
+  # ──────────────────────────────────────────────
+  # YELLOW tier — Requires explicit user confirmation
+  # ──────────────────────────────────────────────
+
+  # Email
+  email.send:
+    risk_tier: yellow
+    tools: [polaris.email.send]
+    capability_scope: comms:send_email
+    category: communications
+    approval:
+      type: explicit
+      binding_fields: [to, subject, template_id]
+    params:
+      required: [to, subject]
+      constraints:
+        to_regex: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+        subject_max_len: 120
+    redact_fields: [to, subject, body]
+
+  email.draft:
+    risk_tier: yellow
+    tools: [polaris.email.draft]
+    capability_scope: comms:draft_email
+    category: communications
+    approval:
+      type: explicit
+      binding_fields: [to, subject]
+    redact_fields: [to, subject, body]
+
+  # Calendar (write)
+  calendar.create:
+    risk_tier: yellow
+    tools: [google.calendar.create]
+    capability_scope: calendar:write
+    category: calendar
+    approval:
+      type: explicit
+      binding_fields: [title, start_time, attendees]
+    redact_fields: [attendees]
+
+  # Invoice
+  invoice.create:
+    risk_tier: yellow
+    tools: [stripe.invoice.create]
+    capability_scope: invoicing:create
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [customer_id, amount, currency, line_items]
+    params:
+      required: [customer_id, amount]
+    redact_fields: [customer_id]
+
+  # Meeting
+  meeting.schedule:
+    risk_tier: yellow
+    tools: [livekit.meeting.schedule]
+    capability_scope: meetings:schedule
+    category: meetings
+    approval:
+      type: explicit
+      binding_fields: [title, participants, start_time]
+    redact_fields: [participants]
+
+  # Contacts (write)
+  contacts.create:
+    risk_tier: yellow
+    tools: [contacts.create]
+    capability_scope: contacts:write
+    category: contacts
+    approval:
+      type: explicit
+    redact_fields: [email, phone, address]
+
+  # Profile
+  profile.update:
+    risk_tier: yellow
+    tools: [profile.update]
+    capability_scope: profile:write
+    category: profile
+    approval:
+      type: explicit
+    redact_fields: []
+
+  # Domain (write)
+  domain.dns.create:
+    risk_tier: yellow
+    tools: [domain.dns.create]
+    capability_scope: domain:dns:write
+    category: domain
+    approval:
+      type: explicit
+      binding_fields: [domain, record_type, value]
+    redact_fields: []
+
+  # Mail (write)
+  mail.account.create:
+    risk_tier: yellow
+    tools: [polaris.account.create]
+    capability_scope: mail:account:write
+    category: mail
+    approval:
+      type: explicit
+      binding_fields: [email_address, display_name]
+    redact_fields: [email_address]
+
+  # Contracts (generate, not sign)
+  contract.generate:
+    risk_tier: yellow
+    tools: [pandadoc.contract.generate]
+    capability_scope: contracts:generate
+    category: contracts
+    approval:
+      type: legal
+      binding_fields: [party_names, template_id]
+    redact_fields: [party_names, address]
+
+  # Bookkeeping
+  books.sync:
+    risk_tier: yellow
+    tools: [quickbooks.sync]
+    capability_scope: books:sync
+    category: bookkeeping
+    approval:
+      type: explicit
+    redact_fields: []
+
+  # ──────────────────────────────────────────────
+  # RED tier — Requires authority + presence verification
+  # ──────────────────────────────────────────────
+
+  # Payments
+  payment.send:
+    risk_tier: red
+    tools: [moov.payment.send, plaid.payment.send]
+    capability_scope: payments:initiate
+    category: payments
+    approval:
+      type: spend
+      binding_fields: [recipient, amount_cents, currency]
+      spend_fields: [amount_cents, currency]
+      max_spend_cents: 5000000
+    params:
+      required: [recipient, amount_cents, currency]
+      constraints:
+        currency_enum: [USD]
+        amount_cents_min: 100
+    redact_fields: [recipient, amount_cents, memo]
+
+  payment.transfer:
+    risk_tier: red
+    tools: [moov.transfer.create]
+    capability_scope: payments:transfer
+    category: payments
+    approval:
+      type: spend
+      binding_fields: [from_account, to_account, amount_cents]
+    redact_fields: [from_account, to_account, amount_cents]
+
+  # Contracts (sign — irreversible)
+  contract.sign:
+    risk_tier: red
+    tools: [pandadoc.contract.sign]
+    capability_scope: contracts:sign
+    category: contracts
+    approval:
+      type: legal
+      binding_fields: [contract_id, signer_name, signer_email]
+    redact_fields: [signer_name, signer_email]
+
+  # Tax filing
+  tax.file:
+    risk_tier: red
+    tools: [tax.filing.submit]
+    capability_scope: tax:file
+    category: filings
+    approval:
+      type: legal
+      binding_fields: [filing_type, tax_year, jurisdiction]
+    redact_fields: [ssn, ein, tax_amount]
+
+  # Payroll
+  payroll.run:
+    risk_tier: red
+    tools: [gusto.payroll.run]
+    capability_scope: payroll:run
+    category: payroll
+    approval:
+      type: spend
+      binding_fields: [payroll_id, pay_period, total_amount]
+    redact_fields: [employee_names, ssn, bank_routing, bank_account]
+
+  # Data deletion (irreversible)
+  data.delete:
+    risk_tier: red
+    tools: [data.delete]
+    capability_scope: data:delete
+    category: data
+    approval:
+      type: explicit
+      binding_fields: [resource_type, resource_id]
+    redact_fields: []
+
+  # Domain (purchase/delete — financial/irreversible)
+  domain.purchase:
+    risk_tier: red
+    tools: [domain.purchase]
+    capability_scope: domain:purchase
+    category: domain
+    approval:
+      type: spend
+      binding_fields: [domain_name, years, amount_cents]
+    redact_fields: [amount_cents]
+
+  domain.delete:
+    risk_tier: red
+    tools: [domain.delete]
+    capability_scope: domain:delete
+    category: domain
+    approval:
+      type: explicit
+      binding_fields: [domain_name]
+    redact_fields: []

@@ -1,0 +1,510 @@
+# Aspire Skill Pack Manifests — Runtime registry for orchestrator dispatch
+# Per architecture.md: Control Plane Registry provides capability discovery
+# Per CLAUDE.md Law #1: Only the orchestrator decides which skill pack handles a task
+#
+# Schema per skill pack:
+#   id: unique identifier
+#   name: human-readable name
+#   owner: agent name
+#   category: channel | finance | legal | internal_admin | internal
+#   risk_tier: green | yellow | red (highest risk of any action)
+#   status: registered | active | suspended
+#   description: what this skill pack does
+#   actions: list of action_types this skill pack handles (must exist in policy_matrix.yaml)
+#   providers: external services used
+#   capability_scopes: union of all capability scopes
+#   tools: union of all tool identifiers
+#   per_suite_enabled: whether per-suite enable/disable is supported
+#
+# Phase 1: All packs registered with status=registered (manifests only).
+# Phase 2+: Status transitions to active as implementations are deployed.
+
+version: "1.0.0"
+updated_at: "2026-02-13"
+
+defaults:
+  per_suite_enabled: true
+  max_concurrent_tasks: 10
+  task_timeout_seconds: 300
+
+# ──────────────────────────────────────────────
+# CHANNEL SKILL PACKS (6)
+# ──────────────────────────────────────────────
+
+skill_packs:
+  sarah_front_desk:
+    id: sarah_front_desk
+    name: "Sarah (Front Desk)"
+    owner: sarah
+    category: channel
+    risk_tier: yellow
+    status: registered
+    description: "Telephony, call routing, front desk reception"
+    actions: []
+    providers: [livekit, twilio]
+    capability_scopes: [telephony:route, telephony:answer]
+    tools: []
+    per_suite_enabled: true
+
+  eli_inbox:
+    id: eli_inbox
+    name: "Eli (Inbox)"
+    owner: eli
+    category: channel
+    risk_tier: yellow
+    status: registered
+    description: "Email handling, triage, draft responses"
+    actions: [email.send, email.draft]
+    providers: [polarism]
+    capability_scopes: [comms:send_email, comms:draft_email]
+    tools: [polaris.email.send, polaris.email.draft]
+    per_suite_enabled: true
+
+  quinn_invoicing:
+    id: quinn_invoicing
+    name: "Quinn (Invoicing)"
+    owner: quinn
+    category: channel
+    risk_tier: yellow
+    status: registered
+    description: "Invoice creation, payment tracking via Stripe Connect"
+    actions: [invoice.create]
+    providers: [stripe]
+    capability_scopes: [invoicing:create]
+    tools: [stripe.invoice.create]
+    per_suite_enabled: true
+
+  nora_conference:
+    id: nora_conference
+    name: "Nora (Conference)"
+    owner: nora
+    category: channel
+    risk_tier: green
+    status: registered
+    description: "Video meetings, transcription"
+    actions: [meeting.schedule]
+    providers: [livekit, deepgram, elevenlabs]
+    capability_scopes: [meetings:schedule]
+    tools: [livekit.meeting.schedule]
+    per_suite_enabled: true
+
+  adam_research:
+    id: adam_research
+    name: "Adam (Research)"
+    owner: adam
+    category: channel
+    risk_tier: green
+    status: registered
+    description: "Vendor search, web research"
+    actions: [research.search]
+    providers: [exa, brave]
+    capability_scopes: [research:search]
+    tools: [exa.search, brave.search]
+    per_suite_enabled: true
+
+  tec_documents:
+    id: tec_documents
+    name: "Tec (Documents)"
+    owner: tec
+    category: channel
+    risk_tier: green
+    status: registered
+    description: "PDF generation, document processing"
+    actions: []
+    providers: [internal]
+    capability_scopes: [documents:generate]
+    tools: []
+    per_suite_enabled: true
+
+# ──────────────────────────────────────────────
+# FINANCE SKILL PACKS (3)
+# ──────────────────────────────────────────────
+
+  finn_money_desk:
+    id: finn_money_desk
+    name: "Finn (Money Desk)"
+    owner: finn
+    category: finance
+    risk_tier: red
+    status: registered
+    description: "Money transfers via Moov/Plaid"
+    actions: [payment.send, payment.transfer]
+    providers: [moov, plaid, stripe]
+    capability_scopes: [payments:initiate, payments:transfer]
+    tools: [moov.payment.send, plaid.payment.send, moov.transfer.create]
+    per_suite_enabled: true
+
+  milo_payroll:
+    id: milo_payroll
+    name: "Milo (Payroll)"
+    owner: milo
+    category: finance
+    risk_tier: red
+    status: registered
+    description: "Payroll processing via Gusto"
+    actions: [payroll.run]
+    providers: [gusto]
+    capability_scopes: [payroll:run]
+    tools: [gusto.payroll.run]
+    per_suite_enabled: true
+
+  teressa_books:
+    id: teressa_books
+    name: "Teressa (Books)"
+    owner: teressa
+    category: finance
+    risk_tier: yellow
+    status: registered
+    description: "Accounting, QuickBooks sync"
+    actions: [books.sync]
+    providers: [quickbooks]
+    capability_scopes: [books:sync]
+    tools: [quickbooks.sync]
+    per_suite_enabled: true
+
+# ──────────────────────────────────────────────
+# LEGAL SKILL PACK (1)
+# ──────────────────────────────────────────────
+
+  clara_legal:
+    id: clara_legal
+    name: "Clara (Legal)"
+    owner: clara
+    category: legal
+    risk_tier: red
+    status: registered
+    description: "Contract management, e-signatures via PandaDoc"
+    actions: [contract.generate, contract.sign]
+    providers: [pandadoc]
+    capability_scopes: [contracts:generate, contracts:sign]
+    tools: [pandadoc.contract.generate, pandadoc.contract.sign]
+    per_suite_enabled: true
+
+# ──────────────────────────────────────────────
+# ADMIN SKILL PACK (1)
+# ──────────────────────────────────────────────
+
+  mail_ops_desk:
+    id: mail_ops_desk
+    name: "mail_ops_desk (PolarisM Admin)"
+    owner: mail_ops
+    category: internal_admin
+    risk_tier: yellow
+    status: registered
+    description: "Domain and mailbox management for PolarisM"
+    actions: [domain.check, domain.verify, domain.dns.create, domain.purchase, domain.delete, mail.account.create, mail.account.read]
+    providers: [polarism]
+    capability_scopes: [domain:read, domain:dns:write, domain:purchase, domain:delete, mail:account:read, mail:account:write]
+    tools: [domain.check, domain.verify, domain.dns.create, domain.purchase, domain.delete, polaris.account.create, polaris.account.read]
+    per_suite_enabled: true
+
+# ──────────────────────────────────────────────
+# TOOL DEFINITIONS — Maps tool IDs to providers
+# ──────────────────────────────────────────────
+
+tools:
+  google.calendar.read:
+    provider: google
+    category: calendar
+    risk_tier: green
+  google.calendar.list:
+    provider: google
+    category: calendar
+    risk_tier: green
+  google.calendar.create:
+    provider: google
+    category: calendar
+    risk_tier: yellow
+  contacts.search:
+    provider: internal
+    category: contacts
+    risk_tier: green
+  contacts.read:
+    provider: internal
+    category: contacts
+    risk_tier: green
+  contacts.create:
+    provider: internal
+    category: contacts
+    risk_tier: yellow
+  receipts.search:
+    provider: internal
+    category: receipts
+    risk_tier: green
+  receipts.read:
+    provider: internal
+    category: receipts
+    risk_tier: green
+  polaris.email.send:
+    provider: polarism
+    category: communications
+    risk_tier: yellow
+  polaris.email.draft:
+    provider: polarism
+    category: communications
+    risk_tier: yellow
+  stripe.invoice.create:
+    provider: stripe
+    category: invoicing
+    risk_tier: yellow
+  livekit.meeting.schedule:
+    provider: livekit
+    category: meetings
+    risk_tier: yellow
+  exa.search:
+    provider: exa
+    category: research
+    risk_tier: green
+  brave.search:
+    provider: brave
+    category: research
+    risk_tier: green
+  moov.payment.send:
+    provider: moov
+    category: payments
+    risk_tier: red
+  plaid.payment.send:
+    provider: plaid
+    category: payments
+    risk_tier: red
+  moov.transfer.create:
+    provider: moov
+    category: payments
+    risk_tier: red
+  pandadoc.contract.generate:
+    provider: pandadoc
+    category: contracts
+    risk_tier: yellow
+  pandadoc.contract.sign:
+    provider: pandadoc
+    category: contracts
+    risk_tier: red
+  tax.filing.submit:
+    provider: internal
+    category: filings
+    risk_tier: red
+  gusto.payroll.run:
+    provider: gusto
+    category: payroll
+    risk_tier: red
+  quickbooks.sync:
+    provider: quickbooks
+    category: bookkeeping
+    risk_tier: yellow
+  domain.check:
+    provider: resellerclub
+    category: domain
+    risk_tier: green
+  domain.verify:
+    provider: resellerclub
+    category: domain
+    risk_tier: green
+  domain.dns.create:
+    provider: resellerclub
+    category: domain
+    risk_tier: yellow
+  domain.purchase:
+    provider: resellerclub
+    category: domain
+    risk_tier: red
+  domain.delete:
+    provider: resellerclub
+    category: domain
+    risk_tier: red
+  polaris.account.create:
+    provider: polarism
+    category: mail
+    risk_tier: yellow
+  polaris.account.read:
+    provider: polarism
+    category: mail
+    risk_tier: green
+  profile.update:
+    provider: internal
+    category: profile
+    risk_tier: yellow
+  data.delete:
+    provider: internal
+    category: data
+    risk_tier: red
+
+# ──────────────────────────────────────────────
+# PROVIDER REGISTRY — External service metadata
+# ──────────────────────────────────────────────
+
+providers:
+  stripe:
+    id: stripe
+    name: "Stripe"
+    category: financial
+    auth_type: api_key
+    base_url: "https://api.stripe.com/v1"
+    rate_limit_rpm: 100
+    timeout_ms: 10000
+    retry_strategy: exponential_backoff
+    idempotency_support: true
+
+  moov:
+    id: moov
+    name: "Moov"
+    category: financial
+    auth_type: oauth2
+    base_url: "https://api.moov.io"
+    rate_limit_rpm: 60
+    timeout_ms: 15000
+    retry_strategy: exponential_backoff
+    idempotency_support: true
+
+  plaid:
+    id: plaid
+    name: "Plaid"
+    category: financial
+    auth_type: api_key
+    base_url: "https://production.plaid.com"
+    rate_limit_rpm: 100
+    timeout_ms: 30000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  quickbooks:
+    id: quickbooks
+    name: "QuickBooks"
+    category: financial
+    auth_type: oauth2
+    base_url: "https://quickbooks.api.intuit.com/v3"
+    rate_limit_rpm: 500
+    timeout_ms: 10000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  gusto:
+    id: gusto
+    name: "Gusto"
+    category: payroll
+    auth_type: oauth2
+    base_url: "https://api.gusto.com/v1"
+    rate_limit_rpm: 60
+    timeout_ms: 15000
+    retry_strategy: exponential_backoff
+    idempotency_support: true
+
+  pandadoc:
+    id: pandadoc
+    name: "PandaDoc"
+    category: legal
+    auth_type: api_key
+    base_url: "https://api.pandadoc.com/public/v1"
+    rate_limit_rpm: 100
+    timeout_ms: 10000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  livekit:
+    id: livekit
+    name: "LiveKit"
+    category: communication
+    auth_type: api_key
+    base_url: "https://cloud-api.livekit.io"
+    rate_limit_rpm: 200
+    timeout_ms: 5000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  polarism:
+    id: polarism
+    name: "PolarisM"
+    category: mail
+    auth_type: api_key
+    base_url: "https://mail.aspireos.app"
+    rate_limit_rpm: 60
+    timeout_ms: 10000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  exa:
+    id: exa
+    name: "Exa"
+    category: search
+    auth_type: api_key
+    base_url: "https://api.exa.ai/v1"
+    rate_limit_rpm: 100
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  brave:
+    id: brave
+    name: "Brave Search"
+    category: search
+    auth_type: api_key
+    base_url: "https://api.search.brave.com/res/v1"
+    rate_limit_rpm: 100
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  resellerclub:
+    id: resellerclub
+    name: "ResellerClub"
+    category: domain
+    auth_type: api_key
+    base_url: "https://httpapi.com/api"
+    rate_limit_rpm: 30
+    timeout_ms: 15000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  google:
+    id: google
+    name: "Google"
+    category: productivity
+    auth_type: oauth2
+    base_url: "https://www.googleapis.com"
+    rate_limit_rpm: 300
+    timeout_ms: 5000
+    retry_strategy: exponential_backoff
+    idempotency_support: false
+
+  twilio:
+    id: twilio
+    name: "Twilio"
+    category: communication
+    auth_type: api_key
+    base_url: "https://api.twilio.com/2010-04-01"
+    rate_limit_rpm: 100
+    timeout_ms: 10000
+    retry_strategy: exponential_backoff
+    idempotency_support: true
+
+  deepgram:
+    id: deepgram
+    name: "Deepgram"
+    category: communication
+    auth_type: api_key
+    base_url: "https://api.deepgram.com/v1"
+    rate_limit_rpm: 100
+    timeout_ms: 30000
+    retry_strategy: none
+    idempotency_support: false
+
+  elevenlabs:
+    id: elevenlabs
+    name: "ElevenLabs"
+    category: communication
+    auth_type: api_key
+    base_url: "https://api.elevenlabs.io/v1"
+    rate_limit_rpm: 100
+    timeout_ms: 10000
+    retry_strategy: none
+    idempotency_support: false
+
+  internal:
+    id: internal
+    name: "Internal"
+    category: internal
+    auth_type: none
+    base_url: ""
+    rate_limit_rpm: 1000
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
