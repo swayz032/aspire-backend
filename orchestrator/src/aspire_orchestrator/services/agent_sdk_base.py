@@ -330,17 +330,27 @@ class AspireAgentBase:
 
         # Make the LLM call
         url = f"{base_url.rstrip('/')}/chat/completions"
+        # Reasoning models (gpt-5*, o1, o3) don't support temperature or system role
+        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+
         messages = []
         if effective_system:
-            messages.append({"role": "system", "content": effective_system})
+            messages.append({"role": "developer" if _is_reasoning else "system", "content": effective_system})
         messages.append({"role": "user", "content": prompt})
 
-        payload = {
+        # Reasoning models consume tokens for internal chain-of-thought before
+        # producing output.  Ensure budget is large enough to avoid truncation.
+        effective_max_tokens = route_max_tokens
+        if _is_reasoning and route_max_tokens < 4096:
+            effective_max_tokens = 4096
+
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": route_temperature,
-            "max_tokens": route_max_tokens,
+            "max_completion_tokens": effective_max_tokens,
         }
+        if not _is_reasoning:
+            payload["temperature"] = route_temperature
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

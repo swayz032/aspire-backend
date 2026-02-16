@@ -225,6 +225,7 @@ class TestAvaResult:
             schema_version="1.0",
             request_id=str(uuid.uuid4()),
             correlation_id=str(uuid.uuid4()),
+            text="Your invoice has been created successfully.",
             route={"skill_pack": "invoicing", "agent": "quinn"},
             risk=AvaResultRisk(tier=RiskTier.YELLOW),
             governance=AvaResultGovernance(
@@ -237,6 +238,7 @@ class TestAvaResult:
         )
         assert result.risk.tier == RiskTier.YELLOW
         assert result.governance.capability_token_required is True
+        assert result.text == "Your invoice has been created successfully."
 
 
 class TestAspireError:

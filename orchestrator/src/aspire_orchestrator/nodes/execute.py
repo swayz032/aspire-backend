@@ -1,4 +1,4 @@
-"""Execute Node — Bounded tool execution (Law #7).
+"""Execute Node — Bounded tool execution (Law #7) with A2A dispatch.
 
 Responsibilities:
 1. Execute the approved action via the appropriate skill pack
@@ -8,20 +8,14 @@ Responsibilities:
 5. Set outcome (success/failed/timeout)
 6. Enforce idempotency on state-changing operations (Phase 3 W5)
 7. Route RED-tier ops through outbox for durable execution (Phase 3 W5)
+8. Dispatch all executions through A2A for agent identity tracking
 
-Wave 7: Tool executor registry integration.
-  - Domain Rail tools (domain.*, polaris.account.*) registered as live executors
-  - All other tools → stub executor (Phase 2 implementations)
-  - LangGraph nodes are sync; live Domain Rail calls use the async tool
-    executor service directly (via POST /v1/tools/execute or A2A dispatch)
-  - The execute node produces receipts for all outcomes
-
-Phase 3 Wave 5: Idempotency + Outbox integration.
-  - YELLOW ops: Synchronous execution (existing path) + idempotency check
-  - RED ops: Submit to outbox → durable processing → receipt on completion
-  - Law #2: Every idempotency check and outbox submission produces receipts
-  - Law #3: Duplicate idempotency key → fail-closed (reject re-execution)
-  - Law #4: Only RED-tier operations go through outbox
+A2A Integration (Phase 3):
+  - Every execution is dispatched via A2A to the owning agent
+  - Ava orchestrates → A2A dispatch → Agent claims → Tool executes → Agent completes
+  - Receipt trail preserves agent identity (who did what)
+  - Phase 1: Synchronous dispatch/claim/execute/complete in same request cycle
+  - Phase 2+: Async dispatch with agent workers claiming from queue
 """
 
 from __future__ import annotations
@@ -36,6 +30,7 @@ from aspire_orchestrator.models import (
     Outcome,
     ReceiptType,
 )
+from aspire_orchestrator.services.a2a_service import get_a2a_service
 from aspire_orchestrator.services.idempotency_service import get_idempotency_service
 from aspire_orchestrator.services.outbox_client import OutboxJob, get_outbox_client
 from aspire_orchestrator.services.token_service import validate_token
@@ -45,6 +40,43 @@ from aspire_orchestrator.state import OrchestratorState
 logger = logging.getLogger(__name__)
 
 
+def _resolve_agent_from_routing(state: OrchestratorState) -> str:
+    """Extract owning agent from routing plan.
+
+    The routing plan is set by route_node from SkillRouter.
+    Each step has a skill_pack ID that maps to a manifest with an owner.
+    Falls back to 'ava' if routing plan isn't available.
+    """
+    routing_plan = state.get("routing_plan")
+    if not routing_plan or not isinstance(routing_plan, dict):
+        return "ava"
+
+    steps = routing_plan.get("steps", [])
+    if not steps:
+        return "ava"
+
+    # Use the first step's skill_pack to determine agent
+    skill_pack_id = steps[0].get("skill_pack", "")
+
+    # skill_pack_id → agent owner mapping (from manifests)
+    _PACK_TO_AGENT: dict[str, str] = {
+        "sarah_front_desk": "sarah",
+        "eli_inbox": "eli",
+        "quinn_invoicing": "quinn",
+        "nora_conference": "nora",
+        "adam_research": "adam",
+        "tec_documents": "tec",
+        "finn_finance_manager": "finn",
+        "finn_money_desk": "finn",
+        "milo_payroll": "milo",
+        "teressa_books": "teressa",
+        "clara_legal": "clara",
+        "mail_ops_desk": "mail_ops",
+    }
+
+    return _PACK_TO_AGENT.get(skill_pack_id, "ava")
+
+
 def _resolve_risk_tier(state: OrchestratorState) -> str:
     """Extract risk_tier as a string, handling both enum and str values."""
     risk_tier_val = state.get("risk_tier")
@@ -52,14 +84,16 @@ def _resolve_risk_tier(state: OrchestratorState) -> str:
 
 
 def execute_node(state: OrchestratorState) -> dict[str, Any]:
-    """Execute the approved action via tool executor registry.
+    """Execute the approved action via A2A dispatch to owning agent.
 
-    For Phase 1:
-      - All tools produce receipts and set outcome
-      - Live tools (Domain Rail) are flagged for async dispatch
-      - Stub tools return immediate success
-      - Actual async Domain Rail calls happen via the tool executor
-        service when invoked through A2A dispatch or direct API
+    Flow (Phase 1 — synchronous):
+      1. Resolve target agent from routing plan (Quinn, Finn, etc.)
+      2. Dispatch task via A2A (Ava → agent)
+      3. Agent claims the task
+      4. Validate capability token (Law #5)
+      5. Execute tool (Law #7 — tools are hands)
+      6. Agent completes task via A2A
+      7. Receipt trail: a2a.dispatch → a2a.claim → tool_execution → a2a.complete
     """
     if state.get("error_code"):
         return {
@@ -76,20 +110,23 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
     capability_token = state.get("capability_token")
     risk_tier_str = _resolve_risk_tier(state)
 
+    # Resolve which agent owns this execution
+    assigned_agent = _resolve_agent_from_routing(state)
+
     # -------------------------------------------------------------------
     # Capability token validation — full 6-check (Law #3 + Law #5)
     # This is the enforcement boundary: tokens are minted by token_mint
     # node, but MUST be validated again here before any execution.
     # -------------------------------------------------------------------
     def _deny_execution(reason_code: str, message: str) -> dict[str, Any]:
-        """Build denial response with receipt."""
+        """Build denial response with receipt. Agent identity preserved."""
         receipt = {
             "id": str(uuid.uuid4()),
             "correlation_id": correlation_id,
             "suite_id": suite_id,
             "office_id": office_id,
-            "actor_type": "system",
-            "actor_id": "executor",
+            "actor_type": "agent",
+            "actor_id": assigned_agent,
             "action_type": f"execute.{task_type}",
             "risk_tier": risk_tier_str,
             "tool_used": allowed_tools[0] if allowed_tools else "unknown",
@@ -108,6 +145,7 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             "error_message": message,
             "tool_used": allowed_tools[0] if allowed_tools else "unknown",
             "pipeline_receipts": existing,
+            "assigned_agent": assigned_agent,
         }
 
     # Check 0: Token must exist
@@ -210,9 +248,58 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
     live = is_live_tool(tool_used)
 
     logger.info(
-        "Executing tool: %s (live=%s, tier=%s) for task=%s, suite=%s",
-        tool_used, live, risk_tier_str, task_type,
+        "Executing tool: %s (live=%s, tier=%s) for task=%s, agent=%s, suite=%s",
+        tool_used, live, risk_tier_str, task_type, assigned_agent,
         suite_id[:8] if len(suite_id) > 8 else suite_id,
+    )
+
+    # -------------------------------------------------------------------
+    # A2A Dispatch — Ava delegates to owning agent (Law #1 + Law #2)
+    # This creates the agent identity chain: Ava → dispatch → Agent → execute
+    # Phase 1: synchronous dispatch/claim in same request cycle.
+    # -------------------------------------------------------------------
+    a2a = get_a2a_service()
+    existing_receipts = list(state.get("pipeline_receipts", []))
+
+    dispatch_result = a2a.dispatch(
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        task_type=task_type,
+        assigned_to_agent=assigned_agent,
+        payload={
+            "tool_used": tool_used,
+            "risk_tier": risk_tier_str,
+            "capability_token_id": capability_token_id,
+            "live": live,
+        },
+        priority=1 if risk_tier_str == "red" else (2 if risk_tier_str == "yellow" else 3),
+        idempotency_key=idempotency_key,
+        actor_id="ava",
+    )
+
+    if not dispatch_result.success:
+        logger.error("A2A dispatch failed: %s", dispatch_result.error)
+        return _deny_execution("A2A_DISPATCH_FAILED", f"A2A dispatch failed: {dispatch_result.error}")
+
+    a2a_task_id = dispatch_result.task_id
+    if dispatch_result.receipt_data:
+        existing_receipts.append(dispatch_result.receipt_data)
+
+    # Agent claims the task (synchronous in Phase 1)
+    claim_result = a2a.claim(
+        agent_id=assigned_agent,
+        suite_id=suite_id,
+        task_types=[task_type],
+    )
+
+    if claim_result.success and claim_result.receipt_data:
+        existing_receipts.append(claim_result.receipt_data)
+
+    logger.info(
+        "A2A: %s dispatched to %s, task_id=%s",
+        task_type, assigned_agent,
+        (a2a_task_id or "?")[:8],
     )
 
     # -------------------------------------------------------------------
@@ -232,6 +319,8 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
                 "tool_used": tool_used,
                 "capability_token_id": capability_token_id,
                 "live": live,
+                "a2a_task_id": a2a_task_id,
+                "assigned_agent": assigned_agent,
             },
             idempotency_key=idempotency_key,
             capability_token_id=capability_token_id,
@@ -243,8 +332,8 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             "correlation_id": correlation_id,
             "suite_id": suite_id,
             "office_id": office_id,
-            "actor_type": "system",
-            "actor_id": "executor",
+            "actor_type": "agent",
+            "actor_id": assigned_agent,
             "action_type": f"execute.{task_type}",
             "risk_tier": "red",
             "tool_used": tool_used,
@@ -256,10 +345,9 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             "receipt_type": ReceiptType.TOOL_EXECUTION.value,
             "receipt_hash": "",
             "outbox_job_id": job.job_id,
+            "a2a_task_id": a2a_task_id,
             "idempotency_key": idempotency_key,
         }
-
-        existing_receipts = list(state.get("pipeline_receipts", []))
         existing_receipts.append(outbox_receipt)
 
         # Mark idempotency as completed with the outbox receipt
@@ -272,8 +360,8 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             )
 
         logger.info(
-            "RED-tier op routed to outbox: job_id=%s action=%s suite=%s",
-            job.job_id[:8], task_type,
+            "RED-tier op routed to outbox: job_id=%s action=%s agent=%s suite=%s",
+            job.job_id[:8], task_type, assigned_agent,
             suite_id[:8] if len(suite_id) > 8 else suite_id,
         )
 
@@ -284,16 +372,19 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
                 "tool": tool_used,
                 "task_type": task_type,
                 "outbox_job_id": job.job_id,
+                "a2a_task_id": a2a_task_id,
+                "assigned_agent": assigned_agent,
                 "submitted_at": datetime.now(timezone.utc).isoformat(),
                 "stub": not live,
                 "live": live,
             },
             "tool_used": tool_used,
+            "assigned_agent": assigned_agent,
             "pipeline_receipts": existing_receipts,
         }
 
     # -------------------------------------------------------------------
-    # GREEN/YELLOW ops → Synchronous execution (existing path)
+    # GREEN/YELLOW ops → Synchronous execution
     # -------------------------------------------------------------------
 
     # Build execution result
@@ -301,6 +392,8 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
         "status": "success",
         "tool": tool_used,
         "task_type": task_type,
+        "assigned_agent": assigned_agent,
+        "a2a_task_id": a2a_task_id,
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "stub": not live,
         "live": live,
@@ -308,14 +401,14 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
 
     receipt_id = str(uuid.uuid4())
 
-    # Tool execution receipt
+    # Tool execution receipt — agent identity preserved
     receipt = {
         "id": receipt_id,
         "correlation_id": correlation_id,
         "suite_id": suite_id,
         "office_id": office_id,
-        "actor_type": "system",
-        "actor_id": "executor",
+        "actor_type": "agent",
+        "actor_id": assigned_agent,
         "action_type": f"execute.{task_type}",
         "risk_tier": risk_tier_str,
         "tool_used": tool_used,
@@ -327,8 +420,8 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
         "reason_code": "EXECUTED" if live else "EXECUTED_STUB",
         "receipt_type": ReceiptType.TOOL_EXECUTION.value,
         "receipt_hash": "",
+        "a2a_task_id": a2a_task_id,
     }
-    existing_receipts = list(state.get("pipeline_receipts", []))
     existing_receipts.append(receipt)
 
     # Mark idempotency as completed for YELLOW ops
@@ -340,9 +433,27 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             receipt_id=receipt_id,
         )
 
+    # -------------------------------------------------------------------
+    # A2A Complete — Agent reports task done (Law #2)
+    # -------------------------------------------------------------------
+    if a2a_task_id:
+        complete_result = a2a.complete(
+            task_id=a2a_task_id,
+            agent_id=assigned_agent,
+            suite_id=suite_id,
+            result={
+                "tool_used": tool_used,
+                "receipt_id": receipt_id,
+                "outcome": "success",
+            },
+        )
+        if complete_result.success and complete_result.receipt_data:
+            existing_receipts.append(complete_result.receipt_data)
+
     return {
         "outcome": Outcome.SUCCESS,
         "execution_result": execution_result,
         "tool_used": tool_used,
+        "assigned_agent": assigned_agent,
         "pipeline_receipts": existing_receipts,
     }

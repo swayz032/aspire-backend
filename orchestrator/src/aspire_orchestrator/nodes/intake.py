@@ -90,6 +90,30 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
             "receipt_ids": [],
         }
 
+    # Voice/chat shorthand: Desktop proxy sends {text, agent, channel}
+    # instead of the full AvaOrchestratorRequest schema.
+    # Detect this and convert to full format before validation.
+    if isinstance(raw_request, dict) and "text" in raw_request and "schema_version" not in raw_request:
+        utterance_text = raw_request.get("text", "")
+        agent = raw_request.get("agent", "ava")
+        channel = raw_request.get("channel", "voice")
+        # suite_id comes from X-Suite-Id header → server.py passes it via state
+        suite_id_from_header = state.get("auth_suite_id") or raw_request.get("suite_id", "00000000-0000-0000-0000-000000000000")
+        raw_request = {
+            "schema_version": "1.0",
+            "suite_id": suite_id_from_header,
+            "office_id": raw_request.get("office_id", "00000000-0000-0000-0000-000000000001"),
+            "request_id": str(uuid.uuid4()),
+            "correlation_id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "task_type": "unknown",  # Classifier will determine this
+            "payload": {
+                "text": utterance_text,
+                "agent": agent,
+                "channel": channel,
+            },
+        }
+
     # Validate against Pydantic model
     try:
         if isinstance(raw_request, dict):
@@ -160,7 +184,13 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
         redacted_inputs={"task_type": request.task_type},
     )
 
-    return {
+    # Extract utterance from payload for Brain Layer classification.
+    # Supports both payload.utterance and payload.text (Desktop sends "text").
+    utterance = None
+    if isinstance(request.payload, dict):
+        utterance = request.payload.get("utterance") or request.payload.get("text") or None
+
+    result: dict[str, Any] = {
         "request": request,
         "correlation_id": correlation_id,
         "request_id": request.request_id,
@@ -173,3 +203,6 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
         "pipeline_receipts": [receipt],
         "receipt_ids": [],
     }
+    if utterance:
+        result["utterance"] = utterance
+    return result

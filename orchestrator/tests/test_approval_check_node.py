@@ -287,13 +287,13 @@ class TestYellowTier:
 
 class TestRedTier:
     def test_no_evidence_returns_pending(self) -> None:
-        """RED tier without evidence returns APPROVAL_REQUIRED with presence flag."""
+        """RED tier without evidence returns PRESENCE_REQUIRED (video escalation)."""
         state = _make_state(risk_tier=RiskTier.RED, task_type="payment.send")
         result = approval_check_node(state)
 
         assert result["approval_status"] == "pending"
-        assert result["error_code"] == AspireErrorCode.APPROVAL_REQUIRED.value
-        assert "presence verification" in result["error_message"].lower()
+        assert result["error_code"] == AspireErrorCode.PRESENCE_REQUIRED.value
+        assert result["presence_required"] is True
 
     def test_evidence_without_presence_rejected(self) -> None:
         """RED tier with evidence but NO presence token is rejected."""

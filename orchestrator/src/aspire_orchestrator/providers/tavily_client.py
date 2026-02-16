@@ -173,6 +173,7 @@ async def execute_tavily_search(
                         "content": r.get("content", ""),
                         "score": r.get("score", 0.0),
                         "published_date": r.get("published_date"),
+                        "image_url": r.get("image") or r.get("thumbnail"),
                     }
                     for r in results
                 ],

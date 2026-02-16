@@ -186,10 +186,31 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
     approval_evidence = state.get("approval_evidence")
 
     if approval_evidence is None:
-        # No approval yet — return ApprovalRequest to client
+        # No approval yet — return approval request to client.
+        #
+        # Ecosystem interaction states (Law #8):
+        #   YELLOW tier → WARM state (inline voice/chat confirmation)
+        #     Ava presents the draft and asks "Should I proceed?"
+        #     User confirms in the conversation → re-submit with approval_evidence
+        #   RED tier → HOT state (video presence required)
+        #     Ava escalates to video: "This requires your face-to-face approval"
+        #     User appears on camera → approval binding verified → execute
+        #
+        # Authority Queue is for ASYNC items only — NOT for inline approvals.
+        is_red = risk_tier == RiskTier.RED
+
         logger.info(
-            "Approval required: tier=%s, correlation=%s, suite=%s",
-            risk_tier_value, correlation_id[:8], suite_id[:8],
+            "Approval required: tier=%s, state=%s, correlation=%s, suite=%s",
+            risk_tier_value,
+            "HOT (video)" if is_red else "WARM (inline)",
+            correlation_id[:8], suite_id[:8],
+        )
+
+        # Use distinct error codes: APPROVAL_REQUIRED (YELLOW inline) vs
+        # PRESENCE_REQUIRED (RED video). The Desktop handles them differently.
+        error_code = (
+            AspireErrorCode.PRESENCE_REQUIRED if is_red
+            else AspireErrorCode.APPROVAL_REQUIRED
         )
 
         receipt = _make_receipt(
@@ -201,22 +222,25 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
             action_type="approval.request",
             risk_tier=risk_tier_value,
             outcome=Outcome.PENDING.value,
-            reason_code=AspireErrorCode.APPROVAL_REQUIRED.value,
+            reason_code=error_code.value,
             receipt_type=ReceiptType.APPROVAL_REQUESTED.value,
             details={"payload_hash": payload_hash},
         )
         existing_receipts = list(state.get("pipeline_receipts", []))
         existing_receipts.append(receipt)
 
-        error_msg = f"{'Red' if risk_tier == RiskTier.RED else 'Yellow'}-tier action requires approval"
-        if risk_tier == RiskTier.RED:
-            error_msg += " with presence verification"
+        if is_red:
+            error_msg = "Red-tier action requires video presence approval"
+        else:
+            error_msg = "Yellow-tier action — Ava is asking for your confirmation"
 
         return {
             "approval_status": "pending",
             "approval_payload_hash": payload_hash,
-            "error_code": AspireErrorCode.APPROVAL_REQUIRED.value,
+            "error_code": error_code.value,
             "error_message": error_msg,
+            "required_approvals": ["owner_approval"] + (["presence_verification"] if is_red else []),
+            "presence_required": is_red,
             "outcome": Outcome.PENDING,
             "pipeline_receipts": existing_receipts,
         }

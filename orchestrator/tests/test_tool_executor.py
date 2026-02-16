@@ -722,7 +722,14 @@ class TestExecuteNodeIntegration:
         assert result["outcome"] == Outcome.DENIED
 
     def test_receipt_emitted(self):
-        """Execute node emits receipt for tool execution (Law #2)."""
+        """Execute node emits A2A + tool execution receipts (Law #2).
+
+        A2A wiring produces 4 receipts per execution:
+          1. a2a.dispatch (Ava delegates to agent)
+          2. a2a.claim (agent claims task)
+          3. tool_execution (actual tool call with agent identity)
+          4. a2a.complete (agent reports done)
+        """
         from aspire_orchestrator.nodes.execute import execute_node
         from aspire_orchestrator.services.token_service import compute_token_hash
 
@@ -744,7 +751,13 @@ class TestExecuteNodeIntegration:
 
         result = execute_node(state)
         receipts = result["pipeline_receipts"]
-        assert len(receipts) == 1
-        assert receipts[0]["tool_used"] == "domain.verify"
-        assert receipts[0]["outcome"] == "success"
-        assert receipts[0]["suite_id"] == SUITE_ID
+        # A2A lifecycle: dispatch + claim + execution + complete
+        assert len(receipts) == 4
+        assert receipts[0]["action_type"] == "a2a.dispatch"
+        assert receipts[1]["action_type"] == "a2a.claim"
+        # Tool execution receipt (the actual work)
+        assert receipts[2]["tool_used"] == "domain.verify"
+        assert receipts[2]["outcome"] == "success"
+        assert receipts[2]["suite_id"] == SUITE_ID
+        assert receipts[2]["actor_type"] == "agent"
+        assert receipts[3]["action_type"] == "a2a.complete"

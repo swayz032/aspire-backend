@@ -74,6 +74,7 @@ class OrchestratorState(TypedDict, total=False):
 
     # --- Execute (set by execute node) ---
     tool_used: str | None
+    assigned_agent: str | None  # Agent that owns this execution (from A2A dispatch)
     execution_result: dict[str, Any] | None
     outcome: Outcome
 

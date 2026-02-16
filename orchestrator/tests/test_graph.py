@@ -119,12 +119,12 @@ class TestRedTierFlow:
     """RED tier: requires approval + presence token."""
 
     def test_red_tier_no_approval(self, graph) -> None:
-        """TC-04 (partial): Red tier without approval returns APPROVAL_REQUIRED."""
+        """TC-04 (partial): Red tier without approval returns PRESENCE_REQUIRED (video)."""
         request = _make_valid_request(task_type="payment.send")
         result = graph.invoke({"request": request, "actor_id": "test_user"})
 
         response = result["response"]
-        assert response["error"] == "APPROVAL_REQUIRED"
+        assert response["error"] == "PRESENCE_REQUIRED"
         assert response["presence_required"] is True
 
 

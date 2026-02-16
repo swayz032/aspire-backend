@@ -1,14 +1,21 @@
-"""Respond Node — AvaResult construction and egress validation.
+"""Respond Node — AvaResult construction, LLM summarization, and egress validation.
 
 Responsibilities:
 1. Persist any unpersisted pipeline receipts (Law #2 safety net)
-2. Construct AvaResult from pipeline state
-3. Validate AvaResult schema before returning (egress validation)
-4. Handle error cases (return AspireError instead of AvaResult)
-5. Include all receipt_ids in governance metadata
+2. Generate human-readable response via LLM with agent persona (Summary step)
+3. Construct AvaResult from pipeline state
+4. Validate AvaResult schema before returning (egress validation)
+5. Handle error cases (return AspireError instead of AvaResult)
+6. Include all receipt_ids in governance metadata
 
-Per receipt_emission_rules.md:
-  "Validate AvaResult schema before returning"
+Pipeline position:
+  Intake → Safety → Classify → Route → Policy → Approval → TokenMint →
+  Execute → ReceiptWrite → QA → **Respond (Summary)** → Client
+
+The Summary step is where the LLM generates a natural language response
+using the routed agent's persona. This is what makes Ava sound like Ava
+and Finn sound like Finn. Template responses are the fallback when the
+LLM is unavailable (Law #3: fail closed, but gracefully).
 
 Law #2 Safety Net:
   Denied/blocked flows skip receipt_write_node. The respond node is the
@@ -21,6 +28,7 @@ This is the final node in the pipeline — its output becomes the HTTP response.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -36,6 +44,77 @@ from aspire_orchestrator.models import (
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
+
+# Maps task_type domain prefix → agent persona ID.
+# The classifier outputs task_types like "research.search", "invoice.create",
+# "payment.send" — but the personas are named by agent (adam, quinn, finn).
+# Users talk to Ava, Eli, Nora, Finn directly — Ava orchestrates everything.
+_DOMAIN_TO_AGENT: dict[str, str] = {
+    "research": "adam",
+    "invoice": "quinn",
+    "quote": "quinn",
+    "email": "eli",
+    "mail": "eli",
+    "calendar": "ava",
+    "scheduling": "ava",
+    "booking": "ava",
+    "conference": "nora",
+    "meeting": "nora",
+    "payment": "finn",
+    "transfer": "finn",
+    "finance": "finn_fm",
+    "payroll": "milo",
+    "contract": "clara",
+    "legal": "clara",
+    "document": "tec",
+    "filing": "teressa",
+    "bookkeeping": "teressa",
+    "accounting": "teressa",
+    "contact": "ava",
+    "domain": "mail_ops",
+    "mailbox": "mail_ops",
+    "frontdesk": "sarah",
+    "call": "sarah",
+    "sms": "sarah",
+    "telephony": "sarah",
+}
+
+
+def _resolve_agent_id(state: OrchestratorState) -> str:
+    """Resolve the agent persona ID from task_type and request context.
+
+    Priority: request.agent field (Desktop sends this) → domain prefix mapping → ava fallback.
+    """
+    # Desktop proxy sends agent field in the original request payload
+    request = state.get("request")
+    if isinstance(request, dict):
+        explicit_agent = request.get("agent")
+    elif hasattr(request, "payload") and isinstance(request.payload, dict):
+        explicit_agent = request.payload.get("agent")
+    else:
+        explicit_agent = None
+
+    # Map explicit agent names to persona IDs
+    if explicit_agent and explicit_agent != "ava":
+        _agent_name_map = {
+            "finn": "finn",
+            "eli": "eli",
+            "nora": "nora",
+            "sarah": "sarah",
+            "adam": "adam",
+            "quinn": "quinn",
+            "tec": "tec",
+            "teressa": "teressa",
+            "milo": "milo",
+            "clara": "clara",
+        }
+        if explicit_agent in _agent_name_map:
+            return _agent_name_map[explicit_agent]
+
+    # Fall back to domain prefix mapping from task_type
+    task_type = state.get("task_type", "unknown")
+    domain_prefix = task_type.split(".")[0] if "." in task_type else task_type
+    return _DOMAIN_TO_AGENT.get(domain_prefix, "ava")
 
 
 def _persist_unpersisted_receipts(state: OrchestratorState) -> list[str]:
@@ -80,6 +159,471 @@ def _persist_unpersisted_receipts(state: OrchestratorState) -> list[str]:
         return []
 
 
+def _generate_response_text(state: OrchestratorState) -> str:
+    """Generate human-readable response text for voice/chat output.
+
+    Maps task_type + outcome to a natural language response that Ava
+    speaks to the user via ElevenLabs TTS or displays in chat.
+    """
+    task_type = state.get("task_type", "unknown")
+    outcome = state.get("outcome", Outcome.SUCCESS)
+    outcome_val = outcome.value if hasattr(outcome, "value") else str(outcome)
+    execution_result = state.get("execution_result") or {}
+    utterance = state.get("utterance", "")
+    tool_used = state.get("tool_used", "unknown")
+    is_stub = execution_result.get("stub", False)
+
+    # Skill pack prefix → human-readable domain
+    domain_prefix = task_type.split(".")[0] if "." in task_type else task_type
+    action_suffix = task_type.split(".", 1)[1] if "." in task_type else ""
+
+    # If tool is a stub (provider not connected), tell the user
+    if is_stub and outcome_val == "success":
+        provider_names = {
+            "stripe": "Stripe",
+            "pandadoc": "PandaDoc",
+            "brave": "Brave Search",
+            "tavily": "Tavily",
+            "livekit": "LiveKit",
+            "deepgram": "Deepgram",
+            "twilio": "Twilio",
+            "moov": "Moov",
+            "plaid": "Plaid",
+            "gusto": "Gusto",
+            "qbo": "QuickBooks",
+            "puppeteer": "document generator",
+            "s3": "file storage",
+            "polaris": "email service",
+            "elevenlabs": "ElevenLabs",
+        }
+        provider_key = tool_used.split(".")[0] if "." in tool_used else tool_used
+        provider_name = provider_names.get(provider_key, provider_key)
+        return (
+            f"I understand your request, but {provider_name} isn't connected yet. "
+            f"Head to your connections page to set it up, and I'll handle this right away."
+        )
+
+    # Outbox-submitted (RED tier async)
+    if execution_result.get("status") == "outbox_submitted":
+        _action_descriptions = {
+            "payment": "Your payment",
+            "transfer": "Your transfer",
+            "payroll": "The payroll run",
+            "contract": "Your contract",
+            "filing": "Your filing",
+        }
+        desc = _action_descriptions.get(domain_prefix, "Your request")
+        return f"{desc} has been submitted for secure processing. I'll notify you when it's complete."
+
+    # Success with live execution
+    if outcome_val == "success":
+        _success_responses: dict[str, str] = {
+            "research": "I found some results for you. Check your activity feed for the full details.",
+            "invoice": "Your invoice has been created successfully.",
+            "contract": "Your contract has been prepared.",
+            "calendar": "Done — your calendar has been updated.",
+            "email": "Your email has been handled.",
+            "meeting": "Your meeting room is ready. You can join now.",
+            "conference": "Your conference room is set up and ready to go.",
+            "finance": "Here's what I found in your financial data.",
+            "payment": "Your payment has been processed.",
+            "document": "Your document is ready.",
+            "contact": "Your contacts have been updated.",
+            "booking": "Your booking has been confirmed.",
+            "scheduling": "Your schedule has been updated.",
+        }
+        base = _success_responses.get(domain_prefix, "Done — I've completed your request.")
+
+        # Enrich with action detail when available
+        if domain_prefix == "research" and utterance:
+            # Trim to first 60 chars of utterance for voice brevity
+            topic = utterance[:60].rstrip()
+            if len(utterance) > 60:
+                topic += "..."
+            base = f"I searched for \"{topic}\". Check your activity feed for the results."
+        elif domain_prefix == "invoice" and action_suffix == "send":
+            base = "Your invoice has been sent to the client."
+        elif domain_prefix == "invoice" and action_suffix == "create":
+            base = "Your invoice has been created. It's waiting in your drafts."
+        elif domain_prefix == "contract" and action_suffix == "generate":
+            base = "Your contract has been drafted. Review it before sending."
+        elif domain_prefix == "email" and action_suffix in ("send", "draft"):
+            base = "Your email draft is ready for review."
+
+        return base
+
+    # Failed execution
+    if outcome_val == "failed":
+        return "I ran into a problem processing that. Please try again, or check your connections page."
+
+    # Denied by policy
+    if outcome_val == "denied":
+        return "I'm not able to perform that action. It was blocked by your security policy."
+
+    # Fallback
+    return "I've processed your request."
+
+
+def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
+    """Generate persona-aware response text via LLM (Summary step).
+
+    Calls the LLM with the routed agent's persona to produce a natural
+    response. Falls back to template text if the LLM is unavailable.
+
+    This is a sync wrapper — the respond_node is called from a sync
+    LangGraph context, so we run the async LLM call in a thread.
+    """
+    utterance = state.get("utterance", "")
+    if not utterance:
+        return fallback_text
+
+    task_type = state.get("task_type", "unknown")
+    outcome = state.get("outcome", Outcome.SUCCESS)
+    outcome_val = outcome.value if hasattr(outcome, "value") else str(outcome)
+    execution_result = state.get("execution_result") or {}
+    tool_used = state.get("tool_used", "unknown")
+
+    # Load the routed agent's persona for response generation
+    agent_id = _resolve_agent_id(state)
+    persona = _load_agent_persona(agent_id)
+
+    # Build the summarization prompt
+    prompt = (
+        f"The user said: \"{utterance}\"\n\n"
+        f"Action taken: {task_type}\n"
+        f"Tool used: {tool_used}\n"
+        f"Outcome: {outcome_val}\n"
+        f"Execution details: {json.dumps(execution_result, default=str)}\n\n"
+        "Generate a brief, natural voice response (1-2 sentences max) that:\n"
+        "- Directly addresses what the user asked\n"
+        "- Confirms what was done or explains what happened\n"
+        "- Sounds natural when spoken aloud (this will be text-to-speech)\n"
+        "- Does NOT use markdown, bullet points, or formatting\n"
+        "- Does NOT say 'I processed your request' or generic filler\n"
+        "Respond with ONLY the spoken text, nothing else."
+    )
+
+    try:
+        import asyncio
+        import os
+
+        import httpx
+
+        api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return fallback_text
+
+        # Use fast model for summarization (gpt-5-mini)
+        model = "gpt-5-mini"
+        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+
+        messages = []
+        if persona:
+            messages.append({"role": "developer" if _is_reasoning else "system", "content": persona})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": 4096,
+        }
+        if not _is_reasoning:
+            payload["temperature"] = 0.3
+
+        # Sync HTTP call (respond_node is sync in LangGraph)
+        with httpx.Client(timeout=8) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if content and content.strip():
+            logger.info("LLM summarization success for %s (len=%d)", agent_id, len(content))
+            return content.strip()
+
+        return fallback_text
+
+    except Exception as e:
+        # Law #3: Fail gracefully — use template response if LLM fails
+        logger.warning("LLM summarization failed for %s: %s — using template", agent_id, e)
+        return fallback_text
+
+
+def _load_agent_persona(agent_id: str) -> str:
+    """Load the agent's persona file for response generation.
+
+    Personas are stored at:
+      config/pack_personas/{agent_id}_system_prompt.md
+
+    Special cases:
+      - "ava" → ava_user_system_prompt.md (user-facing Ava)
+      - "finn" when task is finance.* → finn_fm_system_prompt.md (Finance Manager)
+      - "finn" otherwise → finn_system_prompt.md (Money Desk)
+
+    Returns minimal built-in persona if file not found.
+    """
+    from pathlib import Path
+
+    config_dir = Path(__file__).parent.parent / "config" / "pack_personas"
+
+    # Map agent_id to persona filename — ALL agents have personas
+    _persona_map: dict[str, str] = {
+        "ava": "ava_user_system_prompt.md",
+        "ava_admin": "ava_admin_system_prompt.md",
+        "finn": "finn_system_prompt.md",
+        "finn_fm": "finn_fm_system_prompt.md",
+        "eli": "eli_system_prompt.md",
+        "quinn": "quinn_system_prompt.md",
+        "nora": "nora_system_prompt.md",
+        "sarah": "sarah_system_prompt.md",
+        "adam": "adam_system_prompt.md",
+        "tec": "tec_system_prompt.md",
+        "teressa": "teressa_system_prompt.md",
+        "milo": "milo_system_prompt.md",
+        "clara": "clara_system_prompt.md",
+        "mail_ops": "mail_ops_system_prompt.md",
+    }
+
+    filename = _persona_map.get(agent_id, f"{agent_id}_system_prompt.md")
+    persona_file = config_dir / filename
+
+    if persona_file.exists():
+        try:
+            return persona_file.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    # Fallback: Ava's persona (she orchestrates all responses)
+    ava_file = config_dir / "ava_user_system_prompt.md"
+    if ava_file.exists():
+        try:
+            return ava_file.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    # Minimal built-in persona (last resort)
+    return (
+        "You are Ava, the AI executive assistant for Aspire. "
+        "You speak in a warm, professional, concise voice. "
+        "You confirm actions, explain outcomes, and guide the user — always briefly."
+    )
+
+
+def _generate_approval_prompt(state: OrchestratorState) -> str:
+    """Generate inline approval prompt for YELLOW tier (WARM state).
+
+    Ecosystem rule: YELLOW actions are presented as drafts inline in the
+    conversation. Ava describes what she's about to do and asks "Should I
+    proceed?" — the user confirms right there in voice/chat. This NEVER
+    goes to the Authority Queue (that's for async items only).
+
+    Uses LLM with persona for natural phrasing, template as fallback.
+    """
+    task_type = state.get("task_type", "unknown")
+    utterance = state.get("utterance", "")
+    domain_prefix = task_type.split(".")[0] if "." in task_type else task_type
+    action_suffix = task_type.split(".", 1)[1] if "." in task_type else ""
+
+    # Template fallback — describes the draft and asks for confirmation
+    _draft_descriptions: dict[str, str] = {
+        "invoice.create": "I've prepared an invoice draft based on your request.",
+        "invoice.send": "I've got the invoice ready to send.",
+        "email.send": "I've drafted the email for you.",
+        "email.draft": "I've drafted the email for you.",
+        "calendar.create": "I've prepared a calendar event.",
+        "contract.generate": "I've drafted the contract.",
+        "booking.create": "I've prepared the booking details.",
+        "scheduling.create": "I've set up the schedule.",
+    }
+
+    specific_key = f"{domain_prefix}.{action_suffix}" if action_suffix else domain_prefix
+    draft_desc = _draft_descriptions.get(
+        specific_key,
+        _draft_descriptions.get(domain_prefix, "I've prepared this for you."),
+    )
+    fallback_text = f"{draft_desc} Want me to go ahead?"
+
+    # Try LLM for more natural phrasing
+    if not utterance:
+        return fallback_text
+
+    agent_id = _resolve_agent_id(state)
+    persona = _load_agent_persona(agent_id)
+
+    prompt = (
+        f"The user said: \"{utterance}\"\n\n"
+        f"You are about to perform: {task_type}\n"
+        f"Risk tier: YELLOW (requires user confirmation before executing)\n\n"
+        "Generate a brief voice response (1-2 sentences max) that:\n"
+        "- Describes what you've prepared (the draft)\n"
+        "- Asks the user for confirmation to proceed\n"
+        "- Sounds natural when spoken aloud (this is text-to-speech)\n"
+        "- Does NOT mention 'Authority Queue' or 'approval queue'\n"
+        "- Does NOT use markdown or formatting\n"
+        "Example tone: 'I've drafted an invoice for $500 to John Smith. Should I send it?'\n"
+        "Respond with ONLY the spoken text, nothing else."
+    )
+
+    try:
+        import os
+
+        import httpx
+
+        api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return fallback_text
+
+        model = "gpt-5-mini"
+        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+
+        messages = []
+        if persona:
+            messages.append({"role": "developer" if _is_reasoning else "system", "content": persona})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": 4096,
+        }
+        if not _is_reasoning:
+            payload["temperature"] = 0.3
+
+        with httpx.Client(timeout=8) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if content and content.strip():
+            logger.info("LLM approval prompt success for %s", agent_id)
+            return content.strip()
+
+        return fallback_text
+
+    except Exception as e:
+        logger.warning("LLM approval prompt failed: %s — using template", e)
+        return fallback_text
+
+
+def _generate_presence_prompt(state: OrchestratorState) -> str:
+    """Generate video escalation prompt for RED tier (HOT state).
+
+    Ecosystem rule: RED actions (payments >$5000, contracts, payroll, filings)
+    require video presence with Ava. She tells the user to navigate to
+    'Video with Ava' for the binding authority moment. Ava does NOT start
+    the video — the user clicks into the video screen.
+
+    Uses LLM with persona for natural phrasing, template as fallback.
+    """
+    task_type = state.get("task_type", "unknown")
+    utterance = state.get("utterance", "")
+    domain_prefix = task_type.split(".")[0] if "." in task_type else task_type
+
+    # Template fallback — tells user video is required
+    _presence_descriptions: dict[str, str] = {
+        "payment": "This payment requires your video confirmation.",
+        "transfer": "This transfer requires your video confirmation.",
+        "payroll": "Running payroll requires your video confirmation.",
+        "contract": "Signing this contract requires your video presence.",
+        "filing": "This filing requires your video confirmation.",
+    }
+
+    desc = _presence_descriptions.get(
+        domain_prefix,
+        "This action requires your video confirmation.",
+    )
+    fallback_text = f"{desc} Head over to Video with Ava so we can finalize this together."
+
+    # Try LLM for more natural phrasing
+    if not utterance:
+        return fallback_text
+
+    agent_id = _resolve_agent_id(state)
+    persona = _load_agent_persona(agent_id)
+
+    prompt = (
+        f"The user said: \"{utterance}\"\n\n"
+        f"You are about to perform: {task_type}\n"
+        f"Risk tier: RED (requires video presence — binding authority action)\n\n"
+        "Generate a brief voice response (1-2 sentences max) that:\n"
+        "- Explains this is a high-stakes action requiring video confirmation\n"
+        "- Tells the user to go to 'Video with Ava' to finalize it (the USER clicks, you don't start it)\n"
+        "- Sounds natural and reassuring (not alarming)\n"
+        "- Sounds natural when spoken aloud (this is text-to-speech)\n"
+        "- Does NOT mention 'Authority Queue' or 'approval queue'\n"
+        "- Does NOT say you will start or launch a video session — the user navigates there\n"
+        "- Does NOT use markdown or formatting\n"
+        "Example tone: 'This payment needs your video sign-off. Head over to Video with Ava so we can finalize it together.'\n"
+        "Respond with ONLY the spoken text, nothing else."
+    )
+
+    try:
+        import os
+
+        import httpx
+
+        api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return fallback_text
+
+        model = "gpt-5-mini"
+        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+
+        messages = []
+        if persona:
+            messages.append({"role": "developer" if _is_reasoning else "system", "content": persona})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": 4096,
+        }
+        if not _is_reasoning:
+            payload["temperature"] = 0.3
+
+        with httpx.Client(timeout=8) as client:
+            resp = client.post(
+                "https://api.openai.com/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if content and content.strip():
+            logger.info("LLM presence prompt success for %s", agent_id)
+            return content.strip()
+
+        return fallback_text
+
+    except Exception as e:
+        logger.warning("LLM presence prompt failed: %s — using template", e)
+        return fallback_text
+
+
 def respond_node(state: OrchestratorState) -> dict[str, Any]:
     """Construct and validate the response.
 
@@ -97,21 +641,51 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     if safety_net_ids:
         receipt_ids.extend(safety_net_ids)
 
-    # Error case — return structured error
+    # Error case — return structured error with human-readable text
     if error_code:
-        response = {
+        # Ecosystem interaction states (Law #8):
+        #   APPROVAL_REQUIRED (YELLOW) → WARM state: Ava presents draft inline
+        #   PRESENCE_REQUIRED (RED) → HOT state: Ava escalates to video
+        #   Authority Queue is ASYNC only — never used for inline approvals
+
+        if error_code == "APPROVAL_REQUIRED":
+            # YELLOW tier → WARM state → Ava presents the draft and asks inline
+            text = _generate_approval_prompt(state)
+        elif error_code == "PRESENCE_REQUIRED":
+            # RED tier → HOT state → Ava escalates to video
+            text = _generate_presence_prompt(state)
+        else:
+            _error_messages: dict[str, str] = {
+                "POLICY_DENIED": "Your security policy doesn't allow this action.",
+                "SAFETY_BLOCKED": "I can't process that request for safety reasons.",
+                "CAPABILITY_TOKEN_REQUIRED": "I need authorization to perform this action.",
+                "CAPABILITY_TOKEN_EXPIRED": "The authorization for this action has expired. Please try again.",
+                "SCHEMA_VALIDATION_FAILED": "I didn't understand that request. Could you try rephrasing it?",
+            }
+            text = _error_messages.get(
+                error_code,
+                state.get("error_message", "Something went wrong. Please try again."),
+            )
+
+        response: dict[str, Any] = {
             "error": error_code,
             "message": state.get("error_message", "Unknown error"),
+            "text": text,
             "correlation_id": correlation_id,
             "request_id": request_id,
             "receipt_ids": receipt_ids,
+            "assigned_agent": state.get("assigned_agent", "ava"),
         }
 
-        # For approval-required, include the payload hash for binding
+        # For approval-required, include the payload hash + draft details
         if error_code in ("APPROVAL_REQUIRED", "PRESENCE_REQUIRED"):
             response["approval_payload_hash"] = state.get("approval_payload_hash")
             response["required_approvals"] = state.get("required_approvals", [])
             response["presence_required"] = state.get("presence_required", False)
+            # Include task context so the Desktop can display draft details
+            response["task_type"] = state.get("task_type")
+            response["risk_tier"] = state.get("risk_tier").value if hasattr(state.get("risk_tier"), "value") else str(state.get("risk_tier", "yellow"))
+            response["utterance"] = state.get("utterance", "")
 
         return {"response": response}
 
@@ -119,19 +693,30 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     risk_tier = state.get("risk_tier", RiskTier.GREEN)
     risk_tier_val = risk_tier.value if isinstance(risk_tier, RiskTier) else str(risk_tier)
 
+    # Generate human-readable response text
+    # Step 1: Build template fallback (fast, deterministic)
+    template_text = _generate_response_text(state)
+    # Step 2: Use LLM with agent persona for natural response (preferred)
+    response_text = _llm_summarize(state, fallback_text=template_text)
+
     # Build governance metadata
     required_approvals = state.get("required_approvals", [])
     presence_required = state.get("presence_required", False)
     capability_token_required = state.get("capability_token_id") is not None
+
+    # Agent identity for Desktop rendering (which persona to show)
+    assigned_agent = state.get("assigned_agent", "ava")
 
     try:
         result = AvaResult(
             schema_version="1.0",
             request_id=request_id,
             correlation_id=correlation_id,
+            text=response_text,
             route={
                 "skill_pack": state.get("task_type", "").split(".")[0] if state.get("task_type") else "unknown",
                 "tool": state.get("tool_used", "unknown"),
+                "agent": assigned_agent,
             },
             risk=AvaResultRisk(tier=RiskTier(risk_tier_val)),
             governance=AvaResultGovernance(
@@ -149,6 +734,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
 
         # Egress validation — validate AvaResult schema before returning
         response = result.model_dump()
+        response["assigned_agent"] = assigned_agent
         return {"response": response}
 
     except (ValidationError, Exception) as e:
@@ -157,6 +743,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             "response": {
                 "error": "INTERNAL_ERROR",
                 "message": f"Failed to construct AvaResult: {e}",
+                "text": "I'm having trouble right now. Please try again.",
                 "correlation_id": correlation_id,
                 "request_id": request_id,
                 "receipt_ids": receipt_ids,

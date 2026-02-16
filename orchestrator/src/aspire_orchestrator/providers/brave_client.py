@@ -161,6 +161,8 @@ async def execute_brave_search(
                         "url": r.get("url", ""),
                         "description": r.get("description", ""),
                         "age": r.get("age"),
+                        "image_url": (r.get("thumbnail", {}) or {}).get("src"),
+                        "favicon_url": (r.get("profile", {}) or {}).get("img"),
                     }
                     for r in web_results
                 ],

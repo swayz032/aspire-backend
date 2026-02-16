@@ -349,16 +349,39 @@ class IntentClassifier:
 
         url = f"{base_url.rstrip('/')}/chat/completions"
 
-        payload = {
-            "model": model,
-            "messages": [
+        # Reasoning models (gpt-5*, o1, o3) don't support temperature or
+        # system role — use developer role and omit temperature.
+        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+
+        if _is_reasoning:
+            messages = [
+                {"role": "developer", "content": self._system_prompt},
+                {"role": "user", "content": user_message},
+            ]
+        else:
+            messages = [
                 {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": user_message},
-            ],
+            ]
+
+        # Reasoning models (gpt-5*, o1, o3) consume tokens for internal
+        # chain-of-thought BEFORE producing output.  With max_completion_tokens=512,
+        # the model can exhaust its budget on reasoning, leaving 0 tokens for the
+        # JSON output (finish_reason="length").  Production fix: give reasoning
+        # models a 4096-token budget so there's always room for the ~300-token
+        # classification JSON after reasoning overhead.
+        effective_max_tokens = max_tokens
+        if _is_reasoning and max_tokens < 4096:
+            effective_max_tokens = 4096
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
             "response_format": {"type": "json_object"},
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": effective_max_tokens,
         }
+        if not _is_reasoning:
+            payload["temperature"] = temperature
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
@@ -372,12 +395,31 @@ class IntentClassifier:
             resp.raise_for_status()
 
         data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+        choice = data.get("choices", [{}])[0] if data.get("choices") else {}
+        message = choice.get("message", {})
+        content = message.get("content") or ""
+        finish_reason = choice.get("finish_reason", "unknown")
+
+        if not content:
+            logger.error(
+                "LLM response empty — finish_reason=%s, model=%s. "
+                "Reasoning models may exhaust token budget on chain-of-thought.",
+                finish_reason, model,
+            )
+            return {}
 
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            logger.error("LLM returned non-JSON content")
+            # Reasoning models sometimes wrap JSON in markdown code fences
+            import re
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            logger.error("LLM returned non-JSON content (len=%d): %.200s", len(content), content)
             return {}
 
     def _build_user_message(

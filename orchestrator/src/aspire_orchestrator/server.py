@@ -206,11 +206,17 @@ async def process_intent(request: Request) -> JSONResponse:
 
     # Auth context propagated from Gateway via X- headers
     actor_id = request.headers.get("x-actor-id", "unknown")
+    suite_id = request.headers.get("x-suite-id")
+    correlation_id = request.headers.get("x-correlation-id")
 
-    initial_state = {
+    initial_state: dict[str, Any] = {
         "request": body,
         "actor_id": actor_id,
     }
+    if suite_id:
+        initial_state["auth_suite_id"] = suite_id
+    if correlation_id:
+        initial_state["correlation_id"] = correlation_id
 
     start_time = time.monotonic()
     try:

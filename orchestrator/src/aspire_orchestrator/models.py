@@ -264,6 +264,10 @@ class AvaResult(BaseModel):
     schema_version: str = Field(pattern=r"^1\.0$")
     request_id: str
     correlation_id: str
+    text: str = Field(
+        description="Human-readable response text for voice/chat output. "
+        "This is what Ava speaks to the user via ElevenLabs TTS.",
+    )
     route: dict[str, Any]
     risk: AvaResultRisk
     governance: AvaResultGovernance
