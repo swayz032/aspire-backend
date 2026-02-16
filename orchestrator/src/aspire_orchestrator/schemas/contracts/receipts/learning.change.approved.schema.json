@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "learning.change.approved",
+  "description": "A learning change proposal was approved and authorized for rollout.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "learning.change.approved"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "change_proposal_id": {
+          "type": "string"
+        },
+        "approval_id": {
+          "type": "string"
+        },
+        "rollout_plan_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "change_proposal_id",
+        "approval_id",
+        "rollout_plan_ref"
+      ]
+    }
+  ]
+}

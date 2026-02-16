@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qa.quality_gate.blocked",
+  "description": "One or more critics failed; output is blocked until revisions are applied.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "qa.quality_gate.blocked" },
+        "risk_tier": { "type": "string", "enum": ["LOW","MEDIUM","HIGH"] },
+        "blocking_critics": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["quality","policy","safety","tool_plan"] }
+        },
+        "required_revisions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "artifact_ref": { "type": ["string","null"] }
+      },
+      "required": ["receipt_type","risk_tier","blocking_critics","required_revisions"]
+    }
+  ]
+}

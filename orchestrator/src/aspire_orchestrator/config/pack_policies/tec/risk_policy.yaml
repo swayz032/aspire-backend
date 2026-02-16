@@ -1,0 +1,22 @@
+# Tec Documents — Risk Policy
+# Generate/preview GREEN; sharing YELLOW
+
+pack_id: tec-docs
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  document.generate:
+    risk_tier: green
+    approval_required: false
+    description: "Generate PDF from template"
+
+  document.preview:
+    risk_tier: green
+    approval_required: false
+    description: "Generate presigned URL for document preview"
+
+  document.share:
+    risk_tier: yellow
+    approval_required: true
+    description: "Share document with external recipients"

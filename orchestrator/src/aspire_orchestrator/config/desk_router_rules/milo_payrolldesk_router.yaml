@@ -1,0 +1,32 @@
+# Milo Payroll Desk routing rules
+# Ported from ecosystem: platform/brain/router/rules/milo_payrolldesk_router.yaml
+version: v1
+rule_id: milo_payrolldesk_router
+agent: milo_payrolldesk
+match:
+  domain: finance.payroll
+  intents:
+    - payroll_setup
+    - payroll_status
+    - payroll_exceptions
+    - payroll_run
+    - payroll_changes
+route:
+  agent: milo
+  skillpack: milo-payroll
+outputs:
+  - payroll_snapshot
+  - finance_exception
+  - payroll_action_proposal
+model_overrides:
+  # Milo uses high_risk_guard for ALL payroll decisions (RED tier)
+  classify.high: high_risk_guard
+  extract.high: high_risk_guard
+  draft.high: high_risk_guard
+  plan.high: high_risk_guard
+  verify.high: high_risk_guard
+  # Medium risk payroll ops also get guard model
+  classify.medium: primary_reasoner
+  plan.medium: high_risk_guard
+notes:
+  - Payroll runs are RED tier. All planning and verification use high_risk_guard.

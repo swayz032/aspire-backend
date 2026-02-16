@@ -1,0 +1,8 @@
+{
+  "type": "mail.domain.connect.requested",
+  "required": [
+    "suite_id",
+    "timestamp",
+    "domain"
+  ]
+}

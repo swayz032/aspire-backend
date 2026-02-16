@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aspire://schemas/06_output_schema.json",
+  "title": "Aspire Agent Output Schema (Proposal-only)",
+  "type": "object",
+  "required": [
+    "agent",
+    "suite_id",
+    "office_id",
+    "intent_summary",
+    "risk_tier",
+    "required_approval_mode",
+    "proposals",
+    "escalations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "default": "2026-02-14"
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "suite_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "office_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_summary": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 800
+    },
+    "risk_tier": {
+      "type": "string",
+      "enum": [
+        "green",
+        "yellow",
+        "red"
+      ]
+    },
+    "required_approval_mode": {
+      "type": "string",
+      "minLength": 1,
+      "examples": [
+        "none",
+        "owner",
+        "finance_owner",
+        "manual"
+      ]
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "proposals": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": [
+          "action",
+          "inputs",
+          "inputs_hash"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "minLength": 1,
+            "examples": [
+              "finance.proposal.create",
+              "a2a.create",
+              "finance.packet.draft"
+            ]
+          },
+          "inputs": {
+            "type": "object"
+          },
+          "inputs_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-fA-F]{3,}$"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "expected_receipts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "escalations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "examples": [
+              "missing_data",
+              "needs_approval",
+              "policy_blocked",
+              "unknown"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warn",
+              "error"
+            ],
+            "default": "info"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 4
+          },
+          "details": {
+            "type": "object"
+          },
+          "recommended_next_action": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "agent": "finn-finance-manager",
+      "suite_id": "suite_demo",
+      "office_id": "office_001",
+      "intent_summary": "Assess tax substantiation gaps and propose fixes",
+      "risk_tier": "green",
+      "required_approval_mode": "none",
+      "proposals": [
+        {
+          "action": "a2a.create",
+          "inputs": {
+            "to_agent": "adam",
+            "request_type": "ResearchRequest",
+            "payload": {
+              "topic": "Substantiation best-practices for meals/travel/vehicle logs",
+              "jurisdiction": "US",
+              "deliverable": "CPA-ready checklist + common failure modes"
+            },
+            "risk_tier": "green",
+            "correlation_id": "corr_01HZZ..."
+          },
+          "inputs_hash": "sha256:...",
+          "rationale": "Need evidence-backed substantiation guidance to reduce audit risk."
+        }
+      ],
+      "escalations": []
+    }
+  ]
+}

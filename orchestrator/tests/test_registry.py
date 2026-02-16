@@ -47,8 +47,8 @@ class TestRegistryLoading:
         assert registry.version == "1.0.0"
 
     def test_loads_all_skill_packs(self, registry: ControlPlaneRegistry):
-        """All 11 customer-facing + admin skill packs loaded."""
-        assert len(registry.skill_packs) == 11
+        """All 12 customer-facing + admin skill packs loaded."""
+        assert len(registry.skill_packs) == 12
 
     def test_loads_all_tools(self, registry: ControlPlaneRegistry):
         """All tool definitions loaded."""
@@ -107,14 +107,15 @@ class TestSkillPackLookup:
         ("sarah_front_desk", "sarah", "channel", RiskTier.YELLOW),
         ("eli_inbox", "eli", "channel", RiskTier.YELLOW),
         ("quinn_invoicing", "quinn", "channel", RiskTier.YELLOW),
-        ("nora_conference", "nora", "channel", RiskTier.GREEN),
+        ("nora_conference", "nora", "channel", RiskTier.YELLOW),
         ("adam_research", "adam", "channel", RiskTier.GREEN),
-        ("tec_documents", "tec", "channel", RiskTier.GREEN),
+        ("tec_documents", "tec", "channel", RiskTier.YELLOW),
         ("finn_money_desk", "finn", "finance", RiskTier.RED),
         ("milo_payroll", "milo", "finance", RiskTier.RED),
         ("teressa_books", "teressa", "finance", RiskTier.YELLOW),
         ("clara_legal", "clara", "legal", RiskTier.RED),
         ("mail_ops_desk", "mail_ops", "internal_admin", RiskTier.YELLOW),
+        ("finn_finance_manager", "finn", "finance", RiskTier.YELLOW),
     ]
 
     @pytest.mark.parametrize("pack_id,owner,category,risk_tier", EXPECTED_PACKS)
@@ -215,7 +216,7 @@ class TestFiltering:
         assert len(channel_packs) == 6
 
         finance_packs = registry.list_skill_packs(category="finance")
-        assert len(finance_packs) == 3
+        assert len(finance_packs) == 4
 
         legal_packs = registry.list_skill_packs(category="legal")
         assert len(legal_packs) == 1
@@ -223,18 +224,18 @@ class TestFiltering:
     def test_filter_by_risk_tier(self, registry: ControlPlaneRegistry):
         """Filter by risk tier returns correct subset."""
         green_packs = registry.list_skill_packs(risk_tier=RiskTier.GREEN)
-        assert len(green_packs) == 3  # nora, adam, tec
+        assert len(green_packs) == 1  # adam
 
         red_packs = registry.list_skill_packs(risk_tier=RiskTier.RED)
-        assert len(red_packs) == 3  # finn, milo, clara
+        assert len(red_packs) == 3  # finn_money, milo, clara
 
         yellow_packs = registry.list_skill_packs(risk_tier=RiskTier.YELLOW)
-        assert len(yellow_packs) == 5  # sarah, eli, quinn, teressa, mail_ops
+        assert len(yellow_packs) == 8  # sarah, eli, quinn, nora, tec, teressa, mail_ops, finn_finance_manager
 
     def test_filter_by_status(self, registry: ControlPlaneRegistry):
         """All packs are in 'registered' status for Phase 1."""
         registered = registry.list_skill_packs(status="registered")
-        assert len(registered) == 11
+        assert len(registered) == 12
 
         active = registry.list_skill_packs(status="active")
         assert len(active) == 0
@@ -261,7 +262,7 @@ class TestCapabilityDiscovery:
     def test_lists_all_capabilities(self, registry: ControlPlaneRegistry):
         """list_capabilities returns all registered skill packs."""
         caps = registry.list_capabilities()
-        assert len(caps) == 11
+        assert len(caps) == 12
 
     def test_capability_has_required_fields(self, registry: ControlPlaneRegistry):
         """Each capability entry has the required discovery fields."""
@@ -294,8 +295,8 @@ class TestStats:
     def test_stats_totals(self, registry: ControlPlaneRegistry):
         """Stats include correct totals."""
         stats = registry.get_stats()
-        assert stats["total_skill_packs"] == 11
-        assert stats["total_tools"] >= 28
+        assert stats["total_skill_packs"] == 12
+        assert stats["total_tools"] >= 33
         assert stats["total_providers"] >= 14
         assert stats["total_actions_mapped"] >= 17
 
@@ -304,15 +305,15 @@ class TestStats:
         stats = registry.get_stats()
         by_cat = stats["by_category"]
         assert by_cat.get("channel") == 6
-        assert by_cat.get("finance") == 3
+        assert by_cat.get("finance") == 4
         assert by_cat.get("legal") == 1
 
     def test_stats_by_risk_tier(self, registry: ControlPlaneRegistry):
         """Stats by risk tier match expectations."""
         stats = registry.get_stats()
         by_risk = stats["by_risk_tier"]
-        assert by_risk.get("green") == 3
-        assert by_risk.get("yellow") == 5
+        assert by_risk.get("green") == 1
+        assert by_risk.get("yellow") == 8
         assert by_risk.get("red") == 3
 
 

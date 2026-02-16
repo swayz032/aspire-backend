@@ -1,0 +1,35 @@
+{
+  "skillpack_id": "nora-conference",
+  "name": "Nora Conference",
+  "agent_name": "Nora",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Calendar management, meeting scheduling, silent scribe mode with risk trigger detection.",
+  "capabilities": [
+    "can_schedule_meetings",
+    "can_create_rooms",
+    "can_generate_recap_packet",
+    "can_call_specialists_via_ava",
+    "can_detect_risk_triggers"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "google.calendar.read",
+    "google.calendar.list",
+    "google.calendar.create",
+    "livekit.room.create",
+    "livekit.meeting.schedule",
+    "deepgram.transcribe"
+  ],
+  "providers": ["google_calendar", "livekit", "deepgram"],
+  "actions": [
+    "calendar.read", "calendar.list", "calendar.create",
+    "meeting.schedule", "meeting.create_room", "meeting.summarize"
+  ],
+  "certification_status": "uncertified",
+  "outputs": ["meeting_recap", "risk_trigger_alert", "calendar_event"],
+  "dependencies": []
+}

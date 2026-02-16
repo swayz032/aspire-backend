@@ -38,6 +38,7 @@ from aspire_orchestrator.models import (
     ReceiptType,
     RiskTier,
 )
+from aspire_orchestrator.services.kill_switch import check_kill_switch
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.state import OrchestratorState
 
@@ -48,6 +49,8 @@ def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
     """Evaluate policy for the incoming request.
 
     Returns partial state update with risk tier, allowed tools, and approval requirements.
+
+    Kill switch check runs BEFORE policy evaluation (Law #3: fail-closed).
     """
     if state.get("error_code"):
         return {"policy_allowed": False}
@@ -59,6 +62,37 @@ def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
 
     # Load policy matrix (cached singleton)
     matrix = get_policy_matrix()
+
+    # Kill switch check — BEFORE policy evaluation
+    # We need the risk tier from the matrix to check against kill switch
+    eval_result_preview = matrix.evaluate(task_type)
+    ks_result = check_kill_switch(
+        action_type=task_type,
+        risk_tier=eval_result_preview.risk_tier.value,
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+    )
+    if not ks_result.allowed:
+        logger.warning(
+            "Kill switch BLOCKED: task=%s, tier=%s, mode=%s",
+            task_type, eval_result_preview.risk_tier.value, ks_result.mode.value,
+        )
+        existing_receipts = list(state.get("pipeline_receipts", []))
+        if ks_result.receipt:
+            existing_receipts.append(ks_result.receipt)
+        return {
+            "risk_tier": eval_result_preview.risk_tier,
+            "policy_allowed": False,
+            "policy_deny_reason": ks_result.reason,
+            "allowed_tools": [],
+            "required_approvals": [],
+            "presence_required": False,
+            "error_code": "KILL_SWITCH_BLOCKED",
+            "error_message": ks_result.reason,
+            "outcome": Outcome.DENIED,
+            "pipeline_receipts": existing_receipts,
+        }
 
     # Steps 3-8: Evaluate policy
     eval_result = matrix.evaluate(task_type)

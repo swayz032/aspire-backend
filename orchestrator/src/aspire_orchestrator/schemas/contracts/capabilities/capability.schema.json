@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "capability_id",
+    "suite_id",
+    "purpose",
+    "bind",
+    "expires_at",
+    "single_use"
+  ],
+  "properties": {
+    "capability_id": {
+      "type": "string"
+    },
+    "suite_id": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "bind": {
+      "type": "object",
+      "description": "Fields that bind this capability to a specific action (e.g. provider, object_id, amount)."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "single_use": {
+      "type": "boolean"
+    },
+    "issued_for_approval_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

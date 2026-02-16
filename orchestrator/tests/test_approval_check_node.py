@@ -377,7 +377,7 @@ class TestRedTier:
         }
         payload_hash = compute_payload_hash(execution_payload)
 
-        # Mint with 1s TTL, then it expires almost immediately
+        # Mint with very short TTL and sleep long enough to guarantee expiry
         import time
 
         token = _mint(
@@ -387,7 +387,7 @@ class TestRedTier:
             payload_hash=payload_hash,
             ttl_seconds=1,
         )
-        time.sleep(1.1)  # Wait for expiry
+        time.sleep(2.0)  # 2x TTL to avoid timing flakes under load
 
         state["presence_token"] = {
             "token_id": token.token_id,

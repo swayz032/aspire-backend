@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "learning.object.created",
+  "description": "A learning object was created from incident evidence (curated, not raw).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "learning.object.created"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "object_kind": {
+          "type": "string",
+          "enum": [
+            "incident_summary",
+            "runbook",
+            "eval_case",
+            "robot_assertion",
+            "change_proposal"
+          ]
+        },
+        "object_id": {
+          "type": "string"
+        },
+        "object_hash": {
+          "type": "string"
+        },
+        "source_trace_id": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "object_kind",
+        "object_id",
+        "object_hash",
+        "source_trace_id"
+      ]
+    }
+  ]
+}

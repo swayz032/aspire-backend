@@ -1,0 +1,40 @@
+# Finn Money Desk — Risk Policy
+# ALL payment operations RED; reconciliation GREEN
+
+pack_id: finn-money
+default_risk_tier: red
+max_risk_tier: red
+
+actions:
+  payment.send:
+    risk_tier: red
+    approval_required: true
+    dual_approval_required: true
+    presence_required: true
+    binding_fields: [recipient, amount_cents, currency]
+    description: "Send payment via Moov"
+
+  payment.transfer:
+    risk_tier: red
+    approval_required: true
+    dual_approval_required: true
+    presence_required: true
+    binding_fields: [from_account, to_account, amount_cents]
+    description: "Transfer funds between accounts"
+
+  payment.owner_draw:
+    risk_tier: red
+    approval_required: true
+    dual_approval_required: true
+    presence_required: true
+    binding_fields: [owner_id, amount_cents]
+    description: "Process owner draw (cash reserve validation required)"
+
+  payment.reconcile:
+    risk_tier: green
+    approval_required: false
+    description: "Reconcile payment with invoice (read-only matching)"
+
+idempotency:
+  required: true
+  key_pattern: "finn:{suite_id}:{action}:{amount}:{recipient}"

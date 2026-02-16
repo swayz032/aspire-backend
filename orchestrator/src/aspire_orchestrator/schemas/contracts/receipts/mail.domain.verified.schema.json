@@ -1,0 +1,8 @@
+{
+  "type": "mail.domain.verified",
+  "required": [
+    "suite_id",
+    "timestamp",
+    "domain"
+  ]
+}

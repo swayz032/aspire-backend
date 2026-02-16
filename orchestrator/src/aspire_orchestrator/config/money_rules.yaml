@@ -1,0 +1,48 @@
+# Money Rules — Transfer policy configuration for Finn Money Desk
+# These rules govern when transfers require additional authorization
+#
+# Law compliance:
+# - Law #4: All transfers are RED tier minimum (financial operations)
+# - Law #5: Capability tokens required for all transfers
+# - Law #9: No PII/account numbers in this config
+
+version: "1.0"
+default_currency: "USD"
+
+# Per-transaction limits
+transaction_limits:
+  single_transaction_max_cents: 50000000  # $500,000
+  daily_aggregate_max_cents: 100000000   # $1,000,000
+  weekly_aggregate_max_cents: 500000000  # $5,000,000
+
+# Approval thresholds (additional to RED tier base)
+approval_thresholds:
+  - max_cents: 10000        # $100 -- still RED but simpler UX
+    approvers_required: 1
+    presence_required: true
+  - max_cents: 100000       # $1,000
+    approvers_required: 1
+    presence_required: true
+  - max_cents: 1000000      # $10,000
+    approvers_required: 2    # dual approval
+    presence_required: true
+  - max_cents: 50000000     # $500,000
+    approvers_required: 2
+    presence_required: true
+    cooling_period_minutes: 30  # 30-min waiting period
+
+# Velocity controls
+velocity_limits:
+  max_transactions_per_hour: 10
+  max_transactions_per_day: 50
+  max_unique_recipients_per_day: 20
+
+# Blocked patterns
+blocked_patterns:
+  - pattern: "round_number"
+    description: "Exact round numbers >$5000 flagged for review"
+    threshold_cents: 500000
+  - pattern: "split_transaction"
+    description: "Multiple txns to same recipient within 1h"
+    window_minutes: 60
+    max_count: 3

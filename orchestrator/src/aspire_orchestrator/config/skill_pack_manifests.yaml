@@ -39,11 +39,11 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: registered
-    description: "Telephony, call routing, front desk reception"
-    actions: []
-    providers: [livekit, twilio]
-    capability_scopes: [telephony:route, telephony:answer]
-    tools: []
+    description: "Telephony, call routing, call transfer, front desk reception, visitor logging"
+    actions: [call.route, call.transfer, visitor.log]
+    providers: [twilio]
+    capability_scopes: [call:route, call:transfer, visitor:log]
+    tools: [twilio.call.create, internal.visitor.log]
     per_suite_enabled: true
 
   eli_inbox:
@@ -53,11 +53,11 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: registered
-    description: "Email handling, triage, draft responses"
-    actions: [email.send, email.draft]
+    description: "Email handling, triage, draft responses, send emails"
+    actions: [email.read, email.triage, email.draft, email.send]
     providers: [polarism]
-    capability_scopes: [comms:send_email, comms:draft_email]
-    tools: [polaris.email.send, polaris.email.draft]
+    capability_scopes: [email:read, email:triage, comms:draft_email, comms:send_email]
+    tools: [polaris.email.read, internal.email.triage, polaris.email.draft, polaris.email.send]
     per_suite_enabled: true
 
   quinn_invoicing:
@@ -67,11 +67,11 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: registered
-    description: "Invoice creation, payment tracking via Stripe Connect"
-    actions: [invoice.create]
+    description: "Invoice creation, quote sending, payment tracking via Stripe Connect"
+    actions: [invoice.create, invoice.send, invoice.void, quote.create, quote.send]
     providers: [stripe]
-    capability_scopes: [invoicing:create]
-    tools: [stripe.invoice.create]
+    capability_scopes: [invoicing:create, invoicing:send, invoicing:void, quotes:create, quotes:send]
+    tools: [stripe.invoice.create, stripe.invoice.send, stripe.invoice.void, stripe.quote.create, stripe.quote.send]
     per_suite_enabled: true
 
   nora_conference:
@@ -79,13 +79,13 @@ skill_packs:
     name: "Nora (Conference)"
     owner: nora
     category: channel
-    risk_tier: green
+    risk_tier: yellow
     status: registered
-    description: "Video meetings, transcription"
-    actions: [meeting.schedule]
+    description: "Video meetings, room management, transcription, post-meeting summaries"
+    actions: [meeting.schedule, meeting.create_room, meeting.summarize]
     providers: [livekit, deepgram, elevenlabs]
-    capability_scopes: [meetings:schedule]
-    tools: [livekit.meeting.schedule]
+    capability_scopes: [meetings:schedule, meeting:create_room, meeting:summarize]
+    tools: [livekit.meeting.schedule, livekit.room.create, deepgram.transcribe]
     per_suite_enabled: true
 
   adam_research:
@@ -95,11 +95,11 @@ skill_packs:
     category: channel
     risk_tier: green
     status: registered
-    description: "Vendor search, web research"
-    actions: [research.search]
-    providers: [exa, brave]
-    capability_scopes: [research:search]
-    tools: [exa.search, brave.search]
+    description: "Vendor search, web research, places lookup, vendor comparison, RFQ generation"
+    actions: [research.search, research.places, research.compare, research.rfq]
+    providers: [brave, tavily, google_places, tomtom, here, foursquare, osm_overpass, mapbox]
+    capability_scopes: [research:search, research:places, research:compare, research:rfq]
+    tools: [brave.search, tavily.search, google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode, internal.document.generate]
     per_suite_enabled: true
 
   tec_documents:
@@ -107,18 +107,32 @@ skill_packs:
     name: "Tec (Documents)"
     owner: tec
     category: channel
-    risk_tier: green
+    risk_tier: yellow
     status: registered
-    description: "PDF generation, document processing"
-    actions: []
-    providers: [internal]
-    capability_scopes: [documents:generate]
-    tools: []
+    description: "PDF generation, document preview, document sharing"
+    actions: [document.generate, document.preview, document.share]
+    providers: [puppeteer, s3, polarism]
+    capability_scopes: [document:generate, document:preview, document:share]
+    tools: [puppeteer.pdf.generate, s3.document.upload, s3.url.sign, polaris.email.send]
     per_suite_enabled: true
 
 # ──────────────────────────────────────────────
 # FINANCE SKILL PACKS (3)
 # ──────────────────────────────────────────────
+
+  finn_finance_manager:
+    id: finn_finance_manager
+    name: "Finn (Finance Manager)"
+    owner: finn
+    category: finance
+    risk_tier: yellow
+    status: registered
+    description: "Strategic finance manager — snapshots, exceptions, proposals, A2A delegation, tax strategy"
+    actions: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.create]
+    providers: [internal]
+    capability_scopes: [finance:snapshot:read, finance:exceptions:read, finance:packet:draft, finance:proposal:create, a2a:create]
+    tools: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.dispatch]
+    per_suite_enabled: true
 
   finn_money_desk:
     id: finn_money_desk
@@ -127,11 +141,11 @@ skill_packs:
     category: finance
     risk_tier: red
     status: registered
-    description: "Money transfers via Moov/Plaid"
-    actions: [payment.send, payment.transfer]
+    description: "Payment sending, fund transfers, owner draws, payment reconciliation via Moov/Plaid"
+    actions: [payment.send, payment.transfer, payment.owner_draw, payment.reconcile]
     providers: [moov, plaid, stripe]
-    capability_scopes: [payments:initiate, payments:transfer]
-    tools: [moov.payment.send, plaid.payment.send, moov.transfer.create]
+    capability_scopes: [payments:initiate, payments:transfer, payments:owner_draw, payments:reconcile]
+    tools: [moov.payment.send, plaid.payment.send, moov.transfer.create, moov.account.read, plaid.accounts.get]
     per_suite_enabled: true
 
   milo_payroll:
@@ -141,11 +155,11 @@ skill_packs:
     category: finance
     risk_tier: red
     status: registered
-    description: "Payroll processing via Gusto"
-    actions: [payroll.run]
+    description: "Payroll processing via Gusto — snapshot, schedule, deadline check, payroll run"
+    actions: [payroll.snapshot, payroll.schedule, payroll.deadline, payroll.run]
     providers: [gusto]
-    capability_scopes: [payroll:run]
-    tools: [gusto.payroll.run]
+    capability_scopes: [payroll:snapshot, payroll:schedule, payroll:deadline, payroll:run]
+    tools: [gusto.read_payrolls, gusto.payroll.run]
     per_suite_enabled: true
 
   teressa_books:
@@ -155,11 +169,11 @@ skill_packs:
     category: finance
     risk_tier: yellow
     status: registered
-    description: "Accounting, QuickBooks sync"
-    actions: [books.sync]
+    description: "Accounting, QuickBooks sync, transaction categorization, financial reports, journal entries"
+    actions: [books.sync, books.categorize, books.report, books.journal_entry]
     providers: [quickbooks]
-    capability_scopes: [books:sync]
-    tools: [quickbooks.sync]
+    capability_scopes: [books:sync, books:categorize, books:report, books:journal_entry]
+    tools: [quickbooks.sync, qbo.read_transactions, qbo.read_accounts, qbo.journal_entry.create]
     per_suite_enabled: true
 
 # ──────────────────────────────────────────────
@@ -173,11 +187,11 @@ skill_packs:
     category: legal
     risk_tier: red
     status: registered
-    description: "Contract management, e-signatures via PandaDoc"
-    actions: [contract.generate, contract.sign]
+    description: "Contract management, review, compliance tracking, e-signatures via PandaDoc"
+    actions: [contract.generate, contract.review, contract.sign, contract.compliance]
     providers: [pandadoc]
-    capability_scopes: [contracts:generate, contracts:sign]
-    tools: [pandadoc.contract.generate, pandadoc.contract.sign]
+    capability_scopes: [contracts:generate, contracts:review, contracts:sign, contracts:compliance]
+    tools: [pandadoc.contract.generate, pandadoc.contract.read, pandadoc.contract.sign]
     per_suite_enabled: true
 
 # ──────────────────────────────────────────────
@@ -235,6 +249,14 @@ tools:
     provider: internal
     category: receipts
     risk_tier: green
+  polaris.email.read:
+    provider: polarism
+    category: email
+    risk_tier: green
+  internal.email.triage:
+    provider: internal
+    category: email
+    risk_tier: green
   polaris.email.send:
     provider: polarism
     category: communications
@@ -247,16 +269,64 @@ tools:
     provider: stripe
     category: invoicing
     risk_tier: yellow
+  stripe.invoice.send:
+    provider: stripe
+    category: invoicing
+    risk_tier: yellow
+  stripe.invoice.void:
+    provider: stripe
+    category: invoicing
+    risk_tier: yellow
+  stripe.quote.create:
+    provider: stripe
+    category: invoicing
+    risk_tier: yellow
+  stripe.quote.send:
+    provider: stripe
+    category: invoicing
+    risk_tier: yellow
   livekit.meeting.schedule:
     provider: livekit
     category: meetings
     risk_tier: yellow
-  exa.search:
-    provider: exa
-    category: research
+  livekit.room.create:
+    provider: livekit
+    category: conference
+    risk_tier: green
+  deepgram.transcribe:
+    provider: deepgram
+    category: conference
     risk_tier: green
   brave.search:
     provider: brave
+    category: research
+    risk_tier: green
+  tavily.search:
+    provider: tavily
+    category: research
+    risk_tier: green
+  google_places.search:
+    provider: google_places
+    category: research
+    risk_tier: green
+  tomtom.search:
+    provider: tomtom
+    category: research
+    risk_tier: green
+  here.search:
+    provider: here
+    category: research
+    risk_tier: green
+  foursquare.search:
+    provider: foursquare
+    category: research
+    risk_tier: green
+  osm_overpass.query:
+    provider: osm_overpass
+    category: research
+    risk_tier: green
+  mapbox.geocode:
+    provider: mapbox
     category: research
     risk_tier: green
   moov.payment.send:
@@ -275,6 +345,10 @@ tools:
     provider: pandadoc
     category: contracts
     risk_tier: yellow
+  pandadoc.contract.read:
+    provider: pandadoc
+    category: contracts
+    risk_tier: green
   pandadoc.contract.sign:
     provider: pandadoc
     category: contracts
@@ -283,11 +357,35 @@ tools:
     provider: internal
     category: filings
     risk_tier: red
+  gusto.read_company:
+    provider: gusto
+    category: payroll
+    risk_tier: green
+  gusto.read_payrolls:
+    provider: gusto
+    category: payroll
+    risk_tier: green
   gusto.payroll.run:
     provider: gusto
     category: payroll
     risk_tier: red
   quickbooks.sync:
+    provider: quickbooks
+    category: bookkeeping
+    risk_tier: yellow
+  qbo.read_company:
+    provider: quickbooks
+    category: bookkeeping
+    risk_tier: green
+  qbo.read_transactions:
+    provider: quickbooks
+    category: bookkeeping
+    risk_tier: green
+  qbo.read_accounts:
+    provider: quickbooks
+    category: bookkeeping
+    risk_tier: green
+  qbo.journal_entry.create:
     provider: quickbooks
     category: bookkeeping
     risk_tier: yellow
@@ -323,10 +421,58 @@ tools:
     provider: internal
     category: profile
     risk_tier: yellow
+  finance.snapshot.read:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finance.exceptions.read:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finance.packet.draft:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finance.proposal.create:
+    provider: internal
+    category: finance
+    risk_tier: yellow
+  a2a.dispatch:
+    provider: internal
+    category: a2a
+    risk_tier: yellow
   data.delete:
     provider: internal
     category: data
     risk_tier: red
+  internal.document.generate:
+    provider: internal
+    category: research
+    risk_tier: green
+  puppeteer.pdf.generate:
+    provider: puppeteer
+    category: documents
+    risk_tier: green
+  s3.document.upload:
+    provider: s3
+    category: documents
+    risk_tier: green
+  s3.url.sign:
+    provider: s3
+    category: documents
+    risk_tier: green
+  twilio.call.create:
+    provider: twilio
+    category: telephony
+    risk_tier: yellow
+  twilio.call.status:
+    provider: twilio
+    category: telephony
+    risk_tier: green
+  internal.visitor.log:
+    provider: internal
+    category: telephony
+    risk_tier: green
 
 # ──────────────────────────────────────────────
 # PROVIDER REGISTRY — External service metadata
@@ -421,14 +567,14 @@ providers:
     retry_strategy: exponential_backoff
     idempotency_support: false
 
-  exa:
-    id: exa
-    name: "Exa"
+  tavily:
+    id: tavily
+    name: "Tavily"
     category: search
     auth_type: api_key
-    base_url: "https://api.exa.ai/v1"
+    base_url: "https://api.tavily.com"
     rate_limit_rpm: 100
-    timeout_ms: 5000
+    timeout_ms: 10000
     retry_strategy: none
     idempotency_support: false
 
@@ -497,6 +643,94 @@ providers:
     timeout_ms: 10000
     retry_strategy: none
     idempotency_support: false
+
+  google_places:
+    id: google_places
+    name: "Google Places"
+    category: search
+    auth_type: api_key
+    base_url: "https://maps.googleapis.com/maps/api/place"
+    rate_limit_rpm: 100
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  tomtom:
+    id: tomtom
+    name: "TomTom"
+    category: search
+    auth_type: api_key
+    base_url: "https://api.tomtom.com/search/2"
+    rate_limit_rpm: 50
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  here:
+    id: here
+    name: "HERE"
+    category: search
+    auth_type: api_key
+    base_url: "https://discover.search.hereapi.com/v1"
+    rate_limit_rpm: 250
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  foursquare:
+    id: foursquare
+    name: "Foursquare"
+    category: search
+    auth_type: api_key
+    base_url: "https://api.foursquare.com/v3"
+    rate_limit_rpm: 100
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  osm_overpass:
+    id: osm_overpass
+    name: "OSM Overpass"
+    category: search
+    auth_type: none
+    base_url: "https://overpass-api.de/api"
+    rate_limit_rpm: 10
+    timeout_ms: 30000
+    retry_strategy: none
+    idempotency_support: false
+
+  mapbox:
+    id: mapbox
+    name: "Mapbox"
+    category: search
+    auth_type: api_key
+    base_url: "https://api.mapbox.com/geocoding/v5"
+    rate_limit_rpm: 600
+    timeout_ms: 5000
+    retry_strategy: none
+    idempotency_support: false
+
+  puppeteer:
+    id: puppeteer
+    name: "Puppeteer"
+    category: documents
+    auth_type: none
+    base_url: ""
+    rate_limit_rpm: 100
+    timeout_ms: 30000
+    retry_strategy: none
+    idempotency_support: false
+
+  s3:
+    id: s3
+    name: "AWS S3"
+    category: documents
+    auth_type: api_key
+    base_url: ""
+    rate_limit_rpm: 500
+    timeout_ms: 15000
+    retry_strategy: exponential_backoff
+    idempotency_support: true
 
   internal:
     id: internal

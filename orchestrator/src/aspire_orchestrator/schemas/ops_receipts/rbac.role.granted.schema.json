@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rbac.role.granted",
+  "description": "Role granted to a seat.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "rbac.role.granted"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "suite_id": {
+          "type": "string"
+        },
+        "target_office_id": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "granted_by": {
+          "type": "string"
+        },
+        "approval_receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "suite_id",
+        "target_office_id",
+        "role",
+        "granted_by"
+      ]
+    }
+  ]
+}

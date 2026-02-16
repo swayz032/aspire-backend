@@ -37,6 +37,27 @@ defaults:
 # ──────────────────────────────────────────────
 
 actions:
+  # ──────────────────────────────────────────────
+  # Brain Layer — LLM routing (Phase 3 Wave 1)
+  # ──────────────────────────────────────────────
+  model.route.select:
+    risk_tier: green
+    tools: [internal.llm_router]
+    capability_scope: brain:route
+    category: brain
+    approval:
+      type: none
+    redact_fields: []
+
+  brain.classify.llm:
+    risk_tier: green
+    tools: [internal.intent_classifier]
+    capability_scope: brain:classify
+    category: brain
+    approval:
+      type: none
+    redact_fields: [utterance]
+
   # Calendar
   calendar.read:
     risk_tier: green
@@ -97,9 +118,55 @@ actions:
   # Research
   research.search:
     risk_tier: green
-    tools: [exa.search, brave.search]
+    tools: [brave.search, tavily.search]
     capability_scope: research:search
     category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  research.places:
+    risk_tier: green
+    tools: [google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode]
+    capability_scope: research:places
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  research.compare:
+    risk_tier: green
+    tools: [brave.search, tavily.search, google_places.search]
+    capability_scope: research:compare
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  research.rfq:
+    risk_tier: green
+    tools: [internal.document.generate]
+    capability_scope: research:rfq
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  # Contracts (read-only review + compliance tracking)
+  contract.review:
+    risk_tier: green
+    tools: [pandadoc.contract.read]
+    capability_scope: contracts:review
+    category: contracts
+    approval:
+      type: none
+    redact_fields: []
+
+  contract.compliance:
+    risk_tier: green
+    tools: [pandadoc.contract.read]
+    capability_scope: contracts:compliance
+    category: contracts
     approval:
       type: none
     redact_fields: []
@@ -123,6 +190,110 @@ actions:
       type: none
     redact_fields: []
 
+  # Finance Manager (Finn v2) — proposal-only reads + drafts
+  finance.snapshot.read:
+    risk_tier: green
+    tools: [finance.snapshot.read]
+    capability_scope: finance:snapshot:read
+    category: finance
+    approval:
+      type: none
+    redact_fields: []
+
+  finance.exceptions.read:
+    risk_tier: green
+    tools: [finance.exceptions.read]
+    capability_scope: finance:exceptions:read
+    category: finance
+    approval:
+      type: none
+    redact_fields: []
+
+  finance.packet.draft:
+    risk_tier: green
+    tools: [finance.packet.draft]
+    capability_scope: finance:packet:draft
+    category: finance
+    approval:
+      type: none
+    redact_fields: [account_numbers, ssn, ein]
+
+  # Documents (read-only generation + preview)
+  document.generate:
+    risk_tier: green
+    tools: [puppeteer.pdf.generate, s3.document.upload]
+    capability_scope: document:generate
+    category: documents
+    approval:
+      type: none
+    redact_fields: []
+
+  document.preview:
+    risk_tier: green
+    tools: [s3.url.sign]
+    capability_scope: document:preview
+    category: documents
+    approval:
+      type: none
+    redact_fields: []
+
+  # Conference (Nora — room management + summarization)
+  meeting.create_room:
+    risk_tier: green
+    tools: [livekit.room.create]
+    capability_scope: meeting:create_room
+    category: conference
+    approval:
+      type: none
+    redact_fields: []
+
+  meeting.summarize:
+    risk_tier: green
+    tools: [deepgram.transcribe]
+    capability_scope: meeting:summarize
+    category: conference
+    approval:
+      type: none
+    redact_fields: []
+
+  # Email (read + triage — Eli Inbox pack)
+  email.read:
+    risk_tier: green
+    tools: [polaris.email.read]
+    capability_scope: email:read
+    category: email
+    approval:
+      type: none
+    redact_fields: [subject, body, from, to]
+
+  email.triage:
+    risk_tier: green
+    tools: [internal.email.triage]
+    capability_scope: email:triage
+    category: email
+    approval:
+      type: none
+    redact_fields: []
+
+  # Telephony (Sarah Front Desk — call routing + visitor logging)
+  call.route:
+    risk_tier: green
+    tools: [twilio.call.create]
+    capability_scope: call:route
+    category: telephony
+    approval:
+      type: none
+    redact_fields: [caller_number]
+
+  visitor.log:
+    risk_tier: green
+    tools: [internal.visitor.log]
+    capability_scope: visitor:log
+    category: telephony
+    approval:
+      type: none
+    redact_fields: [phone]
+
   # Mail (read-only)
   mail.account.read:
     risk_tier: green
@@ -133,9 +304,30 @@ actions:
       type: none
     redact_fields: []
 
+  # Outbox — durable execution for RED-tier ops (Phase 3 Wave 5)
+  outbox.job.submit:
+    risk_tier: green
+    tools: [internal.outbox]
+    capability_scope: outbox:submit
+    category: infrastructure
+    approval:
+      type: none
+    redact_fields: []
+
   # ──────────────────────────────────────────────
   # YELLOW tier — Requires explicit user confirmation
   # ──────────────────────────────────────────────
+
+  # Telephony (Sarah Front Desk — call transfer)
+  call.transfer:
+    risk_tier: yellow
+    tools: [twilio.call.create]
+    capability_scope: call:transfer
+    category: telephony
+    approval:
+      type: explicit
+      binding_fields: [call_id, destination]
+    redact_fields: [destination]
 
   # Email
   email.send:
@@ -186,6 +378,55 @@ actions:
     params:
       required: [customer_id, amount]
     redact_fields: [customer_id]
+
+  invoice.send:
+    risk_tier: yellow
+    tools: [stripe.invoice.send]
+    capability_scope: invoicing:send
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
+
+  invoice.void:
+    risk_tier: yellow
+    tools: [stripe.invoice.void]
+    capability_scope: invoicing:void
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
+
+  # Quote
+  quote.create:
+    risk_tier: yellow
+    tools: [stripe.quote.create]
+    capability_scope: quotes:create
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [customer_id, amount, currency, line_items]
+    params:
+      required: [customer_id]
+    redact_fields: [customer_id]
+
+  quote.send:
+    risk_tier: yellow
+    tools: [stripe.quote.send]
+    capability_scope: quotes:send
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [quote_id]
+    params:
+      required: [quote_id]
+    redact_fields: []
 
   # Meeting
   meeting.schedule:
@@ -240,6 +481,17 @@ actions:
       binding_fields: [email_address, display_name]
     redact_fields: [email_address]
 
+  # Documents (share — external communication)
+  document.share:
+    risk_tier: yellow
+    tools: [polaris.email.send, s3.url.sign]
+    capability_scope: document:share
+    category: documents
+    approval:
+      type: explicit
+      binding_fields: [document_id, recipients]
+    redact_fields: [recipients]
+
   # Contracts (generate, not sign)
   contract.generate:
     risk_tier: yellow
@@ -251,6 +503,27 @@ actions:
       binding_fields: [party_names, template_id]
     redact_fields: [party_names, address]
 
+  # Finance Manager (Finn v2) — proposals + A2A delegation
+  finance.proposal.create:
+    risk_tier: yellow
+    tools: [finance.proposal.create]
+    capability_scope: finance:proposal:create
+    category: finance
+    approval:
+      type: explicit
+      binding_fields: [action, inputs_hash, risk_tier]
+    redact_fields: [account_numbers, ssn]
+
+  a2a.create:
+    risk_tier: yellow
+    tools: [a2a.dispatch]
+    capability_scope: a2a:create
+    category: a2a
+    approval:
+      type: explicit
+      binding_fields: [to_agent, request_type, inputs_hash]
+    redact_fields: []
+
   # Bookkeeping
   books.sync:
     risk_tier: yellow
@@ -259,6 +532,34 @@ actions:
     category: bookkeeping
     approval:
       type: explicit
+    redact_fields: []
+
+  books.categorize:
+    risk_tier: green
+    tools: [qbo.read_transactions]
+    capability_scope: books:categorize
+    category: bookkeeping
+    approval:
+      type: none
+    redact_fields: []
+
+  books.report:
+    risk_tier: green
+    tools: [qbo.read_accounts, qbo.read_transactions]
+    capability_scope: books:report
+    category: bookkeeping
+    approval:
+      type: none
+    redact_fields: []
+
+  books.journal_entry:
+    risk_tier: yellow
+    tools: [qbo.journal_entry.create]
+    capability_scope: books:journal_entry
+    category: bookkeeping
+    approval:
+      type: explicit
+      binding_fields: [entries, memo]
     redact_fields: []
 
   # ──────────────────────────────────────────────
@@ -291,7 +592,35 @@ actions:
     approval:
       type: spend
       binding_fields: [from_account, to_account, amount_cents]
+      dual_approval: true
+      required_approvers: [owner, accountant]
     redact_fields: [from_account, to_account, amount_cents]
+
+  payment.owner_draw:
+    risk_tier: red
+    tools: [moov.transfer.create]
+    capability_scope: payments:owner_draw
+    category: payments
+    approval:
+      type: spend
+      binding_fields: [owner_id, amount_cents]
+      spend_fields: [amount_cents]
+      max_spend_cents: 5000000
+    params:
+      required: [owner_id, amount_cents]
+      constraints:
+        amount_cents_min: 100
+        validate_cash_reserves: true
+    redact_fields: [owner_id, amount_cents]
+
+  payment.reconcile:
+    risk_tier: green
+    tools: [moov.account.read, plaid.accounts.get]
+    capability_scope: payments:reconcile
+    category: payments
+    approval:
+      type: none
+    redact_fields: []
 
   # Contracts (sign — irreversible)
   contract.sign:
@@ -316,6 +645,34 @@ actions:
     redact_fields: [ssn, ein, tax_amount]
 
   # Payroll
+  payroll.snapshot:
+    risk_tier: green
+    tools: [gusto.read_payrolls]
+    capability_scope: payroll:snapshot
+    category: payroll
+    approval:
+      type: none
+    redact_fields: [employee_names, ssn]
+
+  payroll.schedule:
+    risk_tier: yellow
+    tools: [gusto.read_payrolls]
+    capability_scope: payroll:schedule
+    category: payroll
+    approval:
+      type: explicit
+      binding_fields: [payroll_period, run_date]
+    redact_fields: [employee_names, ssn]
+
+  payroll.deadline:
+    risk_tier: green
+    tools: [gusto.read_payrolls]
+    capability_scope: payroll:deadline
+    category: payroll
+    approval:
+      type: none
+    redact_fields: []
+
   payroll.run:
     risk_tier: red
     tools: [gusto.payroll.run]

@@ -1,0 +1,9 @@
+{
+  "enabled_reasons_default": [
+    "SALES_PRICING",
+    "SCHEDULING",
+    "SUPPORT_ISSUES"
+  ],
+  "detail_level_default": "FAST",
+  "route_default": "OWNER"
+}

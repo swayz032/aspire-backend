@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "backup.completed",
+  "description": "Backup completed (success/fail).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "backup.completed"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "description": "db|objects|configs"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "fail"
+          ]
+        },
+        "artifact_ref": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "rpo_minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "target",
+        "status",
+        "artifact_ref"
+      ]
+    }
+  ]
+}

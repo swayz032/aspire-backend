@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "entitlement.plan.changed",
+  "description": "Plan changed for suite (entitlements).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "entitlement.plan.changed"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "suite_id": {
+          "type": "string"
+        },
+        "from_plan": {
+          "type": "string"
+        },
+        "to_plan": {
+          "type": "string"
+        },
+        "effective_at": {
+          "type": "string"
+        },
+        "billing_provider_ref": {
+          "type": "string"
+        },
+        "requires_approval": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "suite_id",
+        "from_plan",
+        "to_plan",
+        "effective_at"
+      ]
+    }
+  ]
+}

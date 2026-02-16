@@ -1,0 +1,32 @@
+{
+  "skillpack_id": "teressa-books",
+  "name": "Teressa Books",
+  "agent_name": "Teressa",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Transaction categorization, QBO sync, reconciliation, bookkeeping reports.",
+  "capabilities": [
+    "can_categorize_transactions",
+    "can_sync_qbo",
+    "can_reconcile_accounts",
+    "can_generate_reports",
+    "can_create_journal_entries"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "yellow",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "quickbooks.sync",
+    "qbo.read_transactions",
+    "qbo.read_accounts",
+    "qbo.journal_entry.create"
+  ],
+  "providers": ["quickbooks"],
+  "actions": [
+    "books.sync", "books.categorize", "books.report", "books.journal_entry"
+  ],
+  "certification_status": "uncertified",
+  "outputs": ["categorization_result", "reconciliation_report", "sync_status"],
+  "dependencies": []
+}

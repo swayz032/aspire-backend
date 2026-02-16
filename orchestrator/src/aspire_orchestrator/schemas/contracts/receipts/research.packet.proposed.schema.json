@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research.packet.proposed",
+  "description": "A ResearchPacket was produced and proposed for Authority Queue review.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "research.packet.proposed" },
+        "packet_id": { "type": "string" },
+        "packet_hash": { "type": "string" },
+        "topic": { "type": "string" },
+        "mode": { "type": "string", "enum": ["FAST", "VERIFIED", "HIGH_STAKES"] }
+      },
+      "required": ["receipt_type", "packet_id", "packet_hash", "topic", "mode"]
+    }
+  ]
+}

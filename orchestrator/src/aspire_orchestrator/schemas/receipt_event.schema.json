@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aspire://schemas/receipt_event.schema.json",
+  "title": "Aspire Receipt Event Schema",
+  "type": "object",
+  "required": [
+    "receipt_version",
+    "receipt_id",
+    "ts",
+    "event_type",
+    "suite_id",
+    "office_id",
+    "actor",
+    "correlation_id",
+    "status",
+    "inputs_hash",
+    "policy",
+    "redactions"
+  ],
+  "properties": {
+    "receipt_version": {
+      "type": "string",
+      "minLength": 1,
+      "default": "1.0"
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "event_type": {
+      "type": "string",
+      "minLength": 3
+    },
+    "suite_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "office_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "denied",
+        "error"
+      ]
+    },
+    "inputs_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{3,}$"
+    },
+    "outputs_hash": {
+      "type": "string"
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "decision",
+        "policy_id",
+        "reasons"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny"
+          ]
+        },
+        "policy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "redactions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

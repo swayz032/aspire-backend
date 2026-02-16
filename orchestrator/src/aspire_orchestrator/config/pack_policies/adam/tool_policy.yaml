@@ -1,0 +1,22 @@
+# Adam Research — Tool Policy
+# Defines which tools Adam can invoke and provider preferences
+
+pack_id: adam-research
+
+authorized_tools:
+  - search.web
+  - search.places
+  - brave.search
+  - tavily.search
+  - google_places.search
+
+provider_preferences:
+  web_search:
+    primary: brave
+    fallback: tavily
+  places_search:
+    primary: google_places
+
+rate_limits:
+  searches_per_minute: 30
+  comparisons_per_minute: 10

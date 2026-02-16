@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "council.decision",
+  "description": "Ava adjudication result selecting a plan and recording rubric scores.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "council.decision"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "council_session_id": {
+          "type": "string"
+        },
+        "selected_plan": {
+          "type": "object",
+          "required": [
+            "provider",
+            "model",
+            "summary",
+            "work_items"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "work_items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          }
+        },
+        "rubric_scores": {
+          "type": "object",
+          "required": [
+            "evidence",
+            "minimality",
+            "tests",
+            "risk",
+            "time_to_verify"
+          ],
+          "properties": {
+            "evidence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "minimality": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "tests": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "risk": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "time_to_verify": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            }
+          }
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "risk_tier": {
+          "type": "string",
+          "enum": [
+            "green",
+            "yellow",
+            "red"
+          ]
+        },
+        "requires_ava_video": {
+          "type": "boolean"
+        },
+        "dissent_summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "council_session_id",
+        "selected_plan",
+        "rubric_scores",
+        "rationale",
+        "risk_tier",
+        "requires_ava_video"
+      ]
+    }
+  ]
+}

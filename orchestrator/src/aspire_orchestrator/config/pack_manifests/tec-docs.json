@@ -1,0 +1,27 @@
+{
+  "skillpack_id": "tec-docs",
+  "name": "Tec Documents",
+  "agent_name": "Tec",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Document generation, preview rendering, PDF finalization. GREEN tier with approval-gated finalization.",
+  "capabilities": [
+    "can_generate_document_packet",
+    "can_render_preview",
+    "can_finalize_pdf_after_approval"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "puppeteer.pdf.generate",
+    "s3.document.upload",
+    "s3.url.sign"
+  ],
+  "providers": ["puppeteer", "aws_s3"],
+  "actions": ["document.generate", "document.preview", "document.share"],
+  "certification_status": "uncertified",
+  "outputs": ["document_packet", "pdf_preview", "signed_url"],
+  "dependencies": []
+}

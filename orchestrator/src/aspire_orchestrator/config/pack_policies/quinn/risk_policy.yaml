@@ -1,0 +1,42 @@
+# Quinn Invoicing — Risk Policy
+# All invoice/quote operations YELLOW; webhook GREEN
+
+pack_id: quinn-invoicing
+default_risk_tier: yellow
+max_risk_tier: yellow
+
+actions:
+  invoice.create:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [customer_id, amount, currency, line_items]
+    description: "Create invoice via Stripe"
+
+  invoice.send:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [invoice_id]
+    description: "Send invoice to customer"
+
+  invoice.void:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [invoice_id]
+    description: "Void invoice (reversal)"
+
+  quote.create:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [customer_id, amount, currency, line_items]
+    description: "Create quote/proposal"
+
+  quote.send:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [quote_id]
+    description: "Send quote to customer"
+
+  webhook.process:
+    risk_tier: green
+    approval_required: false
+    description: "Process Stripe webhook event (internal)"

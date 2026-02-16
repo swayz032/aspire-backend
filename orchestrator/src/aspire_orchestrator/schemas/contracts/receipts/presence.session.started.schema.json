@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "presence.session.started"
+        },
+        "presence_session_id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "ava_video",
+            "ava_voice"
+          ]
+        },
+        "expires_at": {
+          "type": "string"
+        },
+        "authority_item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "receipt_type",
+        "presence_session_id",
+        "mode",
+        "expires_at"
+      ]
+    }
+  ]
+}

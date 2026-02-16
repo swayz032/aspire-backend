@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qa.critic.failed",
+  "description": "Critic pass failed due to malformed output, timeout, or validation error.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "qa.critic.failed" },
+        "critic_kind": { "type": "string", "enum": ["quality","policy","safety","tool_plan"] },
+        "rubric_id": { "type": "string" },
+        "error": { "type": "string" },
+        "artifact_ref": { "type": ["string","null"] }
+      },
+      "required": ["receipt_type","critic_kind","rubric_id","error"]
+    }
+  ]
+}

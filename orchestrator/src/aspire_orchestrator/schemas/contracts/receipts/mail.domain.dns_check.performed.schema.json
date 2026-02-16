@@ -1,0 +1,9 @@
+{
+  "type": "mail.domain.dns_check.performed",
+  "required": [
+    "suite_id",
+    "timestamp",
+    "domain",
+    "status"
+  ]
+}

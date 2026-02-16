@@ -1,0 +1,10 @@
+{
+  "type": "mail.send.executed",
+  "required": [
+    "suite_id",
+    "office_id",
+    "timestamp",
+    "outbox_item_id",
+    "provider_message_id"
+  ]
+}

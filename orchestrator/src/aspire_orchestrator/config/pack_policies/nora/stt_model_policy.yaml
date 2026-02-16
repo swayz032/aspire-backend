@@ -1,0 +1,27 @@
+# Nora Conference — STT Model Policy
+# Speech-to-text model selection and quality thresholds
+
+pack_id: nora-conference
+
+models:
+  primary:
+    provider: deepgram
+    model: nova-3
+    language: en
+    features:
+      - punctuation
+      - diarization
+      - smart_format
+      - utterances
+
+  fallback:
+    provider: deepgram
+    model: nova-3
+    language: en
+    features:
+      - punctuation
+
+quality_thresholds:
+  min_confidence: 0.7
+  low_confidence_action: flag_for_review
+  silence_detection_threshold_seconds: 10

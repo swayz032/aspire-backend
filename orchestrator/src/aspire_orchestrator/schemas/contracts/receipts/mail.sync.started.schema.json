@@ -1,0 +1,9 @@
+{
+  "type": "mail.sync.started",
+  "required": [
+    "suite_id",
+    "office_id",
+    "mailbox_id",
+    "timestamp"
+  ]
+}

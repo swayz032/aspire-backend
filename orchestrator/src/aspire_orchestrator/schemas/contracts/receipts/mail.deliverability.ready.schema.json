@@ -1,0 +1,11 @@
+{
+  "type": "mail.deliverability.ready",
+  "required": [
+    "suite_id",
+    "timestamp",
+    "domain",
+    "spf",
+    "dkim",
+    "dmarc"
+  ]
+}

@@ -1,0 +1,40 @@
+# Milo Payroll — Risk Policy
+# payroll.run RED; snapshot/deadline GREEN; schedule YELLOW
+
+pack_id: milo-payroll
+default_risk_tier: red
+max_risk_tier: red
+
+actions:
+  payroll.run:
+    risk_tier: red
+    approval_required: true
+    dual_approval_required: true
+    presence_required: true
+    binding_fields: [payroll_id, pay_period, total_amount]
+    prerequisites: [payroll.snapshot]
+    description: "Process payroll via Gusto (dual approval + presence)"
+
+  payroll.snapshot:
+    risk_tier: green
+    approval_required: false
+    description: "Generate pre-payroll snapshot for review"
+
+  payroll.schedule:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [payroll_period, run_date]
+    description: "Schedule future payroll run"
+
+  payroll.deadline:
+    risk_tier: green
+    approval_required: false
+    description: "Check upcoming payroll deadlines"
+
+idempotency:
+  required: true
+  key_pattern: "milo:{suite_id}:{payroll_id}:{pay_period}"
+
+deadline_enforcement:
+  past_deadline_action: escalate_with_warning
+  warning_days_before: 3

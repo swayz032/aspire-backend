@@ -1,0 +1,10 @@
+{
+  "type": "mail.sync.completed",
+  "required": [
+    "suite_id",
+    "office_id",
+    "mailbox_id",
+    "timestamp",
+    "new_cursor"
+  ]
+}

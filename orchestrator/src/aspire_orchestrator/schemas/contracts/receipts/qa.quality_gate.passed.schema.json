@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qa.quality_gate.passed",
+  "description": "All required critics passed; output may proceed to Authority Queue or execution proposal.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "qa.quality_gate.passed" },
+        "risk_tier": { "type": "string", "enum": ["LOW","MEDIUM","HIGH"] },
+        "critics": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["quality","policy","safety","tool_plan"] }
+        },
+        "artifact_ref": { "type": ["string","null"] }
+      },
+      "required": ["receipt_type","risk_tier","critics"]
+    }
+  ]
+}

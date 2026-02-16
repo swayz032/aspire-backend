@@ -1,0 +1,32 @@
+# Finn Finance Manager — Risk Policy
+# Snapshots/exceptions GREEN; packets/proposals/delegation YELLOW
+
+pack_id: finn-finance-manager
+default_risk_tier: yellow
+max_risk_tier: yellow
+
+actions:
+  finance.snapshot.read:
+    risk_tier: green
+    approval_required: false
+    description: "Read aggregate financial snapshot"
+
+  finance.exceptions.read:
+    risk_tier: green
+    approval_required: false
+    description: "Read financial exception alerts"
+
+  finance.packet.draft:
+    risk_tier: yellow
+    approval_required: true
+    description: "Draft finance packet with strategic recommendations"
+
+  finance.proposal.create:
+    risk_tier: yellow
+    approval_required: true
+    description: "Create change proposal for approval"
+
+  a2a.create:
+    risk_tier: yellow
+    approval_required: true
+    description: "Dispatch analysis tasks to other agents"

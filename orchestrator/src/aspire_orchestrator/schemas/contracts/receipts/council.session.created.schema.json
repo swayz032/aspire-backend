@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "council.session.created",
+  "description": "Council deliberation session created for an incident (advisory-only).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "council.session.created"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "incident_receipt_id": {
+          "type": "string"
+        },
+        "evidence_pack_id": {
+          "type": "string"
+        },
+        "evidence_pack_hash": {
+          "type": "string"
+        },
+        "council_members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "model",
+              "role"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "openai",
+                  "google",
+                  "anthropic"
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "architect",
+                  "research",
+                  "implementer"
+                ]
+              }
+            }
+          }
+        },
+        "timebox_ms": {
+          "type": "integer",
+          "minimum": 1000
+        },
+        "trigger_reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "incident_receipt_id",
+        "evidence_pack_id",
+        "evidence_pack_hash",
+        "council_members",
+        "timebox_ms"
+      ]
+    }
+  ]
+}

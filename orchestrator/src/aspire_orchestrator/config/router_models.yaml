@@ -1,0 +1,45 @@
+# Aspire LLM Router Model Profiles — Concrete model ID mappings
+# Maps model profiles to actual OpenAI model identifiers
+#
+# Each profile can be overridden via environment variable (model_env field).
+# Default models: GPT-5-mini (classifier), GPT-5 (general), GPT-5.2 (reasoner/guard)
+#
+# Phase 3 config:
+#   Dev:  GPT-5-mini (classifier) + GPT-5 (general) + GPT-5.2 (reasoner/guard)
+#   Prod: Same, but with higher token limits and lower temperatures
+
+version: "1.0"
+updated_at: "2026-02-14"
+
+profiles:
+  cheap_classifier:
+    model_id: "gpt-5-mini"
+    model_env: "ASPIRE_ROUTER_MODEL_CLASSIFIER"
+    max_tokens: 512
+    temperature: 0.1
+    timeout_seconds: 10
+    description: "Fast, cheap model for intent classification and entity extraction"
+
+  fast_general:
+    model_id: "gpt-5"
+    model_env: "ASPIRE_ROUTER_MODEL_GENERAL"
+    max_tokens: 1024
+    temperature: 0.2
+    timeout_seconds: 15
+    description: "Balanced speed/quality for general purpose tasks"
+
+  primary_reasoner:
+    model_id: "gpt-5.2"
+    model_env: "ASPIRE_ROUTER_MODEL_REASONER"
+    max_tokens: 2048
+    temperature: 0.1
+    timeout_seconds: 30
+    description: "High-quality reasoning for complex tasks, drafting, verification"
+
+  high_risk_guard:
+    model_id: "gpt-5.2"
+    model_env: "ASPIRE_ROUTER_MODEL_HIGH_RISK"
+    max_tokens: 2048
+    temperature: 0.0
+    timeout_seconds: 30
+    description: "Most careful model for financial, legal, and high-risk decisions"

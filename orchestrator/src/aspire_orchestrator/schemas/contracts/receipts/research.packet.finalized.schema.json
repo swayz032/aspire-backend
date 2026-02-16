@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research.packet.finalized",
+  "description": "A ResearchPacket was approved for release and finalized (immutable).",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "research.packet.finalized" },
+        "packet_id": { "type": "string" },
+        "packet_hash": { "type": "string" },
+        "approval_id": { "type": ["string", "null"] }
+      },
+      "required": ["receipt_type", "packet_id", "packet_hash"]
+    }
+  ]
+}

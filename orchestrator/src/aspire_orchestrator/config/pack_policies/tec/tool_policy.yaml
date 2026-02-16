@@ -1,0 +1,20 @@
+# Tec Documents — Tool Policy
+
+pack_id: tec-docs
+
+authorized_tools:
+  - puppeteer.pdf.generate
+  - s3.document.upload
+  - s3.url.sign
+
+allowed_template_types:
+  - invoice
+  - proposal
+  - contract
+  - report
+  - letter
+
+storage:
+  bucket: aspire-documents
+  presigned_url_expiry_seconds: 3600
+  max_document_size_mb: 25

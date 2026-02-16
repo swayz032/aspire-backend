@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research.search.performed",
+  "description": "A research search query was executed via an approved search tool.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "research.search.performed" },
+        "tool_id": { "type": "string" },
+        "query": { "type": "string" },
+        "result_count": { "type": ["integer", "null"], "minimum": 0 },
+        "mode": { "type": "string", "enum": ["FAST", "VERIFIED", "HIGH_STAKES"] }
+      },
+      "required": ["receipt_type", "tool_id", "query", "mode"]
+    }
+  ]
+}

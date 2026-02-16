@@ -1,0 +1,34 @@
+# Adam Research Desk routing rule
+# Ported from ecosystem: platform/brain/router/rules/adam_researchdesk_router.yaml
+# Used by Ava to decide when to delegate to Adam.
+version: v1
+rule_id: adam_researchdesk_router
+match:
+  any:
+    - contains_any:
+        field: user_intent
+        values:
+          - research
+          - vendor
+          - contractor
+          - subcontractor
+          - nearby
+          - quotes
+          - pricing
+          - compare tools
+          - suppliers
+          - directory
+          - marketplace
+route:
+  agent: adam
+  skillpack: adam-research
+  default_mode: VERIFIED
+model_overrides:
+  # Adam uses cheap classifier for search queries, primary reasoner for synthesis
+  classify.low: cheap_classifier
+  extract.low: cheap_classifier
+  draft.low: primary_reasoner
+  summarize.low: fast_general
+  verify.low: primary_reasoner
+notes:
+  - "If user request includes external send, Ava should also involve Eli and require approvals."

@@ -89,6 +89,48 @@ class ReceiptType(str, Enum):
     PRESENCE_VERIFIED = "presence_verified"
     PRESENCE_MISSING = "presence_missing"
 
+    # Robot infrastructure receipt types (Wave 3)
+    ROBOT_RUN_COMPLETED = "robot.run.completed"
+    INCIDENT_OPENED = "incident.opened"
+
+    # Ops receipt types (Phase 2.5 — Enterprise Coverage)
+    DEPLOY_STARTED = "deploy.started"
+    DEPLOY_CANARY_DEPLOYED = "deploy.canary.deployed"
+    DEPLOY_PROMOTED = "deploy.promoted"
+    DEPLOY_ROLLED_BACK = "deploy.rolled_back"
+    DEPLOY_FAILED = "deploy.failed"
+    SLO_METRIC_ROLLUP = "slo.metric.rollup"
+    SLO_BREACH_DETECTED = "slo.breach.detected"
+    ALERT_TRIGGERED = "alert.triggered"
+    BACKUP_COMPLETED = "backup.completed"
+    RESTORE_TESTED = "restore.tested"
+    DR_DRILL_COMPLETED = "dr.drill.completed"
+    ENTITLEMENT_PLAN_CHANGED = "entitlement.plan.changed"
+    ENTITLEMENT_SEAT_ADDED = "entitlement.seat.added"
+    ENTITLEMENT_SEAT_REMOVED = "entitlement.seat.removed"
+    ENTITLEMENT_USAGE_CAPPED = "entitlement.usage.capped"
+    ENTITLEMENT_GRACE_STARTED = "entitlement.grace.started"
+    ENTITLEMENT_GRACE_ENDED = "entitlement.grace.ended"
+    RBAC_ROLE_GRANTED = "rbac.role.granted"
+    RBAC_ROLE_REVOKED = "rbac.role.revoked"
+    RBAC_PERMISSION_ESCALATED = "rbac.permission.escalated"
+
+    # Kill switch receipt types (Wave 4)
+    KILL_SWITCH_ACTIVATED = "kill_switch.activated"
+    KILL_SWITCH_MODE_CHANGED = "kill_switch.mode_changed"
+
+    # Council service receipt types (Wave 5)
+    COUNCIL_SESSION_CREATED = "council.session.created"
+    COUNCIL_MEMBER_PROPOSAL = "council.member.proposal"
+    COUNCIL_DECISION = "council.decision"
+
+    # Learning loop receipt types (Wave 5)
+    LEARNING_OBJECT_CREATED = "learning.object.created"
+    EVAL_RUN_COMPLETED = "eval.run.completed"
+    LEARNING_CHANGE_PROPOSED = "learning.change.proposed"
+    LEARNING_CHANGE_APPROVED = "learning.change.approved"
+    LEARNING_OBJECT_PROMOTED = "learning.object.promoted"
+
 
 # =============================================================================
 # Receipt (from receipts.schema.v1.yaml)

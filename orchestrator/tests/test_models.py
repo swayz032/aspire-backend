@@ -57,9 +57,9 @@ class TestApprovalStatus:
 
 
 class TestReceiptType:
-    def test_eight_receipt_types(self) -> None:
-        """Per receipt_emission_rules.md, 8 receipt types + approval splits + presence types."""
-        assert len(ReceiptType) == 11  # 8 base + approval_granted/denied + presence_verified/missing  # 8 types + approval splits into granted/denied
+    def test_receipt_types_count(self) -> None:
+        """ReceiptType enum: 11 base + 22 ops + 2 kill switch + 3 council + 5 learning = 43."""
+        assert len(ReceiptType) == 43
 
 
 class TestReceipt:

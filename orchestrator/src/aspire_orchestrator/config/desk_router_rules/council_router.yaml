@@ -1,0 +1,22 @@
+# Council Router config (advisory-only)
+# Ported from ecosystem: platform/brain/router/council_router.yaml
+# Phase 3 uses GPT-5.2 only for council. Multi-provider deferred to Phase 4.
+version: v1
+rule_id: council_router
+members:
+  - provider: openai
+    role: architect
+    model: gpt-5.2
+    timebox_ms: 45000
+rules:
+  require_citations: true
+  max_rounds: 2
+  deny_tool_execution: true
+model_overrides:
+  # Council always uses high_risk_guard (advisory decisions are high-stakes)
+  plan.high: high_risk_guard
+  verify.high: high_risk_guard
+  draft.high: high_risk_guard
+notes:
+  - Phase 3 uses GPT-5.2 only. Multi-provider (Gemini, Claude) deferred to Phase 4.
+  - Council is advisory-only. It never executes. It proposes.

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "document.pdf.generated",
+  "description": "Final PDF bytes were rendered and stored (post-approval).",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "document.pdf.generated" },
+        "doc_id": { "type": "string" },
+        "doc_type": { "type": "string" },
+        "authority_item_id": { "type": "string" },
+        "packet_hash": { "type": "string" },
+        "pdf_ref": { "type": "string", "description": "Object-store key for final PDF." },
+        "pdf_sha256": { "type": "string" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "page_count": { "type": "integer", "minimum": 1 },
+        "preflight": {
+          "type": "object",
+          "properties": {
+            "font_embedded": { "type": ["boolean", "null"] },
+            "has_images": { "type": ["boolean", "null"] },
+            "text_extract_ok": { "type": ["boolean", "null"] },
+            "warnings": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "required": ["receipt_type", "doc_id", "doc_type", "authority_item_id", "packet_hash", "pdf_ref", "pdf_sha256", "byte_length", "page_count"]
+    }
+  ]
+}

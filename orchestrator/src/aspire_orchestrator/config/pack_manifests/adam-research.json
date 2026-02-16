@@ -1,0 +1,35 @@
+{
+  "skillpack_id": "adam-research",
+  "name": "Adam Research",
+  "agent_name": "Adam",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Web search, places, vendor comparison, RFQ generation. All GREEN tier.",
+  "capabilities": [
+    "can_search_web",
+    "can_search_places",
+    "can_compare_vendors",
+    "can_generate_vendor_outreach_packets",
+    "can_generate_rfq"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "green"
+  },
+  "tools": [
+    "brave.search",
+    "tavily.search",
+    "google_places.search",
+    "tomtom.search",
+    "here.search",
+    "foursquare.search",
+    "osm_overpass.query",
+    "mapbox.geocode",
+    "internal.document.generate"
+  ],
+  "providers": ["brave", "tavily", "google_maps", "tomtom", "here", "foursquare", "mapbox"],
+  "actions": ["research.search", "research.places", "research.compare", "research.rfq"],
+  "certification_status": "uncertified",
+  "outputs": ["research_packet", "vendor_comparison", "rfq_document", "evidence_item"],
+  "dependencies": []
+}

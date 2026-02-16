@@ -66,9 +66,11 @@ class TestToolRegistry:
     """Verify tool routing to live vs stub executors."""
 
     def test_live_tools_list(self):
-        """All 7 Domain Rail tools are registered as live."""
+        """Domain Rail + Phase 2 provider tools are registered as live."""
         live = get_live_tools()
-        assert len(live) == 7
+        # 7 Domain Rail + 2 Search + 2 Invoicing = 11 live executors
+        assert len(live) >= 11
+        # Domain Rail
         assert "domain.check" in live
         assert "domain.verify" in live
         assert "domain.dns.create" in live
@@ -76,6 +78,12 @@ class TestToolRegistry:
         assert "domain.delete" in live
         assert "polaris.account.create" in live
         assert "polaris.account.read" in live
+        # Phase 2: Search
+        assert "brave.search" in live
+        assert "tavily.search" in live
+        # Phase 2: Invoicing
+        assert "stripe.invoice.create" in live
+        assert "stripe.invoice.send" in live
 
     def test_is_live_tool_true(self):
         """Domain Rail tools report as live."""
@@ -84,10 +92,9 @@ class TestToolRegistry:
         assert is_live_tool("polaris.account.create") is True
 
     def test_is_live_tool_false(self):
-        """Non-Domain Rail tools report as stub."""
-        assert is_live_tool("stripe.invoice.create") is False
+        """Unimplemented tools report as stub."""
         assert is_live_tool("moov.payment.send") is False
-        assert is_live_tool("gusto.payroll.run") is False
+        assert is_live_tool("slack.message.send") is False
         assert is_live_tool("nonexistent.tool") is False
 
     def test_live_tools_match_manifest(self):
@@ -239,12 +246,12 @@ class TestStubExecutor:
     async def test_stub_data_includes_marker(self):
         """Stub result data includes stub=True marker."""
         result = await execute_stub(
-            tool_id="exa.search",
+            tool_id="pandadoc.contract.generate",
             payload={},
             **BASE_KWARGS,
         )
         assert result.data["stub"] is True
-        assert result.data["tool"] == "exa.search"
+        assert result.data["tool"] == "pandadoc.contract.generate"
 
 
 # =============================================================================
@@ -488,10 +495,10 @@ class TestExecuteToolRouting:
 
     @pytest.mark.asyncio
     async def test_routes_to_stub_executor(self):
-        """Non-Domain Rail tools route to stub."""
+        """Unimplemented tools route to stub."""
         result = await execute_tool(
-            tool_id="stripe.invoice.create",
-            payload={"customer_id": "cust-001"},
+            tool_id="slack.message.send",
+            payload={"channel": "general", "text": "hello"},
             **BASE_KWARGS,
         )
         assert result.outcome == Outcome.SUCCESS
@@ -617,19 +624,19 @@ class TestExecuteNodeIntegration:
         assert result["execution_result"]["stub"] is False
 
     def test_stub_tool_flagged(self):
-        """Execute node marks non-Domain Rail tools as stub."""
+        """Execute node marks unimplemented tools as stub."""
         from aspire_orchestrator.nodes.execute import execute_node
         from aspire_orchestrator.services.token_service import compute_token_hash
 
         token = self._mint_test_token(
-            tool="stripe.invoice.create", task_type="invoice.create",
+            tool="slack.message.send", task_type="message.send",
         )
         state = {
             "correlation_id": CORRELATION_ID,
             "suite_id": SUITE_ID,
             "office_id": OFFICE_ID,
-            "task_type": "invoice.create",
-            "allowed_tools": ["stripe.invoice.create"],
+            "task_type": "message.send",
+            "allowed_tools": ["slack.message.send"],
             "capability_token_id": token["token_id"],
             "capability_token_hash": compute_token_hash(token),
             "capability_token": token,

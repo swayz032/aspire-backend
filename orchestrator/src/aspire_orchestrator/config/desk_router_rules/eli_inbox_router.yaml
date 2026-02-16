@@ -1,0 +1,24 @@
+# Eli Inbox Desk routing rules
+version: v1
+rule_id: eli_inbox_router
+agent: eli
+match:
+  domain: communications.email
+  intents:
+    - email_triage
+    - email_draft
+    - email_send
+    - email_read
+route:
+  agent: eli
+  skillpack: eli-inbox
+model_overrides:
+  # Eli uses fast_general for triage (speed matters), primary_reasoner for drafting
+  classify.low: fast_general
+  classify.medium: fast_general
+  draft.medium: primary_reasoner
+  summarize.low: fast_general
+notes:
+  - Drafts are YELLOW (need approval before send)
+  - Sends are YELLOW (external communication)
+  - Triage is GREEN (read-only classification)

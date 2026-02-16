@@ -1,0 +1,29 @@
+{
+  "skillpack_id": "milo-payroll",
+  "name": "Milo Payroll",
+  "agent_name": "Milo",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Payroll processing, tax calculation verification, Gusto integration. RED tier — requires dual approval.",
+  "capabilities": [
+    "can_plan_payroll_run",
+    "can_verify_tax_calculations",
+    "can_generate_payroll_snapshot",
+    "can_track_payroll_deadlines"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "red",
+    "max_risk_tier": "red"
+  },
+  "tools": [
+    "gusto.payroll.run",
+    "gusto.read_payrolls"
+  ],
+  "providers": ["gusto"],
+  "actions": [
+    "payroll.run", "payroll.snapshot", "payroll.schedule", "payroll.deadline"
+  ],
+  "certification_status": "uncertified",
+  "outputs": ["payroll_plan", "payroll_snapshot", "tax_verification"],
+  "dependencies": []
+}

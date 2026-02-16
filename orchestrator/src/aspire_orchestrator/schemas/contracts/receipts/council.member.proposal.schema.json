@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "council.member.proposal",
+  "description": "Council member proposal for incident triage (must cite evidence).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "council.member.proposal"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "council_session_id": {
+          "type": "string"
+        },
+        "member": {
+          "type": "object",
+          "required": [
+            "provider",
+            "model",
+            "role"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "openai",
+                "google",
+                "anthropic"
+              ]
+            },
+            "model": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          }
+        },
+        "proposal": {
+          "type": "object",
+          "required": [
+            "hypotheses",
+            "fix_plan",
+            "tests_to_add",
+            "risk_assessment",
+            "rollback_plan",
+            "confidence",
+            "citations"
+          ],
+          "properties": {
+            "hypotheses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "fix_plan": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "tests_to_add": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "risk_assessment": {
+              "type": "string"
+            },
+            "rollback_plan": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "citations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "ref"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "receipt",
+                      "log",
+                      "robot_run",
+                      "internal_doc",
+                      "external_source"
+                    ]
+                  },
+                  "ref": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "council_session_id",
+        "member",
+        "proposal"
+      ]
+    }
+  ]
+}

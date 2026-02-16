@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "authority.item.denied"
+        },
+        "authority_item_id": {
+          "type": "string"
+        },
+        "risk_tier": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "required_presence": {
+          "type": "string",
+          "enum": [
+            "none",
+            "ava_voice",
+            "ava_video"
+          ]
+        },
+        "presence_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "receipt_type",
+        "authority_item_id",
+        "risk_tier",
+        "required_presence"
+      ]
+    }
+  ]
+}

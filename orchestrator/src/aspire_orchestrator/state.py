@@ -1,7 +1,10 @@
 """LangGraph state schema for the Aspire orchestrator.
 
-This TypedDict defines the state that flows through all 8 graph nodes:
-Intake → Safety → Policy → Approval → TokenMint → Execute → ReceiptWrite → Respond
+This TypedDict defines the state that flows through all 11 graph nodes:
+Intake → Safety → Classify → Route → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+
+Phase 2 added 3 Brain Layer nodes: Classify, Route, QA.
+Backwards compat: if utterance is not set, classify/route are skipped (old-style direct requests).
 
 Each node reads and writes to this shared state.
 """
@@ -66,6 +69,9 @@ class OrchestratorState(TypedDict, total=False):
     capability_token_hash: str | None
     capability_token: dict[str, Any] | None  # Full token for execute-node validation
 
+    # --- Idempotency + Outbox (Phase 3 W5) ---
+    idempotency_key: str | None  # Unique key for state-changing ops (YELLOW/RED)
+
     # --- Execute (set by execute node) ---
     tool_used: str | None
     execution_result: dict[str, Any] | None
@@ -80,6 +86,14 @@ class OrchestratorState(TypedDict, total=False):
     # --- Error handling ---
     error_code: str | None
     error_message: str | None
+
+    # --- Brain Layer (Phase 2 — classify / route / qa) ---
+    utterance: str | None  # Raw user input for intent classification
+    intent_result: dict[str, Any] | None  # From IntentClassifier
+    routing_plan: dict[str, Any] | None  # From SkillRouter
+    qa_result: dict[str, Any] | None  # From QALoop
+    qa_meta_receipt: dict[str, Any] | None  # QA verification receipt (Law #2)
+    qa_retry_count: int  # Retry counter for QA loop re-execution
 
     # --- Accumulated receipts for the full pipeline ---
     pipeline_receipts: list[dict[str, Any]]

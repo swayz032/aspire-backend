@@ -1,0 +1,13 @@
+# Adam Research — Freshness Policy
+# Controls cache behavior and result freshness
+
+pack_id: adam-research
+
+cache:
+  enabled: true
+  web_search_ttl_seconds: 3600
+  places_search_ttl_seconds: 86400
+  comparison_ttl_seconds: 1800
+
+stale_result_behavior: warn_and_return
+force_refresh_on: duplicate_query_within_60s

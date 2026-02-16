@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aspireos.app/schemas/ava_orchestrator_request/1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "office_id", "request_id", "correlation_id", "timestamp", "task_type", "payload"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "suite_id": {"type": "string", "minLength": 1},
+    "office_id": {"type": "string", "minLength": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "correlation_id": {"type": "string", "minLength": 1},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "task_type": {"type": "string", "minLength": 1},
+    "payload": {"type": "object"}
+  }
+}

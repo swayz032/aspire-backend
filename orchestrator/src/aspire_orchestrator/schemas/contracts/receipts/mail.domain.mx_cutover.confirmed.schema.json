@@ -1,0 +1,8 @@
+{
+  "type": "mail.domain.mx_cutover.confirmed",
+  "required": [
+    "suite_id",
+    "timestamp",
+    "domain"
+  ]
+}

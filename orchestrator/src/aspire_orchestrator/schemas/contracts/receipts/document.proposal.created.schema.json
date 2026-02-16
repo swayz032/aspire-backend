@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "document.proposal.created",
+  "description": "A document release item was created in Authority Queue for approval.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "document.proposal.created" },
+        "doc_id": { "type": "string" },
+        "doc_type": { "type": "string" },
+        "authority_item_id": { "type": "string" },
+        "risk_tier": { "type": "string", "enum": ["low", "medium", "high"] },
+        "requires_approval": { "type": "boolean" },
+        "preview_ref": { "type": "string" },
+        "packet_hash": { "type": "string" }
+      },
+      "required": ["receipt_type", "doc_id", "doc_type", "authority_item_id", "risk_tier", "requires_approval", "preview_ref", "packet_hash"]
+    }
+  ]
+}

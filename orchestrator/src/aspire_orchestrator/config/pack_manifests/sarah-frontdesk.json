@@ -1,0 +1,28 @@
+{
+  "skillpack_id": "sarah-frontdesk",
+  "name": "Sarah Front Desk",
+  "agent_name": "Sarah",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Call routing, voicemail transcription, visitor logging, appointment booking via Twilio + LiveKit.",
+  "capabilities": [
+    "can_route_calls",
+    "can_transfer_calls",
+    "can_transcribe_voicemail",
+    "can_log_visitors",
+    "can_book_appointments"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "twilio.call.create",
+    "internal.visitor.log"
+  ],
+  "providers": ["twilio", "livekit"],
+  "actions": ["call.route", "call.transfer", "visitor.log"],
+  "certification_status": "uncertified",
+  "outputs": ["call_log", "voicemail_transcript", "visitor_record"],
+  "dependencies": []
+}

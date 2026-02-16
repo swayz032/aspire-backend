@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "money.transfer.proposed"
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "action_type": {
+          "type": "string",
+          "const": "money.transfer.create"
+        },
+        "transfer_kind": {
+          "type": "string",
+          "enum": [
+            "business_transfer",
+            "owner_draw"
+          ]
+        },
+        "amount_cents": {
+          "type": "integer"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "from_account_ref": {
+          "type": "string"
+        },
+        "to_account_ref": {
+          "type": "string"
+        },
+        "memo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "receipt_type",
+        "proposal_id",
+        "transfer_kind",
+        "amount_cents",
+        "currency",
+        "from_account_ref",
+        "to_account_ref"
+      ]
+    }
+  ]
+}

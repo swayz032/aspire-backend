@@ -1,0 +1,188 @@
+version: "2026-01"
+jurisdiction: US
+tax_year: 2026
+
+rules:
+  home_office_deduction:
+    rule_id: HO-001
+    title: "Home Office Deduction (Simplified Method)"
+    eligibility_facts_required:
+      - exclusive_use_for_business
+      - regular_use_for_business
+      - square_footage_of_office
+    substantiation_required:
+      - floor_plan_or_measurement
+      - photos_of_dedicated_space
+    common_failure_modes:
+      - "Mixed-use room without clear boundary"
+      - "No documentation of exclusive use"
+    risk_default: medium
+    source_refs:
+      - "IRS Pub 587"
+      - "IRS Topic 509"
+
+  vehicle_deduction:
+    rule_id: VEH-001
+    title: "Business Use of Vehicle"
+    eligibility_facts_required:
+      - vehicle_ownership_or_lease
+      - business_vs_personal_usage_percentage
+      - method_selection
+    substantiation_required:
+      - mileage_log_with_dates_and_destinations
+      - odometer_readings_start_and_end_of_year
+    common_failure_modes:
+      - "No contemporaneous mileage log"
+      - "Commuting miles included in business total"
+    risk_default: high
+    source_refs:
+      - "IRS Pub 463"
+      - "IRS Topic 510"
+
+  meals_deduction:
+    rule_id: MEAL-001
+    title: "Business Meals Deduction"
+    eligibility_facts_required:
+      - meal_has_business_purpose
+      - attendee_names_and_business_relationship
+      - meal_not_lavish_or_extravagant
+    substantiation_required:
+      - receipt_with_date_amount_restaurant
+      - note_of_business_purpose_and_attendees
+    common_failure_modes:
+      - "Missing attendee names"
+      - "No business purpose documented"
+      - "Personal meals mixed with business"
+    risk_default: medium
+    source_refs:
+      - "IRS Pub 463 Chapter 2"
+      - "IRC Section 274(k)"
+
+  retirement_contributions:
+    rule_id: RET-001
+    title: "Retirement Plan Contributions"
+    eligibility_facts_required:
+      - self_employment_income
+      - plan_type_selected
+      - contribution_within_limits
+    substantiation_required:
+      - plan_documentation
+      - contribution_receipts_from_custodian
+      - form_5500_if_applicable
+    common_failure_modes:
+      - "Contribution exceeds annual limit"
+      - "Plan not established before year-end"
+    risk_default: low
+    source_refs:
+      - "IRS Pub 560"
+      - "IRC Section 401(a)"
+
+  health_insurance_deduction:
+    rule_id: HI-001
+    title: "Self-Employed Health Insurance Deduction"
+    eligibility_facts_required:
+      - self_employed_status
+      - not_eligible_for_employer_plan
+      - insurance_established_under_business
+    substantiation_required:
+      - premium_payment_records
+      - form_1095_a_or_b
+    common_failure_modes:
+      - "Also eligible for spouse's employer plan"
+      - "Deduction exceeds net self-employment income"
+    risk_default: low
+    source_refs:
+      - "IRS Pub 535"
+      - "IRC Section 162(l)"
+
+  depreciation_section_179:
+    rule_id: DEP-001
+    title: "Section 179 Depreciation"
+    eligibility_facts_required:
+      - asset_placed_in_service_current_year
+      - asset_used_more_than_50_percent_business
+      - total_cost_within_annual_limit
+    substantiation_required:
+      - purchase_receipt_or_invoice
+      - date_asset_placed_in_service
+      - business_use_percentage_documentation
+    common_failure_modes:
+      - "Asset placed in service in wrong year"
+      - "Business use drops below 50% threshold"
+      - "Total exceeds annual Section 179 limit"
+    risk_default: medium
+    source_refs:
+      - "IRS Pub 946"
+      - "IRC Section 179"
+
+  education_deduction:
+    rule_id: EDU-001
+    title: "Business Education Expenses"
+    eligibility_facts_required:
+      - education_maintains_or_improves_existing_skills
+      - not_required_to_meet_minimum_qualifications
+      - not_qualifying_for_new_trade_or_business
+    substantiation_required:
+      - tuition_receipts
+      - course_description_and_relevance
+    common_failure_modes:
+      - "Education qualifies for new profession"
+      - "No documented connection to current business"
+    risk_default: medium
+    source_refs:
+      - "IRS Pub 970"
+      - "Treas. Reg. 1.162-5"
+
+  business_insurance:
+    rule_id: INS-001
+    title: "Business Insurance Premiums"
+    eligibility_facts_required:
+      - insurance_for_business_activity
+      - ordinary_and_necessary_expense
+    substantiation_required:
+      - policy_declarations_page
+      - premium_payment_records
+    common_failure_modes:
+      - "Personal insurance premiums mixed with business"
+      - "Life insurance premiums (generally not deductible)"
+    risk_default: low
+    source_refs:
+      - "IRS Pub 535"
+      - "IRC Section 162"
+
+  professional_services:
+    rule_id: PROF-001
+    title: "Professional Services (Legal, Accounting, Consulting)"
+    eligibility_facts_required:
+      - service_related_to_business_operations
+      - ordinary_and_necessary
+    substantiation_required:
+      - invoices_from_service_providers
+      - engagement_letters_or_contracts
+    common_failure_modes:
+      - "Personal legal fees mixed with business"
+      - "Startup costs not properly amortized"
+    risk_default: low
+    source_refs:
+      - "IRS Pub 535"
+      - "IRC Section 162"
+
+  qbi_deduction:
+    rule_id: QBI-001
+    title: "Qualified Business Income Deduction (Section 199A)"
+    eligibility_facts_required:
+      - qualified_business_income
+      - income_below_threshold_or_specified_service
+      - proper_entity_structure
+    substantiation_required:
+      - schedule_c_or_k1
+      - income_allocation_documentation
+    common_failure_modes:
+      - "Specified service trade or business above income threshold"
+      - "Income aggregation errors"
+      - "W-2 wage limitation not calculated"
+    risk_default: high
+    source_refs:
+      - "IRS Pub 535"
+      - "IRC Section 199A"
+      - "Treas. Reg. 1.199A"

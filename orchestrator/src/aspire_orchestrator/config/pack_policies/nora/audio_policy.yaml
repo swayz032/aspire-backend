@@ -1,0 +1,19 @@
+# Nora Conference — Audio Policy
+# Controls transcription and voice settings
+
+pack_id: nora-conference
+
+stt_model: nova-3
+stt_provider: deepgram
+stt_language: en
+
+tts_provider: elevenlabs
+tts_voice_id: 6aDn1KB0hjpdcocrUkmq
+tts_model: eleven_turbo_v2
+
+recording:
+  enabled: true
+  format: opus
+  max_duration_minutes: 120
+  auto_stop_on_empty: true
+  empty_timeout_seconds: 300

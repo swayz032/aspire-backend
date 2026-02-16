@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "document.preview.generated",
+  "description": "A preview for a document packet was rendered and stored for user review.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "document.preview.generated" },
+        "doc_id": { "type": "string" },
+        "doc_type": { "type": "string" },
+        "packet_hash": { "type": "string" },
+        "preview_ref": { "type": "string", "description": "Object-store key or internal URI for preview." },
+        "page_count_estimate": { "type": ["integer", "null"], "minimum": 1 },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["receipt_type", "doc_id", "doc_type", "packet_hash", "preview_ref"]
+    }
+  ]
+}

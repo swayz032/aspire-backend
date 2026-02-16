@@ -1,0 +1,33 @@
+mode: smoke
+paths:
+  orchestrator_root: backend/orchestrator
+  gateway_root: backend/gateway
+  roadmap_root: plan
+  infra_root: infrastructure
+sentinels:
+  orchestrator:
+    - pyproject.toml
+    - src/aspire_orchestrator/models.py
+    - src/aspire_orchestrator/graph.py
+  gateway:
+    - package.json
+    - src/server.ts
+  roadmap:
+    - Aspire-Production-Roadmap.md
+    - schemas/receipts.schema.v1.yaml
+scenarios:
+  enabled:
+    - sync_validate
+    - api_smoke
+  api_smoke:
+    health_path: /healthz
+    p95_ms: 800
+    max_5xx: 0
+env_defaults:
+  staging:
+    base_url: http://localhost:8000
+  production:
+    base_url: https://aspireos.app
+ingest:
+  enabled: false
+  url: http://localhost:8000/robots/ingest

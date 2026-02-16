@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "learning.change_proposal",
+  "type": "object",
+  "required": [
+    "id",
+    "kind",
+    "target",
+    "summary",
+    "risk_tier",
+    "requires_approval",
+    "eval_suite_refs",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "prompt",
+        "policy",
+        "router",
+        "tool_allowlist",
+        "runbook",
+        "robot_assertion",
+        "eval_suite"
+      ]
+    },
+    "target": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "diff_ref": {
+      "type": "string"
+    },
+    "risk_tier": {
+      "type": "string",
+      "enum": [
+        "green",
+        "yellow",
+        "red"
+      ]
+    },
+    "requires_approval": {
+      "type": "boolean"
+    },
+    "eval_suite_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "SALES_PRICING": [
+    "What can I help you with today?",
+    "About how many do you need, and what ZIP code?",
+    "Do you need standard or custom sizing?"
+  ],
+  "SCHEDULING": [
+    "What would you like to schedule?",
+    "What day and time works best for you?",
+    "What\u2019s the service address or ZIP code?"
+  ],
+  "SUPPORT_ISSUES": [
+    "Can you tell me what happened?",
+    "Is this urgent or can it wait until business hours?",
+    "What\u2019s the best number to reach you back?"
+  ],
+  "ORDER_UPDATES": [
+    "What order are you calling about?",
+    "Do you have an order number or the name on the order?",
+    "What\u2019s the best callback number in case we get disconnected?"
+  ],
+  "MESSAGE_CALLBACK": [
+    "Who should I say is calling?",
+    "What\u2019s the best number to call you back?",
+    "What\u2019s a good time window for a callback?"
+  ]
+}

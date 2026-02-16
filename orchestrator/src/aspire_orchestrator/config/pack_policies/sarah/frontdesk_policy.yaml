@@ -1,0 +1,17 @@
+# Sarah Front Desk Policy (enforced, not just prompt)
+# Source: enterprise pack v4
+max_questions_fast: 2
+max_questions_detailed: 3
+max_total_handle_time_seconds: 180
+max_time_before_escalation_seconds: 120
+barge_in_enabled: true
+barge_in_cancel_tts: true
+fallback_on_stt_failure: "take_message"
+forbidden_topics:
+  - billing
+  - credit card
+  - bank account
+  - payment
+speech_enhancement:
+  enabled: false
+  provider: none  # none | webrtc_builtin | nvidia_bnr

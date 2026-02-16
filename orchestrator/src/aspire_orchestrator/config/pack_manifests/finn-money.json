@@ -1,0 +1,32 @@
+{
+  "skillpack_id": "finn-money",
+  "name": "Finn Money Desk",
+  "agent_name": "Finn",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Payments, transfers, bank connections via Moov/Plaid/Stripe. RED tier — requires dual approval.",
+  "capabilities": [
+    "can_plan_transfers",
+    "can_execute_payments",
+    "can_classify_owner_draw",
+    "can_reconcile_accounts"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "red",
+    "max_risk_tier": "red"
+  },
+  "tools": [
+    "moov.payment.send",
+    "moov.transfer.create",
+    "plaid.payment.send",
+    "plaid.accounts.get",
+    "moov.account.read"
+  ],
+  "providers": ["moov", "plaid", "stripe"],
+  "actions": [
+    "payment.send", "payment.transfer", "payment.owner_draw", "payment.reconcile"
+  ],
+  "certification_status": "uncertified",
+  "outputs": ["transfer_plan", "payment_confirmation", "reconciliation_result"],
+  "dependencies": []
+}

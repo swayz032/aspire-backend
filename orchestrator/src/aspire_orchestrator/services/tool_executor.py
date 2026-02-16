@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from aspire_orchestrator.models import Outcome, ReceiptType
+from aspire_orchestrator.services.tool_types import ToolExecutionResult, ToolExecutorFn
 from aspire_orchestrator.services.domain_rail_client import (
     DomainRailClientError,
     DomainRailResponse,
@@ -32,23 +32,93 @@ from aspire_orchestrator.services.domain_rail_client import (
     mail_account_read,
 )
 
+# Phase 2 provider imports — no circular dependency (ToolExecutionResult in tool_types)
+from aspire_orchestrator.providers.tavily_client import execute_tavily_search
+from aspire_orchestrator.providers.brave_client import execute_brave_search
+from aspire_orchestrator.providers.stripe_client import (
+    execute_stripe_invoice_create,
+    execute_stripe_invoice_send,
+    execute_stripe_invoice_void,
+    execute_stripe_quote_create,
+    execute_stripe_quote_send,
+)
+from aspire_orchestrator.providers.twilio_client import (
+    execute_twilio_call_create,
+    execute_twilio_call_status,
+)
+from aspire_orchestrator.providers.polaris_email_client import (
+    execute_polaris_email_send,
+    execute_polaris_email_draft,
+)
+
+# Wave 1: Adam Research geo/places providers
+from aspire_orchestrator.providers.google_places_client import execute_google_places_search
+from aspire_orchestrator.providers.tomtom_client import execute_tomtom_search
+from aspire_orchestrator.providers.here_client import execute_here_search
+from aspire_orchestrator.providers.foursquare_client import execute_foursquare_search
+from aspire_orchestrator.providers.osm_overpass_client import execute_osm_overpass_query
+from aspire_orchestrator.providers.mapbox_client import execute_mapbox_geocode
+
+# Wave 1: Search router (meta-executors with fallback chains)
+from aspire_orchestrator.services.search_router import (
+    route_web_search,
+    route_places_search,
+    route_geocode,
+)
+
+# Wave 2: Nora (Conference) providers — LiveKit + Deepgram + ElevenLabs
+from aspire_orchestrator.providers.livekit_client import (
+    execute_livekit_room_create,
+    execute_livekit_room_list,
+)
+from aspire_orchestrator.providers.deepgram_client import execute_deepgram_transcribe
+from aspire_orchestrator.providers.elevenlabs_client import execute_elevenlabs_speak
+
+# Wave 2: Tec (Documents) providers — Puppeteer + S3
+from aspire_orchestrator.providers.puppeteer_client import execute_puppeteer_pdf_generate
+from aspire_orchestrator.providers.s3_client import (
+    execute_s3_document_upload,
+    execute_s3_url_sign,
+)
+
+# Wave 4: Teressa (Books) providers — QuickBooks Online
+from aspire_orchestrator.providers.quickbooks_client import (
+    execute_qbo_read_company,
+    execute_qbo_read_transactions,
+    execute_qbo_read_accounts,
+    execute_qbo_journal_entry_create,
+)
+
+# Wave 5: Finn (Money Desk) providers — Moov + Plaid (RED tier)
+from aspire_orchestrator.providers.moov_client import (
+    execute_moov_account_read,
+    execute_moov_transfer_create,
+    execute_moov_transfer_status,
+)
+from aspire_orchestrator.providers.plaid_client import (
+    execute_plaid_accounts_get,
+    execute_plaid_transactions_get,
+    execute_plaid_transfer_create,
+)
+
+# Wave 5: Milo (Payroll) providers — Gusto (RED tier)
+from aspire_orchestrator.providers.gusto_client import (
+    execute_gusto_read_company,
+    execute_gusto_read_payrolls,
+    execute_gusto_payroll_run,
+)
+
+# Wave 6: Clara (Legal) providers — PandaDoc (YELLOW/RED tier)
+from aspire_orchestrator.providers.pandadoc_client import (
+    execute_pandadoc_contract_generate,
+    execute_pandadoc_contract_read,
+    execute_pandadoc_contract_sign,
+)
+
 logger = logging.getLogger(__name__)
 
-
-@dataclass(frozen=True)
-class ToolExecutionResult:
-    """Result of executing a tool."""
-
-    outcome: Outcome
-    tool_id: str
-    data: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
-    receipt_data: dict[str, Any] = field(default_factory=dict)
-    is_stub: bool = False
-
-
-# Type alias for tool executor functions
-ToolExecutorFn = Callable[..., Awaitable[ToolExecutionResult]]
+# Re-export for backward compatibility (other modules import from here)
+__all__ = ["ToolExecutionResult", "ToolExecutorFn"]
 
 
 def _make_receipt_data(
@@ -582,7 +652,7 @@ async def execute_stub(
 # =============================================================================
 
 
-# Domain Rail tools (LIVE — S2S HMAC authenticated)
+# Domain Rail tools (LIVE — S2S HMAC authenticated, Phase 0C)
 _DOMAIN_RAIL_EXECUTORS: dict[str, ToolExecutorFn] = {
     "domain.check": execute_domain_check,
     "domain.verify": execute_domain_verify,
@@ -591,6 +661,116 @@ _DOMAIN_RAIL_EXECUTORS: dict[str, ToolExecutorFn] = {
     "domain.delete": execute_domain_delete,
     "polaris.account.create": execute_mail_account_create,
     "polaris.account.read": execute_mail_account_read,
+}
+
+# Phase 2: Research tools (GREEN tier — Adam Research pack)
+# Per ecosystem providers.yaml: brave (primary) → tavily (fallback)
+_SEARCH_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "brave.search": execute_brave_search,
+    "tavily.search": execute_tavily_search,
+}
+
+# Phase 2: Places/geo tools (GREEN tier — Adam Research pack)
+# Per ecosystem: google_places -> tomtom -> here -> foursquare -> osm_overpass
+_PLACES_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "google_places.search": execute_google_places_search,
+    "tomtom.search": execute_tomtom_search,
+    "here.search": execute_here_search,
+    "foursquare.search": execute_foursquare_search,
+    "osm_overpass.query": execute_osm_overpass_query,
+    "mapbox.geocode": execute_mapbox_geocode,
+}
+
+# Phase 2: Search router meta-executors (fallback chains)
+_SEARCH_ROUTER_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "search.web": route_web_search,
+    "search.places": route_places_search,
+    "search.geocode": route_geocode,
+}
+
+# Phase 2: Invoicing tools (YELLOW tier — Quinn Invoicing pack)
+_INVOICING_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "stripe.invoice.create": execute_stripe_invoice_create,
+    "stripe.invoice.send": execute_stripe_invoice_send,
+    "stripe.invoice.void": execute_stripe_invoice_void,
+    "stripe.quote.create": execute_stripe_quote_create,
+    "stripe.quote.send": execute_stripe_quote_send,
+}
+
+# Phase 2: Conference tools (GREEN/YELLOW — Nora Conference pack)
+_CONFERENCE_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "livekit.room.create": execute_livekit_room_create,
+    "livekit.room.list": execute_livekit_room_list,
+    "deepgram.transcribe": execute_deepgram_transcribe,
+    "elevenlabs.speak": execute_elevenlabs_speak,
+}
+
+# Phase 2: Document tools (GREEN/YELLOW — Tec Documents pack)
+_DOCUMENT_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "puppeteer.pdf.generate": execute_puppeteer_pdf_generate,
+    "s3.document.upload": execute_s3_document_upload,
+    "s3.url.sign": execute_s3_url_sign,
+}
+
+# Phase 2 Wave 3: Email tools (YELLOW — Eli Inbox pack)
+_EMAIL_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "polaris.email.send": execute_polaris_email_send,
+    "polaris.email.draft": execute_polaris_email_draft,
+}
+
+# Phase 2 Wave 3: Telephony tools (YELLOW — Sarah Front Desk pack)
+_TELEPHONY_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "twilio.call.create": execute_twilio_call_create,
+    "twilio.call.status": execute_twilio_call_status,
+}
+
+# Phase 2 Wave 4: Bookkeeping tools (GREEN/YELLOW — Teressa Books pack)
+_BOOKS_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "qbo.read_company": execute_qbo_read_company,
+    "qbo.read_transactions": execute_qbo_read_transactions,
+    "qbo.read_accounts": execute_qbo_read_accounts,
+    "qbo.journal_entry.create": execute_qbo_journal_entry_create,
+}
+
+# Phase 2 Wave 5: Payment tools (RED — Finn Money Desk pack)
+_PAYMENT_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "moov.account.read": execute_moov_account_read,
+    "moov.transfer.create": execute_moov_transfer_create,
+    "moov.transfer.status": execute_moov_transfer_status,
+    "plaid.accounts.get": execute_plaid_accounts_get,
+    "plaid.transactions.get": execute_plaid_transactions_get,
+    "plaid.transfer.create": execute_plaid_transfer_create,
+}
+
+# Phase 2 Wave 5: Payroll tools (RED — Milo Payroll pack)
+_PAYROLL_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "gusto.read_company": execute_gusto_read_company,
+    "gusto.read_payrolls": execute_gusto_read_payrolls,
+    "gusto.payroll.run": execute_gusto_payroll_run,
+}
+
+# Phase 2 Wave 6: Legal tools (YELLOW/RED — Clara Legal pack)
+_LEGAL_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "pandadoc.contract.generate": execute_pandadoc_contract_generate,
+    "pandadoc.contract.read": execute_pandadoc_contract_read,
+    "pandadoc.contract.sign": execute_pandadoc_contract_sign,
+}
+
+# Merged registry of all live executors
+_ALL_LIVE_EXECUTORS: dict[str, ToolExecutorFn] = {
+    **_DOMAIN_RAIL_EXECUTORS,
+    **_SEARCH_EXECUTORS,
+    **_PLACES_EXECUTORS,
+    **_SEARCH_ROUTER_EXECUTORS,
+    **_INVOICING_EXECUTORS,
+    **_CONFERENCE_EXECUTORS,
+    **_DOCUMENT_EXECUTORS,
+    **_EMAIL_EXECUTORS,
+    **_TELEPHONY_EXECUTORS,
+    **_BOOKS_EXECUTORS,
+    **_PAYMENT_EXECUTORS,
+    **_PAYROLL_EXECUTORS,
+    **_LEGAL_EXECUTORS,
 }
 
 
@@ -607,10 +787,10 @@ async def execute_tool(
 ) -> ToolExecutionResult:
     """Execute a tool by ID. Routes to live executors or stub.
 
-    Domain Rail tools → S2S HMAC authenticated HTTP calls.
-    All other tools → stub executor (Phase 2 implementation).
+    Live executors: Domain Rail (Phase 0C) + Provider clients (Phase 2).
+    Stub fallback: Tools not yet wired return stub success.
     """
-    executor = _DOMAIN_RAIL_EXECUTORS.get(tool_id)
+    executor = _ALL_LIVE_EXECUTORS.get(tool_id)
 
     if executor:
         logger.info("Tool executor LIVE: %s", tool_id)
@@ -639,9 +819,9 @@ async def execute_tool(
 
 def get_live_tools() -> list[str]:
     """Return list of tool IDs with live (non-stub) executors."""
-    return list(_DOMAIN_RAIL_EXECUTORS.keys())
+    return list(_ALL_LIVE_EXECUTORS.keys())
 
 
 def is_live_tool(tool_id: str) -> bool:
     """Check if a tool has a live executor (vs stub)."""
-    return tool_id in _DOMAIN_RAIL_EXECUTORS
+    return tool_id in _ALL_LIVE_EXECUTORS

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "learning.change.proposed",
+  "description": "A governed change proposal created by internal learning pipeline.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "learning.change.proposed"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "change_proposal_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "requires_approval": {
+          "type": "boolean"
+        },
+        "eval_suite_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "canary_policy_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "change_proposal_id",
+        "kind",
+        "target",
+        "requires_approval"
+      ]
+    }
+  ]
+}

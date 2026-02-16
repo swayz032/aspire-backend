@@ -1,7 +1,8 @@
-"""Aspire Orchestrator FastAPI Server — Wave 6 Complete.
+"""Aspire Orchestrator FastAPI Server — Wave 8 Complete.
 
 Endpoints:
   POST /v1/intents — Primary: process AvaOrchestratorRequest through LangGraph pipeline
+  POST /v1/intents/classify — Brain Layer: classify utterance + return routing plan
   GET  /v1/receipts — Query receipts (RLS-scoped by suite_id from auth headers)
   POST /v1/receipts/verify-run — Verify receipt hash chain for a correlation_id
   POST /v1/policy/evaluate — Evaluate policy for an action_type (read-only)
@@ -13,6 +14,20 @@ Endpoints:
   POST /v1/a2a/fail — Mark a task as failed (with retry/quarantine)
   GET  /v1/a2a/tasks — List tasks for a suite
 
+Admin Ops Telemetry Facade (Wave 8):
+  GET  /admin/ops/health — Admin health check (no auth)
+  GET  /admin/ops/incidents — List incidents (filtered, paginated)
+  GET  /admin/ops/incidents/:id — Get incident detail + timeline + evidence_pack
+  GET  /admin/ops/receipts — List receipts (admin cross-suite, PII-redacted)
+  GET  /admin/ops/provider-calls — List provider calls (redacted)
+  GET  /admin/ops/outbox — Outbox queue status
+  GET  /admin/ops/rollouts — List rollouts
+  GET  /admin/proposals/pending — List pending change proposals
+  POST /admin/proposals/:id/approve — Approve a change proposal
+
+Robot Infrastructure (Wave 3):
+  POST /robots/ingest — Accept RobotRun results from CI/CD (S2S HMAC auth)
+
 Health & Observability:
   GET /healthz — Liveness probe
   GET /livez — Kubernetes-style liveness probe
@@ -21,6 +36,7 @@ Health & Observability:
 
 Auth: suite_id/office_id/actor_id come from Gateway via X- headers.
 The Gateway derives these from JWT; the orchestrator trusts the Gateway.
+Admin endpoints use X-Admin-Token header (JWT in production, dev token in dev).
 """
 
 from __future__ import annotations
@@ -42,6 +58,9 @@ from aspire_orchestrator.services.receipt_chain import verify_chain
 from aspire_orchestrator.services.registry import get_registry
 from aspire_orchestrator.services.a2a_service import get_a2a_service, A2ATaskStatus
 from aspire_orchestrator.services.metrics import METRICS
+from aspire_orchestrator.routes.intents import router as intents_router
+from aspire_orchestrator.routes.admin import router as admin_router
+from aspire_orchestrator.routes.robots import router as robots_router
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +84,15 @@ app.add_middleware(
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Correlation-Id"],
 )
+
+# Include Brain Layer routes
+app.include_router(intents_router)
+
+# Include Admin Ops Telemetry Facade routes (Wave 8)
+app.include_router(admin_router)
+
+# Include Robot Ingest routes (Wave 3 — Enterprise Sync)
+app.include_router(robots_router)
 
 # Build the graph once at startup
 orchestrator_graph = build_orchestrator_graph()
@@ -122,14 +150,20 @@ async def readyz() -> JSONResponse:
 async def metrics(request: Request) -> Response:
     """Prometheus metrics endpoint (Gate 2: Observability).
 
-    Security: Only accessible from localhost/internal networks.
+    Security: Only accessible from localhost/internal networks OR with
+    a valid metrics auth token (ASPIRE_METRICS_TOKEN).
     In production, Prometheus scrapes from within the private network.
-    External clients should never reach this endpoint.
     """
     # Restrict to internal access only (Gate 5: Security)
-    # In production, Prometheus scrapes from within the private network.
     # ASPIRE_METRICS_ALLOW_EXTERNAL=1 disables this check (testing only).
     if not os.environ.get("ASPIRE_METRICS_ALLOW_EXTERNAL"):
+        # Check metrics auth token first (defense-in-depth)
+        metrics_token = os.environ.get("ASPIRE_METRICS_TOKEN")
+        if metrics_token:
+            provided = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            if provided == metrics_token:
+                return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
         client_host = request.client.host if request.client else "unknown"
         allowed_hosts = {"127.0.0.1", "::1", "localhost"}
         is_private = (
@@ -180,7 +214,7 @@ async def process_intent(request: Request) -> JSONResponse:
 
     start_time = time.monotonic()
     try:
-        result = orchestrator_graph.invoke(initial_state)
+        result = await orchestrator_graph.ainvoke(initial_state)
 
         response = result.get("response")
         if response is None:
@@ -260,6 +294,18 @@ async def get_receipts(
     suite_id is always the auth-derived value from the Gateway.
     This enforces tenant isolation (Law #6) at the query level.
     """
+    # Law #6: Validate auth header matches query suite_id (tenant isolation)
+    auth_suite_id = request.headers.get("x-suite-id")
+    if auth_suite_id and suite_id != auth_suite_id:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "TENANT_ISOLATION_VIOLATION",
+                "message": "suite_id query param does not match authenticated suite",
+                "correlation_id": request.headers.get("x-correlation-id", "unknown"),
+            },
+        )
+
     if risk_tier and risk_tier not in ("green", "yellow", "red"):
         return JSONResponse(
             status_code=400,

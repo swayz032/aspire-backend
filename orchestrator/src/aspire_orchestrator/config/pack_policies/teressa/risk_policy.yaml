@@ -1,0 +1,28 @@
+# Teressa Books — Risk Policy
+# Categorize/report GREEN; sync/journal_entry YELLOW
+
+pack_id: teressa-books
+default_risk_tier: yellow
+max_risk_tier: yellow
+
+actions:
+  books.categorize:
+    risk_tier: green
+    approval_required: false
+    description: "AI-powered transaction categorization"
+
+  books.report:
+    risk_tier: green
+    approval_required: false
+    description: "Generate financial report"
+
+  books.sync:
+    risk_tier: yellow
+    approval_required: true
+    description: "Sync with QuickBooks Online"
+
+  books.journal_entry:
+    risk_tier: yellow
+    approval_required: true
+    binding_fields: [account_id, amount, description]
+    description: "Create journal entry"

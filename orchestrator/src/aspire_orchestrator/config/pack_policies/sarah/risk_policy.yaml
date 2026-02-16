@@ -1,0 +1,22 @@
+# Sarah Front Desk — Risk Policy
+# Route/log GREEN; transfer YELLOW
+
+pack_id: sarah-frontdesk
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  call.route:
+    risk_tier: green
+    approval_required: false
+    description: "Route inbound call to appropriate handler"
+
+  call.transfer:
+    risk_tier: yellow
+    approval_required: true
+    description: "Transfer call to external number or team member"
+
+  visitor.log:
+    risk_tier: green
+    approval_required: false
+    description: "Log visitor or call event"

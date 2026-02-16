@@ -1,0 +1,40 @@
+# Nora Conference — Routing Policy
+# Risk trigger detection and specialist routing
+
+pack_id: nora-conference
+
+risk_triggers:
+  money_movement:
+    keywords: ["payment", "transfer", "send money", "wire", "pay", "invoice"]
+    route_to: finn-money
+    risk_tier: red
+    action: "escalate_to_specialist"
+
+  contracts:
+    keywords: ["contract", "agreement", "sign", "signature", "NDA", "terms"]
+    route_to: clara-legal
+    risk_tier: red
+    action: "escalate_to_specialist"
+
+  payroll:
+    keywords: ["payroll", "salary", "wages", "compensation", "bonus"]
+    route_to: milo-payroll
+    risk_tier: red
+    action: "escalate_to_specialist"
+
+  email:
+    keywords: ["send email", "draft email", "reply", "follow up email"]
+    route_to: eli-inbox
+    risk_tier: yellow
+    action: "route_to_specialist"
+
+  invoice:
+    keywords: ["invoice", "billing", "charge", "quote", "estimate"]
+    route_to: quinn-invoicing
+    risk_tier: yellow
+    action: "route_to_specialist"
+
+silent_scribe_mode:
+  enabled: true
+  always_transcribe: true
+  risk_detection_interval_seconds: 30

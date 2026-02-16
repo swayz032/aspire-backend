@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "robot.regression.completed",
+  "description": "A robot regression suite completed.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "robot.regression.completed"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "robot_suite": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "robot_suite",
+        "status",
+        "artifacts"
+      ]
+    }
+  ]
+}

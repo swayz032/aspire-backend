@@ -1,0 +1,26 @@
+# Nora Conference Desk routing rules
+# Ported from ecosystem: platform/brain/router/rules/conference_router.ts
+# and model_policies/conference.yaml
+version: v1
+rule_id: nora_conference_router
+agent: nora
+match:
+  domain: conference
+  intents:
+    - schedule_meeting
+    - create_room
+    - summarize_meeting
+    - risk_trigger_detection
+route:
+  agent: nora
+  skillpack: nora-conference
+model_overrides:
+  # Nora uses fast_general for transcription summaries
+  summarize.low: fast_general
+  # Risk trigger detection (money/contracts/payroll mentions) uses primary_reasoner
+  classify.low: fast_general
+  verify.low: primary_reasoner
+notes:
+  - Silent scribe mode: Nora monitors meetings and detects risk triggers
+  - Risk triggers: money_movement, contracts, payroll -> routes to specialist
+  - Specialist routing: email->Eli, invoice->Quinn, payment->Finn

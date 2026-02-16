@@ -1,0 +1,9 @@
+{
+  "type": "mail.send.approved",
+  "required": [
+    "suite_id",
+    "office_id",
+    "timestamp",
+    "outbox_item_id"
+  ]
+}

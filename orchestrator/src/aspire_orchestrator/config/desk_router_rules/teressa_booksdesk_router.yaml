@@ -1,0 +1,28 @@
+# Teressa Books Desk routing rules
+# Ported from ecosystem: platform/brain/router/rules/teressa_booksdesk_router.yaml
+version: v1
+rule_id: teressa_booksdesk_router
+agent: teressa_booksdesk
+match:
+  domain: finance.books
+  intents:
+    - categorize
+    - reconcile
+    - close_packet
+    - bookkeeping_exceptions
+route:
+  agent: teressa
+  skillpack: teressa-books
+outputs:
+  - finance_canon.book_event
+  - finance_exception
+  - books_update_proposal
+model_overrides:
+  # Teressa uses primary_reasoner for categorization (needs accuracy)
+  classify.low: fast_general
+  classify.medium: primary_reasoner
+  draft.medium: primary_reasoner
+  verify.medium: primary_reasoner
+notes:
+  - Transaction categorization requires high accuracy to avoid misclassification.
+  - QBO sync is YELLOW tier.

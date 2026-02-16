@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research.evidence.captured",
+  "description": "An evidence item was captured and stored for traceable claims.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "research.evidence.captured" },
+        "evidence_id": { "type": "string" },
+        "url": { "type": "string" },
+        "evidence_hash": { "type": "string" },
+        "source_type": { "type": "string" }
+      },
+      "required": ["receipt_type", "evidence_id", "url", "evidence_hash"]
+    }
+  ]
+}

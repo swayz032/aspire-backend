@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aspireos.app/schemas/receipts/model_route_selected.v1.json",
+  "title": "Model Route Selected Receipt",
+  "description": "Receipt emitted when the LLM Router selects a model profile for a processing step. Law #2: every routing decision produces a receipt.",
+  "type": "object",
+  "required": [
+    "receipt_version",
+    "receipt_id",
+    "ts",
+    "event_type",
+    "suite_id",
+    "correlation_id",
+    "actor",
+    "status",
+    "data"
+  ],
+  "properties": {
+    "receipt_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "receipt_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this receipt"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the routing decision"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "model.route.selected"
+    },
+    "suite_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Tenant suite identifier (Law #6)"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Trace correlation ID for end-to-end request tracking"
+    },
+    "actor": {
+      "type": "string",
+      "description": "Service that made the routing decision",
+      "examples": ["service:llm_router"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "fallback", "failed"],
+      "description": "Routing outcome status"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "selected_profile",
+        "concrete_model",
+        "step_type",
+        "risk_tier",
+        "fallback_used"
+      ],
+      "properties": {
+        "selected_profile": {
+          "type": "string",
+          "enum": ["cheap_classifier", "fast_general", "primary_reasoner", "high_risk_guard"],
+          "description": "The model profile selected by the router"
+        },
+        "concrete_model": {
+          "type": "string",
+          "description": "The actual model ID (e.g., gpt-5-mini, gpt-5, gpt-5.2)"
+        },
+        "step_type": {
+          "type": "string",
+          "enum": ["classify", "extract", "summarize", "draft", "plan", "verify", "policy_check"],
+          "description": "The processing step type that was routed"
+        },
+        "risk_tier": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "The risk tier used for routing"
+        },
+        "fallback_used": {
+          "type": "boolean",
+          "description": "Whether the fallback chain was used"
+        },
+        "fallback_reason": {
+          "type": ["string", "null"],
+          "description": "Reason for fallback, if applicable"
+        },
+        "latency_ms": {
+          "type": ["number", "null"],
+          "description": "Routing decision latency in milliseconds"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["allow", "deny"]
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "redactions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Fields that were redacted (none expected for routing decisions)"
+    }
+  },
+  "additionalProperties": false
+}

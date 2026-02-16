@@ -6,6 +6,8 @@ Responsibilities:
 3. Validate capability token before execution
 4. Handle execution failures with receipts
 5. Set outcome (success/failed/timeout)
+6. Enforce idempotency on state-changing operations (Phase 3 W5)
+7. Route RED-tier ops through outbox for durable execution (Phase 3 W5)
 
 Wave 7: Tool executor registry integration.
   - Domain Rail tools (domain.*, polaris.account.*) registered as live executors
@@ -13,6 +15,13 @@ Wave 7: Tool executor registry integration.
   - LangGraph nodes are sync; live Domain Rail calls use the async tool
     executor service directly (via POST /v1/tools/execute or A2A dispatch)
   - The execute node produces receipts for all outcomes
+
+Phase 3 Wave 5: Idempotency + Outbox integration.
+  - YELLOW ops: Synchronous execution (existing path) + idempotency check
+  - RED ops: Submit to outbox → durable processing → receipt on completion
+  - Law #2: Every idempotency check and outbox submission produces receipts
+  - Law #3: Duplicate idempotency key → fail-closed (reject re-execution)
+  - Law #4: Only RED-tier operations go through outbox
 """
 
 from __future__ import annotations
@@ -27,6 +36,8 @@ from aspire_orchestrator.models import (
     Outcome,
     ReceiptType,
 )
+from aspire_orchestrator.services.idempotency_service import get_idempotency_service
+from aspire_orchestrator.services.outbox_client import OutboxJob, get_outbox_client
 from aspire_orchestrator.services.token_service import validate_token
 from aspire_orchestrator.services.tool_executor import is_live_tool
 from aspire_orchestrator.state import OrchestratorState
@@ -142,14 +153,148 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             f"Token validation failed: {validation.error_message}",
         )
 
+    # -------------------------------------------------------------------
+    # Idempotency enforcement (Law #3 — fail-closed on duplicates)
+    # State-changing operations (YELLOW/RED) get idempotency checks.
+    # GREEN read-only ops skip idempotency (no side effects).
+    # -------------------------------------------------------------------
+    idempotency_key = state.get("idempotency_key")
+    is_state_changing = risk_tier_str in ("yellow", "red")
+
+    if is_state_changing and idempotency_key:
+        idem_svc = get_idempotency_service()
+        idem_result = idem_svc.check_and_reserve(
+            suite_id=suite_id,
+            idempotency_key=idempotency_key,
+            action_type=task_type,
+        )
+
+        if not idem_result.should_execute:
+            logger.warning(
+                "Idempotency key already used: key=%s suite=%s action=%s original_receipt=%s",
+                idempotency_key[:8], suite_id[:8] if len(suite_id) > 8 else suite_id,
+                task_type, idem_result.original_receipt_id,
+            )
+            # Build idempotency-rejection receipt (Law #2)
+            idem_receipt = {
+                "id": str(uuid.uuid4()),
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "office_id": office_id,
+                "actor_type": "system",
+                "actor_id": "executor",
+                "action_type": f"execute.{task_type}",
+                "risk_tier": risk_tier_str,
+                "tool_used": allowed_tools[0] if allowed_tools else "unknown",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "outcome": Outcome.DENIED.value,
+                "reason_code": "IDEMPOTENCY_DUPLICATE",
+                "receipt_type": ReceiptType.TOOL_EXECUTION.value,
+                "receipt_hash": "",
+                "idempotency_key": idempotency_key,
+                "original_receipt_id": idem_result.original_receipt_id,
+            }
+            existing = list(state.get("pipeline_receipts", []))
+            existing.append(idem_receipt)
+            return {
+                "outcome": Outcome.DENIED,
+                "execution_result": None,
+                "error_code": "IDEMPOTENCY_DUPLICATE",
+                "error_message": "Operation already executed with this idempotency key",
+                "tool_used": allowed_tools[0] if allowed_tools else "unknown",
+                "pipeline_receipts": existing,
+                "original_receipt_id": idem_result.original_receipt_id,
+            }
+
     # Resolve tool to execute (tool_used already set during scope derivation)
     live = is_live_tool(tool_used)
 
     logger.info(
-        "Executing tool: %s (live=%s) for task=%s, suite=%s",
-        tool_used, live, task_type,
+        "Executing tool: %s (live=%s, tier=%s) for task=%s, suite=%s",
+        tool_used, live, risk_tier_str, task_type,
         suite_id[:8] if len(suite_id) > 8 else suite_id,
     )
+
+    # -------------------------------------------------------------------
+    # RED-tier operations → Outbox for durable execution (Law #4)
+    # RED ops are too risky for synchronous execution: if the orchestrator
+    # crashes mid-execution, the outbox ensures retry/completion.
+    # -------------------------------------------------------------------
+    if risk_tier_str == "red":
+        outbox = get_outbox_client()
+        job = OutboxJob(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type=task_type,
+            risk_tier="red",
+            payload={
+                "tool_used": tool_used,
+                "capability_token_id": capability_token_id,
+                "live": live,
+            },
+            idempotency_key=idempotency_key,
+            capability_token_id=capability_token_id,
+        )
+
+        # Outbox submission receipt (Law #2)
+        outbox_receipt = {
+            "id": str(uuid.uuid4()),
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "actor_type": "system",
+            "actor_id": "executor",
+            "action_type": f"execute.{task_type}",
+            "risk_tier": "red",
+            "tool_used": tool_used,
+            "capability_token_id": capability_token_id,
+            "capability_token_hash": state.get("capability_token_hash"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": Outcome.SUCCESS.value,
+            "reason_code": "OUTBOX_SUBMITTED",
+            "receipt_type": ReceiptType.TOOL_EXECUTION.value,
+            "receipt_hash": "",
+            "outbox_job_id": job.job_id,
+            "idempotency_key": idempotency_key,
+        }
+
+        existing_receipts = list(state.get("pipeline_receipts", []))
+        existing_receipts.append(outbox_receipt)
+
+        # Mark idempotency as completed with the outbox receipt
+        if is_state_changing and idempotency_key:
+            idem_svc = get_idempotency_service()
+            idem_svc.mark_completed(
+                suite_id=suite_id,
+                idempotency_key=idempotency_key,
+                receipt_id=outbox_receipt["id"],
+            )
+
+        logger.info(
+            "RED-tier op routed to outbox: job_id=%s action=%s suite=%s",
+            job.job_id[:8], task_type,
+            suite_id[:8] if len(suite_id) > 8 else suite_id,
+        )
+
+        return {
+            "outcome": Outcome.SUCCESS,
+            "execution_result": {
+                "status": "outbox_submitted",
+                "tool": tool_used,
+                "task_type": task_type,
+                "outbox_job_id": job.job_id,
+                "submitted_at": datetime.now(timezone.utc).isoformat(),
+                "stub": not live,
+                "live": live,
+            },
+            "tool_used": tool_used,
+            "pipeline_receipts": existing_receipts,
+        }
+
+    # -------------------------------------------------------------------
+    # GREEN/YELLOW ops → Synchronous execution (existing path)
+    # -------------------------------------------------------------------
 
     # Build execution result
     execution_result = {
@@ -161,9 +306,11 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
         "live": live,
     }
 
+    receipt_id = str(uuid.uuid4())
+
     # Tool execution receipt
     receipt = {
-        "id": str(uuid.uuid4()),
+        "id": receipt_id,
         "correlation_id": correlation_id,
         "suite_id": suite_id,
         "office_id": office_id,
@@ -183,6 +330,15 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
     }
     existing_receipts = list(state.get("pipeline_receipts", []))
     existing_receipts.append(receipt)
+
+    # Mark idempotency as completed for YELLOW ops
+    if is_state_changing and idempotency_key:
+        idem_svc = get_idempotency_service()
+        idem_svc.mark_completed(
+            suite_id=suite_id,
+            idempotency_key=idempotency_key,
+            receipt_id=receipt_id,
+        )
 
     return {
         "outcome": Outcome.SUCCESS,

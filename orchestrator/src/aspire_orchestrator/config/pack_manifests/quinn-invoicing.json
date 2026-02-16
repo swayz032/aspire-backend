@@ -1,0 +1,34 @@
+{
+  "skillpack_id": "quinn-invoicing",
+  "name": "Quinn Invoicing",
+  "agent_name": "Quinn",
+  "channel": "internal_frontend",
+  "version": "3.0.0",
+  "description": "Invoice creation, quotes, payment tracking via Stripe Connect. YELLOW tier.",
+  "capabilities": [
+    "can_create_invoices",
+    "can_send_invoices",
+    "can_void_invoices",
+    "can_create_quotes",
+    "can_track_payments"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "yellow",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "stripe.invoice.create",
+    "stripe.invoice.send",
+    "stripe.invoice.void",
+    "stripe.quote.create",
+    "stripe.quote.send"
+  ],
+  "providers": ["stripe"],
+  "actions": [
+    "invoice.create", "invoice.send", "invoice.void",
+    "quote.create", "quote.send"
+  ],
+  "certification_status": "uncertified",
+  "outputs": ["invoice", "quote", "payment_status"],
+  "dependencies": []
+}

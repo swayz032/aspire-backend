@@ -1,0 +1,23 @@
+# Quinn Invoicing Desk routing rules
+version: v1
+rule_id: quinn_invoicing_router
+agent: quinn
+match:
+  domain: invoicing
+  intents:
+    - invoice_create
+    - invoice_send
+    - invoice_void
+    - quote_create
+    - quote_send
+route:
+  agent: quinn
+  skillpack: quinn-invoicing
+model_overrides:
+  # Quinn uses primary_reasoner for complex invoices (line item extraction)
+  classify.medium: fast_general
+  extract.medium: primary_reasoner
+  draft.medium: primary_reasoner
+notes:
+  - Invoice creation is YELLOW (financial + external communication)
+  - Uses Stripe Connect for invoice management

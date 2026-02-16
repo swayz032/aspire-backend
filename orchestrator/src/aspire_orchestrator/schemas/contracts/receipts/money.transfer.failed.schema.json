@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "money.transfer.failed"
+        },
+        "authority_item_id": {
+          "type": "string"
+        },
+        "outbox_job_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "error_code": {
+          "type": "string"
+        },
+        "error_message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "receipt_type",
+        "authority_item_id",
+        "outbox_job_id",
+        "provider",
+        "error_code"
+      ]
+    }
+  ]
+}

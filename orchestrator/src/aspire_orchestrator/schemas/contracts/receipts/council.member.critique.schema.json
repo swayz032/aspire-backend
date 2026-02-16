@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "council.member.critique",
+  "description": "Council member critique of other proposals (advisory-only).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "council.member.critique"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "council_session_id": {
+          "type": "string"
+        },
+        "member": {
+          "type": "object",
+          "required": [
+            "provider",
+            "model",
+            "role"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "openai",
+                "google",
+                "anthropic"
+              ]
+            },
+            "model": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          }
+        },
+        "critiques": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "target_provider",
+              "target_model",
+              "findings",
+              "confidence"
+            ],
+            "properties": {
+              "target_provider": {
+                "type": "string"
+              },
+              "target_model": {
+                "type": "string"
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "missing_evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "council_session_id",
+        "member",
+        "critiques"
+      ]
+    }
+  ]
+}

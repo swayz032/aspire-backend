@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qa.critic.ran",
+  "description": "A critic pass was executed as part of the QA loop.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "qa.critic.ran" },
+        "critic_kind": { "type": "string", "enum": ["quality", "policy", "safety", "tool_plan"] },
+        "rubric_id": { "type": "string" },
+        "passed": { "type": "boolean" },
+        "score_overall": { "type": ["number", "null"] },
+        "issues_count": { "type": "integer" },
+        "artifact_ref": { "type": ["string", "null"], "description": "Optional pointer to artifact or proposal being reviewed." },
+        "model": { "type": "string" }
+      },
+      "required": ["receipt_type", "critic_kind", "rubric_id", "passed", "issues_count", "model"]
+    }
+  ]
+}

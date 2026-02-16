@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "research.vendor_outreach.proposed",
+  "description": "A VendorOutreachPacket was produced and proposed for Eli/email workflow.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "research.vendor_outreach.proposed" },
+        "packet_id": { "type": "string" },
+        "packet_hash": { "type": "string" },
+        "intent": { "type": "string" },
+        "recipient_count": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["receipt_type", "packet_id", "packet_hash", "intent", "recipient_count"]
+    }
+  ]
+}

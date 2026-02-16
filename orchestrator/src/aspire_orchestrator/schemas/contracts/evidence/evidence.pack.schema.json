@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "evidence.pack",
+  "description": "Read-only evidence bundle used for council and learning pipelines.",
+  "type": "object",
+  "required": [
+    "evidence_pack_id",
+    "hash",
+    "suite_id",
+    "office_id",
+    "trace_id",
+    "items",
+    "created_at"
+  ],
+  "properties": {
+    "evidence_pack_id": {
+      "type": "string"
+    },
+    "hash": {
+      "type": "string"
+    },
+    "suite_id": {
+      "type": "string"
+    },
+    "office_id": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "receipt",
+              "log",
+              "robot_run",
+              "internal_doc",
+              "external_source",
+              "diff",
+              "deploy"
+            ]
+          },
+          "ref": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "redaction_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pii_removed",
+              "minimal"
+            ],
+            "default": "minimal"
+          }
+        }
+      }
+    },
+    "policy_context": {
+      "type": "object",
+      "properties": {
+        "allowed_sources_registry_ref": {
+          "type": "string"
+        },
+        "data_minimization_policy_ref": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

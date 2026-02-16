@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "learning.incident_summary",
+  "type": "object",
+  "required": [
+    "id",
+    "suite_id",
+    "office_id",
+    "trace_id",
+    "incident_receipt_id",
+    "summary",
+    "root_cause",
+    "fix_summary",
+    "prevention",
+    "tags",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "suite_id": {
+      "type": "string"
+    },
+    "office_id": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "incident_receipt_id": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "root_cause": {
+      "type": "string"
+    },
+    "fix_summary": {
+      "type": "string"
+    },
+    "prevention": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "eval.run.completed",
+  "description": "An evaluation run completed for a learning change proposal.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "eval.run.completed"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "eval_suite": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "eval_suite",
+        "status",
+        "score",
+        "artifacts"
+      ]
+    }
+  ]
+}

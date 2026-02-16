@@ -1,0 +1,35 @@
+# Eli Inbox — Risk Policy
+# Read/triage GREEN; draft/send YELLOW
+
+pack_id: eli-inbox
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  email.read:
+    risk_tier: green
+    approval_required: false
+    description: "Read and list emails"
+
+  email.triage:
+    risk_tier: green
+    approval_required: false
+    description: "Classify email by urgency and category"
+
+  email.draft.create:
+    risk_tier: yellow
+    approval_required: true
+    description: "Draft email response"
+
+  email.send:
+    risk_tier: yellow
+    approval_required: true
+    description: "Send email via PolarisM"
+
+dlp_redaction:
+  enabled: true
+  redact_in_receipts: true
+  patterns:
+    - SSN
+    - credit_card
+    - phone_number

@@ -1,0 +1,20 @@
+# Adam Research — Sources Policy
+# Requirements for source attribution and evidence quality
+
+pack_id: adam-research
+
+source_requirements:
+  min_sources_per_comparison: 2
+  max_sources_per_search: 10
+  require_url_attribution: true
+  require_freshness_check: true
+
+freshness_thresholds:
+  business_info_max_age_days: 90
+  pricing_max_age_days: 30
+  reviews_max_age_days: 180
+
+evidence_quality:
+  require_snippet: true
+  require_relevance_score: true
+  min_relevance_score: 0.1

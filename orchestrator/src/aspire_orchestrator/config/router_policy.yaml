@@ -1,0 +1,89 @@
+# Aspire LLM Router Policy — 3-tier model routing rules
+# Ported from ecosystem: platform/brain/router/router_policy.yaml
+#
+# Maps (step_type, risk_tier) -> model profile
+# Risk tiers: LOW (GREEN), MEDIUM (YELLOW), HIGH (RED)
+# Step types: classify, extract, summarize, draft, plan, verify, policy_check
+#
+# Profiles:
+#   CHEAP_CLASSIFIER — GPT-5-mini: fast, cheap, good for classification
+#   FAST_GENERAL — GPT-5: general purpose, balanced speed/quality
+#   PRIMARY_REASONER — GPT-5.2: complex reasoning, high quality
+#   HIGH_RISK_GUARD — GPT-5.2: financial/legal/high-risk decisions
+
+version: "1.0"
+updated_at: "2026-02-14"
+
+rules:
+  # Classification + extraction + summarization at low risk -> cheapest model
+  - when:
+      step_type: [classify, extract, summarize]
+      risk_tier: [low]
+    use: cheap_classifier
+
+  # Classification at medium risk -> fast general (more careful)
+  - when:
+      step_type: [classify, extract]
+      risk_tier: [medium]
+    use: fast_general
+
+  # Classification at high risk -> primary reasoner (most careful for RED)
+  - when:
+      step_type: [classify, extract]
+      risk_tier: [high]
+    use: primary_reasoner
+
+  # Drafting at low/medium risk -> primary reasoner (quality matters)
+  - when:
+      step_type: [draft]
+      risk_tier: [low, medium]
+    use: primary_reasoner
+
+  # Drafting at high risk -> high risk guard
+  - when:
+      step_type: [draft]
+      risk_tier: [high]
+    use: high_risk_guard
+
+  # Summarization at medium risk -> fast general
+  - when:
+      step_type: [summarize]
+      risk_tier: [medium]
+    use: fast_general
+
+  # Summarization at high risk -> primary reasoner
+  - when:
+      step_type: [summarize]
+      risk_tier: [high]
+    use: primary_reasoner
+
+  # Verification at low risk -> primary reasoner (QA critics need quality)
+  - when:
+      step_type: [verify]
+      risk_tier: [low]
+    use: primary_reasoner
+
+  # Planning + verification at medium/high risk -> high risk guard
+  - when:
+      step_type: [plan, verify]
+      risk_tier: [medium, high]
+    use: high_risk_guard
+
+  # Planning at low risk -> fast general
+  - when:
+      step_type: [plan]
+      risk_tier: [low]
+    use: fast_general
+
+  # Policy check always uses high risk guard (safety critical)
+  - when:
+      step_type: [policy_check]
+      risk_tier: [low, medium, high]
+    use: high_risk_guard
+
+# Fallback chain: if no rule matches, try these profiles in order
+# Most conservative first (HIGH_RISK_GUARD), then degrade
+fallback_chain:
+  - high_risk_guard
+  - primary_reasoner
+  - fast_general

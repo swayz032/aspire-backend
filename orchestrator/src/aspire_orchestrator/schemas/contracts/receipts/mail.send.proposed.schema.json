@@ -1,0 +1,9 @@
+{
+  "type": "mail.send.proposed",
+  "required": [
+    "suite_id",
+    "office_id",
+    "timestamp",
+    "draft_id"
+  ]
+}

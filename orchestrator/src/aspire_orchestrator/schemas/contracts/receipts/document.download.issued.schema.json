@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "document.download.issued",
+  "description": "A signed download link was issued for an approved document.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "document.download.issued" },
+        "doc_id": { "type": "string" },
+        "authority_item_id": { "type": "string" },
+        "pdf_ref": { "type": "string" },
+        "download_url_ttl_seconds": { "type": "integer", "minimum": 60 },
+        "download_url_hash": { "type": "string", "description": "Hash of the signed URL (do not store raw URL in receipts)." }
+      },
+      "required": ["receipt_type", "doc_id", "authority_item_id", "pdf_ref", "download_url_ttl_seconds", "download_url_hash"]
+    }
+  ]
+}

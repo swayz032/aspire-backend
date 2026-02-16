@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "event_type",
+    "trace_id",
+    "run_id",
+    "span_id",
+    "suite_id",
+    "step_type",
+    "risk_tier",
+    "model_tier",
+    "selected_model",
+    "created_at"
+  ],
+  "properties": {
+    "event_type": {
+      "const": "model.route.selected"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "span_id": {
+      "type": "string"
+    },
+    "parent_span_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "suite_id": {
+      "type": "string"
+    },
+    "step_type": {
+      "type": "string",
+      "enum": [
+        "classify",
+        "extract",
+        "summarize",
+        "draft",
+        "plan",
+        "verify"
+      ]
+    },
+    "risk_tier": {
+      "type": "string",
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH"
+      ]
+    },
+    "model_tier": {
+      "type": "string",
+      "enum": [
+        "FAST_GENERAL",
+        "PRIMARY_REASONER",
+        "HIGH_RISK_GUARD"
+      ]
+    },
+    "selected_model": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
