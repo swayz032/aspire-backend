@@ -7,20 +7,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency spec first for layer caching
+# Copy dependency spec and source code
 COPY pyproject.toml ./
+COPY src/ ./src/
 
-# Install Python deps
+# Install Python deps + package
 RUN pip install --no-cache-dir .
 
 # Download spaCy model for Presidio DLP (Law #9)
 RUN python -m spacy download en_core_web_lg || true
-
-# Copy source code (includes config/, schemas/, skillpacks/, etc.)
-COPY src/ ./src/
-
-# Install the package in editable mode so config files are found
-RUN pip install --no-cache-dir -e .
 
 # Expose port
 EXPOSE 8000
