@@ -1,0 +1,43 @@
+{
+  "version": "tool_policy_v2_2026-02-12",
+  "rules": {
+    "deny_by_default": true,
+    "wildcard_suffix": ".*"
+  },
+  "roles": {
+    "owner": {
+      "allowed_tools": [
+        "openai_sdk",
+        "supabase",
+        "http",
+        "policy.evaluate",
+        "trustspine.*",
+        "doc.*",
+        "storage.*"
+      ]
+    },
+    "admin": {
+      "allowed_tools": [
+        "openai_sdk",
+        "supabase",
+        "policy.evaluate",
+        "trustspine.*",
+        "doc.*",
+        "storage.*"
+      ]
+    },
+    "staff": {
+      "allowed_tools": [
+        "openai_sdk",
+        "policy.evaluate",
+        "trustspine.create_proposal",
+        "trustspine.request_approval",
+        "trustspine.emit_receipt",
+        "doc.render_preview"
+      ]
+    },
+    "unknown": {
+      "allowed_tools": ["openai_sdk"]
+    }
+  }
+}

@@ -1,0 +1,311 @@
+[
+  {
+    "scenario": "HVAC Proposal (16 tokens -- hardest)",
+    "template_key": "trades_hvac_proposal",
+    "outcome": "success",
+    "document_id": "tutBfPBtXwi95XCLRHYwwb",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $45,000.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 11.4,
+    "narration": "Antonio: I queued an HVAC proposal for GreenBuild Properties. 16/16 fields filled -- 98% confidence. Pricing table populated (1 line item, total $45,000.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Construction Proposal (12 tokens -- full client address)",
+    "template_key": "trades_construction_proposal",
+    "outcome": "success",
+    "document_id": "bniBDtLDWS2Jk75gs57RN3",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $150,000.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 8.4,
+    "narration": "Antonio: I queued a construction proposal for Lakeview HOA. 12/12 fields filled -- 98% confidence. Pricing table populated (1 line item, total $150,000.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Painting Proposal (8 tokens -- mixed Sender/Client)",
+    "template_key": "trades_painting_proposal",
+    "outcome": "success",
+    "document_id": "eRaPPDnaw7zYM7Cpv47nLH",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $12,500.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 9.0,
+    "narration": "Antonio: I queued a painting proposal for David Robinson. 8/8 fields filled -- 98% confidence. Pricing table populated (1 line item, total $12,500.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Roofing Proposal (6 tokens -- baseline)",
+    "template_key": "trades_roofing_proposal",
+    "outcome": "success",
+    "document_id": "UszzPqf9LTwje78UhBFTFM",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $18,500.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 8.5,
+    "narration": "Antonio: I queued a roofing proposal for Martinez Family Trust. 6/6 fields filled -- 98% confidence. Pricing table populated (1 line item, total $18,500.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Architecture Proposal (project timeline)",
+    "template_key": "trades_architecture_proposal",
+    "outcome": "success",
+    "document_id": "LysUDALkajmNNga2pUuVUg",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $250,000.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 7.4,
+    "narration": "Antonio: I queued an architecture proposal for Westside Foundation. 6/6 fields filled -- 98% confidence. Pricing table populated (1 line item, total $250,000.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Residential Construction (budget + scope)",
+    "template_key": "trades_residential_construction",
+    "outcome": "success",
+    "document_id": "e9f6R4GpXADJnsLTRHQdHK",
+    "fill_rate": 83.3,
+    "confidence": 80,
+    "grade": "B",
+    "missing_tokens": [
+      "Client.Company"
+    ],
+    "specialist_notes": [
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $85,000.00)"
+    ],
+    "proactive_warnings": [
+      "1 important field(s) missing (Client.Company) -- review in PandaDoc before sending"
+    ],
+    "needs_info": false,
+    "needs_additional": true,
+    "questions": [
+      "I also need the other party's: the other party's company name."
+    ],
+    "elapsed_s": 9.4,
+    "narration": "Antonio: I queued a residential construction proposal for Maria Garcia. It's in your Authority Queue -- open it to review the actual document and verify the terms are accurate, then approve or deny. I've listed all the details in the chat -- please review them there to make sure everything is spelled correctly before you approve.",
+    "error": null
+  },
+  {
+    "scenario": "Residential Contract (RED -- binding)",
+    "template_key": "trades_residential_contract",
+    "outcome": "success",
+    "document_id": "kMkrkskXJwtEenf3K7BbsR",
+    "fill_rate": 91.7,
+    "confidence": 92,
+    "grade": "A",
+    "missing_tokens": [
+      "Owner.Company"
+    ],
+    "specialist_notes": [
+      "Custom role tokens (Contractor.Company, Contractor.Email, Contractor.FirstName, Contractor.LastName, Contractor.Phone, Contractor.StreetAddress) resolved via AI",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $175,000.00)"
+    ],
+    "proactive_warnings": [
+      "1 important field(s) missing (Owner.Company) -- review in PandaDoc before sending"
+    ],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 8.1,
+    "narration": "Antonio: I queued a residential construction contract for John Thompson. 11/12 fields filled -- 92% confidence. Pricing table populated (1 line item, total $175,000.00). 1 important field(s) missing (Owner.Company) -- review in PandaDoc before sending It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Scope of Work (milestones + pricing)",
+    "template_key": "trades_sow",
+    "outcome": "success",
+    "document_id": "DvaCBxwcTDbpYbYwg9aDmB",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "Custom role tokens (Contractor.Company, Contractor.FirstName, Contractor.LastName, Contractor.Title) resolved via AI",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $45,000.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 8.4,
+    "narration": "Antonio: I queued a statement of work for TechNova Inc. 12/12 fields filled -- 98% confidence. Pricing table populated (1 line item, total $45,000.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Engagement Letter (7 tokens + Document.Value)",
+    "template_key": "acct_engagement_letter",
+    "outcome": "success",
+    "document_id": "4ZMiqj5eRNFFku84HPgwrZ",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "Document pricing set to $2,500/month",
+      "1 interactive field(s) auto-prefilled",
+      "Pricing table populated (1 line item, total $2,500.00)"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 9.1,
+    "narration": "Antonio: I queued an engagement letter for TechNova Inc. 7/7 fields filled -- 98% confidence. Pricing table populated (1 line item, total $2,500.00). It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Tax Filing (RED -- 1040/1099)",
+    "template_key": "acct_tax_filing",
+    "outcome": "success",
+    "document_id": "fTiKGEWAWhkdwtBHvawHjJ",
+    "fill_rate": 0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "0/0 merge fields populated"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 1.9,
+    "narration": "Antonio: I queued a tax filing form for Robert Chen. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Commercial Sublease (Sublessee/Sublessor roles)",
+    "template_key": "landlord_commercial_sublease",
+    "outcome": "success",
+    "document_id": "sSGHPLSXAjYQhf7pcsMuvK",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "Custom role tokens (Sublessee.Company, Sublessee.FirstName, Sublessee.LastName, Sublessor.Company, Sublessor.FirstName, Sublessor.LastName, Sublessor.State) resolved via AI",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 2.2,
+    "narration": "Antonio: I queued a commercial sublease for BlueWave Marketing. 7/7 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Mutual NDA (two-way confidentiality)",
+    "template_key": "general_mutual_nda",
+    "outcome": "success",
+    "document_id": "8mcukkbW33PfaGE4pLn7q4",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 2.5,
+    "narration": "Antonio: I queued a mutual NDA for Apex Dynamics. 11/11 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "One-Way NDA (disclosing party)",
+    "template_key": "general_one_way_nda",
+    "outcome": "success",
+    "document_id": "jaWwswRGLk7RHnKyBk9Ngm",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 3.1,
+    "narration": "Antonio: I queued a one-way NDA for Pinnacle Consulting. 8/8 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "W-9 Form (taxpayer identification)",
+    "template_key": "general_w9",
+    "outcome": "success",
+    "document_id": "BPT7VvVFWdJhq9yMJbkYCB",
+    "fill_rate": 0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "0/0 merge fields populated"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 1.9,
+    "narration": "Antonio: I queued a W-9 form for Summit Electric LLC. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  }
+]

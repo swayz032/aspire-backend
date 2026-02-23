@@ -99,7 +99,7 @@ class TestGreenTierEvaluation:
     def test_green_has_tools(self, matrix: PolicyMatrix) -> None:
         result = matrix.evaluate("calendar.read")
         assert len(result.tools) > 0
-        assert "google.calendar.read" in result.tools
+        assert "calendar.event.list" in result.tools
 
     def test_green_has_capability_scope(self, matrix: PolicyMatrix) -> None:
         result = matrix.evaluate("calendar.read")
@@ -117,11 +117,12 @@ class TestGreenTierEvaluation:
 
 
 class TestYellowTierEvaluation:
-    def test_invoice_create_is_yellow(self, matrix: PolicyMatrix) -> None:
+    def test_invoice_create_is_green(self, matrix: PolicyMatrix) -> None:
+        """invoice.create is GREEN (draft creation, no money moves)."""
         result = matrix.evaluate("invoice.create")
         assert result.allowed is True
-        assert result.risk_tier == RiskTier.YELLOW
-        assert result.approval_required is True
+        assert result.risk_tier == RiskTier.GREEN
+        assert result.approval_required is False
         assert result.presence_required is False
 
     def test_email_send_is_yellow(self, matrix: PolicyMatrix) -> None:

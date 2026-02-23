@@ -53,6 +53,8 @@ class PolicyAction:
     category: str
     approval_type: str  # none | explicit | spend | legal
     approval_binding_fields: list[str]
+    dual_approval: bool
+    required_approvers: list[str]
     params_required: list[str]
     params_constraints: dict[str, Any]
     redact_fields: list[str]
@@ -68,6 +70,7 @@ class PolicyEvalResult:
     capability_scope: str
     approval_required: bool
     presence_required: bool
+    dual_approval: bool
     redact_fields: list[str]
     deny_reason: str | None = None
     action_config: PolicyAction | None = None
@@ -120,6 +123,7 @@ class PolicyMatrix:
                 capability_scope="",
                 approval_required=False,
                 presence_required=False,
+                dual_approval=False,
                 redact_fields=[],
                 deny_reason=f"Unknown action type: {action_type}",
             )
@@ -148,6 +152,7 @@ class PolicyMatrix:
             capability_scope=action.capability_scope,
             approval_required=approval_required,
             presence_required=presence_required,
+            dual_approval=action.dual_approval,
             redact_fields=action.redact_fields,
             action_config=action,
         )
@@ -219,6 +224,8 @@ def load_policy_matrix(path: Path | str | None = None) -> PolicyMatrix:
             category=action_def.get("category", "unknown"),
             approval_type=approval_def.get("type", "none"),
             approval_binding_fields=approval_def.get("binding_fields", []),
+            dual_approval=bool(approval_def.get("dual_approval", False)),
+            required_approvers=approval_def.get("required_approvers", []),
             params_required=params_def.get("required", []),
             params_constraints=params_def.get("constraints", {}),
             redact_fields=action_def.get("redact_fields", []),

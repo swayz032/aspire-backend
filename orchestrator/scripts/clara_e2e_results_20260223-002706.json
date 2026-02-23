@@ -1,0 +1,342 @@
+[
+  {
+    "scenario": "HVAC Proposal (16 tokens -- hardest)",
+    "template_key": "trades_hvac_proposal",
+    "outcome": "success",
+    "document_id": "Pd526p2u7qod7sAMvYCgDB",
+    "fill_rate": 75.0,
+    "confidence": 80,
+    "grade": "B",
+    "missing_tokens": [
+      "Client.StreetAddress",
+      "Sender.PostalCode",
+      "Sender.StreetAddress",
+      "Sender.Website"
+    ],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [
+      "2 important field(s) missing (Client.StreetAddress, Sender.StreetAddress) -- review in PandaDoc before sending"
+    ],
+    "needs_info": false,
+    "needs_additional": true,
+    "questions": [
+      "I need sender streetaddress. Should I use your business profile info, or would you like to provide different details?",
+      "I also need the other party's: client streetaddress.",
+      "What value should go in the 'Sender.PostalCode' field?",
+      "What value should go in the 'Sender.Website' field?"
+    ],
+    "elapsed_s": 3.7,
+    "narration": "Antonio: I queued an HVAC proposal for GreenBuild Properties. It's in your Authority Queue -- open it to review the actual document and verify the terms are accurate, then approve or deny. I've listed all the details in the chat -- please review them there to make sure everything is spelled correctly before you approve.",
+    "error": null
+  },
+  {
+    "scenario": "Construction Proposal (12 tokens -- full client address)",
+    "template_key": "trades_construction_proposal",
+    "outcome": "success",
+    "document_id": "igx9aRk5QzGTdPR3DmLjb9",
+    "fill_rate": 83.3,
+    "confidence": 80,
+    "grade": "B",
+    "missing_tokens": [
+      "Client.PostalCode",
+      "Client.StreetAddress"
+    ],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [
+      "1 important field(s) missing (Client.StreetAddress) -- review in PandaDoc before sending"
+    ],
+    "needs_info": false,
+    "needs_additional": true,
+    "questions": [
+      "I also need the other party's: client streetaddress.",
+      "What value should go in the 'Client.PostalCode' field?"
+    ],
+    "elapsed_s": 2.2,
+    "narration": "Antonio: I queued a construction proposal for Lakeview HOA. It's in your Authority Queue -- open it to review the actual document and verify the terms are accurate, then approve or deny. I've listed all the details in the chat -- please review them there to make sure everything is spelled correctly before you approve.",
+    "error": null
+  },
+  {
+    "scenario": "Painting Proposal (8 tokens -- mixed Sender/Client)",
+    "template_key": "trades_painting_proposal",
+    "outcome": "success",
+    "document_id": "uLScHTAFnpdiDKbnecJmTn",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 2.8,
+    "narration": "Antonio: I queued a painting proposal for David Robinson. 8/8 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Roofing Proposal (6 tokens -- baseline)",
+    "template_key": "trades_roofing_proposal",
+    "outcome": "success",
+    "document_id": "8aCH3xdnGhQkX28fXz8CfV",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 2.1,
+    "narration": "Antonio: I queued a roofing proposal for Martinez Family Trust. 6/6 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Architecture Proposal (project timeline)",
+    "template_key": "trades_architecture_proposal",
+    "outcome": "success",
+    "document_id": "9Knvk8WWcdpaMcju7gnkQ3",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 2.3,
+    "narration": "Antonio: I queued an architecture proposal for Westside Foundation. 6/6 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Residential Construction (budget + scope)",
+    "template_key": "trades_residential_construction",
+    "outcome": "success",
+    "document_id": "ktSC9nviyAuPxKE6uHQtQS",
+    "fill_rate": 0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "0/0 merge fields populated"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 7.3,
+    "narration": "Antonio: I queued a residential construction proposal for Maria Garcia. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Residential Contract (RED -- binding)",
+    "template_key": "trades_residential_contract",
+    "outcome": "failed",
+    "document_id": "",
+    "fill_rate": 0,
+    "confidence": 0,
+    "grade": "?",
+    "missing_tokens": [],
+    "specialist_notes": [],
+    "proactive_warnings": [],
+    "needs_info": true,
+    "needs_additional": false,
+    "questions": [
+      "What value should go in the 'Contractor.Company' field?",
+      "What value should go in the 'Contractor.Email' field?",
+      "What value should go in the 'Contractor.FirstName' field?",
+      "What value should go in the 'Contractor.LastName' field?",
+      "What value should go in the 'Contractor.Phone' field?",
+      "What value should go in the 'Contractor.StreetAddress' field?",
+      "What value should go in the 'Owner.Company' field?",
+      "What value should go in the 'Owner.Email' field?",
+      "What value should go in the 'Owner.FirstName' field?",
+      "What value should go in the 'Owner.LastName' field?",
+      "What value should go in the 'Owner.Phone' field?",
+      "What value should go in the 'Owner.StreetAddress' field?"
+    ],
+    "elapsed_s": 5.4,
+    "narration": "Antonio: I found the right template for Residential Contract - Skytech Tower LLC / Thompson, but I need a few details before I can create it. What value should go in the 'Contractor.Company' field? What value should go in the 'Contractor.Email' field? What value should go in the 'Contractor.FirstName' field? After you tell me, please glance at the chat to make sure I captured the addresses and details correctly.",
+    "error": "needs_info"
+  },
+  {
+    "scenario": "Scope of Work (milestones + pricing)",
+    "template_key": "trades_sow",
+    "outcome": "failed",
+    "document_id": "",
+    "fill_rate": 0,
+    "confidence": 0,
+    "grade": "?",
+    "missing_tokens": [],
+    "specialist_notes": [],
+    "proactive_warnings": [],
+    "needs_info": true,
+    "needs_additional": false,
+    "questions": [
+      "What value should go in the 'Approver.FirstName' field?",
+      "What value should go in the 'Approver.LastName' field?",
+      "What value should go in the 'Approver.Title' field?",
+      "What value should go in the 'Contractor.Company' field?",
+      "What value should go in the 'Contractor.FirstName' field?",
+      "What value should go in the 'Contractor.LastName' field?",
+      "What value should go in the 'Contractor.Title' field?",
+      "What value should go in the 'Project.Name' field?"
+    ],
+    "elapsed_s": 5.3,
+    "narration": "Antonio: I found the right template for Scope of Work - Skytech Tower LLC / TechNova Inc, but I need a few details before I can create it. What value should go in the 'Approver.FirstName' field? What value should go in the 'Approver.LastName' field? What value should go in the 'Approver.Title' field?",
+    "error": "needs_info"
+  },
+  {
+    "scenario": "Engagement Letter (7 tokens + Document.Value)",
+    "template_key": "acct_engagement_letter",
+    "outcome": "success",
+    "document_id": "UFzGL3BMoHGvcKmkWdSLqk",
+    "fill_rate": 85.7,
+    "confidence": 80,
+    "grade": "B",
+    "missing_tokens": [
+      "Document.Value"
+    ],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [
+      "1 optional field(s) left blank (Document.Value) -- you can add them in PandaDoc"
+    ],
+    "needs_info": false,
+    "needs_additional": true,
+    "questions": [],
+    "elapsed_s": 3.3,
+    "narration": "Antonio: I queued an engagement letter for TechNova Inc. It's in your Authority Queue -- open it to review the actual document and verify the terms are accurate, then approve or deny. I've listed all the details in the chat -- please review them there to make sure everything is spelled correctly before you approve.",
+    "error": null
+  },
+  {
+    "scenario": "Tax Filing (RED -- 1040/1099)",
+    "template_key": "acct_tax_filing",
+    "outcome": "success",
+    "document_id": "iAg6Uc8gfmJdixdsNGqj7X",
+    "fill_rate": 0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "0/0 merge fields populated"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 2.1,
+    "narration": "Antonio: I queued a tax filing form for Robert Chen. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "Commercial Sublease (Sublessee/Sublessor roles)",
+    "template_key": "landlord_commercial_sublease",
+    "outcome": "failed",
+    "document_id": "",
+    "fill_rate": 0,
+    "confidence": 0,
+    "grade": "?",
+    "missing_tokens": [],
+    "specialist_notes": [],
+    "proactive_warnings": [],
+    "needs_info": true,
+    "needs_additional": false,
+    "questions": [
+      "What value should go in the 'Sublessee.Company' field?",
+      "What value should go in the 'Sublessee.FirstName' field?",
+      "What value should go in the 'Sublessee.LastName' field?",
+      "What value should go in the 'Sublessor.Company' field?",
+      "What value should go in the 'Sublessor.FirstName' field?",
+      "What value should go in the 'Sublessor.LastName' field?",
+      "What value should go in the 'Sublessor.State' field?"
+    ],
+    "elapsed_s": 6.7,
+    "narration": "Antonio: I found the right template for Commercial Sublease - Skytech Tower LLC / BlueWave Marketing, but I need a few details before I can create it. What value should go in the 'Sublessee.Company' field? What value should go in the 'Sublessee.FirstName' field? What value should go in the 'Sublessee.LastName' field? After you tell me, please glance at the chat to make sure I captured the addresses and details correctly.",
+    "error": "needs_info"
+  },
+  {
+    "scenario": "Mutual NDA (two-way confidentiality)",
+    "template_key": "general_mutual_nda",
+    "outcome": "success",
+    "document_id": "AEye7gfuFjjALfxx8HBETE",
+    "fill_rate": 100.0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "All party identification tokens filled correctly",
+      "1 interactive field(s) auto-prefilled"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 7.2,
+    "narration": "Antonio: I queued a mutual NDA for Apex Dynamics. 11/11 fields filled -- 98% confidence. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  },
+  {
+    "scenario": "One-Way NDA (disclosing party)",
+    "template_key": "general_one_way_nda",
+    "outcome": "failed",
+    "document_id": "",
+    "fill_rate": 0,
+    "confidence": 0,
+    "grade": "?",
+    "missing_tokens": [],
+    "specialist_notes": [],
+    "proactive_warnings": [],
+    "needs_info": true,
+    "needs_additional": false,
+    "questions": [
+      "What value should go in the 'Owner.Company' field?",
+      "What value should go in the 'Owner.FirstName' field?",
+      "What value should go in the 'Owner.LastName' field?",
+      "What value should go in the 'Owner.State' field?",
+      "What value should go in the 'Recipient.Company' field?",
+      "What value should go in the 'Recipient.FirstName' field?",
+      "What value should go in the 'Recipient.LastName' field?"
+    ],
+    "elapsed_s": 9.6,
+    "narration": "Antonio: I found the right template for One-Way NDA - Skytech Tower LLC / Pinnacle Consulting, but I need a few details before I can create it. What value should go in the 'Owner.Company' field? What value should go in the 'Owner.FirstName' field? What value should go in the 'Owner.LastName' field? After you tell me, please glance at the chat to make sure I captured the addresses and details correctly.",
+    "error": "needs_info"
+  },
+  {
+    "scenario": "W-9 Form (taxpayer identification)",
+    "template_key": "general_w9",
+    "outcome": "success",
+    "document_id": "5rQ7YpJnvjGG5moJjNoJLG",
+    "fill_rate": 0,
+    "confidence": 98,
+    "grade": "A",
+    "missing_tokens": [],
+    "specialist_notes": [
+      "0/0 merge fields populated"
+    ],
+    "proactive_warnings": [],
+    "needs_info": false,
+    "needs_additional": false,
+    "questions": [],
+    "elapsed_s": 1.6,
+    "narration": "Antonio: I queued a W-9 form for Summit Electric LLC. It's in your Authority Queue -- review and approve when ready.",
+    "error": null
+  }
+]

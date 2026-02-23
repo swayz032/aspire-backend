@@ -202,7 +202,7 @@ def _load_model_configs() -> dict[ModelProfile, ModelConfig]:
 
     # Ensure all profiles have defaults
     defaults = {
-        ModelProfile.CHEAP_CLASSIFIER: ModelConfig(model_id="gpt-5-mini"),
+        ModelProfile.CHEAP_CLASSIFIER: ModelConfig(model_id="gpt-5-mini", timeout_seconds=60),
         ModelProfile.FAST_GENERAL: ModelConfig(model_id="gpt-5"),
         ModelProfile.PRIMARY_REASONER: ModelConfig(model_id="gpt-5.2"),
         ModelProfile.HIGH_RISK_GUARD: ModelConfig(model_id="gpt-5.2"),

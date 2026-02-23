@@ -187,11 +187,11 @@ skill_packs:
     category: legal
     risk_tier: red
     status: registered
-    description: "Contract management, review, compliance tracking, e-signatures via PandaDoc"
-    actions: [contract.generate, contract.review, contract.sign, contract.compliance]
+    description: "Contract management, review, compliance tracking, e-signatures via PandaDoc. Template library browsing and field discovery."
+    actions: [contract.generate, contract.review, contract.sign, contract.send, contract.session, contract.compliance, templates.list, templates.details]
     providers: [pandadoc]
-    capability_scopes: [contracts:generate, contracts:review, contracts:sign, contracts:compliance]
-    tools: [pandadoc.contract.generate, pandadoc.contract.read, pandadoc.contract.sign]
+    capability_scopes: [contracts:generate, contracts:review, contracts:sign, contracts:send, contracts:session, contracts:compliance, templates:read]
+    tools: [pandadoc.templates.list, pandadoc.templates.details, pandadoc.contract.generate, pandadoc.contract.read, pandadoc.contract.sign, pandadoc.contract.send, pandadoc.contract.session]
     per_suite_enabled: true
 
 # ──────────────────────────────────────────────
@@ -341,6 +341,14 @@ tools:
     provider: moov
     category: payments
     risk_tier: red
+  pandadoc.templates.list:
+    provider: pandadoc
+    category: contracts
+    risk_tier: green
+  pandadoc.templates.details:
+    provider: pandadoc
+    category: contracts
+    risk_tier: green
   pandadoc.contract.generate:
     provider: pandadoc
     category: contracts
@@ -353,6 +361,14 @@ tools:
     provider: pandadoc
     category: contracts
     risk_tier: red
+  pandadoc.contract.send:
+    provider: pandadoc
+    category: contracts
+    risk_tier: yellow
+  pandadoc.contract.session:
+    provider: pandadoc
+    category: contracts
+    risk_tier: yellow
   tax.filing.submit:
     provider: internal
     category: filings

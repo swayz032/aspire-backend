@@ -34,6 +34,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.models import (
     AvaResult,
     AvaResultGovernance,
@@ -41,6 +42,8 @@ from aspire_orchestrator.models import (
     Outcome,
     RiskTier,
 )
+from aspire_orchestrator.services.narration import compose_narration
+from aspire_orchestrator.services.output_guard import guard_output
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -313,8 +316,7 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
         if not api_key:
             return fallback_text
 
-        # Use fast model for summarization (gpt-5-mini)
-        model = "gpt-5-mini"
+        model = settings.router_model_classifier
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
         messages = []
@@ -481,7 +483,7 @@ def _generate_approval_prompt(state: OrchestratorState) -> str:
         if not api_key:
             return fallback_text
 
-        model = "gpt-5-mini"
+        model = settings.router_model_classifier
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
         messages = []
@@ -583,7 +585,7 @@ def _generate_presence_prompt(state: OrchestratorState) -> str:
         if not api_key:
             return fallback_text
 
-        model = "gpt-5-mini"
+        model = settings.router_model_classifier
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
         messages = []
@@ -650,7 +652,22 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
 
         if error_code == "APPROVAL_REQUIRED":
             # YELLOW tier → WARM state → Ava presents the draft and asks inline
-            text = _generate_approval_prompt(state)
+            risk_tier_val = state.get("risk_tier").value if hasattr(state.get("risk_tier"), "value") else str(state.get("risk_tier", "yellow"))
+            # Extract channel for voice verification UX
+            _req_ap = state.get("request")
+            _req_ap_payload = (_req_ap.get("payload", {}) if isinstance(_req_ap, dict) else getattr(_req_ap, "payload", {})) or {}
+            _channel_ap = _req_ap_payload.get("channel", "chat")
+            narration = compose_narration(
+                outcome="pending",
+                task_type=state.get("task_type", "unknown"),
+                tool_used=state.get("tool_used"),
+                execution_params=state.get("execution_params"),
+                execution_result=None,
+                draft_id=state.get("draft_id"),
+                risk_tier=risk_tier_val,
+                channel=_channel_ap,
+            )
+            text = narration if narration else _generate_approval_prompt(state)
         elif error_code == "PRESENCE_REQUIRED":
             # RED tier → HOT state → Ava escalates to video
             text = _generate_presence_prompt(state)
@@ -682,10 +699,12 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             response["approval_payload_hash"] = state.get("approval_payload_hash")
             response["required_approvals"] = state.get("required_approvals", [])
             response["presence_required"] = state.get("presence_required", False)
+            response["draft_id"] = state.get("draft_id")
             # Include task context so the Desktop can display draft details
             response["task_type"] = state.get("task_type")
             response["risk_tier"] = state.get("risk_tier").value if hasattr(state.get("risk_tier"), "value") else str(state.get("risk_tier", "yellow"))
             response["utterance"] = state.get("utterance", "")
+            response["execution_params"] = state.get("execution_params")
 
         return {"response": response}
 
@@ -693,11 +712,82 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     risk_tier = state.get("risk_tier", RiskTier.GREEN)
     risk_tier_val = risk_tier.value if isinstance(risk_tier, RiskTier) else str(risk_tier)
 
+    # ── Phantom execution guard ──────────────────────────────────────
+    # If pipeline reached respond without executing (no token minted,
+    # no execution result), the classify/route/param_extract node
+    # short-circuited to respond. Do NOT let LLM claim success —
+    # return clarification response instead.
+    _execution_happened = (
+        state.get("capability_token_id") is not None
+        or bool(state.get("execution_result"))
+    )
+
+    if not _execution_happened and state.get("utterance"):
+        intent_result = state.get("intent_result", {})
+        clarification = intent_result.get("clarification_prompt", "")
+        if not clarification:
+            clarification = (
+                "I wasn't quite sure how to handle that. "
+                "Could you rephrase your request or be more specific?"
+            )
+
+        logger.warning(
+            "Phantom execution guard: pipeline reached respond without execution "
+            "(no capability_token_id, no execution_result). Returning clarification. "
+            "task_type=%s, utterance=%.60s",
+            state.get("task_type", "unknown"),
+            state.get("utterance", "")[:60],
+        )
+
+        response: dict[str, Any] = {
+            "error": "CLASSIFICATION_UNCLEAR",
+            "message": "Pipeline did not reach execution — classify/route short-circuit",
+            "text": clarification,
+            "correlation_id": correlation_id,
+            "request_id": request_id,
+            "receipt_ids": receipt_ids,
+            "assigned_agent": state.get("assigned_agent", "ava"),
+        }
+        return {"response": response}
+
     # Generate human-readable response text
-    # Step 1: Build template fallback (fast, deterministic)
-    template_text = _generate_response_text(state)
-    # Step 2: Use LLM with agent persona for natural response (preferred)
-    response_text = _llm_summarize(state, fallback_text=template_text)
+    # Step 1: Check narration layer (deterministic, template-based for action outcomes)
+    narration_text = state.get("narration_text")
+    outcome = state.get("outcome", Outcome.SUCCESS)
+    outcome_val = outcome.value if hasattr(outcome, "value") else str(outcome)
+
+    # Extract channel (voice/chat/video) for UX adaptation
+    _req = state.get("request")
+    _req_payload = (_req.get("payload", {}) if isinstance(_req, dict) else getattr(_req, "payload", {})) or {}
+    _channel = _req_payload.get("channel", "chat")
+
+    if not narration_text and state.get("tool_used"):
+        narration_text = compose_narration(
+            outcome=outcome_val,
+            task_type=state.get("task_type", "unknown"),
+            tool_used=state.get("tool_used"),
+            execution_params=state.get("execution_params"),
+            execution_result=state.get("execution_result"),
+            draft_id=state.get("draft_id"),
+            risk_tier=risk_tier_val,
+            channel=_channel,
+        )
+
+    if narration_text:
+        # Narration layer produced text — use it directly (skip LLM)
+        response_text = narration_text
+    else:
+        # Step 2: Build template fallback (fast, deterministic)
+        template_text = _generate_response_text(state)
+        # Step 3: Use LLM with agent persona for natural response (preferred)
+        response_text = _llm_summarize(state, fallback_text=template_text)
+
+    # Output guard: strip phantom execution claims
+    response_text = guard_output(
+        text=response_text,
+        receipts=list(state.get("pipeline_receipts", [])),
+        outcome=outcome_val,
+    )
 
     # Build governance metadata
     required_approvals = state.get("required_approvals", [])

@@ -19,6 +19,7 @@ Law coverage:
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -91,7 +92,13 @@ async def test_generate_contract_yellow_tier_approval_required(clara: ClaraLegal
     result = await clara.generate_contract(
         template_type="nda",
         parties=[{"name": "Acme Corp", "email": "legal@acme.com", "role": "party_a"}],
-        terms={"title": "Non-Disclosure Agreement", "duration": "2 years"},
+        terms={
+            "title": "Non-Disclosure Agreement",
+            "duration": "2 years",
+            "jurisdiction_state": "NY",
+            "purpose": "Business partnership",
+            "term_length": "2 years",
+        },
         context=ctx,
     )
 
@@ -99,7 +106,7 @@ async def test_generate_contract_yellow_tier_approval_required(clara: ClaraLegal
     assert result.approval_required is True
     assert result.presence_required is False  # YELLOW, not RED
     assert result.data["risk_tier"] == "yellow"
-    assert result.data["template_type"] == "nda"
+    assert result.data["template_type"] == "general_mutual_nda"  # resolved from alias
     # Receipt emitted (Law #2)
     assert result.receipt["receipt_id"].startswith("rcpt-clara-")
     assert result.receipt["event_type"] == "contract.generate"
@@ -110,17 +117,61 @@ async def test_generate_contract_yellow_tier_approval_required(clara: ClaraLegal
 
 @pytest.mark.asyncio
 async def test_generate_contract_all_template_types(clara: ClaraLegalSkillPack) -> None:
-    """generate_contract should accept all valid template types."""
+    """generate_contract should accept all valid template types.
+
+    Each template has its own jurisdiction and preflight requirements.
+    We provide a superset of all possible required fields so every
+    template passes validation.
+    """
+    from aspire_orchestrator.skillpacks.clara_legal import (
+        _resolve_template_key,
+        get_template_spec,
+    )
+
     ctx = _ctx()
+    # Superset of all required_fields_delta across all 14 real templates
+    all_terms: dict[str, Any] = {
+        "title": "Test",
+        "jurisdiction_state": "NY",
+        "purpose": "Testing",
+        "term_length": "1 year",
+        "scope_description": "Test scope",
+        "milestones": "M1",
+        "pricing": "$100",
+        "schedule": "ASAP",
+        "budget": "$50,000",
+        "project_timeline": "6 months",
+        "contract_value": "$75,000",
+        "services_scope": "Bookkeeping",
+        "fee_schedule": "$200/mo",
+        "tax_year": "2025",
+        "filing_type": "1040",
+        "taxpayer_name": "Test Taxpayer",
+        "business_type": "LLC",
+        "property_address": "123 Main St",
+        "lease_term": "12 months",
+        "monthly_rent": "$1500",
+        "disclosing_party": "Acme Corp",
+    }
+
     for ttype in VALID_TEMPLATE_TYPES:
+        resolved = _resolve_template_key(ttype)
+        spec = get_template_spec(ttype)
+        if spec is None:
+            # Legacy alias that resolves to None (e.g., "termination")
+            continue
+
         result = await clara.generate_contract(
             template_type=ttype,
             parties=[{"name": "Test Party", "email": "test@example.com", "role": "signer"}],
-            terms={"title": f"Test {ttype}"},
+            terms=all_terms,
             context=ctx,
         )
-        assert result.success is True, f"Template type '{ttype}' should succeed"
-        assert result.data["template_type"] == ttype
+        assert result.success is True, (
+            f"Template type '{ttype}' (resolved: {resolved}) should succeed, "
+            f"got error: {result.error}"
+        )
+        assert result.data["template_type"] == resolved
 
 
 @pytest.mark.asyncio
@@ -128,12 +179,17 @@ async def test_generate_contract_receipt_has_required_fields(clara: ClaraLegalSk
     """generate_contract receipt must have all Law #2 required fields."""
     ctx = _ctx()
     result = await clara.generate_contract(
-        template_type="msa",
+        template_type="sow",
         parties=[
             {"name": "Client LLC", "email": "client@example.com", "role": "client"},
             {"name": "Vendor Inc", "email": "vendor@example.com", "role": "vendor"},
         ],
-        terms={"title": "Master Service Agreement"},
+        terms={
+            "title": "Scope of Work",
+            "jurisdiction_state": "CA",
+            "milestones": "Phase 1: Design, Phase 2: Build",
+            "pricing": "$50,000",
+        },
         context=ctx,
     )
 
@@ -149,8 +205,8 @@ async def test_generate_contract_receipt_has_required_fields(clara: ClaraLegalSk
     assert "inputs_hash" in receipt
     assert "policy" in receipt
     assert receipt["policy"]["decision"] == "allow"
-    # Metadata includes party info
-    assert receipt["metadata"]["template_type"] == "msa"
+    # Metadata includes party info — resolved from "sow" alias
+    assert receipt["metadata"]["template_type"] == "trades_sow"
     assert receipt["metadata"]["party_count"] == 2
     assert "Client LLC" in receipt["metadata"]["party_names"]
 
@@ -251,8 +307,9 @@ async def test_sign_contract_binding_fields_in_receipt(clara: ClaraLegalSkillPac
     assert receipt["actor"] == ACTOR_CLARA
     # Binding fields in metadata for audit trail
     assert receipt["metadata"]["contract_id"] == "doc-xyz789"
-    assert receipt["metadata"]["signer_name"] == "John Smith"
-    assert receipt["metadata"]["signer_email"] == "john@company.com"
+    # PII-masked in receipt (Law #9)
+    assert receipt["metadata"]["signer_name"] == "J. S***"
+    assert receipt["metadata"]["signer_email"] == "j***@company.com"
     assert "signature_timestamp" in receipt["metadata"]
 
 
@@ -452,9 +509,9 @@ async def test_evil_forge_signer_identity(clara: ClaraLegalSkillPack) -> None:
         context=ctx,
     )
 
-    # Receipt captures exact signer info for audit
-    assert result.receipt["metadata"]["signer_name"] == "CEO <script>alert(1)</script>"
-    assert result.receipt["metadata"]["signer_email"] == "ceo@victim.com"
+    # Receipt has PII-masked signer info (Law #9) — raw XSS payload is masked
+    assert result.receipt["metadata"]["signer_name"] == "C. <***"
+    assert result.receipt["metadata"]["signer_email"] == "c***@victim.com"
     # The inputs_hash binds these exact values
     assert result.receipt["inputs_hash"].startswith("sha256:")
     # Approval + presence still required
@@ -472,12 +529,14 @@ async def test_evil_bypass_approval_invalid_template(clara: ClaraLegalSkillPack)
     ctx = _ctx()
 
     # Try various attack payloads
+    # NOTE: "NDA" is a VALID case-insensitive alias (resolves to general_mutual_nda).
+    # Only genuinely invalid templates should be tested here.
     evil_templates = [
         "",  # empty
         "../../etc/passwd",  # path traversal
         "admin_override",  # non-existent type
-        "NDA",  # case-sensitive mismatch
         "nda; DROP TABLE contracts",  # SQL injection
+        "__proto__",  # prototype pollution attempt
     ]
 
     for evil_tpl in evil_templates:
@@ -492,3 +551,156 @@ async def test_evil_bypass_approval_invalid_template(clara: ClaraLegalSkillPack)
             f"Template '{evil_tpl}' MUST be rejected (fail closed)"
         assert result.receipt["status"] == "denied"
         assert "INVALID_TEMPLATE_TYPE" in result.receipt["policy"]["reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Template Discovery Tests (browse_templates + get_template_details)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_browse_templates_success(clara: ClaraLegalSkillPack) -> None:
+    """browse_templates returns template list on success (GREEN, no approval)."""
+    ctx = _ctx()
+    mock_result = ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="pandadoc.templates.list",
+        data={
+            "templates": [
+                {"id": "tmpl-abc", "name": "Mutual NDA"},
+                {"id": "tmpl-def", "name": "Service Agreement"},
+            ],
+            "count": 2,
+        },
+    )
+
+    with patch(
+        "aspire_orchestrator.skillpacks.clara_legal.execute_tool",
+        new=AsyncMock(return_value=mock_result),
+    ) as mock_exec:
+        result = await clara.browse_templates(query="NDA", context=ctx)
+
+    assert result.success is True
+    assert result.data["count"] == 2
+    assert len(result.data["templates"]) == 2
+    assert result.receipt["event_type"] == "templates.list"
+    assert result.receipt["status"] == "ok"
+    # GREEN tier: no approval_required
+    assert result.approval_required is False
+    # Verify the correct tool was called
+    mock_exec.assert_called_once()
+    call_kwargs = mock_exec.call_args[1]
+    assert call_kwargs["tool_id"] == "pandadoc.templates.list"
+    assert call_kwargs["payload"]["q"] == "NDA"
+
+
+@pytest.mark.asyncio
+async def test_browse_templates_no_query(clara: ClaraLegalSkillPack) -> None:
+    """browse_templates works without a search query (lists all)."""
+    ctx = _ctx()
+    mock_result = ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="pandadoc.templates.list",
+        data={"templates": [], "count": 0},
+    )
+
+    with patch(
+        "aspire_orchestrator.skillpacks.clara_legal.execute_tool",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        result = await clara.browse_templates(query=None, context=ctx)
+
+    assert result.success is True
+    assert result.receipt["event_type"] == "templates.list"
+
+
+@pytest.mark.asyncio
+async def test_browse_templates_api_failure(clara: ClaraLegalSkillPack) -> None:
+    """browse_templates returns failure receipt when PandaDoc is down."""
+    ctx = _ctx()
+    mock_result = ToolExecutionResult(
+        outcome=Outcome.FAILED,
+        tool_id="pandadoc.templates.list",
+        error="PandaDoc API error: HTTP 500",
+    )
+
+    with patch(
+        "aspire_orchestrator.skillpacks.clara_legal.execute_tool",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        result = await clara.browse_templates(query="NDA", context=ctx)
+
+    assert result.success is False
+    assert result.receipt["status"] == "failed"
+    assert result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_get_template_details_success(clara: ClaraLegalSkillPack) -> None:
+    """get_template_details returns fields/tokens/roles for a template."""
+    ctx = _ctx()
+    mock_result = ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="pandadoc.templates.details",
+        data={
+            "template_id": "tmpl-abc",
+            "name": "Mutual NDA",
+            "fields": [
+                {"name": "Effective Date", "type": "date", "merge_field": ""},
+            ],
+            "tokens": [
+                {"name": "Client.FirstName", "value": ""},
+                {"name": "Client.LastName", "value": ""},
+                {"name": "Company.Name", "value": ""},
+            ],
+            "roles": [
+                {"name": "Owner", "signing_order": 1},
+                {"name": "Counterparty", "signing_order": 2},
+            ],
+            "field_count": 1,
+            "token_count": 3,
+            "role_count": 2,
+        },
+    )
+
+    with patch(
+        "aspire_orchestrator.skillpacks.clara_legal.execute_tool",
+        new=AsyncMock(return_value=mock_result),
+    ) as mock_exec:
+        result = await clara.get_template_details(
+            template_id="tmpl-abc", context=ctx,
+        )
+
+    assert result.success is True
+    assert result.data["token_count"] == 3
+    assert result.data["role_count"] == 2
+    assert result.receipt["event_type"] == "templates.details"
+    assert result.receipt["status"] == "ok"
+    # Receipt metadata should have counts
+    assert result.receipt["metadata"]["field_count"] == 1
+    assert result.receipt["metadata"]["token_count"] == 3
+    # Verify correct tool call
+    call_kwargs = mock_exec.call_args[1]
+    assert call_kwargs["tool_id"] == "pandadoc.templates.details"
+    assert call_kwargs["payload"]["template_id"] == "tmpl-abc"
+
+
+@pytest.mark.asyncio
+async def test_get_template_details_missing_id(clara: ClaraLegalSkillPack) -> None:
+    """get_template_details denies with receipt when template_id is missing (Law #3)."""
+    ctx = _ctx()
+    result = await clara.get_template_details(template_id="", context=ctx)
+
+    assert result.success is False
+    assert result.receipt["status"] == "denied"
+    assert "MISSING_TEMPLATE_ID" in result.receipt["policy"]["reasons"]
+
+
+@pytest.mark.asyncio
+async def test_get_template_details_whitespace_id(clara: ClaraLegalSkillPack) -> None:
+    """get_template_details denies whitespace-only template_id (fail closed)."""
+    ctx = _ctx()
+    result = await clara.get_template_details(template_id="   ", context=ctx)
+
+    assert result.success is False
+    assert result.receipt["status"] == "denied"

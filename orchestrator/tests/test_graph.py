@@ -48,10 +48,11 @@ def _make_valid_request(
 class TestGreenTierFlow:
     """GREEN tier: full pipeline, auto-approval, token mint, execute, receipt."""
 
-    def test_green_tier_success(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_green_tier_success(self, graph) -> None:
         """GREEN tier request flows through all 8 nodes and returns AvaResult."""
         request = _make_valid_request(task_type="receipts.search")
-        result = graph.invoke({"request": request, "actor_id": "test_user"})
+        result = await graph.ainvoke({"request": request, "actor_id": "test_user"})
 
         assert result["safety_passed"] is True
         assert result["policy_allowed"] is True
@@ -66,10 +67,11 @@ class TestGreenTierFlow:
         assert response["risk"]["tier"] == "green"
         assert len(response["governance"]["receipt_ids"]) > 0
 
-    def test_green_tier_no_approval_needed(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_green_tier_no_approval_needed(self, graph) -> None:
         """GREEN tier auto-approves without requiring user confirmation."""
         request = _make_valid_request(task_type="calendar.read")
-        result = graph.invoke({"request": request, "actor_id": "test_user"})
+        result = await graph.ainvoke({"request": request, "actor_id": "test_user"})
 
         assert result["approval_status"] == "approved"
         assert result["approval_evidence"] is None
@@ -80,7 +82,7 @@ class TestYellowTierFlow:
 
     def test_yellow_tier_no_approval(self, graph) -> None:
         """TC-03: Yellow tier without approval returns APPROVAL_REQUIRED."""
-        request = _make_valid_request(task_type="invoice.create")
+        request = _make_valid_request(task_type="email.send")
         result = graph.invoke({"request": request, "actor_id": "test_user"})
 
         # Should stop at approval_check and return APPROVAL_REQUIRED
@@ -89,9 +91,13 @@ class TestYellowTierFlow:
         assert "approval_payload_hash" in response
         assert result["approval_status"] == "pending"
 
-    def test_yellow_tier_with_approval(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_yellow_tier_with_approval(self, graph) -> None:
         """YELLOW tier with approval evidence flows through to execution."""
-        from aspire_orchestrator.models import ApprovalEvidence, ApprovalMethod
+        from unittest.mock import AsyncMock, patch
+
+        from aspire_orchestrator.models import ApprovalEvidence, ApprovalMethod, Outcome
+        from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
         evidence = ApprovalEvidence(
             approver_id="test_user",
@@ -99,12 +105,24 @@ class TestYellowTierFlow:
             approved_at=datetime.now(timezone.utc),
         )
 
-        request = _make_valid_request(task_type="invoice.create")
-        result = graph.invoke({
-            "request": request,
-            "actor_id": "test_user",
-            "approval_evidence": evidence,
-        })
+        mock_result = ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id="polaris.email.send",
+            data={"message_id": "test_123"},
+            receipt_data={},
+        )
+
+        request = _make_valid_request(task_type="email.send")
+        with patch(
+            "aspire_orchestrator.nodes.execute._execute_tool_async",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            result = await graph.ainvoke({
+                "request": request,
+                "actor_id": "test_user",
+                "approval_evidence": evidence,
+            })
 
         assert result["approval_status"] == "approved"
         assert result["capability_token_id"] is not None
@@ -171,11 +189,12 @@ class TestSafetyGate:
         assert response["error"] == "SAFETY_BLOCKED"
         assert result["safety_passed"] is False
 
-    def test_normal_request_passes_safety(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_normal_request_passes_safety(self, graph) -> None:
         """Normal business request passes safety gate."""
         request = _make_valid_request(task_type="receipts.search")
         request["payload"] = {"query": "show my invoices from last month"}
-        result = graph.invoke({"request": request, "actor_id": "test_user"})
+        result = await graph.ainvoke({"request": request, "actor_id": "test_user"})
 
         assert result["safety_passed"] is True
 
@@ -195,10 +214,11 @@ class TestPolicyDenial:
 class TestReceiptChain:
     """Receipt chain integrity across the pipeline."""
 
-    def test_receipts_have_hashes(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_receipts_have_hashes(self, graph) -> None:
         """All receipts in the pipeline have computed hashes."""
         request = _make_valid_request(task_type="receipts.search")
-        result = graph.invoke({"request": request, "actor_id": "test_user"})
+        result = await graph.ainvoke({"request": request, "actor_id": "test_user"})
 
         pipeline_receipts = result.get("pipeline_receipts", [])
         assert len(pipeline_receipts) > 0
@@ -207,10 +227,11 @@ class TestReceiptChain:
             assert receipt["receipt_hash"] != ""
             assert "previous_receipt_hash" in receipt
 
-    def test_receipt_chain_links(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_receipt_chain_links(self, graph) -> None:
         """Receipt chain: each receipt's prev_hash links to the previous receipt's hash."""
         request = _make_valid_request(task_type="receipts.search")
-        result = graph.invoke({"request": request, "actor_id": "test_user"})
+        result = await graph.ainvoke({"request": request, "actor_id": "test_user"})
 
         pipeline_receipts = result.get("pipeline_receipts", [])
         if len(pipeline_receipts) < 2:
@@ -219,10 +240,11 @@ class TestReceiptChain:
         for i in range(1, len(pipeline_receipts)):
             assert pipeline_receipts[i]["previous_receipt_hash"] == pipeline_receipts[i - 1]["receipt_hash"]
 
-    def test_genesis_receipt_has_zero_prev_hash(self, graph) -> None:
+    @pytest.mark.asyncio
+    async def test_genesis_receipt_has_zero_prev_hash(self, graph) -> None:
         """First receipt in chain has genesis prev_hash (64 zeros)."""
         request = _make_valid_request(task_type="receipts.search")
-        result = graph.invoke({"request": request, "actor_id": "test_user"})
+        result = await graph.ainvoke({"request": request, "actor_id": "test_user"})
 
         pipeline_receipts = result.get("pipeline_receipts", [])
         assert len(pipeline_receipts) > 0

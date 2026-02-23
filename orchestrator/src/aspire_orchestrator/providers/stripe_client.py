@@ -2,7 +2,7 @@
 
 Provider: Stripe (https://api.stripe.com/v1)
 Auth: API key (Bearer token) — per-suite connected accounts via Stripe Connect
-Risk tier: YELLOW (invoice.create), RED (payment.send via Stripe transfers)
+Risk tier: GREEN (invoice.create draft), YELLOW (invoice.send), RED (payment.send via Stripe transfers)
 Idempotency: Yes — Stripe-native idempotency keys (Idempotency-Key header)
 
 Tools:
@@ -12,7 +12,8 @@ Tools:
   - stripe.transfer.create: Create a Stripe transfer (RED tier, for Finn)
 
 Per policy_matrix.yaml:
-  invoice.create: YELLOW, binding_fields=[customer_id, amount, currency, line_items]
+  invoice.create: GREEN (draft creation, no money moves)
+  invoice.send: YELLOW, binding_fields=[invoice_id]
 
 Stripe Connect model:
   - Aspire is the platform account
@@ -39,6 +40,31 @@ from aspire_orchestrator.services.tool_types import ToolExecutionResult
 logger = logging.getLogger(__name__)
 
 
+def _flatten_stripe_params(
+    params: dict[str, Any], prefix: str = "",
+) -> list[tuple[str, str]]:
+    """Flatten nested dict to Stripe form-encoded pairs.
+
+    Stripe expects: metadata[key]=value, items[0][amount]=100, etc.
+    """
+    items: list[tuple[str, str]] = []
+    for key, value in params.items():
+        full_key = f"{prefix}[{key}]" if prefix else key
+        if isinstance(value, dict):
+            items.extend(_flatten_stripe_params(value, full_key))
+        elif isinstance(value, (list, tuple)):
+            for i, item in enumerate(value):
+                if isinstance(item, dict):
+                    items.extend(_flatten_stripe_params(item, f"{full_key}[{i}]"))
+                else:
+                    items.append((f"{full_key}[{i}]", str(item)))
+        elif isinstance(value, bool):
+            items.append((full_key, "true" if value else "false"))
+        elif value is not None:
+            items.append((full_key, str(value)))
+    return items
+
+
 class StripeClient(BaseProviderClient):
     """Stripe API client with Connect account support."""
 
@@ -50,6 +76,15 @@ class StripeClient(BaseProviderClient):
 
     # Per-suite Stripe connected account IDs: {suite_id: "acct_xxx"}
     _connected_accounts: dict[str, str] = {}
+
+    def _prepare_body(self, request: ProviderRequest) -> tuple[str, bytes | None]:
+        """Stripe requires application/x-www-form-urlencoded for POST bodies."""
+        if not request.body:
+            return "application/x-www-form-urlencoded", None
+        from urllib.parse import urlencode
+        flat = _flatten_stripe_params(request.body)
+        encoded = urlencode(flat)
+        return "application/x-www-form-urlencoded", encoded.encode()
 
     async def _authenticate_headers(
         self, request: ProviderRequest
@@ -113,6 +148,71 @@ def _get_client() -> StripeClient:
     return _client
 
 
+async def _resolve_stripe_customer(
+    client: StripeClient,
+    email: str,
+    name: str | None,
+    suite_id: str,
+    correlation_id: str,
+) -> str | None:
+    """Find or create a Stripe customer by email.
+
+    Returns customer ID (cus_xxx) or None on failure.
+    """
+    # Search by email first
+    search_response = await client._request(
+        ProviderRequest(
+            method="GET",
+            path=f"/customers?email={email}&limit=1",
+            body={},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id="",
+        )
+    )
+    if search_response.success:
+        data = search_response.body.get("data", [])
+        if data:
+            return data[0].get("id")
+    else:
+        logger.warning(
+            "Stripe customer search failed: status=%s body=%s",
+            search_response.status_code,
+            str(search_response.body)[:200],
+        )
+
+    # Not found — create
+    create_body: dict[str, Any] = {"email": email}
+    if name:
+        create_body["name"] = name
+    create_body["metadata"] = {"aspire_suite_id": suite_id}
+
+    create_response = await client._request(
+        ProviderRequest(
+            method="POST",
+            path="/customers",
+            body=create_body,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id="",
+        )
+    )
+    if create_response.success:
+        return create_response.body.get("id")
+
+    logger.warning(
+        "Stripe customer create failed: status=%s body=%s",
+        create_response.status_code,
+        str(create_response.body)[:200],
+    )
+    logger.warning(
+        "Failed to resolve Stripe customer for email=%s suite=%s",
+        email[:3] + "***",
+        suite_id[:8] if len(suite_id) > 8 else suite_id,
+    )
+    return None
+
+
 async def execute_stripe_invoice_create(
     *,
     payload: dict[str, Any],
@@ -125,11 +225,16 @@ async def execute_stripe_invoice_create(
 ) -> ToolExecutionResult:
     """Execute stripe.invoice.create — create a draft invoice.
 
-    Required payload:
-      - customer_id: str — Stripe customer ID
-      - amount: int — total amount in cents
+    Required payload (one of):
+      - customer_id: str — Stripe customer ID (direct)
+      - customer_email: str — email to find-or-create customer (from param_extract)
+
+    Required:
+      - amount_cents: int — total amount in cents (preferred)
+      - amount: int — alias for amount_cents (backward compat)
 
     Optional payload:
+      - customer_name: str — name for new customer creation
       - currency: str — 3-letter ISO (default "usd")
       - description: str — invoice description
       - line_items: list[dict] — individual line items
@@ -139,7 +244,20 @@ async def execute_stripe_invoice_create(
     client = _get_client()
 
     customer_id = payload.get("customer_id", "")
-    amount = payload.get("amount")
+    customer_email = payload.get("customer_email", "")
+    amount = payload.get("amount_cents") or payload.get("amount")
+
+    # Resolve customer from email if no direct ID
+    if not customer_id and customer_email:
+        resolved = await _resolve_stripe_customer(
+            client,
+            email=customer_email,
+            name=payload.get("customer_name"),
+            suite_id=suite_id,
+            correlation_id=correlation_id,
+        )
+        if resolved:
+            customer_id = resolved
 
     if not customer_id or amount is None:
         receipt = client.make_receipt_data(
@@ -153,10 +271,15 @@ async def execute_stripe_invoice_create(
             capability_token_id=capability_token_id,
             capability_token_hash=capability_token_hash,
         )
+        missing = []
+        if not customer_id:
+            missing.append("customer_id or customer_email")
+        if amount is None:
+            missing.append("amount_cents")
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id="stripe.invoice.create",
-            error="Missing required parameters: customer_id, amount",
+            error=f"Missing required parameters: {', '.join(missing)}",
             receipt_data=receipt,
         )
 
@@ -165,7 +288,7 @@ async def execute_stripe_invoice_create(
     body: dict[str, Any] = {
         "customer": customer_id,
         "collection_method": "send_invoice",
-        "days_until_due": payload.get("due_days", 30),
+        "days_until_due": payload.get("due_days") or 30,
         "currency": payload.get("currency", "usd"),
         "metadata": {
             "aspire_suite_id": suite_id,
@@ -210,13 +333,37 @@ async def execute_stripe_invoice_create(
 
     if response.success:
         invoice = response.body
+        invoice_id = invoice.get("id", "")
+
+        # Add line item with the amount (Stripe requires separate invoiceitem)
+        if amount and invoice_id:
+            item_body: dict[str, Any] = {
+                "customer": customer_id,
+                "invoice": invoice_id,
+                "amount": int(amount),
+                "currency": payload.get("currency", "usd"),
+            }
+            if payload.get("description"):
+                item_body["description"] = payload["description"]
+
+            await client._request(
+                ProviderRequest(
+                    method="POST",
+                    path="/invoiceitems",
+                    body=item_body,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                )
+            )
+
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id="stripe.invoice.create",
             data={
-                "invoice_id": invoice.get("id", ""),
+                "invoice_id": invoice_id,
                 "status": invoice.get("status", "draft"),
-                "amount_due": invoice.get("amount_due", 0),
+                "amount_due": int(amount) if amount else invoice.get("amount_due", 0),
                 "currency": invoice.get("currency", "usd"),
                 "customer": invoice.get("customer", ""),
                 "hosted_invoice_url": invoice.get("hosted_invoice_url"),
@@ -283,24 +430,31 @@ async def execute_stripe_invoice_send(
     )
 
     if not response.success:
-        receipt = client.make_receipt_data(
-            correlation_id=correlation_id,
-            suite_id=suite_id,
-            office_id=office_id,
-            tool_id="stripe.invoice.send",
-            risk_tier=risk_tier,
-            outcome=Outcome.FAILED,
-            reason_code=response.error_code.value if response.error_code else "FAILED",
-            capability_token_id=capability_token_id,
-            capability_token_hash=capability_token_hash,
-            provider_response=response,
-        )
-        return ToolExecutionResult(
-            outcome=Outcome.FAILED,
-            tool_id="stripe.invoice.send",
-            error=response.error_message or "Failed to finalize invoice",
-            receipt_data=receipt,
-        )
+        # Already-finalized invoices can proceed directly to send (resend flow)
+        error_body = response.body if isinstance(response.body, dict) else {}
+        error_msg = error_body.get("error", {}).get("message", "") if isinstance(error_body.get("error"), dict) else str(error_body.get("error", ""))
+        already_finalized = "already finalized" in error_msg.lower()
+
+        if not already_finalized:
+            receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id="stripe.invoice.send",
+                risk_tier=risk_tier,
+                outcome=Outcome.FAILED,
+                reason_code=response.error_code.value if response.error_code else "FAILED",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+                provider_response=response,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id="stripe.invoice.send",
+                error=response.error_message or "Failed to finalize invoice",
+                receipt_data=receipt,
+            )
+        logger.info("Invoice %s already finalized — proceeding to send (resend)", invoice_id)
 
     # Then send it
     send_response = await client._request(

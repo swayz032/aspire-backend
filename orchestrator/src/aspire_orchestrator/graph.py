@@ -1,7 +1,7 @@
 """Aspire LangGraph Orchestrator Graph — the Single Brain (Law #1).
 
-Phase 2 canonical flow (11 nodes):
-  Intake → Safety → Classify → Route → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+Phase 3 canonical flow (12 nodes):
+  Intake → Safety → Classify → Route → ParamExtract → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
 
 Backwards-compatible flow (8 nodes, when utterance is not set):
   Intake → Safety → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
@@ -11,6 +11,7 @@ Conditional routing:
   - classify: low confidence (<0.5) → respond (escalation)
   - classify: requires_clarification → respond (clarification prompt)
   - route: deny_reason set → respond (routing denied)
+  - param_extract: PARAM_EXTRACTION_FAILED → respond (missing fields prompt)
   - policy_eval: DENIED → respond (with policy denial receipt)
   - approval_check: APPROVAL_REQUIRED → respond (with approval request)
   - approval_check: PRESENCE_REQUIRED → respond (with presence request)
@@ -29,6 +30,7 @@ from langgraph.graph import END, StateGraph
 
 from aspire_orchestrator.nodes.intake import intake_node
 from aspire_orchestrator.nodes.safety_gate import safety_gate_node
+from aspire_orchestrator.nodes.param_extract import param_extract_node
 from aspire_orchestrator.nodes.policy_eval import policy_eval_node
 from aspire_orchestrator.nodes.approval_check import approval_check_node
 from aspire_orchestrator.nodes.token_mint import token_mint_node
@@ -53,11 +55,17 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
 
     Calls IntentClassifier.classify() and stores the result in state.
     If confidence is too low or clarification is needed, routes to respond.
+
+    Trust-but-verify: If the request already carries an explicit task_type that
+    exists in the policy matrix AND the LLM returns unknown/low-confidence,
+    preserve the original task_type. The client (Desktop/Ava) knows what action
+    the user requested; the LLM classifier refines but must not erase it.
     """
     from aspire_orchestrator.services.intent_classifier import get_intent_classifier
 
     utterance = state.get("utterance", "")
     context = state.get("context") if isinstance(state.get("context"), dict) else None
+    explicit_task_type = state.get("task_type", "")
 
     classifier = get_intent_classifier()
     intent_result = await classifier.classify(utterance, context)
@@ -70,12 +78,29 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
     # Update task_type so downstream policy_eval uses the classified action
     if intent_result.action_type and intent_result.action_type != "unknown":
         result["task_type"] = intent_result.action_type
+    elif explicit_task_type and explicit_task_type != "unknown":
+        # LLM returned unknown/low-confidence but request has explicit task_type.
+        # Preserve it — the client knows what action the user wants.
+        from aspire_orchestrator.services.policy_engine import get_policy_matrix
+        matrix = get_policy_matrix()
+        policy_result = matrix.evaluate(explicit_task_type)
+        if policy_result.allowed:
+            logger.info(
+                "Classify: LLM returned unknown but explicit task_type=%s is valid — preserving",
+                explicit_task_type,
+            )
+            result["task_type"] = explicit_task_type
+            # Boost intent_result so routing doesn't bail out
+            result["intent_result"]["action_type"] = explicit_task_type
+            result["intent_result"]["confidence"] = 0.9
+            result["action_type"] = explicit_task_type
 
     logger.info(
-        "Classify: action=%s, confidence=%.2f, clarify=%s",
+        "Classify: action=%s, confidence=%.2f, clarify=%s, explicit_task=%s",
         intent_result.action_type,
         intent_result.confidence,
         intent_result.requires_clarification,
+        explicit_task_type,
     )
 
     return result
@@ -117,6 +142,20 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
     result["risk_tier"] = routing_plan.estimated_risk_tier
     if routing_plan.steps:
         result["tool_used"] = routing_plan.steps[0].tools[0] if routing_plan.steps[0].tools else None
+
+        # Lifecycle reroute may have changed the action (e.g. contract.send → contract.generate).
+        # Propagate the ACTUAL routed action to task_type so policy_eval evaluates the
+        # correct risk tier.  Without this, policy sees the original classified action
+        # (YELLOW) instead of the rerouted one (GREEN) and blocks execution.
+        routed_action = routing_plan.steps[0].action_type
+        current_task = state.get("task_type", "")
+        if routed_action != current_task:
+            logger.info(
+                "Route: lifecycle reroute propagated task_type %s → %s",
+                current_task, routed_action,
+            )
+            result["task_type"] = routed_action
+            result["action_type"] = routed_action
 
     logger.info(
         "Route: steps=%d, risk=%s, strategy=%s",
@@ -223,10 +262,21 @@ def _route_after_classify(state: OrchestratorState) -> str:
 def _route_after_route(state: OrchestratorState) -> str:
     """Route after skill router.
 
-    If routing denied → respond. Otherwise → policy_eval.
+    If routing denied → respond. Otherwise → param_extract.
     """
     routing_plan = state.get("routing_plan", {})
     if routing_plan.get("deny_reason"):
+        return "respond"
+    return "param_extract"
+
+
+def _route_after_param_extract(state: OrchestratorState) -> str:
+    """Route after parameter extraction.
+
+    If extraction failed (missing required fields) → respond.
+    Otherwise → policy_eval.
+    """
+    if state.get("error_code") == "PARAM_EXTRACTION_FAILED":
         return "respond"
     return "policy_eval"
 
@@ -284,20 +334,21 @@ def _route_after_qa(state: OrchestratorState) -> str:
 
 
 def build_orchestrator_graph() -> StateGraph:
-    """Build the Aspire orchestrator StateGraph with 11 nodes.
+    """Build the Aspire orchestrator StateGraph with 12 nodes.
 
-    Phase 2 adds 3 Brain Layer nodes: classify, route, qa.
-    Backwards compatible: if utterance is not set, classify/route are skipped.
+    Phase 3 adds param_extract between route and policy_eval.
+    Backwards compatible: if utterance is not set, classify/route/param_extract are skipped.
 
     Returns a compiled graph ready for invocation.
     """
     graph = StateGraph(OrchestratorState)
 
-    # Add all 11 nodes (8 existing + 3 Brain Layer)
+    # Add all 12 nodes (8 existing + 3 Brain Layer + 1 param_extract)
     graph.add_node("intake", intake_node)
     graph.add_node("safety_gate", safety_gate_node)
     graph.add_node("classify", classify_node)
     graph.add_node("route", route_node)
+    graph.add_node("param_extract", param_extract_node)
     graph.add_node("policy_eval", policy_eval_node)
     graph.add_node("approval_check", approval_check_node)
     graph.add_node("token_mint", token_mint_node)
@@ -331,8 +382,14 @@ def build_orchestrator_graph() -> StateGraph:
         "respond": "respond",
     })
 
-    # route → policy_eval OR respond (routing denied)
+    # route → param_extract OR respond (routing denied)
     graph.add_conditional_edges("route", _route_after_route, {
+        "param_extract": "param_extract",
+        "respond": "respond",
+    })
+
+    # param_extract → policy_eval OR respond (extraction failed)
+    graph.add_conditional_edges("param_extract", _route_after_param_extract, {
         "policy_eval": "policy_eval",
         "respond": "respond",
     })

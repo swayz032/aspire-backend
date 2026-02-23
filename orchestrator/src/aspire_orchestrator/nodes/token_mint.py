@@ -198,7 +198,7 @@ def token_mint_node(state: OrchestratorState) -> dict[str, Any]:
     ).hexdigest()
 
     logger.info(
-        "Capability token minted: tool=%s, scopes=%s, ttl=%ds, suite=%s",
+        "Token minted: tool=%s, scopes=%s, ttl=%ds, suite=%s",
         tool, scopes, ttl, suite_id[:8],
     )
 

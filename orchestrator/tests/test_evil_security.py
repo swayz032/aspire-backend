@@ -229,10 +229,10 @@ class TestE2PrivilegeEscalation:
         assert data.get("error") in ("APPROVAL_REQUIRED", "PRESENCE_REQUIRED")
 
     def test_yellow_action_without_approval_denied(self, client) -> None:
-        """YELLOW-tier action (invoice.create) without approval is denied."""
+        """YELLOW-tier action (email.send) without approval is denied."""
         request = _make_request(
             suite_id="evil-e2-002",
-            task_type="invoice.create",
+            task_type="email.send",
         )
         response = client.post("/v1/intents", json=request)
         data = response.json()

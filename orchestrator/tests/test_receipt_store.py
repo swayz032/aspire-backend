@@ -299,30 +299,29 @@ class TestDualWrite:
         assert get_receipt_count() == 1  # In-memory still works
 
     @patch("aspire_orchestrator.services.receipt_store._get_supabase_client")
-    def test_persist_to_supabase_calls_upsert(self, mock_get_client):
-        """Verify the Supabase client receives correct upsert call."""
+    def test_persist_to_supabase_calls_insert(self, mock_get_client):
+        """Verify the Supabase client receives correct insert call (append-only)."""
         from aspire_orchestrator.services.receipt_store import _persist_to_supabase
 
         mock_client = MagicMock()
         mock_table = MagicMock()
-        mock_upsert = MagicMock()
+        mock_insert = MagicMock()
         mock_execute = MagicMock()
 
         mock_get_client.return_value = mock_client
         mock_client.table.return_value = mock_table
-        mock_table.upsert.return_value = mock_upsert
-        mock_upsert.execute.return_value = mock_execute
+        mock_table.insert.return_value = mock_insert
+        mock_insert.execute.return_value = mock_execute
 
         receipts = [{"id": "r1", "suite_id": "s1", "outcome": "success", "correlation_id": "c1"}]
         _persist_to_supabase(receipts)
 
         mock_client.table.assert_called_once_with("receipts")
-        call_args = mock_table.upsert.call_args
+        call_args = mock_table.insert.call_args
         rows = call_args[0][0]
         assert len(rows) == 1
         assert rows[0]["receipt_id"] == "r1"
         assert rows[0]["status"] == "SUCCEEDED"
-        assert call_args[1]["on_conflict"] == "receipt_id"
 
     @patch("aspire_orchestrator.services.receipt_store._get_supabase_client", return_value=None)
     def test_persist_gracefully_handles_no_client(self, mock_get_client):

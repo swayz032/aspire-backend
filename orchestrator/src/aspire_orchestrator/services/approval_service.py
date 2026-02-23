@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -139,7 +140,8 @@ def verify_approval_binding(
         now = datetime.now(timezone.utc)
 
     # CHECK 1: payload_hash matches (approve-then-swap defense)
-    if binding.payload_hash != expected_payload_hash:
+    # Use timing-safe comparison to prevent side-channel brute-force
+    if not secrets.compare_digest(binding.payload_hash, expected_payload_hash):
         logger.warning(
             "Approval binding REJECTED: payload_hash mismatch, "
             "binding=%s, expected=%s, request_id=%s",

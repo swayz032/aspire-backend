@@ -31,6 +31,13 @@ class ProviderErrorCategory(str, Enum):
     DOMAIN = "domain"
 
 
+# Map non-standard error code prefixes to ProviderErrorCategory values
+_PREFIX_CATEGORY_ALIASES: dict[str, str] = {
+    "template": "domain",    # TEMPLATE_NOT_FOUND → domain error
+    "validation": "input",   # VALIDATION_ERROR → input error
+}
+
+
 class InternalErrorCode(str, Enum):
     """Canonical error codes for all provider integrations.
 
@@ -74,11 +81,18 @@ class InternalErrorCode(str, Enum):
     DOMAIN_INSUFFICIENT_FUNDS = "DOMAIN_INSUFFICIENT_FUNDS"
     DOMAIN_IDEMPOTENCY_CONFLICT = "DOMAIN_IDEMPOTENCY_CONFLICT"
 
+    # --- TEMPLATE errors (PandaDoc template issues) ---
+    TEMPLATE_NOT_FOUND = "TEMPLATE_NOT_FOUND"
+
+    # --- VALIDATION errors (422 unprocessable) ---
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+
     @property
     def category(self) -> ProviderErrorCategory:
         """Derive error category from code prefix."""
-        prefix = self.value.split("_")[0]
-        return ProviderErrorCategory(prefix.lower())
+        prefix = self.value.split("_")[0].lower()
+        mapped = _PREFIX_CATEGORY_ALIASES.get(prefix, prefix)
+        return ProviderErrorCategory(mapped)
 
     @property
     def retryable(self) -> bool:

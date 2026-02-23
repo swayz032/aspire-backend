@@ -122,19 +122,16 @@ class TestSchemaFilesExist:
 
 
 class TestAvaOrchestratorRequestSchema:
-    """Validate AvaOrchestratorRequest contract."""
+    """Validate AvaOrchestratorRequest contract (v1.5)."""
 
     def test_schema_has_required_fields(self) -> None:
         schema = _load_schema("ava_orchestrator_request.schema.json")
         required = schema["required"]
-        assert "schema_version" in required
-        assert "suite_id" in required
-        assert "office_id" in required
-        assert "request_id" in required
         assert "correlation_id" in required
-        assert "timestamp" in required
-        assert "task_type" in required
-        assert "payload" in required
+        assert "task" in required
+        assert "role" in required
+        assert "policy_version" in required
+        assert "tool_policy_version" in required
 
     def test_schema_disallows_additional_properties(self) -> None:
         schema = _load_schema("ava_orchestrator_request.schema.json")
@@ -145,14 +142,24 @@ class TestAvaOrchestratorRequestSchema:
         schema = _load_schema("ava_orchestrator_request.schema.json")
         required = set(schema["required"])
         example = {
-            "schema_version": "1.0",
-            "suite_id": "suite-001",
-            "office_id": "office-001",
-            "request_id": "req-001",
             "correlation_id": "corr-001",
-            "timestamp": "2026-02-15T10:00:00Z",
-            "task_type": "invoice.create",
-            "payload": {"amount": 1200, "customer": "Sarah"},
+            "role": "owner",
+            "policy_version": "approval_gates_v2_2026-02-12",
+            "tool_policy_version": "tool_policy_v2_2026-02-12",
+            "task": {
+                "task_id": "task-001",
+                "suite_id": "suite-001",
+                "task_type": "invoice.create",
+                "status": "pending",
+                "priority": 1,
+                "payload": {"amount": 1200},
+                "assigned_to_agent": "quinn_invoices",
+                "created_by_office_id": "office-001",
+                "assigned_to_office_id": "office-001",
+                "attempt_count": 0,
+                "created_at": "2026-02-15T10:00:00Z",
+                "updated_at": "2026-02-15T10:00:00Z",
+            },
         }
         assert required.issubset(set(example.keys()))
 
@@ -163,33 +170,40 @@ class TestAvaOrchestratorRequestSchema:
 
 
 class TestAvaResultSchema:
-    """Validate AvaResult contract."""
+    """Validate AvaResult contract (v1.5)."""
 
     def test_schema_has_required_fields(self) -> None:
         schema = _load_schema("ava_result.schema.json")
         required = schema["required"]
-        assert "schema_version" in required
-        assert "request_id" in required
-        assert "correlation_id" in required
-        assert "route" in required
-        assert "risk" in required
-        assert "governance" in required
-        assert "plan" in required
+        assert "status" in required
+        assert "outputs" in required
+
+    def test_outputs_required_fields(self) -> None:
+        schema = _load_schema("ava_result.schema.json")
+        outputs_required = schema["properties"]["outputs"]["required"]
+        assert "correlation_id" in outputs_required
+        assert "route" in outputs_required
+        assert "risk" in outputs_required
+        assert "governance" in outputs_required
+        assert "plan" in outputs_required
 
     def test_risk_tier_enum(self) -> None:
         schema = _load_schema("ava_result.schema.json")
-        tier_enum = schema["properties"]["risk"]["properties"]["tier"]["enum"]
-        assert "GREEN" in tier_enum
-        assert "YELLOW" in tier_enum
-        assert "RED" in tier_enum
+        tier_enum = schema["properties"]["outputs"]["properties"]["risk"]["properties"]["tier"]["enum"]
+        assert "low" in tier_enum
+        assert "medium" in tier_enum
+        assert "red" in tier_enum
 
     def test_governance_required_fields(self) -> None:
         schema = _load_schema("ava_result.schema.json")
-        gov = schema["properties"]["governance"]
-        assert "approvals_required" in gov["required"]
-        assert "presence_required" in gov["required"]
-        assert "capability_token_required" in gov["required"]
-        assert "receipt_ids" in gov["required"]
+        gov = schema["properties"]["outputs"]["properties"]["governance"]
+        assert "approval_required" in gov["required"]
+        assert "approval_reason_codes" in gov["required"]
+        assert "policy_version" in gov["required"]
+        assert "tool_policy_version" in gov["required"]
+        assert "requested_tools" in gov["required"]
+        assert "allowed_tools" in gov["required"]
+        assert "payload_hash" in gov["required"]
 
 
 # ---------------------------------------------------------------------------

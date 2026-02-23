@@ -112,7 +112,18 @@ from aspire_orchestrator.providers.gusto_client import (
 from aspire_orchestrator.providers.pandadoc_client import (
     execute_pandadoc_contract_generate,
     execute_pandadoc_contract_read,
+    execute_pandadoc_contract_send,
     execute_pandadoc_contract_sign,
+    execute_pandadoc_create_signing_session,
+    execute_pandadoc_templates_list,
+    execute_pandadoc_templates_details,
+)
+
+# Draft-First W5: Calendar tools (GREEN/YELLOW — via Supabase PostgREST)
+from aspire_orchestrator.providers.calendar_client import (
+    execute_calendar_event_create,
+    execute_calendar_event_list,
+    execute_calendar_event_complete,
 )
 
 logger = logging.getLogger(__name__)
@@ -751,9 +762,20 @@ _PAYROLL_EXECUTORS: dict[str, ToolExecutorFn] = {
 
 # Phase 2 Wave 6: Legal tools (YELLOW/RED — Clara Legal pack)
 _LEGAL_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "pandadoc.templates.list": execute_pandadoc_templates_list,
+    "pandadoc.templates.details": execute_pandadoc_templates_details,
     "pandadoc.contract.generate": execute_pandadoc_contract_generate,
     "pandadoc.contract.read": execute_pandadoc_contract_read,
+    "pandadoc.contract.send": execute_pandadoc_contract_send,
     "pandadoc.contract.sign": execute_pandadoc_contract_sign,
+    "pandadoc.contract.session": execute_pandadoc_create_signing_session,
+}
+
+# Draft-First W5: Calendar tools (GREEN/YELLOW — Supabase PostgREST)
+_CALENDAR_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "calendar.event.create": execute_calendar_event_create,
+    "calendar.event.list": execute_calendar_event_list,
+    "calendar.event.complete": execute_calendar_event_complete,
 }
 
 # Merged registry of all live executors
@@ -771,6 +793,7 @@ _ALL_LIVE_EXECUTORS: dict[str, ToolExecutorFn] = {
     **_PAYMENT_EXECUTORS,
     **_PAYROLL_EXECUTORS,
     **_LEGAL_EXECUTORS,
+    **_CALENDAR_EXECUTORS,
 }
 
 

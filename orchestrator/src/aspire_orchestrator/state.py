@@ -78,6 +78,13 @@ class OrchestratorState(TypedDict, total=False):
     execution_result: dict[str, Any] | None
     outcome: Outcome
 
+    # --- Draft-First Execution (Phase 3 — param_extract / narration / approval bridge) ---
+    execution_params: dict[str, Any] | None   # Extracted structured params from NL
+    draft_id: str | None                       # approval_requests.approval_id for persisted drafts
+    draft_persistence_status: str | None       # skipped | success | failed (enterprise observability)
+    narration_text: str | None                 # Deterministic response text from narration layer
+    advisor_context: dict[str, Any] | None     # Built by context_builder (v1.5 playbooks + staff)
+
     # --- Receipt Write (set by receipt_write node) ---
     receipt_ids: list[str]
 

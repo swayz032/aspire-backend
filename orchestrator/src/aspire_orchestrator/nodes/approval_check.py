@@ -21,9 +21,12 @@ Per presence_sessions.md:
 
 from __future__ import annotations
 
+import copy
+import json
 import logging
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aspire_orchestrator.models import (
@@ -68,6 +71,128 @@ def _extract_execution_payload(state: OrchestratorState) -> dict[str, Any]:
         "suite_id": state.get("suite_id", ""),
         "office_id": state.get("office_id", ""),
     }
+
+
+# --- PII Redaction (Law #9 — never persist raw PII in drafts) ---
+
+_EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
+_PHONE_RE = re.compile(r"\+?\d[\d\s\-().]{7,}\d")
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CC_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+
+# Keys whose values should be redacted in execution_payload before Supabase persistence
+_PII_KEYS = frozenset({
+    "customer_email", "email", "to", "cc", "bcc", "from_email",
+    "phone", "phone_number", "mobile", "customer_phone",
+    "ssn", "social_security", "tax_id",
+    "card_number", "account_number", "routing_number",
+    "address", "street", "zip_code", "postal_code",
+})
+
+# Keys that are safe to keep (needed for execution but not PII)
+_SAFE_KEYS = frozenset({
+    "amount_cents", "amount", "currency", "description", "title",
+    "start_time", "end_time", "duration_minutes", "event_type",
+    "invoice_id", "quote_id", "room_name", "query",
+    "customer_name", "client_name", "subject",
+    "due_days", "expiry_days", "location", "participants",
+})
+
+
+def _redact_pii(params: dict[str, Any]) -> dict[str, Any]:
+    """Deep-copy params and redact PII fields for safe persistence.
+
+    Execution_payload (with real values) is stored separately for resume execution.
+    This redacted version is used for draft_summary and audit display.
+    """
+    if not params:
+        return {}
+
+    redacted = copy.deepcopy(params)
+
+    def _redact_value(key: str, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: _redact_value(k, v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_redact_value(key, item) for item in value]
+        if not isinstance(value, str):
+            return value
+
+        lower_key = key.lower()
+        # Redact known PII keys
+        if lower_key in _PII_KEYS:
+            if _EMAIL_RE.search(value):
+                return "<EMAIL_REDACTED>"
+            if _PHONE_RE.search(value):
+                return "<PHONE_REDACTED>"
+            if _SSN_RE.search(value):
+                return "<SSN_REDACTED>"
+            if _CC_RE.search(value):
+                return "<CC_REDACTED>"
+            return "<PII_REDACTED>"
+
+        # Scan string values for embedded PII patterns even in non-PII keys
+        value = _SSN_RE.sub("<SSN_REDACTED>", value)
+        value = _CC_RE.sub("<CC_REDACTED>", value)
+        return value
+
+    for key, value in redacted.items():
+        redacted[key] = _redact_value(key, value)
+
+    return redacted
+
+
+def _mask_email(email: str) -> str:
+    """Partially mask email for display: j***@acme.com."""
+    if "@" not in email:
+        return email
+    local, domain = email.rsplit("@", 1)
+    if len(local) <= 1:
+        masked_local = local + "***"
+    else:
+        masked_local = local[0] + "***"
+    return f"{masked_local}@{domain}"
+
+
+def _build_draft_summary(task_type: str, execution_params: dict[str, Any]) -> str:
+    """Build human-readable draft summary for Authority Queue display."""
+    tt = task_type.lower()
+    p = execution_params or {}
+
+    name = p.get("customer_name") or p.get("client_name") or p.get("contact_name") or "client"
+
+    if "invoice" in tt:
+        cents = p.get("amount_cents")
+        if isinstance(cents, (int, float)) and cents > 0:
+            return f"Invoice for {name} — ${cents / 100:.2f}"
+        return f"Invoice for {name}"
+
+    if "email" in tt:
+        to = p.get("to", "recipient")
+        # Partial mask email for draft_summary (PII protection — Law #9)
+        # Full email stored in execution_payload for resume execution
+        masked_to = _mask_email(to) if "@" in str(to) else to
+        subject_text = p.get("subject", "")
+        return f"Email to {masked_to}" + (f" — Re: {subject_text}" if subject_text else "")
+
+    if "calendar" in tt:
+        title = p.get("title", "event")
+        start = p.get("start_time", "")
+        return f"Calendar: {title}" + (f" on {start}" if start else "")
+
+    if "quote" in tt or "proposal" in tt:
+        return f"Quote for {name}"
+
+    if "contract" in tt:
+        return f"Contract for {name}"
+
+    if "payment" in tt or "transfer" in tt:
+        cents = p.get("amount_cents")
+        if isinstance(cents, (int, float)) and cents > 0:
+            return f"Payment — ${cents / 100:.2f}"
+        return f"Payment — review required"
+
+    return f"{task_type} — review required"
 
 
 def _make_receipt(
@@ -135,6 +260,8 @@ def _map_presence_error_to_error_code(
     return AspireErrorCode.PRESENCE_INVALID
 
 
+
+
 def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
     """Check approval status for the current request.
 
@@ -186,6 +313,32 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
     approval_evidence = state.get("approval_evidence")
 
     if approval_evidence is None:
+        # --- Safe Mode (AVA_SAFE_MODE=1 → all operations draft-only) ---
+        from aspire_orchestrator.config.settings import settings
+
+        if settings.ava_safe_mode:
+            safe_receipt = _make_receipt(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                actor_type="system",
+                actor_id="orchestrator.approval_check",
+                action_type="approval.safe_mode",
+                risk_tier=risk_tier_value,
+                outcome=Outcome.PENDING.value,
+                reason_code="SAFE_MODE",
+                receipt_type=ReceiptType.APPROVAL_REQUESTED.value,
+            )
+            existing_receipts = list(state.get("pipeline_receipts", []))
+            existing_receipts.append(safe_receipt)
+            return {
+                "approval_status": "pending",
+                "outcome": Outcome.PENDING,
+                "error_code": "SAFE_MODE",
+                "error_message": "Safe mode active — all operations are draft-only",
+                "pipeline_receipts": existing_receipts,
+            }
+
         # No approval yet — return approval request to client.
         #
         # Ecosystem interaction states (Law #8):
@@ -234,6 +387,61 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
         else:
             error_msg = "Yellow-tier action — Ava is asking for your confirmation"
 
+        # --- Draft-First: Persist draft to Supabase for Authority Queue ---
+        draft_id = None
+        draft_persistence_status = "skipped"  # skipped | success | failed
+        execution_params = state.get("execution_params")
+        if execution_params:
+            try:
+                import hashlib
+
+                from aspire_orchestrator.services.supabase_client import supabase_insert_sync
+
+                task_type = state.get("task_type", "unknown")
+                draft_summary = _build_draft_summary(task_type, execution_params)
+                assigned_agent = state.get("assigned_agent", "ava")
+                params_hash = hashlib.sha256(
+                    json.dumps(execution_params, sort_keys=True, default=str).encode()
+                ).hexdigest()
+
+                # PII redaction: redact sensitive fields for audit/display columns (Law #9)
+                # execution_payload stores FULL params (needed for resume execution)
+                # payload_redacted stores PII-scrubbed version for audit trail
+                redacted_params = _redact_pii(execution_params)
+
+                approval_id = str(uuid.uuid4())
+                now_utc = datetime.now(timezone.utc)
+                expires_at = now_utc + timedelta(hours=24)
+
+                draft_data = {
+                    "approval_id": approval_id,
+                    "tenant_id": suite_id,
+                    "run_id": correlation_id,
+                    "tool": state.get("tool_used", "unknown"),
+                    "operation": task_type,
+                    "risk_tier": risk_tier_value,
+                    "policy_version": "v1",
+                    "approval_hash": payload_hash,
+                    "status": "pending",
+                    "expires_at": expires_at.isoformat(),
+                    "execution_payload": execution_params,
+                    "draft_summary": draft_summary,
+                    "assigned_agent": assigned_agent,
+                    "execution_params_hash": params_hash,
+                    "payload_redacted": redacted_params,
+                }
+
+                supabase_insert_sync("approval_requests", draft_data)
+
+                draft_id = approval_id
+                draft_persistence_status = "success"
+                logger.info("Draft persisted: draft_id=%s suite=%s", draft_id, suite_id[:8])
+
+            except Exception as e:
+                draft_persistence_status = "failed"
+                logger.warning("Draft persistence failed: %s (suite=%s, task=%s)",
+                               e, suite_id[:8], state.get("task_type", "?"))
+
         return {
             "approval_status": "pending",
             "approval_payload_hash": payload_hash,
@@ -242,6 +450,8 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
             "required_approvals": ["owner_approval"] + (["presence_verification"] if is_red else []),
             "presence_required": is_red,
             "outcome": Outcome.PENDING,
+            "draft_id": draft_id,
+            "draft_persistence_status": draft_persistence_status,
             "pipeline_receipts": existing_receipts,
         }
 
@@ -339,8 +549,6 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
     )
 
     # Compute actual expiry from evidence or default (5 minutes)
-    from datetime import timedelta
-
     from aspire_orchestrator.services.approval_service import (
         DEFAULT_APPROVAL_EXPIRY_SECONDS,
     )

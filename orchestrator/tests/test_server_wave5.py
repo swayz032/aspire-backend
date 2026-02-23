@@ -237,7 +237,7 @@ class TestPolicyEvaluateEndpoint:
     def test_yellow_action(self, client) -> None:
         response = client.post(
             "/v1/policy/evaluate",
-            json={"action_type": "invoice.create"},
+            json={"action_type": "email.send"},
         )
         data = response.json()
         assert data["allowed"] is True
@@ -271,7 +271,7 @@ class TestPolicyEvaluateEndpoint:
             json={"action_type": "calendar.read"},
         )
         data = response.json()
-        assert "google.calendar.read" in data["tools"]
+        assert "calendar.event.list" in data["tools"]
 
     def test_returns_capability_scope(self, client) -> None:
         response = client.post(

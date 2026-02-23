@@ -35,6 +35,7 @@ from aspire_orchestrator.services.idempotency_service import get_idempotency_ser
 from aspire_orchestrator.services.outbox_client import OutboxJob, get_outbox_client
 from aspire_orchestrator.services.token_service import validate_token
 from aspire_orchestrator.services.tool_executor import is_live_tool
+from aspire_orchestrator.services.tool_executor import execute_tool as _execute_tool_async
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def _resolve_risk_tier(state: OrchestratorState) -> str:
     return risk_tier_val.value if hasattr(risk_tier_val, "value") else str(risk_tier_val or "green")
 
 
-def execute_node(state: OrchestratorState) -> dict[str, Any]:
+async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     """Execute the approved action via A2A dispatch to owning agent.
 
     Flow (Phase 1 — synchronous):
@@ -100,6 +101,20 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             "outcome": Outcome.DENIED,
             "execution_result": None,
         }
+
+    # Defense-in-depth: check safe mode before any tool execution (Law #3)
+    try:
+        from aspire_orchestrator.config.settings import settings as _settings
+        if _settings.ava_safe_mode:
+            logger.warning("Execute denied: safe mode active")
+            return {
+                "outcome": Outcome.DENIED,
+                "execution_result": {"status": "denied", "reason": "SAFE_MODE", "stub": False},
+                "error_code": "SAFE_MODE",
+                "error_message": "Safe mode active — all tool execution disabled",
+            }
+    except Exception:
+        pass  # Settings not available — proceed (non-critical)
 
     correlation_id = state.get("correlation_id", str(uuid.uuid4()))
     suite_id = state.get("suite_id", "unknown")
@@ -384,22 +399,71 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
         }
 
     # -------------------------------------------------------------------
-    # GREEN/YELLOW ops → Synchronous execution
+    # GREEN/YELLOW ops → Real execution via execute_tool
     # -------------------------------------------------------------------
+    execution_result: dict[str, Any]
 
-    # Build execution result
-    execution_result = {
-        "status": "success",
-        "tool": tool_used,
-        "task_type": task_type,
-        "assigned_agent": assigned_agent,
-        "a2a_task_id": a2a_task_id,
-        "executed_at": datetime.now(timezone.utc).isoformat(),
-        "stub": not live,
-        "live": live,
-    }
+    if live and state.get("execution_params"):
+        try:
+            tool_result = await _execute_tool_async(
+                tool_id=tool_used,
+                payload=state["execution_params"],
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                risk_tier=risk_tier_str,
+                capability_token_id=capability_token_id,
+            )
+            # ToolExecutionResult uses .outcome (Outcome enum), not .success
+            execution_success = (
+                tool_result.outcome == Outcome.SUCCESS
+                if hasattr(tool_result, "outcome")
+                else bool(tool_result)
+            )
+            execution_data = tool_result.data if hasattr(tool_result, "data") else {}
+            execution_error = tool_result.error if hasattr(tool_result, "error") else None
+
+            execution_result = {
+                "status": "success" if execution_success else "failed",
+                "tool": tool_used,
+                "task_type": task_type,
+                "assigned_agent": assigned_agent,
+                "a2a_task_id": a2a_task_id,
+                "data": execution_data if isinstance(execution_data, dict) else {},
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+                "stub": False,
+                "live": True,
+            }
+            if execution_error:
+                execution_result["error"] = execution_error
+        except Exception as e:
+            logger.error("Live tool execution failed for %s: %s", tool_used, e)
+            execution_result = {
+                "status": "failed",
+                "tool": tool_used,
+                "task_type": task_type,
+                "assigned_agent": assigned_agent,
+                "a2a_task_id": a2a_task_id,
+                "error": str(e),
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+                "stub": False,
+                "live": True,
+            }
+    else:
+        # Stub path (for tools not yet in live executors, or no execution_params)
+        execution_result = {
+            "status": "success",
+            "tool": tool_used,
+            "task_type": task_type,
+            "assigned_agent": assigned_agent,
+            "a2a_task_id": a2a_task_id,
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "stub": not live,
+            "live": live,
+        }
 
     receipt_id = str(uuid.uuid4())
+    outcome_val = Outcome.SUCCESS if execution_result["status"] == "success" else Outcome.FAILED
 
     # Tool execution receipt — agent identity preserved
     receipt = {
@@ -416,8 +480,8 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
         "capability_token_hash": state.get("capability_token_hash"),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "executed_at": datetime.now(timezone.utc).isoformat(),
-        "outcome": Outcome.SUCCESS.value,
-        "reason_code": "EXECUTED" if live else "EXECUTED_STUB",
+        "outcome": outcome_val.value,
+        "reason_code": "EXECUTED" if execution_result["status"] == "success" else "EXECUTION_FAILED",
         "receipt_type": ReceiptType.TOOL_EXECUTION.value,
         "receipt_hash": "",
         "a2a_task_id": a2a_task_id,
@@ -434,6 +498,117 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
         )
 
     # -------------------------------------------------------------------
+    # Post-execute: Queue invoice.send in Authority Queue (draft-first pattern)
+    #
+    # When invoice.create succeeds (GREEN), we immediately queue invoice.send
+    # (YELLOW) so the user can approve sending from the Authority Queue.
+    # -------------------------------------------------------------------
+    authority_queue_id = None
+    if (
+        task_type == "invoice.create"
+        and outcome_val == Outcome.SUCCESS
+        and execution_result.get("data", {}).get("invoice_id")
+    ):
+        try:
+            import hashlib
+            import json
+            from datetime import timedelta
+
+            from aspire_orchestrator.services.supabase_client import supabase_insert
+
+            invoice_data = execution_result.get("data", {})
+            exec_params = state.get("execution_params") or {}
+            invoice_id = invoice_data["invoice_id"]
+            customer_name = exec_params.get("customer_name") or exec_params.get("client_name") or "client"
+            amount_cents = exec_params.get("amount_cents") or exec_params.get("amount") or invoice_data.get("amount_due", 0)
+            currency = exec_params.get("currency", "usd").upper()
+
+            # Build send params for resume execution
+            send_params = {
+                "invoice_id": invoice_id,
+                "customer_name": customer_name,
+                "customer_email": exec_params.get("customer_email", ""),
+                "amount_cents": int(amount_cents) if amount_cents else 0,
+                "currency": currency,
+                "description": exec_params.get("description", ""),
+            }
+
+            amount_display = f"${int(amount_cents) / 100:.2f}" if amount_cents else ""
+            draft_summary = f"Send invoice to {customer_name}" + (f" — {amount_display}" if amount_display else "")
+
+            params_hash = hashlib.sha256(
+                json.dumps(send_params, sort_keys=True, default=str).encode()
+            ).hexdigest()
+
+            from aspire_orchestrator.services.approval_service import compute_payload_hash
+
+            approval_hash = compute_payload_hash({
+                "task_type": "invoice.send",
+                "parameters": send_params,
+                "suite_id": suite_id,
+                "office_id": office_id,
+            })
+
+            # created_by_user_id is UUID-typed — only pass a valid UUID or None
+            actor_id_raw = state.get("actor_id")
+            created_by: str | None = None
+            if actor_id_raw and actor_id_raw != "unknown":
+                try:
+                    uuid.UUID(actor_id_raw)  # Validate it's a real UUID
+                    created_by = actor_id_raw
+                except (ValueError, AttributeError):
+                    created_by = None
+
+            send_approval_data = {
+                "approval_id": str(uuid.uuid4()),
+                "tenant_id": suite_id,
+                "run_id": correlation_id,
+                "tool": "stripe.invoice.send",
+                "operation": "invoice.send",
+                "risk_tier": "yellow",
+                "policy_version": "v1",
+                "approval_hash": approval_hash,
+                "status": "pending",
+                "created_by_user_id": created_by,
+                "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+                "execution_payload": send_params,
+                "draft_summary": draft_summary,
+                "assigned_agent": assigned_agent,
+                "execution_params_hash": params_hash,
+                "payload_redacted": {
+                    "invoice_id": invoice_id,
+                    "customer_name": customer_name,
+                    "amount_cents": int(amount_cents) if amount_cents else 0,
+                    "currency": currency,
+                },
+            }
+
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    aq_result = pool.submit(
+                        asyncio.run, supabase_insert("approval_requests", send_approval_data)
+                    ).result(timeout=8)
+            else:
+                aq_result = asyncio.run(supabase_insert("approval_requests", send_approval_data))
+
+            authority_queue_id = aq_result.get("approval_id") or aq_result.get("id")
+            execution_result["authority_queue_id"] = authority_queue_id
+            logger.info(
+                "invoice.send queued in Authority Queue: aq_id=%s invoice=%s suite=%s",
+                authority_queue_id, invoice_id[:12] if invoice_id else "?",
+                suite_id[:8] if len(suite_id) > 8 else suite_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to queue invoice.send in Authority Queue: %s (suite=%s)",
+                e, suite_id[:8] if len(suite_id) > 8 else suite_id,
+            )
+            # Non-fatal: invoice draft was created successfully, queue failure doesn't block
+
+    # -------------------------------------------------------------------
     # A2A Complete — Agent reports task done (Law #2)
     # -------------------------------------------------------------------
     if a2a_task_id:
@@ -444,14 +619,14 @@ def execute_node(state: OrchestratorState) -> dict[str, Any]:
             result={
                 "tool_used": tool_used,
                 "receipt_id": receipt_id,
-                "outcome": "success",
+                "outcome": outcome_val.value,
             },
         )
         if complete_result.success and complete_result.receipt_data:
             existing_receipts.append(complete_result.receipt_data)
 
     return {
-        "outcome": Outcome.SUCCESS,
+        "outcome": outcome_val,
         "execution_result": execution_result,
         "tool_used": tool_used,
         "assigned_agent": assigned_agent,

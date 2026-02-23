@@ -1,0 +1,132 @@
+{
+  "version": "staff_catalog_v1_2026-02-18",
+  "staff": [
+    {
+      "name": "Ava",
+      "lane": "orchestrator",
+      "role": "chief_of_staff",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "openai_sdk_agent",
+      "notes": "Routes work to desks; enforces approvals; never executes side effects directly."
+    },
+    {
+      "name": "Sarah",
+      "lane": "front_desk",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "sarah_front_desk",
+      "hard_rules": ["disclose_ai_once_per_call", "never_collect_payment_details", "keep_turns_short"],
+      "default_risk_floor": "medium"
+    },
+    {
+      "name": "Eli",
+      "lane": "inbox",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "eli_inbox",
+      "hard_rules": ["never_send_without_owner_approval"],
+      "default_risk_floor": "medium"
+    },
+    {
+      "name": "Quinn",
+      "lane": "revenue",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "quinn_invoices",
+      "hard_rules": ["no_send_or_charge_without_approval"],
+      "default_risk_floor": "medium"
+    },
+    {
+      "name": "Nora",
+      "lane": "conference",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "nora-conference",
+      "hard_rules": ["no_external_side_effects"],
+      "default_risk_floor": "low"
+    },
+    {
+      "name": "Adam",
+      "lane": "research",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "adam-research",
+      "hard_rules": ["evidence_required", "freshness_when_needed", "no_external_actions"],
+      "default_risk_floor": "low"
+    },
+    {
+      "name": "Business Google",
+      "lane": "research_war_room",
+      "chat_visible": false,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "business-google",
+      "gating": ["presence_recommended", "budgeted"],
+      "default_risk_floor": "medium"
+    },
+    {
+      "name": "Tec",
+      "lane": "documents",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "tec-docs",
+      "hard_rules": ["preview_first", "approval_required_for_release"],
+      "default_risk_floor": "medium"
+    },
+    {
+      "name": "Finn",
+      "lane": "money_movement",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "finn-money",
+      "hard_rules": ["never_execute_money_movement"],
+      "default_risk_floor": "red"
+    },
+    {
+      "name": "Milo",
+      "lane": "payroll",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "milo-payroll",
+      "hard_rules": ["never_submit_payroll"],
+      "default_risk_floor": "red"
+    },
+    {
+      "name": "Teressa",
+      "lane": "books",
+      "chat_visible": true,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "teressa-books",
+      "hard_rules": ["no_provider_writes"],
+      "default_risk_floor": "medium"
+    },
+    {
+      "name": "Clara",
+      "lane": "legal",
+      "chat_visible": false,
+      "proposal_only": true,
+      "implemented": true,
+      "skillpack_id": "clara-legal",
+      "hard_rules": [
+        "never_sign_without_dual_approval",
+        "never_skip_jurisdiction_check",
+        "draft_first_always",
+        "pii_redact_in_receipts",
+        "attorney_templates_only"
+      ],
+      "default_risk_floor": "red",
+      "notes": "Internal backstage agent. Invoked by Ava after governance routing. Handles contract lifecycle via PandaDoc. RED floor because contract signing is legally binding and irreversible."
+    }
+  ]
+}

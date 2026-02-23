@@ -136,6 +136,11 @@ class QALoop:
                 len(receipts),
             )
         else:
+            for v in violations:
+                logger.warning(
+                    "QA VIOLATION: check=%s, severity=%s, message=%s",
+                    v.check_name, v.severity, v.message,
+                )
             logger.warning(
                 "QA loop FAILED: action=%s, violations=%d (critical=%d, warning=%d), "
                 "retry_suggested=%s, escalation=%s",

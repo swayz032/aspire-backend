@@ -1,0 +1,17 @@
+{
+  "version": "risk_matrix_v1_2026-02-18",
+  "default": {
+    "tier": "medium",
+    "required_presence": "none"
+  },
+  "rules": [
+    {
+      "match": { "action_types_prefix": ["money.", "payroll.", "bank.", "contract."] },
+      "set": { "tier": "red", "required_presence": "ava_video" }
+    },
+    {
+      "match": { "action_types": ["email.send", "document.send_external"] },
+      "set": { "tier": "medium", "required_presence": "ava_voice" }
+    }
+  ]
+}

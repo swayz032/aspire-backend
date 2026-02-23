@@ -45,8 +45,10 @@ logger = logging.getLogger(__name__)
 CONFIDENCE_AUTO_ROUTE = 0.85
 CONFIDENCE_CLARIFY = 0.5
 
-# LLM timeout (orchestrator budget is 30s; classifier gets 15s)
-_LLM_TIMEOUT_SECONDS = 15
+# LLM timeout — safety net when LLM Router is unavailable.
+# Reasoning models (gpt-5-mini) need chain-of-thought before outputting JSON,
+# which can take 15-45s on complex prompts. 90s is the safe fallback ceiling.
+_LLM_TIMEOUT_SECONDS = 90
 
 
 # =============================================================================
@@ -130,7 +132,7 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 - quote.create, quote.send → quinn_invoicing
 - meeting.schedule → nora_conference
 - payment.send, payment.transfer → finn_money_desk
-- contract.generate, contract.sign → clara_legal
+- contract.generate, contract.send, contract.review, contract.sign → clara_legal
 - tax.file → (internal, filing)
 - payroll.run → milo_payroll
 - books.sync → teressa_books
@@ -169,6 +171,8 @@ _ACTION_TO_PACK: dict[str, str] = {
     "payment.send": "finn_money_desk",
     "payment.transfer": "finn_money_desk",
     "contract.generate": "clara_legal",
+    "contract.send": "clara_legal",
+    "contract.review": "clara_legal",
     "contract.sign": "clara_legal",
     "payroll.run": "milo_payroll",
     "books.sync": "teressa_books",
@@ -237,12 +241,15 @@ class IntentClassifier:
             logger.warning("LLM Router not available, using direct config: %s", e)
 
         # Fallback direct config (used when router unavailable)
-        self._model: str = os.environ.get("INTENT_LLM_MODEL", "gpt-4o-mini")
+        self._model: str = os.environ.get("INTENT_LLM_MODEL", "gpt-5-mini")
         self._base_url: str = os.environ.get(
             "INTENT_LLM_BASE_URL", "https://api.openai.com/v1"
         )
-        # API key resolution: explicit env var takes precedence, then router, then fallback
-        self._api_key: str | None = os.environ.get("OPENAI_API_KEY")
+        # API key resolution: ASPIRE_OPENAI_API_KEY (from .env/settings) > OPENAI_API_KEY > router
+        self._api_key: str | None = (
+            os.environ.get("ASPIRE_OPENAI_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
         if not self._api_key and self._llm_router:
             self._api_key = self._llm_router.api_key
 

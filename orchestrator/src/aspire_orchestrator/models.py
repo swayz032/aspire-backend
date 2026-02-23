@@ -82,6 +82,7 @@ class ReceiptType(str, Enum):
     APPROVAL_REQUESTED = "approval_requested"
     APPROVAL_GRANTED = "approval_granted"
     APPROVAL_DENIED = "approval_denied"
+    PARAM_EXTRACTION = "param_extraction"
     TOOL_EXECUTION = "tool_execution"
     RESEARCH_RUN = "research_run"
     EXCEPTION_CARD_GENERATED = "exception_card_generated"

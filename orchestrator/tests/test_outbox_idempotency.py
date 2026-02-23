@@ -418,7 +418,8 @@ class TestExecuteNodeIdempotency:
         svc = get_idempotency_service()
         svc.clear_store()
 
-    def test_yellow_op_with_idempotency_key_succeeds(self) -> None:
+    @pytest.mark.asyncio
+    async def test_yellow_op_with_idempotency_key_succeeds(self) -> None:
         """YELLOW op with valid idempotency key executes normally."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -427,12 +428,13 @@ class TestExecuteNodeIdempotency:
             task_type="invoice.create",
             idempotency_key="idem-yellow-001",
         )
-        result = execute_node(state)
+        result = await execute_node(state)
 
         assert result["outcome"].value == "success"
         assert result["execution_result"]["status"] == "success"
 
-    def test_yellow_op_duplicate_idempotency_denied(self) -> None:
+    @pytest.mark.asyncio
+    async def test_yellow_op_duplicate_idempotency_denied(self) -> None:
         """YELLOW op with duplicate idempotency key is denied (Law #3)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -441,7 +443,7 @@ class TestExecuteNodeIdempotency:
             task_type="invoice.create",
             idempotency_key="idem-yellow-dup",
         )
-        result1 = execute_node(state1)
+        result1 = await execute_node(state1)
         assert result1["outcome"].value == "success"
 
         # Second submission with same key
@@ -450,13 +452,14 @@ class TestExecuteNodeIdempotency:
             task_type="invoice.create",
             idempotency_key="idem-yellow-dup",
         )
-        result2 = execute_node(state2)
+        result2 = await execute_node(state2)
 
         assert result2["outcome"].value == "denied"
         assert result2["error_code"] == "IDEMPOTENCY_DUPLICATE"
         assert result2["original_receipt_id"] is not None
 
-    def test_duplicate_idempotency_produces_receipt(self) -> None:
+    @pytest.mark.asyncio
+    async def test_duplicate_idempotency_produces_receipt(self) -> None:
         """Duplicate idempotency rejection produces a receipt (Law #2)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -465,14 +468,14 @@ class TestExecuteNodeIdempotency:
             task_type="invoice.create",
             idempotency_key="idem-receipt-check",
         )
-        execute_node(state1)
+        await execute_node(state1)
 
         state2 = _make_execute_state(
             risk_tier="yellow",
             task_type="invoice.create",
             idempotency_key="idem-receipt-check",
         )
-        result2 = execute_node(state2)
+        result2 = await execute_node(state2)
 
         receipts = result2["pipeline_receipts"]
         assert len(receipts) >= 1
@@ -480,7 +483,8 @@ class TestExecuteNodeIdempotency:
         assert idem_receipt["reason_code"] == "IDEMPOTENCY_DUPLICATE"
         assert idem_receipt["idempotency_key"] == "idem-receipt-check"
 
-    def test_green_op_skips_idempotency(self) -> None:
+    @pytest.mark.asyncio
+    async def test_green_op_skips_idempotency(self) -> None:
         """GREEN ops skip idempotency check (no state changes)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -491,7 +495,7 @@ class TestExecuteNodeIdempotency:
             tool="calendar.events.read",
             idempotency_key="idem-green-001",
         )
-        result1 = execute_node(state1)
+        result1 = await execute_node(state1)
         assert result1["outcome"].value == "success"
 
         # Same key again — should still succeed (GREEN skips idempotency)
@@ -501,10 +505,11 @@ class TestExecuteNodeIdempotency:
             tool="calendar.events.read",
             idempotency_key="idem-green-001",
         )
-        result2 = execute_node(state2)
+        result2 = await execute_node(state2)
         assert result2["outcome"].value == "success"
 
-    def test_yellow_op_without_key_executes(self) -> None:
+    @pytest.mark.asyncio
+    async def test_yellow_op_without_key_executes(self) -> None:
         """YELLOW op without idempotency key still executes (key is optional)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -514,7 +519,7 @@ class TestExecuteNodeIdempotency:
             tool="email.draft.create",
         )
         # No idempotency_key in state
-        result = execute_node(state)
+        result = await execute_node(state)
         assert result["outcome"].value == "success"
 
 
@@ -526,7 +531,8 @@ class TestExecuteNodeOutbox:
         svc = get_idempotency_service()
         svc.clear_store()
 
-    def test_red_op_routes_to_outbox(self) -> None:
+    @pytest.mark.asyncio
+    async def test_red_op_routes_to_outbox(self) -> None:
         """RED-tier operation submits to outbox instead of sync execution (Law #4)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -536,13 +542,14 @@ class TestExecuteNodeOutbox:
             tool="moov.transfer.create",
             idempotency_key="idem-red-001",
         )
-        result = execute_node(state)
+        result = await execute_node(state)
 
         assert result["outcome"].value == "success"
         assert result["execution_result"]["status"] == "outbox_submitted"
         assert "outbox_job_id" in result["execution_result"]
 
-    def test_red_op_produces_outbox_receipt(self) -> None:
+    @pytest.mark.asyncio
+    async def test_red_op_produces_outbox_receipt(self) -> None:
         """RED-tier outbox submission produces receipt with job_id (Law #2)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -552,7 +559,7 @@ class TestExecuteNodeOutbox:
             tool="moov.transfer.create",
             idempotency_key="idem-red-receipt",
         )
-        result = execute_node(state)
+        result = await execute_node(state)
 
         receipts = result["pipeline_receipts"]
         assert len(receipts) >= 1
@@ -561,7 +568,8 @@ class TestExecuteNodeOutbox:
         assert outbox_receipt["risk_tier"] == "red"
         assert "outbox_job_id" in outbox_receipt
 
-    def test_yellow_op_stays_synchronous(self) -> None:
+    @pytest.mark.asyncio
+    async def test_yellow_op_stays_synchronous(self) -> None:
         """YELLOW-tier operations execute synchronously, NOT through outbox."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -571,7 +579,7 @@ class TestExecuteNodeOutbox:
             tool="stripe.invoice.create",
             idempotency_key="idem-yellow-sync",
         )
-        result = execute_node(state)
+        result = await execute_node(state)
 
         assert result["outcome"].value == "success"
         assert result["execution_result"]["status"] == "success"

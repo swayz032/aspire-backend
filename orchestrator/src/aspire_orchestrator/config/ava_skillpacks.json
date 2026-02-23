@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "skillpacks_registry_v1_2026-02-18",
+  "skillpacks": [
+    {
+      "id": "openai_sdk_agent",
+      "name": "OpenAI SDK Agent Runner",
+      "version": "0.1.0",
+      "description": "Runs a Skill Pack agent via Ava (GPT-5 orchestrator).",
+      "allowed_tools": ["openai_sdk"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "sarah_front_desk",
+      "name": "Sarah",
+      "version": "1.0.0",
+      "description": "Front Desk AI receptionist (voice line triage; creates proposals).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "eli_inbox",
+      "name": "Eli",
+      "version": "1.0.0",
+      "description": "Business inbox operator (draft-only; approval required to send).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "quinn_invoices",
+      "name": "Quinn",
+      "version": "1.0.0",
+      "description": "Revenue operator: quotes/invoices drafts (approval gated).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "nora-conference",
+      "name": "Nora",
+      "version": "1.0.0",
+      "description": "Conference assistant (meeting notes, recap packets; draft-only; routes exports via Tec).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "adam-research",
+      "name": "Adam",
+      "version": "1.0.0",
+      "description": "Research desk (evidence-backed research packets; no external actions).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 120000
+    },
+    {
+      "id": "business-google",
+      "name": "Business Google",
+      "version": "1.0.0",
+      "description": "Session-scoped research war room wrapper over Adam (budgeted; evidence-backed).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 120000
+    },
+    {
+      "id": "tec-docs",
+      "name": "Tec",
+      "version": "1.0.0",
+      "description": "Document production (preview + approval-gated release/download).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "doc.render_preview", "doc.render_pdf", "storage.put_object", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 120000
+    },
+    {
+      "id": "finn-money",
+      "name": "Finn",
+      "version": "1.0.0",
+      "description": "Money Movement desk (proposal-only; execution gated by approvals + presence).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "milo-payroll",
+      "name": "Milo",
+      "version": "1.0.0",
+      "description": "Payroll desk (proposal-only; never submits payroll).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    },
+    {
+      "id": "teressa-books",
+      "name": "Teressa",
+      "version": "1.0.0",
+      "description": "Books desk (proposal-only; no direct book changes/provider writes).",
+      "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
+      "default_timeout_ms": 60000
+    }
+  ]
+}

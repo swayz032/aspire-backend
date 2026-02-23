@@ -17,7 +17,7 @@ profiles:
     model_env: "ASPIRE_ROUTER_MODEL_CLASSIFIER"
     max_tokens: 512
     temperature: 0.1
-    timeout_seconds: 10
+    timeout_seconds: 60
     description: "Fast, cheap model for intent classification and entity extraction"
 
   fast_general:

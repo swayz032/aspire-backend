@@ -156,7 +156,7 @@ def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
     existing_receipts = list(state.get("pipeline_receipts", []))
     existing_receipts.append(receipt)
 
-    return {
+    result = {
         "risk_tier": eval_result.risk_tier,
         "policy_allowed": True,
         "policy_deny_reason": None,
@@ -165,6 +165,26 @@ def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
         "presence_required": eval_result.presence_required,
         "pipeline_receipts": existing_receipts,
     }
+
+    # Backwards-compat: when Brain Layer is skipped (no utterance),
+    # derive tool_used and execution_params from policy matrix + request payload.
+    if not state.get("tool_used") and eval_result.tools:
+        result["tool_used"] = eval_result.tools[0]
+        logger.info("Backwards-compat: set tool_used=%s from policy matrix", eval_result.tools[0])
+
+    if not state.get("execution_params"):
+        request = state.get("request")
+        if isinstance(request, dict):
+            payload = request.get("payload", {})
+        elif hasattr(request, "payload"):
+            payload = request.payload if isinstance(request.payload, dict) else {}
+        else:
+            payload = {}
+        if payload:
+            result["execution_params"] = payload
+            logger.info("Backwards-compat: set execution_params from request payload (%d keys)", len(payload))
+
+    return result
 
 
 def _make_policy_receipt(

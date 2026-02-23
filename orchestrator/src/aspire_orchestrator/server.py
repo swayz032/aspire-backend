@@ -44,13 +44,21 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
+
+# Load .env BEFORE any other imports that read os.environ
+# Pydantic BaseSettings reads .env for its own fields, but os.environ.get() calls
+# in intent_classifier, param_extract, respond etc. need dotenv to inject values.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
+from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.graph import build_orchestrator_graph
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
@@ -93,6 +101,10 @@ app.include_router(admin_router)
 
 # Include Robot Ingest routes (Wave 3 — Enterprise Sync)
 app.include_router(robots_router)
+
+# Load secrets from AWS Secrets Manager (production) or .env (dev)
+# Must happen BEFORE graph build, which may read provider keys from os.environ
+load_secrets()
 
 # Build the graph once at startup
 orchestrator_graph = build_orchestrator_graph()
@@ -217,6 +229,12 @@ async def process_intent(request: Request) -> JSONResponse:
         initial_state["auth_suite_id"] = suite_id
     if correlation_id:
         initial_state["correlation_id"] = correlation_id
+
+    # Extract approval_evidence from request body for YELLOW/RED re-submit flows.
+    # The client sends approval_evidence in the top-level body; the graph expects
+    # it as a top-level state field (approval_check reads state["approval_evidence"]).
+    if isinstance(body, dict) and "approval_evidence" in body:
+        initial_state["approval_evidence"] = body["approval_evidence"]
 
     start_time = time.monotonic()
     try:
@@ -827,6 +845,46 @@ async def a2a_fail(request: Request) -> JSONResponse:
             "receipt_id": result.receipt_data.get("id") if result.receipt_data else None,
         },
     )
+
+
+@app.post("/v1/resume/{approval_id}")
+async def resume_execution(approval_id: str, request: Request) -> JSONResponse:
+    """Resume execution of an approved draft operation."""
+    import re
+
+    # Validate UUID format
+    if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', approval_id, re.I):
+        return JSONResponse(status_code=400, content={"error": "INVALID_ID", "message": "Invalid approval ID format"})
+
+    # Auth from headers (same pattern as /v1/intents)
+    suite_id = request.headers.get("x-suite-id", "")
+    office_id = request.headers.get("x-office-id", "")
+    actor_id = request.headers.get("x-actor-id", "")
+
+    if not suite_id:
+        return JSONResponse(status_code=401, content={"error": "UNAUTHORIZED", "message": "Missing x-suite-id header"})
+
+    try:
+        from aspire_orchestrator.nodes.resume import resume_after_approval
+        result = await resume_after_approval(approval_id, suite_id, office_id, actor_id)
+
+        if result.get("success"):
+            return JSONResponse(content={
+                "narration": result["narration_text"],
+                "receipt_id": result["receipt_id"],
+                "data": result.get("execution_result"),
+            })
+        else:
+            status = 403 if result.get("error_code") in ("TENANT_ISOLATION_VIOLATION",) else 400
+            return JSONResponse(status_code=status, content={
+                "error": result["error_code"],
+                "message": result["error_message"],
+                "receipt_id": result.get("receipt_id"),
+            })
+
+    except Exception as e:
+        logger.exception("Resume endpoint failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "INTERNAL_ERROR", "message": str(e)})
 
 
 @app.get("/v1/a2a/tasks")

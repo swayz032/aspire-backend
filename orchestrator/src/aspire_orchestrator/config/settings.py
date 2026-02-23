@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     pandadoc_api_key: str = ""
+    pandadoc_webhook_secret: str = ""
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
 
@@ -86,6 +87,20 @@ class Settings(BaseSettings):
     gusto_client_secret: str = ""
     moov_client_id: str = ""
     moov_client_secret: str = ""
+
+    # --- Clara RAG Knowledge Base ---
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimensions: int = 3072
+    embedding_batch_size: int = 50
+    rag_max_chunks_per_query: int = 10
+    rag_min_similarity: float = 0.3
+    rag_vector_weight: float = 0.7
+    rag_text_weight: float = 0.3
+
+    # --- Ava v1.5 Features ---
+    ava_user_prompt_version: str | None = None     # AVA_USER_PROMPT_VERSION env var
+    ava_admin_prompt_version: str | None = None    # AVA_ADMIN_PROMPT_VERSION env var
+    ava_safe_mode: bool = False                    # AVA_SAFE_MODE=1 for incident operation
 
     model_config = {"env_prefix": "ASPIRE_", "env_file": ".env", "extra": "ignore"}
 

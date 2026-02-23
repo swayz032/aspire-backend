@@ -1,0 +1,53 @@
+{
+  "version": "playbooks_v1_2026-02-18",
+  "items": [
+    {
+      "id": "consultant_loop",
+      "path": "00_consultant_loop.md",
+      "tags": ["core", "consulting", "nba"],
+      "match": {"any": ["help my business", "strategy", "plan", "stuck", "what should i do"]}
+    },
+    {
+      "id": "daily_pulse",
+      "path": "01_daily_pulse.md",
+      "tags": ["cadence", "daily", "retention"],
+      "match": {"task_type_prefix": ["ritual.", "daily."], "any": ["check-in", "today", "morning", "daily"]}
+    },
+    {
+      "id": "weekly_review",
+      "path": "02_weekly_review.md",
+      "tags": ["cadence", "weekly", "review"],
+      "match": {"task_type_prefix": ["weekly."], "any": ["weekly review", "end of week", "review"]}
+    },
+    {
+      "id": "load_shedding",
+      "path": "personal_ops/00_load_shedding.md",
+      "tags": ["personal_ops", "stress", "overwhelm"],
+      "match": {"any": ["overwhelmed", "stressed", "behind", "burned out", "exhausted"]}
+    },
+    {
+      "id": "pipeline_rehab",
+      "path": "growth/00_pipeline_rehab.md",
+      "tags": ["growth", "sales", "pipeline"],
+      "match": {"any": ["no leads", "pipeline", "deals", "sales"]}
+    },
+    {
+      "id": "ar_cashflow",
+      "path": "finance/00_ar_cashflow.md",
+      "tags": ["finance", "cashflow", "ar"],
+      "match": {"any": ["invoice overdue", "overdue", "cash", "runway", "paid"]}
+    },
+    {
+      "id": "delegation_sops",
+      "path": "ops/00_delegation_sops.md",
+      "tags": ["ops", "delegation", "sop"],
+      "match": {"any": ["delegat", "process", "sop", "checklist", "system"]}
+    },
+    {
+      "id": "boundary_scripts",
+      "path": "comms/00_boundary_scripts.md",
+      "tags": ["comms", "clients"],
+      "match": {"any": ["scope creep", "late payment", "boundaries", "client"]}
+    }
+  ]
+}

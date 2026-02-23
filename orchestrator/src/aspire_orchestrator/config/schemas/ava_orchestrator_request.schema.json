@@ -1,17 +1,55 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aspireos.app/schemas/ava_orchestrator_request/1.0.json",
+  "title": "AvaOrchestratorRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "suite_id", "office_id", "request_id", "correlation_id", "timestamp", "task_type", "payload"],
+  "required": [
+    "correlation_id",
+    "task",
+    "role",
+    "policy_version",
+    "tool_policy_version"
+  ],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.0"]},
-    "suite_id": {"type": "string", "minLength": 1},
-    "office_id": {"type": "string", "minLength": 1},
-    "request_id": {"type": "string", "minLength": 1},
-    "correlation_id": {"type": "string", "minLength": 1},
-    "timestamp": {"type": "string", "format": "date-time"},
-    "task_type": {"type": "string", "minLength": 1},
-    "payload": {"type": "object"}
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "enum": ["owner","admin","staff","unknown"] },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "tool_policy_version": { "type": "string", "minLength": 1 },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "suite_id",
+        "task_type",
+        "status",
+        "priority",
+        "payload",
+        "assigned_to_agent",
+        "created_by_office_id",
+        "assigned_to_office_id",
+        "attempt_count",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "task_id": { "type": "string", "minLength": 1 },
+        "suite_id": { "type": "string", "minLength": 1 },
+        "task_type": { "type": "string", "minLength": 1 },
+        "status": { "type": "string" },
+        "priority": { "type": "number" },
+        "payload": {
+          "type": ["object","null"],
+          "additionalProperties": true
+        },
+        "assigned_to_agent": { "type": "string" },
+        "created_by_office_id": { "type": ["string","null"] },
+        "assigned_to_office_id": { "type": ["string","null"] },
+        "attempt_count": { "type": "number" },
+        "lease_expires_at": { "type": ["string","null"] },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    }
   }
 }

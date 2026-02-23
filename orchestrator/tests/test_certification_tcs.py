@@ -222,7 +222,7 @@ class TestTC03ApprovalMissing:
         suite_id = "tc03-suite-001"
         request = _make_request(
             suite_id=suite_id,
-            task_type="invoice.create",
+            task_type="email.send",
         )
 
         response = client.post("/v1/intents", json=request)

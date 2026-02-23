@@ -1,0 +1,24 @@
+{
+  "version": "approval_gates_v2_2026-02-12",
+  "requires_human_approval": {
+    "task_types": [
+      "finance_payment",
+      "delete_customer_data",
+      "production_release",
+      "document_release",
+      "document_send_external"
+    ],
+    "action_types": [
+      "money.transfer.create",
+      "payroll.run",
+      "payroll.employee.update",
+      "bank_account.link",
+      "customer.data.delete",
+      "document.send_external",
+      "document.release",
+      "production.release",
+      "contract.generate",
+      "contract.sign"
+    ]
+  }
+}

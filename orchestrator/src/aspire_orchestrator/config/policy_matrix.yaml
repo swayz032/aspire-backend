@@ -61,7 +61,7 @@ actions:
   # Calendar
   calendar.read:
     risk_tier: green
-    tools: [google.calendar.read]
+    tools: [calendar.event.list]
     capability_scope: calendar:read
     category: calendar
     approval:
@@ -70,7 +70,7 @@ actions:
 
   calendar.list:
     risk_tier: green
-    tools: [google.calendar.list]
+    tools: [calendar.event.list]
     capability_scope: calendar:list
     category: calendar
     approval:
@@ -148,6 +148,25 @@ actions:
     tools: [internal.document.generate]
     capability_scope: research:rfq
     category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  # Contract templates (read-only discovery)
+  templates.list:
+    risk_tier: green
+    tools: [pandadoc.templates.list]
+    capability_scope: templates:read
+    category: contracts
+    approval:
+      type: none
+    redact_fields: []
+
+  templates.details:
+    risk_tier: green
+    tools: [pandadoc.templates.details]
+    capability_scope: templates:read
+    category: contracts
     approval:
       type: none
     redact_fields: []
@@ -358,7 +377,7 @@ actions:
   # Calendar (write)
   calendar.create:
     risk_tier: yellow
-    tools: [google.calendar.create]
+    tools: [calendar.event.create]
     capability_scope: calendar:write
     category: calendar
     approval:
@@ -366,15 +385,25 @@ actions:
       binding_fields: [title, start_time, attendees]
     redact_fields: [attendees]
 
-  # Invoice
-  invoice.create:
+  calendar.complete:
     risk_tier: yellow
+    tools: [calendar.event.complete]
+    capability_scope: calendar:write
+    category: calendar
+    approval:
+      type: explicit
+      binding_fields: [event_id]
+    redact_fields: []
+
+  # Invoice (draft creation is GREEN — no money moves, just a Stripe draft)
+  # Sending the invoice (invoice.send) remains YELLOW — requires Authority Queue approval
+  invoice.create:
+    risk_tier: green
     tools: [stripe.invoice.create]
     capability_scope: invoicing:create
     category: invoicing
     approval:
-      type: explicit
-      binding_fields: [customer_id, amount, currency, line_items]
+      type: none
     params:
       required: [customer_id, amount]
     redact_fields: [customer_id]
@@ -492,16 +521,40 @@ actions:
       binding_fields: [document_id, recipients]
     redact_fields: [recipients]
 
-  # Contracts (generate, not sign)
+  # Contracts (draft creation is GREEN — no binding action, just a PandaDoc draft)
+  # Sending the contract (contract.send) remains YELLOW — requires Authority Queue approval
   contract.generate:
-    risk_tier: yellow
+    risk_tier: green
     tools: [pandadoc.contract.generate]
     capability_scope: contracts:generate
     category: contracts
     approval:
-      type: legal
-      binding_fields: [party_names, template_id]
+      type: none
+    params:
+      required: [template_type, parties]
     redact_fields: [party_names, address]
+
+  # Contracts (send for signature — external communication)
+  contract.send:
+    risk_tier: yellow
+    tools: [pandadoc.contract.send]
+    capability_scope: contracts:send
+    category: contracts
+    approval:
+      type: explicit
+      binding_fields: [document_id, message]
+    redact_fields: []
+
+  # Contracts (create embedded signing session)
+  contract.session:
+    risk_tier: yellow
+    tools: [pandadoc.contract.session]
+    capability_scope: contracts:session
+    category: contracts
+    approval:
+      type: explicit
+      binding_fields: [document_id, recipient]
+    redact_fields: [recipient]
 
   # Finance Manager (Finn v2) — proposals + A2A delegation
   finance.proposal.create:
@@ -631,6 +684,8 @@ actions:
     approval:
       type: legal
       binding_fields: [contract_id, signer_name, signer_email]
+      dual_approval: true
+      required_approvers: [legal, business_owner]
     redact_fields: [signer_name, signer_email]
 
   # Tax filing

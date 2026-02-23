@@ -167,7 +167,7 @@ class TestIntentClassification:
 
     @pytest.mark.asyncio
     async def test_classify_invoice_create(self, monkeypatch) -> None:
-        """'Create an invoice for John' -> invoice.create, YELLOW."""
+        """'Create an invoice for John' -> invoice.create, GREEN (draft creation)."""
         llm_resp = _make_llm_response(
             action_type="invoice.create",
             skill_pack="quinn_invoicing",
@@ -185,7 +185,7 @@ class TestIntentClassification:
             result = await classifier.classify("Create an invoice for John")
 
         assert result.action_type == "invoice.create"
-        assert result.risk_tier == RiskTier.YELLOW
+        assert result.risk_tier == RiskTier.GREEN
         assert result.confidence == 0.92
         assert result.skill_pack == "quinn_invoicing"
 
@@ -408,17 +408,24 @@ class TestSkillRouting:
 
     @pytest.mark.asyncio
     async def test_route_single_yellow(self) -> None:
-        """invoice.create -> single step, YELLOW, approval required."""
-        intent = _make_intent_result(
-            action_type="invoice.create",
-            skill_pack="quinn_invoicing",
+        """email.send -> single step, YELLOW, approval required.
+
+        entities include draft_id to prevent lifecycle reroute
+        (email.send → email.draft happens when no existing draft).
+        """
+        intent = IntentResult(
+            action_type="email.send",
+            skill_pack="eli_inbox",
+            confidence=0.95,
+            entities={"draft_id": "existing-draft-123"},
             risk_tier=RiskTier.YELLOW,
+            requires_clarification=False,
         )
         router = SkillRouter()
         plan = await router.route(intent)
 
         assert len(plan.steps) == 1
-        assert plan.steps[0].action_type == "invoice.create"
+        assert plan.steps[0].action_type == "email.send"
         assert plan.estimated_risk_tier == RiskTier.YELLOW
         assert plan.steps[0].approval_required is True
 
@@ -440,10 +447,20 @@ class TestSkillRouting:
 
     @pytest.mark.asyncio
     async def test_route_compound_sequential(self) -> None:
-        """invoice.create + invoice.send -> sequential (dependency)."""
+        """invoice.create + invoice.send -> sequential (dependency).
+
+        invoice.send intent includes invoice_id to prevent lifecycle reroute.
+        """
         intents = [
-            _make_intent_result(action_type="invoice.create", risk_tier=RiskTier.YELLOW),
-            _make_intent_result(action_type="invoice.send", risk_tier=RiskTier.YELLOW),
+            _make_intent_result(action_type="invoice.create", risk_tier=RiskTier.GREEN),
+            IntentResult(
+                action_type="invoice.send",
+                skill_pack="quinn_invoicing",
+                confidence=0.95,
+                entities={"invoice_id": "existing-invoice-123"},
+                risk_tier=RiskTier.YELLOW,
+                requires_clarification=False,
+            ),
         ]
         router = SkillRouter()
         plan = await router.route_multi(intents)
@@ -488,7 +505,7 @@ class TestSkillRouting:
     async def test_route_delegation(self) -> None:
         """Cross-pack routing (invoice + email = Quinn + Eli) -> delegation_required."""
         intents = [
-            _make_intent_result(action_type="invoice.create", skill_pack="quinn_invoicing", risk_tier=RiskTier.YELLOW),
+            _make_intent_result(action_type="invoice.create", skill_pack="quinn_invoicing", risk_tier=RiskTier.GREEN),
             _make_intent_result(action_type="email.send", skill_pack="eli_inbox", risk_tier=RiskTier.YELLOW),
         ]
         router = SkillRouter()
@@ -903,6 +920,19 @@ class TestIntentsEndpoint:
 class TestPipelineIntegration:
     """11-node graph with Brain Layer nodes — integration tests."""
 
+    @pytest.fixture(autouse=True)
+    def _no_real_llm(self, monkeypatch):
+        """Remove LLM API keys so param_extract uses graceful degradation.
+
+        server.py's load_dotenv() runs at import time (triggered by other test
+        modules like test_admin_api.py), which puts OPENAI_API_KEY into
+        os.environ.  Without this cleanup, param_extract makes a real LLM call,
+        required-field validation fails, and the pipeline short-circuits before
+        reaching approval_check — causing KeyError: 'approval_status'.
+        """
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ASPIRE_OPENAI_API_KEY", raising=False)
+
     @pytest.fixture
     def graph(self):
         from aspire_orchestrator.graph import build_orchestrator_graph
@@ -966,8 +996,8 @@ class TestPipelineIntegration:
     async def test_pipeline_yellow_with_brain(self, graph) -> None:
         """Full 11-node YELLOW path — stops at approval (Brain Layer active)."""
         intent = _make_intent_result(
-            action_type="invoice.create",
-            skill_pack="quinn_invoicing",
+            action_type="email.send",
+            skill_pack="eli_inbox",
             confidence=0.92,
             risk_tier=RiskTier.YELLOW,
         )
@@ -977,11 +1007,11 @@ class TestPipelineIntegration:
             "aspire_orchestrator.services.intent_classifier.get_intent_classifier",
             return_value=mock_classifier,
         ):
-            request = self._make_request_with_utterance("Create an invoice for John")
+            request = self._make_request_with_utterance("Send an email to John")
             result = await graph.ainvoke({
                 "request": request,
                 "actor_id": "test_user",
-                "utterance": "Create an invoice for John",
+                "utterance": "Send an email to John",
             })
 
         assert result["safety_passed"] is True
@@ -1040,8 +1070,58 @@ class TestPipelineIntegration:
         assert result.get("intent_result") is not None
         # Low confidence should route directly to respond (no routing/policy/execution)
         assert result.get("routing_plan") is None
-        # Should have a response (escalation)
-        assert result["response"] is not None
+        # Phantom execution guard: respond must NOT claim success
+        response = result["response"]
+        assert response is not None
+        assert response["error"] == "CLASSIFICATION_UNCLEAR"
+        # Must not contain execution claim language
+        assert "success" not in response.get("text", "").lower() or "rephrase" in response.get("text", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_classify_preserves_explicit_task_type(self, graph) -> None:
+        """When LLM returns unknown but explicit task_type is valid, preserve it.
+
+        The mock classifier returns unknown/low-confidence, but the request has
+        explicit task_type='invoice.send'. Classify should boost it.
+        entities include invoice_id to prevent lifecycle reroute in route_node.
+        """
+        intent = IntentResult(
+            action_type="unknown",
+            skill_pack="internal",
+            confidence=0.3,
+            entities={"invoice_id": "existing-inv-123"},
+            risk_tier=RiskTier.YELLOW,
+            requires_clarification=False,
+        )
+        mock_classifier = self._mock_classifier(intent)
+
+        with patch(
+            "aspire_orchestrator.services.intent_classifier.get_intent_classifier",
+            return_value=mock_classifier,
+        ):
+            # Explicit task_type="invoice.send" is in the policy matrix — should be preserved
+            request = self._make_request_with_utterance(
+                "Resend the invoice to Scott Consultants",
+                task_type="invoice.send",
+            )
+            result = await graph.ainvoke({
+                "request": request,
+                "actor_id": "test_user",
+                "utterance": "Resend the invoice to Scott Consultants",
+            })
+
+        assert result["safety_passed"] is True
+        assert result.get("intent_result") is not None
+        # Classify should have preserved the explicit task_type
+        intent_data = result["intent_result"]
+        assert intent_data["action_type"] == "invoice.send"
+        assert intent_data["confidence"] == 0.9
+        # Pipeline should continue to routing, not short-circuit to respond
+        assert result.get("routing_plan") is not None
+        # YELLOW tier invoice.send requires approval
+        assert result["approval_status"] == "pending"
+        response = result["response"]
+        assert response["error"] == "APPROVAL_REQUIRED"
 
     @pytest.mark.asyncio
     async def test_pipeline_qa_retry(self, graph) -> None:

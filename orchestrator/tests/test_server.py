@@ -86,7 +86,7 @@ class TestIntentsEndpoint:
 
     def test_yellow_tier_returns_202(self, client) -> None:
         """POST /v1/intents with YELLOW tier (no approval) returns 202."""
-        response = client.post("/v1/intents", json=_make_valid_request("invoice.create"))
+        response = client.post("/v1/intents", json=_make_valid_request("email.send"))
         assert response.status_code == 202
         data = response.json()
         assert data["error"] == "APPROVAL_REQUIRED"

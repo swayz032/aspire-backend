@@ -1,0 +1,19 @@
+{
+  "name": "ava_admin_prompt_set",
+  "version": "v1.3.0",
+  "created_at": "2026-02-19",
+  "files": {
+    "system.md": {
+      "sha256": "57b3f586dc4d22c663619e5687d427f6b9b51d7b200d298520b19b6cb9faa2dc"
+    },
+    "constraints.md": {
+      "sha256": "0a20f11572939ad775d285a6aa82dee7d73b294df1f54504d07cf908567f508a"
+    },
+    "persona.md": {
+      "sha256": "efd32cc6f1e2f1b10e4bf5617d07a56f5d2e85ba8eda0cd431e0fa3c83d6ff35"
+    },
+    "fewshots.md": {
+      "sha256": "84df73ac37799361eba03389cf54504a0be79e61a54a06d14e784f8c67c53cfd"
+    }
+  }
+}

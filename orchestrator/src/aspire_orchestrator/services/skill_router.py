@@ -110,7 +110,7 @@ class RoutingPlan(BaseModel):
 _OUTPUT_DEPENDENCIES: dict[str, set[str]] = {
     "invoice.create": {"invoice.send", "invoice.void"},
     "quote.create": {"quote.send"},
-    "contract.generate": {"contract.sign"},
+    "contract.generate": {"contract.sign", "contract.send"},
     "email.draft": {"email.send"},
     "finance.snapshot.read": {"finance.proposal.create", "finance.packet.draft"},
     "finance.exceptions.read": {"finance.proposal.create"},
@@ -224,6 +224,32 @@ class SkillRouter:
         for intent in intents:
             resolved = self._resolve_action_types(intent)
             action_types.extend(resolved)
+
+        # Lifecycle-aware rerouting: "send" actions require an existing document.
+        # When the user says "send an NDA to X" but no document_id is provided,
+        # they mean the full lifecycle: draft → approve → send.  Reroute to the
+        # generate action so Ava drafts it first.
+        _SEND_NEEDS_DRAFT: dict[str, str] = {
+            "contract.send": "contract.generate",
+            "invoice.send": "invoice.create",
+            "email.send": "email.draft",
+        }
+        for i, action in enumerate(action_types):
+            if action in _SEND_NEEDS_DRAFT:
+                has_doc_id = any(
+                    intent.entities.get("document_id")
+                    or intent.entities.get("invoice_id")
+                    or intent.entities.get("draft_id")
+                    for intent in intents
+                    if intent.entities
+                )
+                if not has_doc_id:
+                    draft_action = _SEND_NEEDS_DRAFT[action]
+                    logger.info(
+                        "Lifecycle reroute: %s → %s (no existing document_id)",
+                        action, draft_action,
+                    )
+                    action_types[i] = draft_action
 
         if not action_types:
             logger.warning(

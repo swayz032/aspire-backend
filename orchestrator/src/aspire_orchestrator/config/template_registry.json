@@ -1,0 +1,271 @@
+{
+  "_version": "3.0",
+  "_description": "Clara Legal template registry — 14 real PandaDoc templates with role maps + pricing table names. UUIDs verified via discover_templates.py (2026-02-22).",
+
+  "templates": {
+    "trades_sow": {
+      "lane": "trades",
+      "description": "Contractor Scope of Work (milestones, pricing, schedule)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["milestones", "pricing"],
+      "pandadoc_template_uuid": "Pc5saWpynSmb4NT63FPZPS",
+      "attorney_approved": false,
+      "role_map": {"Contractor": "sender", "Approver": "client"},
+      "special_tokens": {
+        "Project.Name": ["project_name", "scope", "title"],
+        "Approver.Title": ["approver_title"],
+        "Contractor.Title": ["contractor_title"]
+      },
+      "default_tokens": {
+        "Approver.Title": "Authorized Representative",
+        "Contractor.Title": "Project Manager"
+      },
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "company", "email"]
+      }
+    },
+    "trades_painting_proposal": {
+      "lane": "trades",
+      "description": "Painting services proposal (interior/exterior, preparation, materials)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description"],
+      "pandadoc_template_uuid": "6SUHv5KfZ58umgoLu9vsNm",
+      "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 2",
+      "required_party_data": {
+        "sender": ["full_name", "company", "city", "email"],
+        "client": ["full_name", "email"]
+      }
+    },
+    "trades_hvac_proposal": {
+      "lane": "trades",
+      "description": "HVAC services proposal (install, repair, maintenance)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description"],
+      "pandadoc_template_uuid": "A4PQkBwRPKjTT38xGLHicN",
+      "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 2",
+      "required_party_data": {
+        "sender": ["full_name", "company", "address", "city", "state", "zip", "email", "phone", "website"],
+        "client": ["full_name", "company", "address", "city", "state", "zip", "email", "phone"]
+      }
+    },
+    "trades_roofing_proposal": {
+      "lane": "trades",
+      "description": "Roofing services proposal (replacement, repair, inspection)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description"],
+      "pandadoc_template_uuid": "7V367zKUvGHFtgnoqT2e7V",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "company", "email"]
+      }
+    },
+    "trades_architecture_proposal": {
+      "lane": "trades",
+      "description": "Architecture firm project proposal",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description", "project_timeline"],
+      "pandadoc_template_uuid": "xzFYgP5NuaQhfTwsmByuDX",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "company", "email"]
+      }
+    },
+    "trades_construction_proposal": {
+      "lane": "trades",
+      "description": "General construction project proposal",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description", "budget"],
+      "pandadoc_template_uuid": "RMqD3gn7qZRZRPVcMbdnUQ",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "company", "address", "city", "state", "zip", "email"]
+      }
+    },
+    "trades_residential_construction": {
+      "lane": "trades",
+      "description": "Residential construction project proposal",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description", "budget"],
+      "pandadoc_template_uuid": "Yxd5Hd8GxvAkCLvUjN9TwC",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "email"]
+      }
+    },
+    "trades_residential_contract": {
+      "lane": "trades",
+      "description": "Residential construction contract (binding)",
+      "risk_tier": "red",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["scope_description", "contract_value", "schedule"],
+      "pandadoc_template_uuid": "7kruQeak5EaHZBy92CC4qT",
+      "attorney_approved": false,
+      "role_map": {"Contractor": "sender", "Owner": "client"},
+      "special_tokens": {
+        "Project.Name": ["project_name", "scope", "title"],
+        "Approver.Title": ["approver_title"],
+        "Contractor.Title": ["contractor_title"]
+      },
+      "default_tokens": {
+        "Approver.Title": "Authorized Representative",
+        "Contractor.Title": "General Contractor"
+      },
+      "required_party_data": {
+        "sender": ["full_name", "company", "address", "city", "state", "zip", "email", "phone"],
+        "client": ["full_name", "address", "city", "state", "zip", "email", "phone"]
+      }
+    },
+
+    "acct_engagement_letter": {
+      "lane": "accounting",
+      "description": "Accounting services engagement letter / proposal",
+      "risk_tier": "yellow",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["services_scope", "fee_schedule"],
+      "pandadoc_template_uuid": "rp2knmUFyfhAghLF8E9iB5",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "company", "email"]
+      }
+    },
+    "acct_tax_filing": {
+      "lane": "accounting",
+      "description": "Tax filing form (1040/1040EZ/1099-MISC)",
+      "risk_tier": "red",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["tax_year", "filing_type"],
+      "pandadoc_template_uuid": "FLsK6snwy6yPjU4jajrJ5E",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "email"]
+      }
+    },
+
+    "landlord_commercial_sublease": {
+      "lane": "landlord",
+      "description": "Commercial sublease agreement (Sublessor/Sublessee roles)",
+      "risk_tier": "red",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["property_address", "lease_term", "monthly_rent"],
+      "pandadoc_template_uuid": "VuVk8KwBFLCAJNWhvnofA7",
+      "attorney_approved": false,
+      "role_map": {"Sublessor": "sender", "Sublessee": "client"},
+      "required_party_data": {
+        "sender": ["full_name", "company", "address", "city", "state", "zip", "email"],
+        "client": ["full_name", "company", "email"]
+      }
+    },
+
+    "general_mutual_nda": {
+      "lane": "general",
+      "description": "Mutual NDA (two-way confidentiality)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["purpose", "term_length"],
+      "pandadoc_template_uuid": "aVPGZtb2PCBxvrZokgeRri",
+      "attorney_approved": false,
+      "document_sections": {
+        "notices_clause": "Both parties must provide mailing addresses for legal notices delivery",
+        "governing_law": "Jurisdiction state determines governing law and venue for disputes",
+        "confidentiality_period": "Term length for confidentiality obligations (typically 1-5 years)"
+      },
+      "required_party_data": {
+        "sender": ["full_name", "company", "address", "city", "state", "zip", "email"],
+        "client": ["full_name", "company", "address", "city", "state", "zip", "email"]
+      }
+    },
+    "general_one_way_nda": {
+      "lane": "general",
+      "description": "One-way NDA (one party discloses)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": true,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["disclosing_party", "purpose", "term_length"],
+      "pandadoc_template_uuid": "sq8j7CH94xPRu6UbDUm6u8",
+      "attorney_approved": false,
+      "role_map": {"Owner": "sender", "Recipient": "client"},
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "company", "email"]
+      }
+    },
+    "general_w9": {
+      "lane": "general",
+      "description": "W-9 tax form (Request for Taxpayer Identification Number)",
+      "risk_tier": "yellow",
+      "jurisdiction_required": false,
+      "required_fields": ["party_names", "template_id"],
+      "required_fields_delta": ["taxpayer_name", "business_type"],
+      "pandadoc_template_uuid": "dg8UdHiAcncid5KhBTUB7i",
+      "attorney_approved": false,
+      "required_party_data": {
+        "sender": ["full_name", "company", "email"],
+        "client": ["full_name", "email"]
+      }
+    }
+  },
+
+  "legacy_aliases": {
+    "nda": "general_mutual_nda",
+    "sow": "trades_sow",
+    "mutual_nda": "general_mutual_nda",
+    "one_way_nda": "general_one_way_nda",
+    "hvac": "trades_hvac_proposal",
+    "hvac_proposal": "trades_hvac_proposal",
+    "roofing": "trades_roofing_proposal",
+    "roofing_proposal": "trades_roofing_proposal",
+    "painting": "trades_painting_proposal",
+    "painting_proposal": "trades_painting_proposal",
+    "construction": "trades_construction_proposal",
+    "construction_proposal": "trades_construction_proposal",
+    "architecture": "trades_architecture_proposal",
+    "architecture_proposal": "trades_architecture_proposal",
+    "residential_construction": "trades_residential_construction",
+    "residential_contract": "trades_residential_contract",
+    "accounting": "acct_engagement_letter",
+    "accounting_proposal": "acct_engagement_letter",
+    "engagement_letter": "acct_engagement_letter",
+    "tax_filing": "acct_tax_filing",
+    "sublease": "landlord_commercial_sublease",
+    "commercial_sublease": "landlord_commercial_sublease",
+    "w9": "general_w9",
+    "scope_of_work": "trades_sow",
+    "contractor_sow": "trades_sow",
+    "msa": null,
+    "employment": null,
+    "amendment": null,
+    "service_agreement": null,
+    "subcontractor": null,
+    "lease": null,
+    "residential_lease": null,
+    "termination": null
+  }
+}

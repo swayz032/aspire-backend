@@ -522,7 +522,16 @@ class TestExecuteToolRouting:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"ok": True}
 
-        with patch("aspire_orchestrator.services.domain_rail_client.httpx.AsyncClient") as mc:
+        # Mock Supabase for calendar tools
+        mock_supabase_insert = AsyncMock(return_value={"id": "test-event-id"})
+        mock_supabase_select = AsyncMock(return_value=[])
+        mock_supabase_update = AsyncMock(return_value={"status": "completed"})
+
+        with patch("aspire_orchestrator.services.domain_rail_client.httpx.AsyncClient") as mc, \
+             patch("aspire_orchestrator.providers.calendar_client.supabase_insert", mock_supabase_insert, create=True), \
+             patch("aspire_orchestrator.services.supabase_client.supabase_insert", mock_supabase_insert, create=True), \
+             patch("aspire_orchestrator.services.supabase_client.supabase_select", mock_supabase_select, create=True), \
+             patch("aspire_orchestrator.services.supabase_client.supabase_update", mock_supabase_update, create=True):
             inst = AsyncMock()
             inst.get.return_value = mock_resp
             inst.post.return_value = mock_resp
@@ -539,6 +548,10 @@ class TestExecuteToolRouting:
                     payload = {"domain_name": "t.com", "years": 1}
                 elif tool_id == "polaris.account.create":
                     payload = {"domain": "t.com", "email_address": "a@t.com"}
+                elif tool_id == "calendar.event.complete":
+                    payload = {"event_id": "test-event-id"}
+                elif tool_id.startswith("calendar."):
+                    payload = {"title": "Test Event", "start_time": "2026-02-20T10:00:00Z"}
                 else:
                     payload = {"domain": "t.com"}
 
@@ -599,7 +612,8 @@ class TestExecuteNodeIntegration:
         )
         return token
 
-    def test_live_tool_flagged(self):
+    @pytest.mark.asyncio
+    async def test_live_tool_flagged(self):
         """Execute node marks Domain Rail tools as live."""
         from aspire_orchestrator.nodes.execute import execute_node
         from aspire_orchestrator.services.token_service import compute_token_hash
@@ -618,12 +632,13 @@ class TestExecuteNodeIntegration:
             "pipeline_receipts": [],
         }
 
-        result = execute_node(state)
+        result = await execute_node(state)
         assert result["outcome"] == Outcome.SUCCESS
         assert result["execution_result"]["live"] is True
         assert result["execution_result"]["stub"] is False
 
-    def test_stub_tool_flagged(self):
+    @pytest.mark.asyncio
+    async def test_stub_tool_flagged(self):
         """Execute node marks unimplemented tools as stub."""
         from aspire_orchestrator.nodes.execute import execute_node
         from aspire_orchestrator.services.token_service import compute_token_hash
@@ -644,12 +659,13 @@ class TestExecuteNodeIntegration:
             "pipeline_receipts": [],
         }
 
-        result = execute_node(state)
+        result = await execute_node(state)
         assert result["outcome"] == Outcome.SUCCESS
         assert result["execution_result"]["stub"] is True
         assert result["execution_result"]["live"] is False
 
-    def test_missing_token_denied(self):
+    @pytest.mark.asyncio
+    async def test_missing_token_denied(self):
         """Execute node denies without capability token (Law #3)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -665,11 +681,12 @@ class TestExecuteNodeIntegration:
             "pipeline_receipts": [],
         }
 
-        result = execute_node(state)
+        result = await execute_node(state)
         assert result["outcome"] == Outcome.DENIED
         assert result["error_code"] == "CAPABILITY_TOKEN_REQUIRED"
 
-    def test_invalid_token_denied(self):
+    @pytest.mark.asyncio
+    async def test_invalid_token_denied(self):
         """Execute node denies with tampered token (6-check validation)."""
         from aspire_orchestrator.nodes.execute import execute_node
 
@@ -690,11 +707,12 @@ class TestExecuteNodeIntegration:
             "pipeline_receipts": [],
         }
 
-        result = execute_node(state)
+        result = await execute_node(state)
         assert result["outcome"] == Outcome.DENIED
         assert result["error_code"] == "CAPABILITY_TOKEN_REQUIRED"
 
-    def test_cross_tenant_token_denied(self):
+    @pytest.mark.asyncio
+    async def test_cross_tenant_token_denied(self):
         """Execute node denies token minted for different suite (Law #6)."""
         from aspire_orchestrator.nodes.execute import execute_node
         from aspire_orchestrator.services.token_service import compute_token_hash
@@ -718,10 +736,11 @@ class TestExecuteNodeIntegration:
             "pipeline_receipts": [],
         }
 
-        result = execute_node(state)
+        result = await execute_node(state)
         assert result["outcome"] == Outcome.DENIED
 
-    def test_receipt_emitted(self):
+    @pytest.mark.asyncio
+    async def test_receipt_emitted(self):
         """Execute node emits A2A + tool execution receipts (Law #2).
 
         A2A wiring produces 4 receipts per execution:
@@ -749,7 +768,7 @@ class TestExecuteNodeIntegration:
             "pipeline_receipts": [],
         }
 
-        result = execute_node(state)
+        result = await execute_node(state)
         receipts = result["pipeline_receipts"]
         # A2A lifecycle: dispatch + claim + execution + complete
         assert len(receipts) == 4

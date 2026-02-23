@@ -231,6 +231,16 @@ class BaseProviderClient(ABC):
         except (json.JSONDecodeError, ValueError):
             return {"raw": raw_body.decode("utf-8", errors="replace")[:500]}
 
+    def _prepare_body(self, request: ProviderRequest) -> tuple[str, bytes | None]:
+        """Prepare request body and return (content_type, body_bytes).
+
+        Default: JSON encoding. Override in subclasses for different formats
+        (e.g., Stripe uses application/x-www-form-urlencoded).
+        """
+        import json
+        body_bytes = json.dumps(request.body).encode() if request.body else None
+        return "application/json", body_bytes
+
     def _compute_idempotency_key(self, request: ProviderRequest) -> str:
         """Generate idempotency key from request content.
 
@@ -291,9 +301,12 @@ class BaseProviderClient(ABC):
                 error_message=e.message,
             )
 
+        # Encode body (subclasses can override _prepare_body for different encoding)
+        content_type, body_bytes = self._prepare_body(request)
+
         # Build final headers
         headers = {
-            "Content-Type": "application/json",
+            "Content-Type": content_type,
             "Accept": "application/json",
             "X-Correlation-Id": request.correlation_id or str(uuid.uuid4()),
         }
@@ -304,10 +317,6 @@ class BaseProviderClient(ABC):
         if self.idempotency_support and request.method.upper() in ("POST", "PUT", "PATCH"):
             idem_key = self._compute_idempotency_key(request)
             headers["Idempotency-Key"] = idem_key
-
-        # Encode body
-        import json
-        body_bytes = json.dumps(request.body).encode() if request.body else None
 
         logger.info(
             "Provider request: %s %s %s (suite=%s, corr=%s)",

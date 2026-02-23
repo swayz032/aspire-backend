@@ -67,6 +67,20 @@ def _get_supabase_client() -> Any:
     return _supabase_client
 
 
+def _map_actor_type(raw: str | None) -> str:
+    """Map orchestrator actor_type to DB enum: USER, SYSTEM, WORKER."""
+    if not raw:
+        return "SYSTEM"
+    upper = raw.upper()
+    # DB CHECK constraint: ('USER','SYSTEM','WORKER')
+    # "agent" from execute node maps to WORKER
+    if upper in ("USER", "SYSTEM", "WORKER"):
+        return upper
+    if upper == "AGENT":
+        return "WORKER"
+    return "SYSTEM"
+
+
 def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
     """Map orchestrator receipt fields to Supabase receipts table columns.
 
@@ -111,7 +125,7 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
         "receipt_type": receipt.get("receipt_type", "orchestrator"),
         "status": status,
         "correlation_id": receipt.get("correlation_id", ""),
-        "actor_type": (receipt.get("actor_type", "SYSTEM") or "SYSTEM").upper(),
+        "actor_type": _map_actor_type(receipt.get("actor_type", "SYSTEM")),
         "actor_id": receipt.get("actor_id", ""),
         "action": action_data if action_data else None,
         "result": result_data if result_data else None,
@@ -152,9 +166,10 @@ def _persist_to_supabase(receipts: list[dict[str, Any]]) -> None:
         return
 
     try:
-        result = client.table("receipts").upsert(
+        # INSERT (not upsert) — receipts table has append-only trigger that blocks mutations.
+        # Duplicate receipt_ids are silently ignored via ON CONFLICT DO NOTHING.
+        result = client.table("receipts").insert(
             rows,
-            on_conflict="receipt_id",
         ).execute()
         logger.info(
             "Persisted %d receipts to Supabase (response status: %s)",
