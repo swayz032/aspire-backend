@@ -270,11 +270,14 @@ class AspireAgentBase:
 
         Routes to the appropriate model based on step_type and risk_tier.
         Emits a model.route.selected receipt for every call.
+        Uses the official OpenAI SDK (AsyncOpenAI) for all API calls.
 
         Returns:
             dict with keys: content, model_used, profile_used, receipt
         """
-        import httpx
+        import os
+
+        import openai
 
         effective_risk = risk_tier or self._default_risk_tier
         effective_system = system_prompt or self._persona or ""
@@ -315,7 +318,6 @@ class AspireAgentBase:
                 logger.warning("LLM Router failed for agent %s: %s", self._agent_id, e)
 
         if not api_key:
-            import os
             api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
         if not api_key:
@@ -328,8 +330,6 @@ class AspireAgentBase:
                 "receipt": route_receipt,
             }
 
-        # Make the LLM call
-        url = f"{base_url.rstrip('/')}/chat/completions"
         # Reasoning models (gpt-5*, o1, o3) don't support temperature or system role
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
@@ -344,28 +344,23 @@ class AspireAgentBase:
         if _is_reasoning and route_max_tokens < 4096:
             effective_max_tokens = 4096
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_completion_tokens": effective_max_tokens,
-        }
-        if not _is_reasoning:
-            payload["temperature"] = route_temperature
-
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                resp.raise_for_status()
+            client = openai.AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=float(timeout),
+            )
 
-            data = resp.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "max_completion_tokens": effective_max_tokens,
+            }
+            if not _is_reasoning:
+                kwargs["temperature"] = route_temperature
+
+            response = await client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content or "" if response.choices else ""
 
             return {
                 "content": content,
@@ -375,7 +370,7 @@ class AspireAgentBase:
                 "receipt": route_receipt,
             }
 
-        except httpx.TimeoutException:
+        except openai.APITimeoutError:
             logger.error("LLM call timeout for agent %s after %ds", self._agent_id, timeout)
             return {
                 "content": "",

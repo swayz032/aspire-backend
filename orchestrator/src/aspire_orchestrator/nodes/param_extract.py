@@ -101,8 +101,6 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     fields for the routed tool. Fails closed if required fields cannot be extracted.
     Also builds advisor_context via context_builder for v1.5 prompt pack awareness.
     """
-    import httpx
-
     from aspire_orchestrator.config.settings import settings
 
     correlation_id = state.get("correlation_id", str(uuid.uuid4()))
@@ -227,31 +225,28 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
 
     if api_key:
         try:
+            import openai
+
             _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
             messages = [{"role": "developer" if _is_reasoning else "system", "content": "You are a precise parameter extractor. Return only valid JSON."}]
             messages.append({"role": "user", "content": prompt})
 
-            payload_llm: dict[str, Any] = {
+            client = openai.AsyncOpenAI(
+                api_key=api_key,
+                base_url=settings.openai_base_url,
+                timeout=25.0,
+            )
+
+            kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": messages,
                 "max_completion_tokens": 1024,
             }
             if not _is_reasoning:
-                payload_llm["temperature"] = 0.0
+                kwargs["temperature"] = 0.0
 
-            with httpx.Client(timeout=25) as client:
-                resp = client.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    json=payload_llm,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                resp.raise_for_status()
-
-            data = resp.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            response = await client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content or "" if response.choices else ""
 
             # Parse JSON from LLM response
             content = content.strip()

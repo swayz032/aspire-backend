@@ -307,49 +307,16 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
     )
 
     try:
-        import asyncio
-        import os
-
-        import httpx
-
-        api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return fallback_text
-
-        model = settings.router_model_classifier
-        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
-
         messages = []
         if persona:
-            messages.append({"role": "developer" if _is_reasoning else "system", "content": persona})
+            messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_completion_tokens": 4096,
-        }
-        if not _is_reasoning:
-            payload["temperature"] = 0.3
+        content = _call_openai_sync(messages)
 
-        # Sync HTTP call (respond_node is sync in LangGraph)
-        with httpx.Client(timeout=8) as client:
-            resp = client.post(
-                "https://api.openai.com/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            resp.raise_for_status()
-
-        data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        if content and content.strip():
+        if content:
             logger.info("LLM summarization success for %s (len=%d)", agent_id, len(content))
-            return content.strip()
+            return content
 
         return fallback_text
 
@@ -357,6 +324,57 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
         # Law #3: Fail gracefully — use template response if LLM fails
         logger.warning("LLM summarization failed for %s: %s — using template", agent_id, e)
         return fallback_text
+
+
+def _call_openai_sync(
+    messages: list[dict[str, str]],
+    *,
+    model: str | None = None,
+    timeout: float = 8,
+) -> str:
+    """Shared sync OpenAI SDK call for respond node LLM operations.
+
+    Handles reasoning model logic (developer role, no temperature, 4096 min tokens).
+    Returns content string or empty string on failure.
+    """
+    import os
+
+    import openai
+
+    api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return ""
+
+    if model is None:
+        model = settings.router_model_classifier
+
+    _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+
+    # Rewrite system role to developer for reasoning models
+    processed_messages = []
+    for msg in messages:
+        if msg["role"] == "system" and _is_reasoning:
+            processed_messages.append({"role": "developer", "content": msg["content"]})
+        else:
+            processed_messages.append(msg)
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": processed_messages,
+        "max_completion_tokens": 4096,
+    }
+    if not _is_reasoning:
+        kwargs["temperature"] = 0.3
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=settings.openai_base_url,
+        timeout=timeout,
+    )
+
+    response = client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content or "" if response.choices else ""
+    return content.strip()
 
 
 def _load_agent_persona(agent_id: str) -> str:
@@ -475,47 +493,16 @@ def _generate_approval_prompt(state: OrchestratorState) -> str:
     )
 
     try:
-        import os
-
-        import httpx
-
-        api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return fallback_text
-
-        model = settings.router_model_classifier
-        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
-
         messages = []
         if persona:
-            messages.append({"role": "developer" if _is_reasoning else "system", "content": persona})
+            messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_completion_tokens": 4096,
-        }
-        if not _is_reasoning:
-            payload["temperature"] = 0.3
+        content = _call_openai_sync(messages)
 
-        with httpx.Client(timeout=8) as client:
-            resp = client.post(
-                "https://api.openai.com/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            resp.raise_for_status()
-
-        data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        if content and content.strip():
+        if content:
             logger.info("LLM approval prompt success for %s", agent_id)
-            return content.strip()
+            return content
 
         return fallback_text
 
@@ -577,47 +564,16 @@ def _generate_presence_prompt(state: OrchestratorState) -> str:
     )
 
     try:
-        import os
-
-        import httpx
-
-        api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return fallback_text
-
-        model = settings.router_model_classifier
-        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
-
         messages = []
         if persona:
-            messages.append({"role": "developer" if _is_reasoning else "system", "content": persona})
+            messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_completion_tokens": 4096,
-        }
-        if not _is_reasoning:
-            payload["temperature"] = 0.3
+        content = _call_openai_sync(messages)
 
-        with httpx.Client(timeout=8) as client:
-            resp = client.post(
-                "https://api.openai.com/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            resp.raise_for_status()
-
-        data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        if content and content.strip():
+        if content:
             logger.info("LLM presence prompt success for %s", agent_id)
-            return content.strip()
+            return content
 
         return fallback_text
 
