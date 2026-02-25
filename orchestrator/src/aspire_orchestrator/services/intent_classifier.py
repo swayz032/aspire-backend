@@ -33,7 +33,7 @@ import logging
 import os
 from typing import Any
 
-import httpx
+import openai
 from pydantic import BaseModel, Field
 
 from aspire_orchestrator.models import RiskTier
@@ -300,14 +300,14 @@ class IntentClassifier:
             raw_response = await self._call_llm(user_message)
             return self._parse_response(raw_response)
 
-        except httpx.TimeoutException:
+        except openai.APITimeoutError:
             logger.error("Intent classifier LLM timeout after %ds", _LLM_TIMEOUT_SECONDS)
             return self._fail_closed_result(reason="intent_classifier_timeout")
 
-        except httpx.HTTPStatusError as e:
+        except openai.APIStatusError as e:
             logger.error(
                 "Intent classifier LLM HTTP error: status=%d",
-                e.response.status_code,
+                e.status_code,
             )
             return self._fail_closed_result(reason="intent_classifier_llm_http_error")
 
@@ -321,12 +321,11 @@ class IntentClassifier:
             return self._fail_closed_result(reason="intent_classifier_internal_error")
 
     async def _call_llm(self, user_message: str) -> dict[str, Any]:
-        """Call the OpenAI-compatible API with structured output (JSON mode).
+        """Call the OpenAI API with structured output (JSON mode).
 
         Phase 3: Uses LLM Router to select the appropriate model.
         Falls back to direct config when router unavailable.
-
-        Uses a fresh httpx.AsyncClient per call for thread safety.
+        Uses the official OpenAI SDK (AsyncOpenAI) for all API calls.
         """
         # Phase 3: Use LLM Router for model selection
         model = self._model
@@ -354,8 +353,6 @@ class IntentClassifier:
                 logger.warning("LLM Router failed, using fallback: %s", e)
                 self._last_route_decision = None
 
-        url = f"{base_url.rstrip('/')}/chat/completions"
-
         # Reasoning models (gpt-5*, o1, o3) don't support temperature or
         # system role — use developer role and omit temperature.
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
@@ -381,31 +378,26 @@ class IntentClassifier:
         if _is_reasoning and max_tokens < 4096:
             effective_max_tokens = 4096
 
-        payload: dict[str, Any] = {
+        client = openai.AsyncOpenAI(
+            api_key=self._api_key,
+            base_url=base_url,
+            timeout=float(timeout),
+        )
+
+        kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "response_format": {"type": "json_object"},
             "max_completion_tokens": effective_max_tokens,
         }
         if not _is_reasoning:
-            payload["temperature"] = temperature
+            kwargs["temperature"] = temperature
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            resp.raise_for_status()
+        response = await client.chat.completions.create(**kwargs)
 
-        data = resp.json()
-        choice = data.get("choices", [{}])[0] if data.get("choices") else {}
-        message = choice.get("message", {})
-        content = message.get("content") or ""
-        finish_reason = choice.get("finish_reason", "unknown")
+        choice = response.choices[0] if response.choices else None
+        content = choice.message.content or "" if choice else ""
+        finish_reason = choice.finish_reason or "unknown" if choice else "unknown"
 
         if not content:
             logger.error(
