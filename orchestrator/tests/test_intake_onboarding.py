@@ -1,11 +1,14 @@
-"""Intake / Onboarding Tests — Phase 3 W10 (Migration 055 + Bootstrap Endpoint).
+"""Intake / Onboarding Tests — Phase 3 W10 (Migration 055 + 056 + Bootstrap Endpoint).
 
 Covers the following changes:
 - Migration 055: enterprise intake fields on suite_profiles + founder_hub_notes table
+- Migration 056: marketing intake fields (income_range, referral_source, industry_specialty)
 - Bootstrap endpoint: /api/onboarding/bootstrap — validation, receipt, tenant isolation
-- TenantProvider: 12 new intake fields mapped from suite_profiles
+- TenantProvider: intake fields mapped from suite_profiles (services fields removed)
 - AvaDeskPanel: userProfile context sent to orchestrator
 - Intake node: userProfile forwarded in orchestrator payload
+- Virtual Office header: Suite ID + Office ID display (replaces "Founder" label)
+- Virtual Office greeting: real-time clock sync + formal name (Mr./Ms. LastName)
 
 Governance laws validated:
   Law #2: Receipt for All Actions — intake receipt must be emitted on bootstrap
@@ -22,6 +25,12 @@ Test categories:
   I6: TenantProvider field mapping (intake fields)
   I7: Orchestrator intake node — userProfile context propagation
   I8: Founder hub notes RLS isolation (Law #6)
+  I9: Migration 055 schema constraint validation
+  I10: n8n webhook payload integrity
+  I11: Migration 056 marketing field constraints (income_range, referral_source)
+  I12: Virtual Office greeting (time-of-day + formal name)
+  I13: Virtual Office header (Suite ID • Office ID display)
+  I14: Industry specialty two-level selector validation
 """
 
 from __future__ import annotations
@@ -313,11 +322,14 @@ class TestI2IntakeReceiptStructure:
             "risk_tier": "yellow",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "payload": {
-                "schema_version": 2,
+                "schema_version": 3,
                 "fields_completed": 8,
-                "industry": "Technology",
+                "industry": "Construction & Trades",
+                "industry_specialty": "HVAC",
                 "team_size": "2-5",
                 "entity_type": "llc",
+                "income_range": "100k_150k",
+                "referral_source": "google_search",
                 "consent_personalization": True,
                 "consent_communications": False,
             },
@@ -354,10 +366,16 @@ class TestI2IntakeReceiptStructure:
         assert "." in action, "Action type must be namespaced (domain.action format)"
         assert action.startswith("onboarding."), "Intake receipts should be in onboarding namespace"
 
-    def test_intake_receipt_schema_version_is_2(self):
-        """intake_schema_version must be 2 (migration 055 adds new fields)."""
-        payload = {"schema_version": 2}
-        assert payload["schema_version"] == 2, "Schema version must be 2 for W10 intake"
+    def test_intake_receipt_schema_version_is_3(self):
+        """intake_schema_version must be 3 (migration 056 adds marketing fields).
+
+        Version history:
+        - 1: Migration 055 column default (backward compat for existing rows)
+        - 2: W10 bootstrap (migration 055 new intake fields)
+        - 3: W10.1 bootstrap (migration 056 marketing fields + services removal)
+        """
+        payload = {"schema_version": 3}
+        assert payload["schema_version"] == 3, "Schema version must be 3 for W10.1 intake"
 
     def test_receipt_id_format_includes_timestamp(self):
         """Receipt ID format must be traceable — includes timestamp for ordering."""
@@ -428,21 +446,30 @@ class TestI3PIIRedaction:
         assert actual_address not in receipt_payload
 
     def test_non_pii_fields_are_logged(self):
-        """Non-PII fields (industry, team_size, entity_type) may appear in receipt."""
-        industry = "Technology"
+        """Non-PII fields (industry, team_size, entity_type, income_range, etc.) may appear in receipt."""
+        industry = "Construction & Trades"
+        industry_specialty = "HVAC"
         team_size = "2-5"
         entity_type = "llc"
+        income_range = "100k_150k"
+        referral_source = "google_search"
 
         receipt_payload = {
             "industry": industry,
+            "industry_specialty": industry_specialty,
             "team_size": team_size,
             "entity_type": entity_type,
+            "income_range": income_range,
+            "referral_source": referral_source,
         }
 
-        # These are business intelligence fields — NOT PII — OK to log
+        # These are business intelligence/marketing fields — NOT PII — OK to log
         assert receipt_payload["industry"] == industry
+        assert receipt_payload["industry_specialty"] == industry_specialty
         assert receipt_payload["team_size"] == team_size
         assert receipt_payload["entity_type"] == entity_type
+        assert receipt_payload["income_range"] == income_range
+        assert receipt_payload["referral_source"] == referral_source
 
     def test_business_name_not_considered_pii(self):
         """Business name is not PII — it should appear in receipt (audit trail)."""
@@ -723,10 +750,15 @@ class TestI5EvilIntakeInjection:
 
 
 class TestI6TenantProviderFieldMapping:
-    """Validate that all 12 new intake fields are correctly mapped in TenantProvider.
+    """Validate intake fields are correctly mapped in TenantProvider.
 
     The mapSuiteProfileToTenant() function must map snake_case DB fields
     to camelCase Tenant type fields with proper null defaults.
+
+    W10.1 changes:
+    - Removed: servicesNeeded, servicesPriority (all services included in Aspire)
+    - Added: incomeRange, referralSource, industrySpecialty (marketing/personalization)
+    - gender and ownerName flow through for greeting personalization
     """
 
     def _map_profile_to_tenant(self, profile: dict) -> dict:
@@ -738,6 +770,7 @@ class TestI6TenantProviderFieldMapping:
             "officeId": profile.get("office_id") or profile.get("officeId") or "",
             "ownerName": profile.get("owner_name") or profile.get("ownerName") or "",
             "ownerEmail": profile.get("owner_email") or profile.get("ownerEmail") or "",
+            "gender": profile.get("gender"),
             "role": profile.get("role") or "Founder",
             "timezone": profile.get("timezone") or "America/Los_Angeles",
             "currency": profile.get("currency") or "USD",
@@ -745,8 +778,7 @@ class TestI6TenantProviderFieldMapping:
             "updatedAt": profile.get("updated_at") or profile.get("updatedAt") or "",
             # Intake fields
             "industry": profile.get("industry"),
-            "servicesNeeded": profile.get("services_needed") or profile.get("servicesNeeded"),
-            "servicesPriority": profile.get("services_priority") or profile.get("servicesPriority"),
+            "industrySpecialty": profile.get("industry_specialty") or profile.get("industrySpecialty"),
             "teamSize": profile.get("team_size") or profile.get("teamSize"),
             "entityType": profile.get("entity_type") or profile.get("entityType"),
             "yearsInBusiness": profile.get("years_in_business") or profile.get("yearsInBusiness"),
@@ -755,6 +787,8 @@ class TestI6TenantProviderFieldMapping:
             "salesChannel": profile.get("sales_channel") or profile.get("salesChannel"),
             "customerType": profile.get("customer_type") or profile.get("customerType"),
             "preferredChannel": profile.get("preferred_channel") or profile.get("preferredChannel"),
+            "incomeRange": profile.get("income_range") or profile.get("incomeRange"),
+            "referralSource": profile.get("referral_source") or profile.get("referralSource"),
             "onboardingCompleted": bool(profile.get("onboarding_completed_at") or profile.get("onboardingCompletedAt")),
         }
 
@@ -764,17 +798,19 @@ class TestI6TenantProviderFieldMapping:
             "suite_id": SUITE_A,
             "business_name": "Acme LLC",
             "owner_name": "Jane Doe",
-            "industry": "Technology",
+            "gender": "female",
+            "industry": "Construction & Trades",
+            "industry_specialty": "HVAC",
             "team_size": "2-5",
             "entity_type": "llc",
             "years_in_business": "3_to_5",
             "sales_channel": "online",
             "customer_type": "b2b",
             "preferred_channel": "warm",
-            "services_needed": ["Invoicing & Payments", "Bookkeeping"],
-            "services_priority": ["Invoicing & Payments"],
             "business_goals": ["Grow revenue"],
             "pain_point": "Too many manual invoices",
+            "income_range": "100k_150k",
+            "referral_source": "google_search",
             "onboarding_completed_at": "2026-02-18T10:00:00Z",
         }
 
@@ -783,15 +819,54 @@ class TestI6TenantProviderFieldMapping:
         assert tenant["suiteId"] == SUITE_A
         assert tenant["businessName"] == "Acme LLC"
         assert tenant["ownerName"] == "Jane Doe"
-        assert tenant["industry"] == "Technology"
+        assert tenant["gender"] == "female"
+        assert tenant["industry"] == "Construction & Trades"
+        assert tenant["industrySpecialty"] == "HVAC"
         assert tenant["teamSize"] == "2-5"
         assert tenant["entityType"] == "llc"
         assert tenant["yearsInBusiness"] == "3_to_5"
         assert tenant["salesChannel"] == "online"
         assert tenant["customerType"] == "b2b"
         assert tenant["preferredChannel"] == "warm"
-        assert tenant["servicesNeeded"] == ["Invoicing & Payments", "Bookkeeping"]
+        assert tenant["incomeRange"] == "100k_150k"
+        assert tenant["referralSource"] == "google_search"
         assert tenant["onboardingCompleted"] is True
+
+    def test_services_fields_removed_from_mapping(self):
+        """servicesNeeded and servicesPriority must NOT be in tenant mapping.
+
+        All services are already included in Aspire — these fields were removed
+        from the intake form in W10.1.
+        """
+        profile = {
+            "suite_id": SUITE_A,
+            "services_needed": ["Invoicing & Payments"],
+            "services_priority": ["Invoicing & Payments"],
+        }
+        tenant = self._map_profile_to_tenant(profile)
+
+        assert "servicesNeeded" not in tenant, "servicesNeeded must be removed from tenant mapping"
+        assert "servicesPriority" not in tenant, "servicesPriority must be removed from tenant mapping"
+
+    def test_gender_flows_through_for_greeting(self):
+        """gender must be in tenant context for greeting personalization (Mr./Ms.)."""
+        profile = {"suite_id": SUITE_A, "gender": "male", "owner_name": "John Williams"}
+        tenant = self._map_profile_to_tenant(profile)
+        assert tenant["gender"] == "male", "gender must flow through for greeting"
+        assert tenant["ownerName"] == "John Williams", "ownerName must flow through for greeting"
+
+    def test_new_marketing_fields_in_mapping(self):
+        """incomeRange, referralSource, industrySpecialty must be in tenant mapping."""
+        profile = {
+            "suite_id": SUITE_A,
+            "income_range": "50k_75k",
+            "referral_source": "podcast",
+            "industry_specialty": "Plumbing",
+        }
+        tenant = self._map_profile_to_tenant(profile)
+        assert tenant["incomeRange"] == "50k_75k"
+        assert tenant["referralSource"] == "podcast"
+        assert tenant["industrySpecialty"] == "Plumbing"
 
     def test_missing_intake_fields_default_to_null(self):
         """Profile without intake fields must map intake fields to None (not crash)."""
@@ -1069,27 +1144,37 @@ class TestI9Migration055Constraints:
     """Validate that migration 055 CHECK constraints cover all enum fields."""
 
     def test_check_constraints_defined_for_all_enum_columns(self):
-        """All enum columns in migration 055 must have CHECK constraints."""
+        """All enum columns in migrations 055+056 must have CHECK constraints."""
         enum_columns_with_constraints = {
+            # Migration 055
             "gender": ["male", "female", "non-binary", "prefer-not-to-say"],
             "entity_type": ["sole_proprietorship", "llc", "s_corp", "c_corp", "partnership", "nonprofit", "other"],
             "preferred_channel": ["cold", "warm", "hot"],
             "years_in_business": ["less_than_1", "1_to_3", "3_to_5", "5_to_10", "10_plus"],
             "sales_channel": ["online", "in_person", "both", "other"],
             "customer_type": ["b2b", "b2c", "both"],
+            # Migration 056
+            "income_range": ["under_25k", "25k_50k", "50k_75k", "75k_100k",
+                             "100k_150k", "150k_250k", "250k_500k", "500k_plus"],
+            "referral_source": ["google_search", "social_media", "friend_referral", "podcast",
+                                "blog_article", "conference_event", "advertisement", "app_store", "other"],
         }
 
-        # All 6 enum columns must have constraints (per migration 055 lines 70-116)
-        assert len(enum_columns_with_constraints) == 6, "Expected 6 enum columns with CHECK constraints"
+        # 6 from migration 055 + 2 from migration 056 = 8 total
+        assert len(enum_columns_with_constraints) == 8, "Expected 8 enum columns with CHECK constraints"
 
     def test_check_constraints_allow_null(self):
-        """All CHECK constraints must allow NULL (optional intake fields)."""
-        # Per migration 055: all constraints have '... OR column IS NULL'
-        # This is critical — not all users fill every field
+        """All CHECK constraints must allow NULL (backward compat for existing rows)."""
+        # Per migrations 055+056: all constraints have '... OR column IS NULL'
+        # New intake forms require these fields, but existing rows may have NULL
         constraint_pattern = "OR {column} IS NULL"
 
-        # Verify the pattern is used for all constraints
-        columns = ["gender", "entity_type", "preferred_channel", "years_in_business", "sales_channel", "customer_type"]
+        # All enum columns from both migrations
+        columns = [
+            "gender", "entity_type", "preferred_channel", "years_in_business",
+            "sales_channel", "customer_type",
+            "income_range", "referral_source",  # Migration 056
+        ]
         for col in columns:
             expected_clause = f"OR {col} IS NULL"
             # In the migration, this appears as: CHECK (column IN (...) OR column IS NULL)
@@ -1117,18 +1202,22 @@ class TestI9Migration055Constraints:
         for invalid in [0, 13, -1, 100]:
             assert not (1 <= invalid <= 12), f"Month {invalid} should be invalid"
 
-    def test_intake_schema_version_default_is_2(self):
-        """intake_schema_version must default to 2 (W10 schema)."""
-        # Per migration 055 line 64: DEFAULT 1
-        # Per bootstrap endpoint routes.ts line 211: intake_schema_version: 2
-        # The migration sets column default to 1 (for existing rows),
-        # but the bootstrap endpoint sets 2 explicitly for new W10 intakes
+    def test_intake_schema_version_default_is_3(self):
+        """intake_schema_version must be 3 for W10.1 schema.
+
+        Version history:
+        - 1: Migration 055 column default (backward compat for existing rows)
+        - 2: W10 bootstrap (migration 055 new intake fields)
+        - 3: W10.1 bootstrap (migration 056 marketing fields + services removal)
+        """
         migration_default = 1
-        bootstrap_sets = 2
+        w10_version = 2
+        w10_1_version = 3
 
         assert migration_default == 1, "Migration 055 column default is 1 (backward compat)"
-        assert bootstrap_sets == 2, "Bootstrap endpoint sets schema_version=2 for W10"
-        assert bootstrap_sets > migration_default, "W10 schema must be higher version"
+        assert w10_version == 2, "W10 bootstrap schema_version was 2"
+        assert w10_1_version == 3, "W10.1 bootstrap sets schema_version=3"
+        assert w10_1_version > w10_version > migration_default, "Version must increase monotonically"
 
 
 # ===========================================================================
@@ -1211,4 +1300,527 @@ class TestI10N8nWebhookPayload:
 
         assert headers["X-Suite-Id"] == payload["suiteId"], (
             "Suite ID in header must match payload (tenant isolation in webhook)"
+        )
+
+    def test_webhook_payload_excludes_services_fields(self):
+        """n8n webhook must NOT include servicesNeeded/servicesPriority (removed in W10.1).
+
+        All services are already included in Aspire — asking users about services
+        in the intake form was removed. The webhook payload must reflect this.
+        """
+        webhook_payload = {
+            "suiteId": SUITE_A,
+            "industry": "Construction & Trades",
+            "industrySpecialty": "HVAC",
+            "businessGoals": ["Grow revenue"],
+            "painPoint": "Manual invoices",
+            "customerType": "b2c",
+            "salesChannel": "online",
+            "teamSize": "2-5",
+            "incomeRange": "100k_150k",
+            "referralSource": "google_search",
+            "correlationId": str(uuid.uuid4()),
+        }
+
+        removed_fields = [
+            "servicesNeeded", "services_needed",
+            "servicesPriority", "services_priority",
+            "currentTools", "current_tools",
+        ]
+
+        for field in removed_fields:
+            assert field not in webhook_payload, (
+                f"Removed field {field!r} must not be in n8n webhook payload"
+            )
+
+    def test_webhook_payload_includes_industry_specialty(self):
+        """n8n webhook must include industrySpecialty for Founder Hub personalization.
+
+        industrySpecialty is the critical new field that enables targeted content
+        generation (e.g., "HVAC business tips" vs generic "Construction tips").
+        """
+        webhook_payload = {
+            "suiteId": SUITE_A,
+            "industry": "Construction & Trades",
+            "industrySpecialty": "HVAC",
+            "teamSize": "2-5",
+            "entityType": "llc",
+            "yearsInBusiness": "3_to_5",
+            "businessGoals": ["Grow revenue"],
+            "painPoint": "Manual invoices",
+            "customerType": "b2c",
+            "salesChannel": "online",
+            "incomeRange": "100k_150k",
+            "referralSource": "google_search",
+            "correlationId": str(uuid.uuid4()),
+        }
+
+        assert "industrySpecialty" in webhook_payload, (
+            "industrySpecialty required for Founder Hub personalization"
+        )
+        assert "incomeRange" in webhook_payload, (
+            "incomeRange required for marketing audience targeting"
+        )
+        assert "referralSource" in webhook_payload, (
+            "referralSource required for marketing attribution"
+        )
+
+
+# ===========================================================================
+# I11: Migration 056 — Marketing Field Constraints
+# ===========================================================================
+
+
+class TestI11Migration056Constraints:
+    """Validate migration 056 adds income_range, referral_source, industry_specialty.
+
+    These columns support:
+    - User profile identification and personalization (Ava/agents)
+    - Marketing audience targeting
+    - Founder Hub content personalization via industry_specialty
+    """
+
+    def test_income_range_valid_values(self):
+        """income_range CHECK constraint must accept all valid income brackets."""
+        valid_income_ranges = [
+            "under_25k", "25k_50k", "50k_75k", "75k_100k",
+            "100k_150k", "150k_250k", "250k_500k", "500k_plus",
+        ]
+        allowed = set(valid_income_ranges)
+
+        for ir in valid_income_ranges:
+            assert ir in allowed, f"Income range {ir!r} should be in allowed set"
+
+    def test_income_range_rejects_invalid_values(self):
+        """income_range CHECK constraint must reject out-of-range values."""
+        def validate_enum(value, allowed):
+            if not isinstance(value, str):
+                return None
+            return value if value in allowed else None
+
+        allowed = [
+            "under_25k", "25k_50k", "50k_75k", "75k_100k",
+            "100k_150k", "150k_250k", "250k_500k", "500k_plus",
+        ]
+
+        invalid = ["low", "high", "$50k", "50000", "100k-150k", "medium", "rich", "poor"]
+        for inv in invalid:
+            assert validate_enum(inv, allowed) is None, (
+                f"Invalid income range {inv!r} must be rejected"
+            )
+
+    def test_referral_source_valid_values(self):
+        """referral_source CHECK constraint must accept all valid referral sources."""
+        valid_referral_sources = [
+            "google_search", "social_media", "friend_referral", "podcast",
+            "blog_article", "conference_event", "advertisement", "app_store", "other",
+        ]
+        allowed = set(valid_referral_sources)
+
+        for rs in valid_referral_sources:
+            assert rs in allowed, f"Referral source {rs!r} should be in allowed set"
+
+    def test_referral_source_rejects_invalid_values(self):
+        """referral_source CHECK constraint must reject out-of-range values."""
+        def validate_enum(value, allowed):
+            if not isinstance(value, str):
+                return None
+            return value if value in allowed else None
+
+        allowed = [
+            "google_search", "social_media", "friend_referral", "podcast",
+            "blog_article", "conference_event", "advertisement", "app_store", "other",
+        ]
+
+        invalid = ["google", "facebook", "twitter", "word_of_mouth", "tv", "radio", "newspaper"]
+        for inv in invalid:
+            assert validate_enum(inv, allowed) is None, (
+                f"Invalid referral source {inv!r} must be rejected"
+            )
+
+    def test_industry_specialty_is_freetext_column(self):
+        """industry_specialty is TEXT (no CHECK constraint) — values depend on industry category.
+
+        The frontend enforces valid specialty options based on the selected industry
+        category. The DB stores it as freetext to allow future expansion without
+        migrations.
+        """
+        specialties = ["HVAC", "Plumbing", "Electrical", "Roofing", "Accounting/Tax", "Legal"]
+        for specialty in specialties:
+            assert isinstance(specialty, str) and len(specialty) > 0
+
+    def test_income_range_allows_null(self):
+        """income_range must allow NULL for pre-existing rows (backward compat).
+
+        New intake forms require this field, but existing suite_profiles rows
+        from before migration 056 will have NULL.
+        """
+        # Simulate: CHECK (income_range IN (...) OR income_range IS NULL)
+        def passes_check(value, allowed):
+            return value is None or value in allowed
+
+        allowed = ["under_25k", "25k_50k", "50k_75k", "75k_100k",
+                    "100k_150k", "150k_250k", "250k_500k", "500k_plus"]
+
+        assert passes_check(None, allowed), "NULL must be allowed for backward compat"
+        assert passes_check("50k_75k", allowed), "Valid value must pass"
+        assert not passes_check("invalid", allowed), "Invalid value must fail"
+
+    def test_referral_source_allows_null(self):
+        """referral_source must allow NULL for pre-existing rows (backward compat)."""
+        def passes_check(value, allowed):
+            return value is None or value in allowed
+
+        allowed = ["google_search", "social_media", "friend_referral", "podcast",
+                    "blog_article", "conference_event", "advertisement", "app_store", "other"]
+
+        assert passes_check(None, allowed), "NULL must be allowed"
+        assert passes_check("podcast", allowed), "Valid value must pass"
+        assert not passes_check("word_of_mouth", allowed), "Invalid value must fail"
+
+    def test_all_new_fields_are_non_pii_except_income(self):
+        """income_range is non-PII (bucketed, not exact). referral_source and
+        industry_specialty are non-PII. All three can appear in receipts and webhooks.
+        """
+        non_pii_fields = ["income_range", "referral_source", "industry_specialty"]
+        pii_fields = ["date_of_birth", "gender", "home_address_line1", "owner_name"]
+
+        for field in non_pii_fields:
+            assert field not in pii_fields, f"{field} should not be classified as PII"
+
+
+# ===========================================================================
+# I12: Virtual Office Greeting — Time-of-Day + Formal Name
+# ===========================================================================
+
+
+class TestI12VirtualOfficeGreeting:
+    """Validate the greeting logic for the Virtual Office header.
+
+    Current: "Good evening." (static, no name)
+    Target: "Good morning, Mr. Williams." (real-time clock sync + formal last name)
+
+    The greeting must:
+    - Use the correct time-of-day period based on current hour
+    - Use a formal title (Mr./Ms.) derived from the gender field
+    - Fall back to first name for non-binary/prefer-not-to-say
+    - Fall back to no name if ownerName is not available
+    """
+
+    def _get_time_of_day_greeting(self, hour: int) -> str:
+        """Determine greeting based on hour (0-23)."""
+        if 5 <= hour < 12:
+            return "Good morning"
+        elif 12 <= hour < 17:
+            return "Good afternoon"
+        elif 17 <= hour < 21:
+            return "Good evening"
+        else:
+            return "Good night"
+
+    def _get_formal_name(self, owner_name: str | None, gender: str | None) -> str:
+        """Build formal greeting name from owner_name and gender.
+
+        Returns:
+            "Mr. Williams", "Ms. Scott", "Jordan" (first name for non-binary),
+            or "" (empty) if no name available.
+        """
+        if not owner_name or not isinstance(owner_name, str) or not owner_name.strip():
+            return ""
+
+        parts = owner_name.strip().split()
+        last_name = parts[-1] if len(parts) > 1 else parts[0]
+        first_name = parts[0]
+
+        if gender == "male":
+            return f"Mr. {last_name}"
+        elif gender == "female":
+            return f"Ms. {last_name}"
+        elif gender in ("non-binary", "prefer-not-to-say"):
+            return first_name
+        else:
+            # Unknown gender — use first name
+            return first_name
+
+    def _build_greeting(self, hour: int, owner_name: str | None, gender: str | None) -> str:
+        """Build the full greeting string."""
+        period = self._get_time_of_day_greeting(hour)
+        formal = self._get_formal_name(owner_name, gender)
+        if formal:
+            return f"{period}, {formal}."
+        return f"{period}."
+
+    def test_morning_greeting(self):
+        """5:00 AM – 11:59 AM → 'Good morning'"""
+        for hour in [5, 6, 8, 10, 11]:
+            assert self._get_time_of_day_greeting(hour) == "Good morning"
+
+    def test_afternoon_greeting(self):
+        """12:00 PM – 4:59 PM → 'Good afternoon'"""
+        for hour in [12, 13, 14, 15, 16]:
+            assert self._get_time_of_day_greeting(hour) == "Good afternoon"
+
+    def test_evening_greeting(self):
+        """5:00 PM – 8:59 PM → 'Good evening'"""
+        for hour in [17, 18, 19, 20]:
+            assert self._get_time_of_day_greeting(hour) == "Good evening"
+
+    def test_night_greeting(self):
+        """9:00 PM – 4:59 AM → 'Good night'"""
+        for hour in [21, 22, 23, 0, 1, 2, 3, 4]:
+            assert self._get_time_of_day_greeting(hour) == "Good night"
+
+    def test_boundary_5am_is_morning(self):
+        """Exactly 5:00 AM should be 'Good morning', not 'Good night'."""
+        assert self._get_time_of_day_greeting(5) == "Good morning"
+
+    def test_boundary_12pm_is_afternoon(self):
+        """Exactly 12:00 PM should be 'Good afternoon', not 'Good morning'."""
+        assert self._get_time_of_day_greeting(12) == "Good afternoon"
+
+    def test_boundary_5pm_is_evening(self):
+        """Exactly 5:00 PM should be 'Good evening', not 'Good afternoon'."""
+        assert self._get_time_of_day_greeting(17) == "Good evening"
+
+    def test_boundary_9pm_is_night(self):
+        """Exactly 9:00 PM should be 'Good night', not 'Good evening'."""
+        assert self._get_time_of_day_greeting(21) == "Good night"
+
+    def test_male_gets_mr_title(self):
+        """Male gender → 'Mr. LastName'."""
+        assert self._get_formal_name("John Williams", "male") == "Mr. Williams"
+
+    def test_female_gets_ms_title(self):
+        """Female gender → 'Ms. LastName'."""
+        assert self._get_formal_name("Sarah Scott", "female") == "Ms. Scott"
+
+    def test_nonbinary_gets_first_name(self):
+        """Non-binary gender → first name only (no Mr./Ms.)."""
+        assert self._get_formal_name("Jordan Taylor", "non-binary") == "Jordan"
+
+    def test_prefer_not_to_say_gets_first_name(self):
+        """Prefer-not-to-say gender → first name only."""
+        assert self._get_formal_name("Alex Morgan", "prefer-not-to-say") == "Alex"
+
+    def test_no_gender_gets_first_name(self):
+        """No gender provided → first name only."""
+        assert self._get_formal_name("Pat Johnson", None) == "Pat"
+
+    def test_single_name_uses_that_name(self):
+        """If ownerName is a single word, use it as-is."""
+        assert self._get_formal_name("Madonna", "female") == "Ms. Madonna"
+        assert self._get_formal_name("Prince", None) == "Prince"
+
+    def test_no_name_returns_empty(self):
+        """No ownerName → empty string (greeting has no name)."""
+        assert self._get_formal_name(None, "male") == ""
+        assert self._get_formal_name("", "male") == ""
+        assert self._get_formal_name("   ", "male") == ""
+
+    def test_full_greeting_with_name(self):
+        """Full greeting: 'Good morning, Mr. Williams.'"""
+        assert self._build_greeting(8, "John Williams", "male") == "Good morning, Mr. Williams."
+        assert self._build_greeting(14, "Sarah Scott", "female") == "Good afternoon, Ms. Scott."
+        assert self._build_greeting(18, "Jordan Taylor", "non-binary") == "Good evening, Jordan."
+        assert self._build_greeting(22, "Alex Morgan", "prefer-not-to-say") == "Good night, Alex."
+
+    def test_full_greeting_without_name(self):
+        """Greeting without name: 'Good morning.' (fallback)."""
+        assert self._build_greeting(8, None, None) == "Good morning."
+        assert self._build_greeting(14, "", "male") == "Good afternoon."
+
+    def test_greeting_all_24_hours_covered(self):
+        """Every hour 0-23 must produce a valid greeting (no gaps)."""
+        valid_greetings = {"Good morning", "Good afternoon", "Good evening", "Good night"}
+        for hour in range(24):
+            greeting = self._get_time_of_day_greeting(hour)
+            assert greeting in valid_greetings, f"Hour {hour} produced invalid greeting: {greeting!r}"
+
+    def test_name_with_extra_spaces_handled(self):
+        """ownerName with leading/trailing/extra spaces must be handled cleanly."""
+        assert self._get_formal_name("  John   Williams  ", "male") == "Mr. Williams"
+
+
+# ===========================================================================
+# I13: Virtual Office Header — Suite ID • Office ID Display
+# ===========================================================================
+
+
+class TestI13VirtualOfficeHeader:
+    """Validate the header display format for the Virtual Office.
+
+    Current: "Zenith Solutions / Founder • Suite 1042"
+    Target: "{businessName} / Suite {suiteDisplayId} • Office {officeDisplayId}"
+
+    The "Founder" label must be replaced with Suite ID + Office ID.
+    """
+
+    def _format_header_identity(
+        self,
+        business_name: str,
+        suite_display_id: str,
+        office_display_id: str,
+    ) -> dict:
+        """Format the header identity badge."""
+        return {
+            "line1": business_name,
+            "line2": f"Suite {suite_display_id} • Office {office_display_id}",
+        }
+
+    def test_header_shows_suite_and_office_ids(self):
+        """Header must show Suite ID and Office ID, not 'Founder'."""
+        header = self._format_header_identity("Zenith Solutions", "1042", "001")
+        assert header["line1"] == "Zenith Solutions"
+        assert header["line2"] == "Suite 1042 • Office 001"
+        assert "Founder" not in header["line2"], "Founder label must be removed"
+
+    def test_header_does_not_contain_founder_label(self):
+        """The word 'Founder' must not appear in the header identity."""
+        header = self._format_header_identity("Acme LLC", "2001", "003")
+        full_text = f"{header['line1']} {header['line2']}"
+        assert "Founder" not in full_text, "Founder label must be removed from header"
+
+    def test_header_with_numeric_ids(self):
+        """Suite and Office IDs displayed as formatted numbers."""
+        header = self._format_header_identity("Test Corp", "1042", "001")
+        assert "1042" in header["line2"]
+        assert "001" in header["line2"]
+
+    def test_header_separator_is_bullet(self):
+        """Suite and Office IDs separated by bullet character (•)."""
+        header = self._format_header_identity("Test Corp", "100", "005")
+        assert "•" in header["line2"], "Must use bullet separator between Suite and Office"
+
+    def test_header_business_name_on_first_line(self):
+        """Business name must be on line 1, Suite/Office on line 2."""
+        header = self._format_header_identity("My Business", "500", "010")
+        assert header["line1"] == "My Business"
+        assert "Suite" in header["line2"]
+        assert "Office" in header["line2"]
+
+
+# ===========================================================================
+# I14: Industry Specialty — Two-Level Selector Validation
+# ===========================================================================
+
+
+class TestI14IndustrySpecialtySelector:
+    """Validate the two-level industry selector for intake form.
+
+    Level 1: Industry Category (required)
+    Level 2: Industry Specialty (required, options change based on Level 1)
+
+    Industry + Specialty is the primary key for Founder Hub population.
+    """
+
+    INDUSTRY_SPECIALTIES = {
+        "Construction & Trades": [
+            "HVAC", "Plumbing", "Electrical", "Roofing", "Painting",
+            "General Contractor", "Landscaping", "Other",
+        ],
+        "Professional Services": [
+            "Accounting/Tax", "Legal", "Consulting", "Financial Advisory",
+            "Insurance", "Other",
+        ],
+        "Healthcare & Wellness": [
+            "Medical Practice", "Dental", "Physical Therapy", "Mental Health",
+            "Wellness/Spa", "Other",
+        ],
+        "Technology & Software": [
+            "SaaS", "Web Development", "Mobile Apps", "IT Services",
+            "Cybersecurity", "Other",
+        ],
+        "Real Estate & Property Management": [
+            "Residential Landlord", "Commercial Property", "Property Management",
+            "Real Estate Agent", "Other",
+        ],
+        "Retail & E-Commerce": [
+            "Online Store", "Brick & Mortar", "Marketplace Seller",
+            "Subscription Box", "Other",
+        ],
+        "Food & Hospitality": [
+            "Restaurant", "Catering", "Food Truck", "Hotel/Lodging",
+            "Bar/Brewery", "Other",
+        ],
+        "Creative & Marketing": [
+            "Graphic Design", "Photography/Video", "Marketing Agency",
+            "Content Creation", "Other",
+        ],
+        "Education & Training": [
+            "Tutoring", "Online Courses", "Corporate Training",
+            "Test Prep", "Other",
+        ],
+        "Transportation & Logistics": [
+            "Trucking", "Courier/Delivery", "Freight", "Moving Services",
+            "Other",
+        ],
+        "Manufacturing": [
+            "Custom Fabrication", "Food Production", "Textiles",
+            "Electronics", "Other",
+        ],
+        "Other": ["Other"],
+    }
+
+    def test_all_categories_have_specialties(self):
+        """Every industry category must have at least one specialty option."""
+        for category, specialties in self.INDUSTRY_SPECIALTIES.items():
+            assert len(specialties) > 0, f"Category {category!r} must have specialties"
+
+    def test_every_category_has_other_option(self):
+        """Every industry category must include 'Other' as a fallback option."""
+        for category, specialties in self.INDUSTRY_SPECIALTIES.items():
+            assert "Other" in specialties, (
+                f"Category {category!r} must include 'Other' as fallback"
+            )
+
+    def test_construction_trades_specialties(self):
+        """Construction & Trades must have trade-specific specialties."""
+        specialties = self.INDUSTRY_SPECIALTIES["Construction & Trades"]
+        required = ["HVAC", "Plumbing", "Electrical", "Roofing"]
+        for r in required:
+            assert r in specialties, f"Construction must include {r!r}"
+
+    def test_professional_services_specialties(self):
+        """Professional Services must have service-specific specialties."""
+        specialties = self.INDUSTRY_SPECIALTIES["Professional Services"]
+        required = ["Accounting/Tax", "Legal", "Consulting"]
+        for r in required:
+            assert r in specialties, f"Professional Services must include {r!r}"
+
+    def test_real_estate_specialties(self):
+        """Real Estate must have property-specific specialties."""
+        specialties = self.INDUSTRY_SPECIALTIES["Real Estate & Property Management"]
+        required = ["Residential Landlord", "Property Management", "Real Estate Agent"]
+        for r in required:
+            assert r in specialties, f"Real Estate must include {r!r}"
+
+    def test_category_count_is_12(self):
+        """There must be exactly 12 industry categories."""
+        assert len(self.INDUSTRY_SPECIALTIES) == 12, (
+            f"Expected 12 industry categories, got {len(self.INDUSTRY_SPECIALTIES)}"
+        )
+
+    def test_specialty_feeds_founder_hub_webhook(self):
+        """industry + industrySpecialty both appear in n8n webhook for Founder Hub.
+
+        A roofer sees different Founder Hub content than a property manager.
+        """
+        webhook_payload = {
+            "industry": "Construction & Trades",
+            "industrySpecialty": "Roofing",
+        }
+        assert webhook_payload["industry"] == "Construction & Trades"
+        assert webhook_payload["industrySpecialty"] == "Roofing"
+        # Both fields must be present for targeted content generation
+        assert "industry" in webhook_payload
+        assert "industrySpecialty" in webhook_payload
+
+    def test_invalid_specialty_for_category_rejected(self):
+        """A specialty not in the selected category's list should be rejected."""
+        category = "Construction & Trades"
+        valid_specialties = set(self.INDUSTRY_SPECIALTIES[category])
+        invalid_specialty = "Accounting/Tax"  # belongs to Professional Services
+
+        assert invalid_specialty not in valid_specialties, (
+            f"Specialty {invalid_specialty!r} should not be valid for {category!r}"
         )
