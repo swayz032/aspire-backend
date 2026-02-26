@@ -155,6 +155,9 @@ class TestVerifySettingsCoverage:
             "ASPIRE_LIVEKIT_API_KEY": "lk-key",
             "ASPIRE_TWILIO_ACCOUNT_SID": "AC-sid",
             "ASPIRE_PANDADOC_API_KEY": "pd-key",
+            "STRIPE_SECRET_KEY": "sk_test_stripe",
+            "ASPIRE_SUPABASE_SERVICE_ROLE_KEY": "eyJ-supa",
+            "TOKEN_SIGNING_SECRET": "sign-secret-key",
         }
         with patch.dict(os.environ, full_env, clear=False):
             warnings = verify_settings_coverage()
