@@ -733,6 +733,17 @@ class EnhancedTeressaBooks(EnhancedSkillPack):
         self, stripe_data: dict, qbo_data: dict, ctx: AgentContext,
     ) -> AgentResult:
         """Compare Stripe transactions with QBO entries. GREEN — analysis only."""
+        # Law #3: Fail-closed on empty input (check for meaningful data)
+        if (not stripe_data or not stripe_data.get("transactions")) and (not qbo_data or not qbo_data.get("transactions")):
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="books.reconcile_plan",
+                status="denied",
+                inputs={"action": "books.reconcile_plan"},
+            )
+            receipt["policy"] = {"decision": "deny", "reasons": ["empty_reconciliation_data"]}
+            return AgentResult(success=False, data={}, receipt=receipt)
+
         return await self.execute_with_llm(
             prompt=(
                 f"You are Teressa. Compare Stripe and QuickBooks data for discrepancies.\n\n"

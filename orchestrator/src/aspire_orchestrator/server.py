@@ -41,9 +41,13 @@ Admin endpoints use X-Admin-Token header (JWT in production, dev token in dev).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +63,8 @@ from fastapi.responses import JSONResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from aspire_orchestrator.config.secrets import load_secrets
+from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
+from aspire_orchestrator.middleware.correlation import CorrelationIdMiddleware
 from aspire_orchestrator.graph import build_orchestrator_graph
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
@@ -92,6 +98,14 @@ app.add_middleware(
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Correlation-Id"],
 )
+
+# Global Exception Handler — catches unhandled exceptions, creates incident + receipt (Wave 1B)
+# Added AFTER CORS so it wraps all routes (Starlette: last added = outermost)
+app.add_middleware(GlobalExceptionMiddleware)
+
+# Correlation ID — extracts/generates X-Correlation-Id, propagates via contextvars (Wave 2A)
+# Added LAST so it runs FIRST (outermost): sets correlation ID before anything else
+app.add_middleware(CorrelationIdMiddleware)
 
 # Include Brain Layer routes
 app.include_router(intents_router)
@@ -217,9 +231,41 @@ async def process_intent(request: Request) -> JSONResponse:
         )
 
     # Auth context propagated from Gateway via X- headers
-    actor_id = request.headers.get("x-actor-id", "unknown")
+    # Law #3: Fail closed — missing actor_id is denied with receipt
+    actor_id = request.headers.get("x-actor-id")
     suite_id = request.headers.get("x-suite-id")
-    correlation_id = request.headers.get("x-correlation-id")
+    correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
+
+    if not actor_id:
+        logger.warning("Missing x-actor-id header [correlation_id=%s]", correlation_id)
+        # Law #2: Emit deny receipt for missing actor
+        try:
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "correlation_id": correlation_id,
+                "suite_id": suite_id or "unknown",
+                "office_id": request.headers.get("x-office-id", "unknown"),
+                "actor_type": "system",
+                "actor_id": "fail_closed_guard",
+                "action_type": "intent.process",
+                "risk_tier": "green",
+                "tool_used": "orchestrator.auth_guard",
+                "outcome": "DENIED",
+                "reason_code": "MISSING_ACTOR_ID",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "receipt_type": "auth_denial",
+                "receipt_hash": "",
+            }])
+        except Exception:
+            pass  # Receipt failure must not mask the auth denial
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": "AUTH_REQUIRED",
+                "message": "Missing x-actor-id header (Law #3: fail closed)",
+                "correlation_id": correlation_id,
+            },
+        )
 
     initial_state: dict[str, Any] = {
         "request": body,
@@ -936,5 +982,163 @@ async def a2a_list_tasks(
             ],
             "count": len(tasks),
             "suite_id": suite_id,
+        },
+    )
+
+
+# =============================================================================
+# Client Event Ingestion (Wave 4I — F7 fix)
+# =============================================================================
+
+# Rate limit tracker: suite_id -> list of timestamps (within 60s window)
+_client_event_counts: dict[str, list[float]] = {}
+
+_VALID_SEVERITIES = {"debug", "info", "warning", "error", "critical"}
+_RATE_LIMIT_MAX = 10
+_RATE_LIMIT_WINDOW = 60.0  # seconds
+
+
+def _redact_pii(text: str) -> str:
+    """Redact PII from text (Law #9).
+
+    Handles: SSN, credit card numbers, email addresses, phone numbers.
+    """
+    # SSN: 123-45-6789
+    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '<SSN_REDACTED>', text)
+    # Credit card: 13-19 digit sequences
+    text = re.sub(r'\b\d{13,19}\b', '<CC_REDACTED>', text)
+    # Email addresses
+    text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '<EMAIL_REDACTED>', text)
+    # Phone numbers: various formats (555-123-4567, (555) 123-4567, 5551234567)
+    text = re.sub(r'(?:\+?1[-.\s]?)?(?:\(\d{3}\)\s?|\b\d{3}[-.\s])\d{3}[-.\s]?\d{4}\b', '<PHONE_REDACTED>', text)
+    return text
+
+
+@app.post("/v1/client/events")
+async def client_event_ingest(request: Request) -> JSONResponse:
+    """Accept client-side error/event reports (Wave 4I — F7 fix).
+
+    Allows the frontend to report errors, blank screens, and UI failures
+    so the backend has visibility into client-side problems.
+
+    Rate limited to 10 events/min per suite (Law #3 — prevent abuse).
+    PII redacted from messages (Law #9).
+    """
+    # Parse JSON body
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "INVALID_JSON", "message": "Request body must be valid JSON"},
+        )
+
+    # Validate event_type (required)
+    event_type = body.get("event_type")
+    if not event_type:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "MISSING_EVENT_TYPE", "message": "event_type is required"},
+        )
+
+    # Resolve suite_id from body or header
+    suite_id = body.get("suite_id") or request.headers.get("x-suite-id", "")
+    if not suite_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "MISSING_SUITE_ID", "message": "suite_id is required (body or X-Suite-Id header)"},
+        )
+
+    # Validate suite_id format (Law #3 — reject injection payloads)
+    # Accepts: UUID format OR premium display_id (STE-XXX)
+    _SUITE_ID_RE = re.compile(
+        r'^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|STE-\d{1,6})$',
+        re.IGNORECASE,
+    )
+    if not _SUITE_ID_RE.match(suite_id):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "INVALID_SUITE_ID", "message": "suite_id must be a valid UUID or STE-XXX display ID"},
+        )
+
+    # Validate severity if provided
+    severity = body.get("severity", "info")
+    if severity not in _VALID_SEVERITIES:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "INVALID_SEVERITY",
+                "message": f"severity must be one of: {sorted(_VALID_SEVERITIES)}",
+            },
+        )
+
+    # Rate limiting: 10 events/min per suite
+    now = time.time()
+    timestamps = _client_event_counts.setdefault(suite_id, [])
+    # Prune old timestamps outside window
+    timestamps[:] = [ts for ts in timestamps if now - ts < _RATE_LIMIT_WINDOW]
+    if len(timestamps) >= _RATE_LIMIT_MAX:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "RATE_LIMITED", "message": "Maximum 10 events per minute per suite"},
+        )
+    timestamps.append(now)
+
+    # Redact PII from message and truncate
+    message = body.get("message", "")
+    message = _redact_pii(message)
+    if len(message) > 2000:
+        message = message[:2000]
+
+    # Cap metadata size (10KB)
+    metadata = body.get("metadata")
+    if metadata:
+        try:
+            meta_str = json.dumps(metadata)
+            if len(meta_str) > 10240:
+                metadata = {"_truncated": True, "original_size": len(meta_str)}
+        except (TypeError, ValueError):
+            metadata = None
+
+    event_id = str(uuid.uuid4())
+    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+
+    logger.info(
+        "Client event: type=%s suite=%s severity=%s corr=%s",
+        event_type, suite_id[:8], severity, correlation_id[:8],
+    )
+
+    # Law #2: Receipt for client event ingestion
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts
+
+        receipt = {
+            "id": event_id,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": "",
+            "actor_type": "client",
+            "actor_id": suite_id,
+            "action_type": f"client.event.{event_type}",
+            "risk_tier": "green",
+            "tool_used": "",
+            "capability_token_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": "success",
+            "reason_code": "INGESTED",
+            "receipt_type": "telemetry",
+            "receipt_hash": "",
+            "action": {"event_type": event_type, "severity": severity},
+            "result": {"event_id": event_id, "correlation_id": correlation_id},
+        }
+        store_receipts([receipt])
+    except Exception:
+        pass  # Receipt failure never blocks client event ingestion (GREEN tier)
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "event_id": event_id,
+            "correlation_id": correlation_id,
         },
     )

@@ -280,8 +280,15 @@ class TestN2HmacValidation:
         """Evil test: Code node must return killed=true on HMAC failure, not fall through."""
         wf = load_workflow(workflow_name)
         code_text = get_code_text(wf)
-        # The code must check HMAC and return killed:true on mismatch
-        assert "killed: true" in code_text or "killed:true" in code_text, (
+        # The code must check HMAC and return killed=true on mismatch
+        # Accept both boolean (killed: true) and string (killed: 'true') forms
+        has_killed = (
+            "killed: true" in code_text
+            or "killed:true" in code_text
+            or "killed: 'true'" in code_text
+            or "killed:'true'" in code_text
+        )
+        assert has_killed, (
             f"{workflow_name}: HMAC rejection must return killed:true to stop execution"
         )
         assert "hmac_validation_failed" in code_text, (

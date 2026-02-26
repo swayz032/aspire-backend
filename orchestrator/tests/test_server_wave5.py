@@ -310,11 +310,11 @@ class TestPolicyEvaluateEndpoint:
 class TestReceiptStoreIntegration:
     def test_intent_produces_receipts_in_store(self, client) -> None:
         """POST /v1/intents should store receipts for successful flows."""
-        suite_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
+        suite_id = "STE-0001"
         request = {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -331,11 +331,11 @@ class TestReceiptStoreIntegration:
 
     def test_denied_intent_also_produces_receipts(self, client) -> None:
         """Even denied intents produce receipts (Law #2)."""
-        suite_id = str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
+        suite_id = "STE-0001"
         request = {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -363,7 +363,7 @@ class TestE2EGreenTierFlow:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -437,7 +437,7 @@ class TestE2EYellowTierFlow:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -500,7 +500,7 @@ class TestE2ERedTierFlow:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -565,7 +565,7 @@ class TestE2EDeniedFlow:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -629,7 +629,7 @@ class TestE2ETenantIsolation:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -690,7 +690,7 @@ class TestE2ECorrelationIdFlow:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": correlation_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),

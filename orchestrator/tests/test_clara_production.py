@@ -64,8 +64,8 @@ from aspire_orchestrator.services.contract_state_machine import (
 # ---------------------------------------------------------------------------
 
 def _ctx(
-    suite_id: str = "suite-001",
-    office_id: str = "office-001",
+    suite_id: str = "STE-0001",
+    office_id: str = "OFF-0001",
 ) -> ClaraContext:
     return ClaraContext(
         suite_id=suite_id,
@@ -448,8 +448,8 @@ class TestWebhookHandler:
                 "id": "doc-abc",
                 "status": "document.completed",
                 "metadata": {
-                    "aspire_suite_id": "suite-001",
-                    "aspire_office_id": "office-001",
+                    "aspire_suite_id": "STE-0001",
+                    "aspire_office_id": "OFF-0001",
                     "aspire_correlation_id": "corr-001",
                 },
             },
@@ -561,8 +561,8 @@ class TestContractOutbox:
             document_id="doc-001",
             template_key="general_mutual_nda",
             template_lane="general",
-            suite_id="suite-001",
-            office_id="office-001",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             correlation_id="corr-001",
             parties=[{"name": "Acme", "email": "a@a.com"}],
             title="Mutual NDA",
@@ -578,8 +578,8 @@ class TestContractOutbox:
             document_id="doc-idem",
             template_key="trades_sow",
             template_lane="trades",
-            suite_id="suite-001",
-            office_id="office-001",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             correlation_id="corr-001",
             parties=[],
         )
@@ -595,8 +595,8 @@ class TestContractOutbox:
             document_id="",
             template_key="nda",
             template_lane="general",
-            suite_id="suite-001",
-            office_id="office-001",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             correlation_id="corr-001",
             parties=[],
         )
@@ -611,7 +611,7 @@ class TestContractOutbox:
             template_key="nda",
             template_lane="general",
             suite_id="",
-            office_id="office-001",
+            office_id="OFF-0001",
             correlation_id="corr-001",
             parties=[],
         )
@@ -645,7 +645,7 @@ class TestContractOutbox:
                 template_key="nda",
                 template_lane="general",
                 suite_id=suite,
-                office_id="office-1",
+                office_id="OFF-0001",
                 correlation_id="corr-1",
                 parties=[],
             ))
@@ -660,8 +660,8 @@ class TestContractOutbox:
             document_id="doc-retry",
             template_key="sow",
             template_lane="trades",
-            suite_id="suite-001",
-            office_id="office-001",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             correlation_id="corr-001",
             parties=[],
         )
@@ -680,23 +680,23 @@ class TestStateMachineEdgeCases:
 
     def test_double_sign_attempt(self) -> None:
         """Cannot sign a contract that's already signed (no SIGNED->SIGNED)."""
-        sm = ContractStateMachine("c-1", "s-1", "o-1")
+        sm = ContractStateMachine("CTR-0001", "STE-0001", "OFF-0001")
         # DRAFT -> REVIEWED
-        sm.transition("c-1", "draft", "reviewed", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0001", "draft", "reviewed", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="user-1")
         # REVIEWED -> SENT
-        sm.transition("c-1", "reviewed", "sent", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0001", "reviewed", "sent", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="user-1",
                       approval_evidence={"approved_by": "user-1"})
         # SENT -> SIGNED
-        sm.transition("c-1", "sent", "signed", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0001", "sent", "signed", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="user-1",
                       approval_evidence={"approved_by": "user-1"},
                       presence_token="pres-1")
 
         # SIGNED -> SIGNED should fail
         with pytest.raises(InvalidTransitionError) as exc_info:
-            sm.transition("c-1", "signed", "signed", suite_id="s-1", office_id="o-1",
+            sm.transition("CTR-0001", "signed", "signed", suite_id="STE-0001", office_id="OFF-0001",
                           correlation_id="corr", actor_id="user-2",
                           approval_evidence={"approved_by": "user-2"},
                           presence_token="pres-2")
@@ -705,14 +705,14 @@ class TestStateMachineEdgeCases:
 
     def test_expired_then_sign_fails(self) -> None:
         """Cannot sign a contract after it expired."""
-        sm = ContractStateMachine("c-2", "s-1", "o-1")
-        sm.transition("c-2", "draft", "reviewed", suite_id="s-1", office_id="o-1",
+        sm = ContractStateMachine("CTR-0002", "STE-0001", "OFF-0001")
+        sm.transition("CTR-0002", "draft", "reviewed", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="user-1")
-        sm.transition("c-2", "reviewed", "sent", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0002", "reviewed", "sent", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="user-1",
                       approval_evidence={"approved_by": "user-1"})
         # Expire it
-        sm.transition("c-2", "sent", "expired", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0002", "sent", "expired", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="system",
                       approval_evidence={"reason": "timeout"})
 
@@ -720,7 +720,7 @@ class TestStateMachineEdgeCases:
 
         # Try to sign expired
         with pytest.raises(InvalidTransitionError) as exc_info:
-            sm.transition("c-2", "expired", "signed", suite_id="s-1", office_id="o-1",
+            sm.transition("CTR-0002", "expired", "signed", suite_id="STE-0001", office_id="OFF-0001",
                           correlation_id="corr", actor_id="user-1",
                           approval_evidence={"approved_by": "user-1"},
                           presence_token="pres-1")
@@ -729,25 +729,25 @@ class TestStateMachineEdgeCases:
 
     def test_full_happy_path(self) -> None:
         """Full lifecycle: DRAFT -> REVIEWED -> SENT -> SIGNED -> ARCHIVED."""
-        sm = ContractStateMachine("c-3", "s-1", "o-1")
+        sm = ContractStateMachine("CTR-0003", "STE-0001", "OFF-0001")
         assert sm.current_state == "draft"
 
-        sm.transition("c-3", "draft", "reviewed", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0003", "draft", "reviewed", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="clara")
         assert sm.current_state == "reviewed"
 
-        sm.transition("c-3", "reviewed", "sent", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0003", "reviewed", "sent", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="user-1",
                       approval_evidence={"approved_by": "user-1"})
         assert sm.current_state == "sent"
 
-        sm.transition("c-3", "sent", "signed", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0003", "sent", "signed", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="signer-1",
                       approval_evidence={"signer": "Jane Doe"},
                       presence_token="pres-token-xyz")
         assert sm.current_state == "signed"
 
-        sm.transition("c-3", "signed", "archived", suite_id="s-1", office_id="o-1",
+        sm.transition("CTR-0003", "signed", "archived", suite_id="STE-0001", office_id="OFF-0001",
                       correlation_id="corr", actor_id="system")
         assert sm.current_state == "archived"
         assert sm.is_terminal is True
@@ -813,9 +813,9 @@ class TestEvilClara:
 
     def test_evil_state_machine_cross_tenant(self) -> None:
         """EVIL: State machine must reject transitions from wrong suite (Law #6)."""
-        sm = ContractStateMachine("c-1", "suite-A", "office-A")
+        sm = ContractStateMachine("CTR-0001", "suite-A", "office-A")
         with pytest.raises(InvalidTransitionError) as exc_info:
-            sm.transition("c-1", "draft", "reviewed",
+            sm.transition("CTR-0001", "draft", "reviewed",
                           suite_id="suite-B",  # WRONG suite
                           office_id="office-A",
                           correlation_id="corr",
@@ -872,8 +872,8 @@ class TestPandaDocTemplateTools:
             result = await execute_pandadoc_templates_list(
                 payload={"q": "NDA"},
                 correlation_id="corr-1",
-                suite_id="suite-1",
-                office_id="office-1",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         assert result.outcome == Outcome.SUCCESS
@@ -895,8 +895,8 @@ class TestPandaDocTemplateTools:
             result = await execute_pandadoc_templates_list(
                 payload={},
                 correlation_id="corr-1",
-                suite_id="suite-1",
-                office_id="office-1",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         assert result.outcome == Outcome.SUCCESS
@@ -916,8 +916,8 @@ class TestPandaDocTemplateTools:
             result = await execute_pandadoc_templates_list(
                 payload={},
                 correlation_id="corr-1",
-                suite_id="suite-1",
-                office_id="office-1",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         assert result.outcome == Outcome.FAILED
@@ -954,8 +954,8 @@ class TestPandaDocTemplateTools:
             result = await execute_pandadoc_templates_details(
                 payload={"template_id": "tmpl-abc-123"},
                 correlation_id="corr-1",
-                suite_id="suite-1",
-                office_id="office-1",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         assert result.outcome == Outcome.SUCCESS
@@ -974,8 +974,8 @@ class TestPandaDocTemplateTools:
         result = await execute_pandadoc_templates_details(
             payload={},
             correlation_id="corr-1",
-            suite_id="suite-1",
-            office_id="office-1",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
         )
 
         assert result.outcome == Outcome.FAILED
@@ -996,8 +996,8 @@ class TestPandaDocTemplateTools:
             await execute_pandadoc_templates_list(
                 payload={"count": 999},  # Should be capped to 100
                 correlation_id="corr-1",
-                suite_id="suite-1",
-                office_id="office-1",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         # Verify the path includes count=100 (capped), not 999
@@ -1402,8 +1402,8 @@ class TestPreflightCompletenessGate:
             result = await execute_pandadoc_contract_generate(
                 payload=payload,
                 correlation_id="corr-123",
-                suite_id="suite-001",
-                office_id="office-001",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         # Gate should block — return FAILED with needs_info
@@ -1499,8 +1499,8 @@ class TestPreflightCompletenessGate:
             result = await execute_pandadoc_contract_generate(
                 payload=payload,
                 correlation_id="corr-124",
-                suite_id="suite-001",
-                office_id="office-001",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
             )
 
         # Gate should allow — all PandaDoc tokens filled + registry party data provided

@@ -37,8 +37,8 @@ from aspire_orchestrator.services.receipt_chain import (
 def _make_receipt(
     *,
     receipt_id: str | None = None,
-    suite_id: str = "00000000-0000-0000-0000-000000000001",
-    office_id: str = "00000000-0000-0000-0000-000000000011",
+    suite_id: str = "STE-0001",
+    office_id: str = "OFF-0001",
     action_type: str = "test.action",
     outcome: str = "success",
 ) -> dict:

@@ -43,8 +43,8 @@ from aspire_orchestrator.services.presence_service import mint_presence_token
 # Helpers
 # ---------------------------------------------------------------------------
 
-SUITE_A = "00000000-0000-0000-0000-000000000001"
-OFFICE_A = "00000000-0000-0000-0000-000000000011"
+SUITE_A = "STE-0001"
+OFFICE_A = "OFF-0001"
 ACTOR = "test-user-001"
 
 

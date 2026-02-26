@@ -58,8 +58,8 @@ from aspire_orchestrator.services.payment_state_machine import (
 # Shared test fixtures
 # ============================================================================
 
-SUITE = "suite-001"
-OFFICE = "office-001"
+SUITE = "STE-0001"
+OFFICE = "OFF-0001"
 CORR = "corr-001"
 ACTOR = "user-tonio"
 YELLOW_APPROVAL = {"approver": "tonio", "reason": "approved"}

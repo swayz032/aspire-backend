@@ -35,8 +35,8 @@ def _make_valid_request(
     """Create a valid AvaOrchestratorRequest dict."""
     return {
         "schema_version": "1.0",
-        "suite_id": suite_id or str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
-        "office_id": office_id or str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+        "suite_id": suite_id or "STE-0001",
+        "office_id": office_id or "OFF-0001",
         "request_id": str(uuid.uuid4()),
         "correlation_id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -22,6 +22,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+class ReceiptPersistenceError(Exception):
+    """Raised when YELLOW/RED receipt persistence fails (Law #3: fail-closed).
+
+    GREEN-tier receipts use non-blocking writes (store_receipts).
+    YELLOW/RED-tier receipts use strict writes (store_receipts_strict) that
+    raise this error if Supabase persistence fails, halting the pipeline.
+    """
+
+
 # Thread-safe receipt storage (in-memory — always active)
 _lock = threading.Lock()
 _receipts: list[dict[str, Any]] = []
@@ -204,6 +214,36 @@ def store_receipts(receipts: list[dict[str, Any]]) -> None:
             _persist_to_supabase(receipts)
         except Exception as e:
             logger.error("Supabase dual-write failed (receipts safe in-memory): %s", e)
+
+
+def store_receipts_strict(receipts: list[dict[str, Any]]) -> None:
+    """Strict receipt persistence for YELLOW/RED tier (Law #3: fail-closed).
+
+    Always stores in-memory first, then attempts Supabase persistence.
+    If Supabase is configured and the write fails, raises ReceiptPersistenceError
+    to halt the pipeline — YELLOW/RED operations MUST NOT proceed without
+    durable receipt persistence.
+
+    If Supabase is NOT configured (dev mode), logs a warning but does not raise.
+    """
+    # Always store in-memory first
+    with _lock:
+        _receipts.extend(receipts)
+        logger.info("Stored %d receipts strict (total: %d)", len(receipts), len(_receipts))
+
+    # Strict Supabase persistence — failure halts pipeline for YELLOW/RED
+    if _supabase_enabled():
+        try:
+            _persist_to_supabase(receipts)
+        except Exception as e:
+            raise ReceiptPersistenceError(
+                f"YELLOW/RED receipt persistence failed (Law #3 fail-closed): {e}"
+            ) from e
+    else:
+        logger.warning(
+            "store_receipts_strict called without Supabase configured — "
+            "receipts stored in-memory only (acceptable in dev mode)"
+        )
 
 
 def query_receipts(

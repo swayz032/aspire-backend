@@ -20,8 +20,8 @@ def client():
 def _make_valid_request(task_type: str = "receipts.search") -> dict:
     return {
         "schema_version": "1.0",
-        "suite_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
-        "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+        "suite_id": "STE-0001",
+        "office_id": "OFF-0001",
         "request_id": str(uuid.uuid4()),
         "correlation_id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),

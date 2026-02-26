@@ -24,20 +24,20 @@ def _clean_approval_state():
 
 @pytest.fixture
 def suite_id() -> str:
-    """Test suite_id (tenant A)."""
-    return str(uuid.UUID("00000000-0000-0000-0000-000000000001"))
+    """Test suite_id (tenant A) — premium Aspire display format (migration 063)."""
+    return "STE-0001"
 
 
 @pytest.fixture
 def suite_id_b() -> str:
     """Test suite_id (tenant B) — for cross-tenant isolation tests."""
-    return str(uuid.UUID("00000000-0000-0000-0000-000000000002"))
+    return "STE-0002"
 
 
 @pytest.fixture
 def office_id() -> str:
-    """Test office_id."""
-    return str(uuid.UUID("00000000-0000-0000-0000-000000000011"))
+    """Test office_id — premium Aspire display format (migration 063)."""
+    return "OFF-0001"
 
 
 @pytest.fixture

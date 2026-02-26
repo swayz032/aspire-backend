@@ -926,8 +926,8 @@ class TestMailTransitionReceipt:
         """MailTransitionReceipt is immutable (frozen dataclass)."""
         receipt = MailTransitionReceipt(
             mail_id="m1",
-            suite_id="s1",
-            office_id="o1",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             from_state="received",
             to_state="triaged",
             receipt_type=MailReceiptType.MAIL_TRIAGED,
@@ -943,8 +943,8 @@ class TestMailTransitionReceipt:
         now = datetime.now(timezone.utc)
         receipt = MailTransitionReceipt(
             mail_id="m1",
-            suite_id="s1",
-            office_id="o1",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             from_state="received",
             to_state="triaged",
             receipt_type=MailReceiptType.MAIL_TRIAGED,
@@ -954,8 +954,8 @@ class TestMailTransitionReceipt:
             metadata={"key": "value"},
         )
         assert receipt.mail_id == "m1"
-        assert receipt.suite_id == "s1"
-        assert receipt.office_id == "o1"
+        assert receipt.suite_id == "STE-0001"
+        assert receipt.office_id == "OFF-0001"
         assert receipt.from_state == "received"
         assert receipt.to_state == "triaged"
         assert receipt.receipt_type == MailReceiptType.MAIL_TRIAGED
@@ -968,8 +968,8 @@ class TestMailTransitionReceipt:
         """Default metadata is empty dict."""
         receipt = MailTransitionReceipt(
             mail_id="m1",
-            suite_id="s1",
-            office_id="o1",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             from_state="received",
             to_state="triaged",
             receipt_type=MailReceiptType.MAIL_TRIAGED,

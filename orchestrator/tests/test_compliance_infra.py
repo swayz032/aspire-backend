@@ -156,7 +156,7 @@ class TestWorkerQueue:
 
     def test_enqueue_produces_receipt(self, queue: WorkerQueue):
         """Enqueue operation produces a receipt (Law #2)."""
-        job = Job(action_type="invoice.create", suite_id="s1", office_id="o1")
+        job = Job(action_type="invoice.create", suite_id="STE-0001", office_id="OFF-0001")
         receipt = queue.enqueue(job)
 
         assert receipt.action == "enqueue"
@@ -248,8 +248,8 @@ class TestFailureHandler:
     def _make_ctx(self, error_type: str = "timeout", attempt: int = 0) -> FailureContext:
         return FailureContext(
             correlation_id=str(uuid.uuid4()),
-            suite_id="s1",
-            office_id="o1",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             action_type="invoice.create",
             error_type=error_type,
             error_message="something went wrong",
@@ -363,8 +363,8 @@ class TestIntegration:
         queue = WorkerQueue()
         job = Job(
             action_type="books.sync",
-            suite_id="s1",
-            office_id="o1",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             correlation_id="chain-test",
         )
 
@@ -397,8 +397,8 @@ class TestIntegration:
         for attempt in range(3):
             ctx = FailureContext(
                 correlation_id=str(uuid.uuid4()),
-                suite_id="s1",
-                office_id="o1",
+                suite_id="STE-0001",
+                office_id="OFF-0001",
                 action_type="email.send",
                 error_type="timeout",
                 error_message="timed out",

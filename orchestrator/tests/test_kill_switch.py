@@ -104,7 +104,7 @@ class TestKillSwitchDisabled:
         result = check_kill_switch(
             action_type="email.send",
             risk_tier="yellow",
-            suite_id="test-suite",
+            suite_id="STE-0001",
             correlation_id="test-corr",
         )
         assert result.allowed is False
@@ -116,7 +116,7 @@ class TestKillSwitchDisabled:
         result = check_kill_switch(
             action_type="money.transfer",
             risk_tier="red",
-            suite_id="test-suite",
+            suite_id="STE-0001",
         )
         assert result.allowed is False
 
@@ -125,16 +125,16 @@ class TestKillSwitchDisabled:
         result = check_kill_switch(
             action_type="email.send",
             risk_tier="yellow",
-            suite_id="test-suite",
-            office_id="test-office",
+            suite_id="STE-0001",
+            office_id="OFF-0001",
             correlation_id="test-corr",
         )
         assert result.receipt is not None
         receipt = result.receipt
         assert receipt["receipt_type"] == "kill_switch.activated"
         assert receipt["outcome"] == "denied"
-        assert receipt["suite_id"] == "test-suite"
-        assert receipt["office_id"] == "test-office"
+        assert receipt["suite_id"] == "STE-0001"
+        assert receipt["office_id"] == "OFF-0001"
         assert receipt["details"]["kill_switch_mode"] == "DISABLED"
 
 
@@ -188,10 +188,10 @@ class TestKillSwitchReceiptPersistence:
         check_kill_switch(
             action_type="email.send",
             risk_tier="yellow",
-            suite_id="test-suite",
+            suite_id="STE-0001",
             correlation_id="test-corr",
         )
-        receipts = query_receipts(suite_id="test-suite")
+        receipts = query_receipts(suite_id="STE-0001")
         block_receipts = [r for r in receipts if r.get("receipt_type") == "kill_switch.activated"]
         assert len(block_receipts) == 1
         assert block_receipts[0]["outcome"] == "denied"

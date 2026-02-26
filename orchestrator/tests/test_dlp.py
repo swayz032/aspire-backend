@@ -143,9 +143,9 @@ class TestReceiptRedaction:
         receipt = {
             "id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
-            "suite_id": "suite-001",
-            "office_id": "office-001",
-            "chain_id": "suite-001",
+            "suite_id": "STE-0001",
+            "office_id": "OFF-0001",
+            "chain_id": "STE-0001",
             "sequence": 1,
             "receipt_hash": "abc" * 21 + "a",
             "previous_receipt_hash": "0" * 64,
@@ -168,7 +168,7 @@ class TestReceiptRedaction:
         # Structural fields unchanged
         assert result["id"] == original_id
         assert result["receipt_hash"] == original_hash
-        assert result["suite_id"] == "suite-001"
+        assert result["suite_id"] == "STE-0001"
         assert result["actor_id"] == "user-001"
 
         # PII in error_message is redacted
@@ -178,7 +178,7 @@ class TestReceiptRedaction:
         """Policy-specified redact_fields are processed."""
         receipt = {
             "id": str(uuid.uuid4()),
-            "suite_id": "suite-001",
+            "suite_id": "STE-0001",
             "customer_ssn": "123-45-6789",
             "customer_phone": "Call 555-888-7777",
         }
@@ -194,7 +194,7 @@ class TestReceiptRedaction:
         receipts = [
             {
                 "id": str(uuid.uuid4()),
-                "suite_id": "suite-001",
+                "suite_id": "STE-0001",
                 "error_message": f"Error for user{i}@test.com",
             }
             for i in range(5)
@@ -254,7 +254,7 @@ class TestReceiptWriteDLPIntegration:
                     "id": str(uuid.uuid4()),
                     "correlation_id": str(uuid.uuid4()),
                     "suite_id": "dlp-test-suite",
-                    "office_id": "office-001",
+                    "office_id": "OFF-0001",
                     "actor_type": "user",
                     "actor_id": "user-001",
                     "action_type": "invoice.create",
@@ -292,7 +292,7 @@ class TestReceiptWriteDLPIntegration:
                     "id": str(uuid.uuid4()),
                     "correlation_id": str(uuid.uuid4()),
                     "suite_id": "dlp-chain-test",
-                    "office_id": "office-001",
+                    "office_id": "OFF-0001",
                     "actor_type": "system",
                     "actor_id": "intake",
                     "action_type": "calendar.read",
@@ -307,7 +307,7 @@ class TestReceiptWriteDLPIntegration:
                     "id": str(uuid.uuid4()),
                     "correlation_id": str(uuid.uuid4()),
                     "suite_id": "dlp-chain-test",
-                    "office_id": "office-001",
+                    "office_id": "OFF-0001",
                     "actor_type": "system",
                     "actor_id": "executor",
                     "action_type": "calendar.read",

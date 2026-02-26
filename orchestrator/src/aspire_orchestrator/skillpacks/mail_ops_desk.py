@@ -652,6 +652,17 @@ class EnhancedMailOps(EnhancedSkillPack):
 
     async def diagnose_delivery(self, issue_data: dict, ctx: AgentContext) -> AgentResult:
         """Diagnose mail delivery issues. GREEN — analysis only."""
+        # Law #3: Fail-closed on empty input
+        if not issue_data:
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="mail.diagnose",
+                status="denied",
+                inputs={"action": "mail.diagnose"},
+            )
+            receipt["policy"] = {"decision": "deny", "reasons": ["empty_issue_data"]}
+            return AgentResult(success=False, data={}, receipt=receipt)
+
         return await self.execute_with_llm(
             prompt=(
                 f"You are the Mail Ops specialist. Diagnose this delivery issue.\n\n"

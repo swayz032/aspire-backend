@@ -38,6 +38,7 @@ from aspire_orchestrator.providers.error_codes import (
     ProviderErrorCategory,
     error_from_http_status,
 )
+from aspire_orchestrator.services.provider_call_logger import get_provider_call_logger
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,21 @@ class BaseProviderClient(ABC):
         try:
             self._circuit.check()
         except ProviderError as e:
+            # Log circuit breaker rejection (Wave 6 fix — all failure paths logged)
+            try:
+                get_provider_call_logger().log_call(
+                    provider=self.provider_id,
+                    action=f"{request.method.upper()} {request.path}",
+                    correlation_id=request.correlation_id or "",
+                    suite_id=request.suite_id or "",
+                    http_status=503,
+                    success=False,
+                    error_code=e.code.value if hasattr(e.code, 'value') else str(e.code),
+                    retry_count=0,
+                    latency_ms=0,
+                )
+            except Exception:
+                pass
             return ProviderResponse(
                 status_code=503,
                 body={"error": e.code.value, "message": e.message},
@@ -378,6 +394,20 @@ class BaseProviderClient(ABC):
 
                 if success:
                     self._circuit.record_success()
+                    # Log successful provider call (Wave 2B — F3 fix)
+                    try:
+                        get_provider_call_logger().log_call(
+                            provider=self.provider_id,
+                            action=f"{request.method.upper()} {request.path}",
+                            correlation_id=request.correlation_id or "",
+                            suite_id=request.suite_id or "",
+                            http_status=response.status_code,
+                            success=True,
+                            retry_count=attempt,
+                            latency_ms=latency_ms,
+                        )
+                    except Exception:
+                        pass  # Logger failure never blocks provider calls
                     return ProviderResponse(
                         status_code=response.status_code,
                         body=parsed,
@@ -402,6 +432,21 @@ class BaseProviderClient(ABC):
                     attempt += 1
                     continue
 
+                # Log non-retryable error (Wave 2B — F3 fix)
+                try:
+                    get_provider_call_logger().log_call(
+                        provider=self.provider_id,
+                        action=f"{request.method.upper()} {request.path}",
+                        correlation_id=request.correlation_id or "",
+                        suite_id=request.suite_id or "",
+                        http_status=response.status_code,
+                        success=False,
+                        error_code=error_code.value if hasattr(error_code, 'value') else str(error_code),
+                        retry_count=attempt,
+                        latency_ms=latency_ms,
+                    )
+                except Exception:
+                    pass
                 return ProviderResponse(
                     status_code=response.status_code,
                     body=parsed,
@@ -420,6 +465,21 @@ class BaseProviderClient(ABC):
                     self.provider_id, request.method, request.path,
                     latency_ms, attempt,
                 )
+                # Log timeout (Wave 6 fix — all failure paths logged)
+                try:
+                    get_provider_call_logger().log_call(
+                        provider=self.provider_id,
+                        action=f"{request.method.upper()} {request.path}",
+                        correlation_id=request.correlation_id or "",
+                        suite_id=request.suite_id or "",
+                        http_status=408,
+                        success=False,
+                        error_code="TIMEOUT",
+                        retry_count=attempt,
+                        latency_ms=latency_ms,
+                    )
+                except Exception:
+                    pass
                 last_error = ProviderError(
                     code=InternalErrorCode.NETWORK_TIMEOUT,
                     message=f"Timeout after {self.timeout_seconds}s",
@@ -429,11 +489,27 @@ class BaseProviderClient(ABC):
                 continue
 
             except httpx.ConnectError:
+                latency_ms = (time.monotonic() - start) * 1000
                 self._circuit.record_failure()
                 logger.error(
                     "Provider connection refused: %s %s %s",
                     self.provider_id, request.method, request.path,
                 )
+                # Log connection failure (Wave 6 fix — all failure paths logged)
+                try:
+                    get_provider_call_logger().log_call(
+                        provider=self.provider_id,
+                        action=f"{request.method.upper()} {request.path}",
+                        correlation_id=request.correlation_id or "",
+                        suite_id=request.suite_id or "",
+                        http_status=503,
+                        success=False,
+                        error_code="CONNECTION_REFUSED",
+                        retry_count=attempt,
+                        latency_ms=latency_ms,
+                    )
+                except Exception:
+                    pass
                 last_error = ProviderError(
                     code=InternalErrorCode.NETWORK_CONNECTION_REFUSED,
                     message="Connection refused",
@@ -446,11 +522,27 @@ class BaseProviderClient(ABC):
                 raise
 
             except Exception as e:
+                latency_ms = (time.monotonic() - start) * 1000
                 self._circuit.record_failure()
                 logger.error(
                     "Provider unexpected error: %s %s %s — %s",
                     self.provider_id, request.method, request.path, type(e).__name__,
                 )
+                # Log unexpected error (Wave 6 fix — all failure paths logged)
+                try:
+                    get_provider_call_logger().log_call(
+                        provider=self.provider_id,
+                        action=f"{request.method.upper()} {request.path}",
+                        correlation_id=request.correlation_id or "",
+                        suite_id=request.suite_id or "",
+                        http_status=500,
+                        success=False,
+                        error_code="UNEXPECTED_ERROR",
+                        retry_count=attempt,
+                        latency_ms=latency_ms,
+                    )
+                except Exception:
+                    pass
                 return ProviderResponse(
                     status_code=500,
                     body={"error": "PROVIDER_ERROR", "message": str(e)[:200]},
@@ -459,9 +551,23 @@ class BaseProviderClient(ABC):
                     error_message=str(e)[:200],
                 )
 
-        # Exhausted retries
+        # Exhausted retries — log final failure (Wave 6 fix)
         error_code = last_error.code if last_error else InternalErrorCode.SERVER_INTERNAL_ERROR
         error_msg = last_error.message if last_error else "Max retries exhausted"
+        try:
+            get_provider_call_logger().log_call(
+                provider=self.provider_id,
+                action=f"{request.method.upper()} {request.path}",
+                correlation_id=request.correlation_id or "",
+                suite_id=request.suite_id or "",
+                http_status=503,
+                success=False,
+                error_code="RETRIES_EXHAUSTED",
+                retry_count=self.max_retries,
+                latency_ms=0,
+            )
+        except Exception:
+            pass
 
         return ProviderResponse(
             status_code=last_error.status_code or 503 if last_error else 503,

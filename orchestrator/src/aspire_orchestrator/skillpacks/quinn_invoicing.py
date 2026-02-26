@@ -706,6 +706,17 @@ class EnhancedQuinnInvoicing(EnhancedSkillPack):
         Uses fast_general (GPT-5) to validate and enrich the parsed data.
         YELLOW tier — requires user approval before Stripe API call.
         """
+        # Law #3: Fail-closed on empty input
+        if not parsed_data:
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="invoice.draft_plan",
+                status="denied",
+                inputs={"action": "invoice.draft_plan"},
+            )
+            receipt["policy"] = {"decision": "deny", "reasons": ["empty_parsed_data"]}
+            return AgentResult(success=False, data={}, receipt=receipt)
+
         return await self.execute_with_llm(
             prompt=(
                 f"You are Quinn. Build a complete invoice plan from parsed data.\n\n"

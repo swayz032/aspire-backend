@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import openai
 import pytest
 
 from aspire_orchestrator.models import Outcome, RiskTier
@@ -62,25 +62,16 @@ def _make_llm_response(
     }
 
 
-def _mock_httpx_response(
+def _mock_openai_completion(
     llm_response: dict[str, Any],
-    status_code: int = 200,
-) -> httpx.Response:
-    """Build a mock httpx.Response wrapping an OpenAI-compatible chat completion."""
-    body = {
-        "choices": [
-            {
-                "message": {
-                    "content": json.dumps(llm_response),
-                },
-            }
-        ],
-    }
-    return httpx.Response(
-        status_code=status_code,
-        json=body,
-        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
-    )
+) -> MagicMock:
+    """Build a mock OpenAI ChatCompletion wrapping a classification result."""
+    choice = MagicMock()
+    choice.message.content = json.dumps(llm_response)
+    choice.finish_reason = "stop"
+    completion = MagicMock()
+    completion.choices = [choice]
+    return completion
 
 
 def _make_intent_result(
@@ -104,7 +95,7 @@ def _make_intent_result(
 def _make_valid_receipt(
     action_type: str = "receipts.search",
     outcome: str = "success",
-    suite_id: str = "00000000-0000-0000-0000-000000000001",
+    suite_id: str = "STE-0001",
     **overrides: Any,
 ) -> dict[str, Any]:
     """Build a valid receipt dict for QA tests."""
@@ -112,7 +103,7 @@ def _make_valid_receipt(
         "id": str(uuid.uuid4()),
         "correlation_id": str(uuid.uuid4()),
         "suite_id": suite_id,
-        "office_id": "00000000-0000-0000-0000-000000000011",
+        "office_id": "OFF-0001",
         "actor_type": "user",
         "actor_id": "test_user",
         "action_type": action_type,
@@ -133,8 +124,8 @@ def _make_valid_receipt(
 
 def _make_classify_request(
     utterance: str = "Show my calendar",
-    suite_id: str = "00000000-0000-0000-0000-000000000001",
-    office_id: str = "00000000-0000-0000-0000-000000000011",
+    suite_id: str = "STE-0001",
+    office_id: str = "OFF-0001",
 ) -> dict[str, Any]:
     """Build a valid IntentRequest body for endpoint tests."""
     return {
@@ -174,13 +165,11 @@ class TestIntentClassification:
             confidence=0.92,
             entities={"customer_name": "John"},
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Create an invoice for John")
 
@@ -198,13 +187,11 @@ class TestIntentClassification:
             confidence=0.91,
             entities={"amount_cents": 50000, "recipient": "supplier"},
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Send $500 to supplier")
 
@@ -220,13 +207,11 @@ class TestIntentClassification:
             skill_pack="nora_conference",
             confidence=0.97,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("What's on my calendar today")
 
@@ -242,13 +227,11 @@ class TestIntentClassification:
             skill_pack="adam_research",
             confidence=0.89,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Find plumbers near me")
 
@@ -264,13 +247,11 @@ class TestIntentClassification:
             skill_pack="eli_inbox",
             confidence=0.88,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Send email to client")
 
@@ -286,13 +267,11 @@ class TestIntentClassification:
             skill_pack="internal",
             confidence=0.1,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("What's the meaning of life")
 
@@ -309,13 +288,11 @@ class TestIntentClassification:
             confidence=0.65,
             clarification_prompt="Did you mean create an invoice or process a payment?",
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Process that thing")
 
@@ -345,11 +322,11 @@ class TestIntentClassification:
     async def test_classify_llm_timeout(self, monkeypatch) -> None:
         """Simulated LLM timeout -> fail-closed (Law #3)."""
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("Connection timed out"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=openai.APITimeoutError(request=MagicMock()),
+        )
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Create an invoice")
 
@@ -366,13 +343,11 @@ class TestIntentClassification:
             skill_pack="finn_money_desk",
             confidence=0.95,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
             result = await classifier.classify("Send payment")
 
@@ -710,8 +685,8 @@ class TestIntentsEndpoint:
 
     def _auth_headers(
         self,
-        suite_id: str = "00000000-0000-0000-0000-000000000001",
-        office_id: str = "00000000-0000-0000-0000-000000000011",
+        suite_id: str = "STE-0001",
+        office_id: str = "OFF-0001",
     ) -> dict[str, str]:
         return {
             "x-suite-id": suite_id,
@@ -730,13 +705,11 @@ class TestIntentsEndpoint:
             action_type="research.search",
             confidence=0.95,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             resp = client.post(
                 "/v1/intents/classify",
                 json=_make_classify_request("Find plumbers near me"),
@@ -802,13 +775,11 @@ class TestIntentsEndpoint:
             action_type="unknown",
             confidence=0.1,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             resp = client.post(
                 "/v1/intents/classify",
                 json=_make_classify_request("blargblargblarg"),
@@ -832,13 +803,11 @@ class TestIntentsEndpoint:
             confidence=0.65,
             clarification_prompt="Did you mean create or edit an invoice?",
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             resp = client.post(
                 "/v1/intents/classify",
                 json=_make_classify_request("Process that thing"),
@@ -862,13 +831,11 @@ class TestIntentsEndpoint:
             action_type="nonexistent.action",
             confidence=0.95,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             resp = client.post(
                 "/v1/intents/classify",
                 json=_make_classify_request("Do something weird"),
@@ -891,13 +858,11 @@ class TestIntentsEndpoint:
             action_type="research.search",
             confidence=0.95,
         )
-        mock_resp = _mock_httpx_response(llm_resp)
+        mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-        with patch("aspire_orchestrator.services.intent_classifier.httpx.AsyncClient", return_value=mock_client):
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             resp = client.post(
                 "/v1/intents/classify",
                 json=_make_classify_request("Find plumbers near me"),
@@ -945,8 +910,8 @@ class TestPipelineIntegration:
     ) -> dict[str, Any]:
         return {
             "schema_version": "1.0",
-            "suite_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "suite_id": "STE-0001",
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1026,8 +991,8 @@ class TestPipelineIntegration:
         """No utterance -> skips classify/route -> 8-node path (backwards compat)."""
         request = {
             "schema_version": "1.0",
-            "suite_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "suite_id": "STE-0001",
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1128,8 +1093,8 @@ class TestPipelineIntegration:
         """QA retry mechanism — retries once then escalates on persistent violations."""
         request = {
             "schema_version": "1.0",
-            "suite_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "suite_id": "STE-0001",
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1152,8 +1117,8 @@ class TestPipelineIntegration:
         """QA produces meta-receipt on every path (Law #2: QA itself generates a receipt)."""
         request = {
             "schema_version": "1.0",
-            "suite_id": str(uuid.UUID("00000000-0000-0000-0000-000000000001")),
-            "office_id": str(uuid.UUID("00000000-0000-0000-0000-000000000011")),
+            "suite_id": "STE-0001",
+            "office_id": "OFF-0001",
             "request_id": str(uuid.uuid4()),
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1185,8 +1150,8 @@ class TestQAMetaReceipt:
         qa = QALoop()
         state = {
             "correlation_id": str(uuid.uuid4()),
-            "suite_id": "00000000-0000-0000-0000-000000000001",
-            "office_id": "00000000-0000-0000-0000-000000000011",
+            "suite_id": "STE-0001",
+            "office_id": "OFF-0001",
             "action_type": "receipts.search",
         }
         qa_result = QAResult(passed=True)
@@ -1206,7 +1171,7 @@ class TestQAMetaReceipt:
         qa = QALoop()
         state = {
             "correlation_id": str(uuid.uuid4()),
-            "suite_id": "00000000-0000-0000-0000-000000000001",
+            "suite_id": "STE-0001",
             "action_type": "invoice.create",
         }
         violations = [

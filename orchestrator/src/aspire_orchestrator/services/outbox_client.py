@@ -197,6 +197,41 @@ class OutboxClient:
             )
         return True
 
+    def get_queue_status(self) -> dict[str, Any]:
+        """Return OutboxStatus per OpenAPI contract.
+
+        Returns queue_depth, oldest_age_seconds, stuck_jobs, server_time.
+        """
+        now = datetime.now(timezone.utc)
+        active_statuses = (OutboxJobStatus.PENDING, OutboxJobStatus.CLAIMED, OutboxJobStatus.EXECUTING)
+        pending_jobs = [
+            j for j in self._jobs.values()
+            if j.status in active_statuses
+        ]
+        dead_letter_jobs = [
+            j for j in self._jobs.values()
+            if j.status == OutboxJobStatus.DEAD_LETTER
+        ]
+        oldest_age = 0.0
+        stuck = len(dead_letter_jobs)  # Dead-lettered jobs always count as stuck
+        for j in pending_jobs:
+            try:
+                created = datetime.fromisoformat(j.created_at)
+                age = (now - created).total_seconds()
+                oldest_age = max(oldest_age, age)
+                # Stuck = pending for >5 minutes
+                if age > 300:
+                    stuck += 1
+            except (ValueError, TypeError):
+                pass
+
+        return {
+            "queue_depth": len(pending_jobs),
+            "oldest_age_seconds": int(oldest_age),
+            "stuck_jobs": stuck,
+            "server_time": now.isoformat(),
+        }
+
     def clear_jobs(self) -> None:
         """Clear all jobs (testing only)."""
         self._jobs.clear()

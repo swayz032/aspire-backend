@@ -165,13 +165,16 @@ class TestIntelligentComplianceAssessment:
     async def test_fallback_without_api_key(self) -> None:
         """Without API key, returns deterministic Layer 1 output."""
         from aspire_orchestrator.skillpacks.clara_legal import _intelligent_compliance_assessment
+        from unittest.mock import MagicMock
 
-        with patch("aspire_orchestrator.skillpacks.clara_legal.settings", create=True) as mock_settings:
-            mock_settings.openai_api_key = ""
+        mock_settings = MagicMock()
+        mock_settings.openai_api_key = ""
+
+        with patch("aspire_orchestrator.config.settings.settings", mock_settings):
             result = await _intelligent_compliance_assessment(
                 {"status": "document.draft", "name": "Test NDA"},
                 "test-id-123",
-                suite_id="test-suite",
+                suite_id="STE-0001",
             )
 
         assert result["compliance_status"] == "pending"
@@ -182,9 +185,12 @@ class TestIntelligentComplianceAssessment:
     async def test_layer1_voided_contract(self) -> None:
         """Voided contract = terminated status (deterministic)."""
         from aspire_orchestrator.skillpacks.clara_legal import _intelligent_compliance_assessment
+        from unittest.mock import MagicMock
 
-        with patch("aspire_orchestrator.skillpacks.clara_legal.settings", create=True) as mock_settings:
-            mock_settings.openai_api_key = ""
+        mock_settings = MagicMock()
+        mock_settings.openai_api_key = ""
+
+        with patch("aspire_orchestrator.config.settings.settings", mock_settings):
             result = await _intelligent_compliance_assessment(
                 {"status": "voided", "name": "Expired NDA"},
                 "void-id",
@@ -216,7 +222,7 @@ class TestIntelligentComplianceAssessment:
                 result = await _intelligent_compliance_assessment(
                     {"status": "document.completed", "name": "Active MSA"},
                     "active-id",
-                    suite_id="test-suite",
+                    suite_id="STE-0001",
                 )
 
         assert result["compliance_status"] == "active"

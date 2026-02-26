@@ -34,9 +34,9 @@ def a2a() -> A2AService:
     return service
 
 
-SUITE_A = "suite-a-001"
-SUITE_B = "suite-b-002"
-OFFICE = "office-001"
+SUITE_A = "STE-A001"
+SUITE_B = "STE-B002"
+OFFICE = "OFF-0001"
 CORR_ID = "corr-test-001"
 
 

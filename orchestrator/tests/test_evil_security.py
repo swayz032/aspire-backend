@@ -91,7 +91,7 @@ def clean_state():
 def _make_request(
     suite_id: str,
     task_type: str,
-    office_id: str = "00000000-0000-0000-0000-000000000011",
+    office_id: str = "OFF-0001",
     payload: dict | None = None,
     **overrides,
 ) -> dict:
@@ -99,7 +99,7 @@ def _make_request(
     req = {
         "schema_version": "1.0",
         "suite_id": suite_id,
-        "office_id": str(uuid.UUID(office_id)),
+        "office_id": office_id,
         "request_id": str(uuid.uuid4()),
         "correlation_id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),

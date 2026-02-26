@@ -58,13 +58,13 @@ class TestCouncilSpawn:
     def test_spawn_receipt_has_required_fields(self):
         _, receipt = spawn_council(
             incident_id="inc-002",
-            suite_id="suite-1",
+            suite_id="STE-0001",
             office_id="office-1",
         )
         assert receipt["receipt_type"] == "council.session.created"
         assert receipt["outcome"] == "success"
         assert receipt["correlation_id"] == "inc-002"
-        assert receipt["suite_id"] == "suite-1"
+        assert receipt["suite_id"] == "STE-0001"
         assert receipt["id"]
         assert receipt["created_at"]
 
@@ -333,11 +333,11 @@ class TestLearningObjectCreation:
             incident_id="inc-101",
             object_type=LearningObjectType.EVAL_CASE,
             content={"test": "pool_overflow"},
-            suite_id="suite-1",
+            suite_id="STE-0001",
         )
         assert receipt["receipt_type"] == "learning.object.created"
         assert receipt["outcome"] == "success"
-        assert receipt["suite_id"] == "suite-1"
+        assert receipt["suite_id"] == "STE-0001"
 
     def test_retrievable(self):
         obj, _ = create_learning_object(

@@ -41,8 +41,8 @@ from aspire_orchestrator.skillpacks.clara_legal import (
 # ---------------------------------------------------------------------------
 
 def _ctx(
-    suite_id: str = "suite-001",
-    office_id: str = "office-001",
+    suite_id: str = "STE-0001",
+    office_id: str = "OFF-0001",
 ) -> ClaraContext:
     return ClaraContext(
         suite_id=suite_id,

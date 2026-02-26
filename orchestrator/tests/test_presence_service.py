@@ -40,9 +40,9 @@ from aspire_orchestrator.services.presence_service import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SUITE_A = "00000000-0000-0000-0000-000000000001"
-SUITE_B = "00000000-0000-0000-0000-000000000002"
-OFFICE_A = "00000000-0000-0000-0000-000000000011"
+SUITE_A = "STE-0001"
+SUITE_B = "STE-0002"
+OFFICE_A = "OFF-0001"
 OFFICE_B = "00000000-0000-0000-0000-000000000012"
 SESSION_ID = "session-" + str(uuid.uuid4())[:8]
 PAYLOAD_HASH = hashlib.sha256(b"test-payload").hexdigest()

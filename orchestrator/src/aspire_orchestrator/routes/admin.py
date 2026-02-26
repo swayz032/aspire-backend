@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -53,10 +55,13 @@ _proposals: dict[str, dict[str, Any]] = {}
 
 
 def register_incident(incident: dict[str, Any]) -> None:
-    """Register an incident into the in-memory store.
+    """Register an incident into the in-memory store AND the admin_store singleton.
 
     Called by other services (e.g., health monitors, circuit breakers)
     to publish incidents that the admin facade exposes.
+
+    Dual-writes to both _incidents (local) and admin_store (singleton)
+    to ensure ava_admin_desk and other consumers can always find incidents.
     """
     incident_id = incident.get("incident_id")
     if not incident_id:
@@ -65,6 +70,14 @@ def register_incident(incident: dict[str, Any]) -> None:
 
     with _store_lock:
         _incidents[incident_id] = incident
+
+    # Also write to admin_store singleton (ensures ava_admin_desk can find it)
+    try:
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        store = get_admin_store()
+        store._incidents[incident_id] = incident
+    except Exception:
+        pass  # Non-blocking — in-memory store is the safety net
 
 
 def register_provider_call(call: dict[str, Any]) -> None:
@@ -97,6 +110,13 @@ def clear_admin_stores() -> None:
         _provider_calls.clear()
         _rollouts.clear()
         _proposals.clear()
+
+
+# Initialize AdminSupabaseStore singleton with shared in-memory dicts.
+# This ensures ava_admin_desk and any other consumer of get_admin_store()
+# shares the same incident/provider_call data as this module.
+from aspire_orchestrator.services.admin_store import get_admin_store as _init_admin_store
+_shared_admin_store = _init_admin_store(incidents=_incidents, provider_calls=_provider_calls)
 
 
 # =============================================================================
@@ -147,6 +167,17 @@ def _require_admin(request: Request) -> str | None:
     if not secret:
         # Law #3: fail closed — no secret configured means deny
         logger.error("ASPIRE_ADMIN_JWT_SECRET not configured — denying admin access")
+        # Register incident for missing critical config (observability)
+        try:
+            register_incident({
+                "incident_id": f"missing-admin-jwt-{int(time.time())}",
+                "severity": "sev1",
+                "title": "ASPIRE_ADMIN_JWT_SECRET not configured — all admin access denied",
+                "state": "open",
+                "correlation_id": "",
+            })
+        except Exception:
+            pass  # Incident registration failure never masks the auth denial
         return None
 
     try:
@@ -655,7 +686,11 @@ def _redact_payload_preview(preview: str) -> str:
 
         preview = redact_text(preview)
     except Exception:
-        pass  # DLP unavailable — truncation is the safety net
+        logger.warning("DLP redaction unavailable for provider call preview, using truncation only")
+        # Fallback: basic regex patterns for common PII
+        preview = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '<SSN_REDACTED>', preview)
+        preview = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '<EMAIL_REDACTED>', preview)
+        preview = re.sub(r'\b(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}\b', '<PHONE_REDACTED>', preview)
 
     # Always truncate to 200 chars
     if len(preview) > 200:
@@ -692,6 +727,15 @@ async def get_outbox_status(request: Request) -> JSONResponse:
             status_code=401,
         )
 
+    # Get real outbox status
+    try:
+        from aspire_orchestrator.services.outbox_client import get_outbox_client
+        outbox = get_outbox_client()
+        queue_status = outbox.get_queue_status()
+    except Exception as e:
+        logger.warning("Outbox status query failed: %s", e)
+        queue_status = {"queue_depth": 0, "oldest_age_seconds": 0, "stuck_jobs": 0, "server_time": _now_iso()}
+
     # Law #2: access receipt
     receipt = _build_access_receipt(
         correlation_id=correlation_id,
@@ -704,10 +748,10 @@ async def get_outbox_status(request: Request) -> JSONResponse:
     return JSONResponse(
         status_code=200,
         content={
-            "server_time": _now_iso(),
-            "queue_depth": 0,
-            "oldest_age_seconds": 0,
-            "stuck_jobs": 0,
+            "server_time": queue_status.get("server_time", _now_iso()),
+            "queue_depth": queue_status.get("queue_depth", 0),
+            "oldest_age_seconds": queue_status.get("oldest_age_seconds", 0),
+            "stuck_jobs": queue_status.get("stuck_jobs", 0),
         },
     )
 
@@ -962,5 +1006,361 @@ async def approve_proposal(request: Request, proposal_id: str) -> JSONResponse:
             "approved_by": approver_id,
             "receipt_id": approval_receipt["id"],
             "server_time": now,
+        },
+    )
+
+
+# =============================================================================
+# Robot Dashboard (Wave 6A — GET /admin/ops/robots)
+# =============================================================================
+
+
+@router.get("/admin/ops/robots")
+async def list_robot_runs(
+    request: Request,
+    status: str | None = Query(None, description="Filter by run status"),
+    env: str | None = Query(None, description="Filter by environment"),
+    limit: int = Query(50, ge=1, le=200),
+) -> JSONResponse:
+    """List robot runs from receipt store (filtered, paginated).
+
+    Robot runs are stored as receipts with action_type containing 'robot.run'
+    or 'incident.opened' from the /robots/ingest endpoint.
+    """
+    correlation_id = _get_correlation_id(request)
+
+    # Auth check (Law #3: fail closed)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.robots.list",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    # Query robot receipts from in-memory store
+    robot_receipts = query_receipts(
+        suite_id="system",
+        limit=limit * 2,  # Over-fetch to allow filtering
+    )
+
+    # Filter for robot-related receipts
+    robot_runs = []
+    for r in robot_receipts:
+        action = r.get("action_type", "")
+        if "robot.run" in action or (action == "incident.opened" and r.get("tool_used") == "robot_runner"):
+            entry = {
+                "run_id": r.get("correlation_id", ""),
+                "status": r.get("outcome", "unknown"),
+                "action_type": action,
+                "env": (r.get("redacted_inputs") or {}).get("env", "unknown"),
+                "version_ref": (r.get("redacted_inputs") or {}).get("version_ref", "unknown"),
+                "scenario_count": (r.get("redacted_inputs") or {}).get("scenario_count", 0),
+                "summary": (r.get("redacted_outputs") or {}).get("summary", ""),
+                "created_at": r.get("created_at", ""),
+                "receipt_id": r.get("id", ""),
+            }
+
+            # Apply filters
+            if status and entry["status"].lower() != status.lower():
+                continue
+            if env and entry["env"].lower() != env.lower():
+                continue
+
+            robot_runs.append(entry)
+
+    robot_runs = robot_runs[:limit]
+
+    # Access receipt (Law #2)
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.robots.list",
+        outcome="success",
+        details={"count": len(robot_runs), "filters": {"status": status, "env": env}},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "items": robot_runs,
+            "page": {"has_more": len(robot_runs) == limit, "next_cursor": None},
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/robots/{run_id}")
+async def get_robot_run(
+    request: Request,
+    run_id: str,
+) -> JSONResponse:
+    """Get detailed robot run by run_id (correlation_id).
+
+    Returns all receipts associated with this robot run, plus timeline.
+    """
+    correlation_id = _get_correlation_id(request)
+
+    # Auth check (Law #3: fail closed)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.robots.detail",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    # Fetch all receipts for this run
+    run_receipts = query_receipts(
+        suite_id="system",
+        correlation_id=run_id,
+        limit=100,
+    )
+
+    if not run_receipts:
+        return _ops_error(
+            code="NOT_FOUND",
+            message=f"Robot run {run_id} not found",
+            correlation_id=correlation_id,
+            status_code=404,
+        )
+
+    # Build timeline from receipts
+    timeline = []
+    for r in run_receipts:
+        timeline.append({
+            "timestamp": r.get("created_at", ""),
+            "event": r.get("action_type", ""),
+            "status": r.get("outcome", ""),
+            "receipt_id": r.get("id", ""),
+            "detail": (r.get("redacted_outputs") or {}).get("summary", ""),
+        })
+    timeline.sort(key=lambda x: x["timestamp"])
+
+    # Extract run metadata from first receipt
+    first = run_receipts[0] if run_receipts else {}
+    run_detail = {
+        "run_id": run_id,
+        "status": first.get("outcome", "unknown"),
+        "env": (first.get("redacted_inputs") or {}).get("env", "unknown"),
+        "version_ref": (first.get("redacted_inputs") or {}).get("version_ref", "unknown"),
+        "scenario_count": (first.get("redacted_inputs") or {}).get("scenario_count", 0),
+        "timeline": timeline,
+        "receipt_count": len(run_receipts),
+        "created_at": first.get("created_at", ""),
+    }
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.robots.detail",
+        outcome="success",
+        details={"run_id": run_id},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "run": run_detail,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# Admin Ava Ops Desk (Wave 6 — LLM OPS DESK endpoints)
+# =============================================================================
+
+
+@router.get("/admin/ops/health-pulse")
+async def admin_health_pulse(request: Request) -> JSONResponse:
+    """Admin Ava health pulse — aggregate platform health.
+
+    Returns structured health report for the LLM OPS DESK.
+    Includes subsystem status, metrics, and voice_id for TTS.
+    """
+    correlation_id = _get_correlation_id(request)
+
+    # Auth check (Law #3: fail closed)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.health_pulse",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    from aspire_orchestrator.skillpacks.ava_admin_desk import get_ava_admin_desk
+    from aspire_orchestrator.services.agent_sdk_base import AgentContext
+
+    admin_desk = get_ava_admin_desk()
+    ctx = AgentContext(
+        suite_id="system",
+        office_id="system",
+        correlation_id=correlation_id,
+        risk_tier="green",
+    )
+
+    result = await admin_desk.get_health_pulse(ctx)
+
+    if not result.success:
+        return _ops_error(
+            code="INTERNAL_ERROR",
+            message=result.error or "Health pulse failed",
+            correlation_id=correlation_id,
+            status_code=500,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "pulse": result.data,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/triage/{incident_id}")
+async def admin_triage_incident(
+    request: Request,
+    incident_id: str,
+) -> JSONResponse:
+    """Admin Ava incident triage — Incident Commander Mode.
+
+    Returns structured triage report with evidence, hypotheses, and recommendations.
+    """
+    correlation_id = _get_correlation_id(request)
+
+    # Auth check (Law #3: fail closed)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.triage",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    from aspire_orchestrator.skillpacks.ava_admin_desk import get_ava_admin_desk
+    from aspire_orchestrator.services.agent_sdk_base import AgentContext
+
+    admin_desk = get_ava_admin_desk()
+    ctx = AgentContext(
+        suite_id="system",
+        office_id="system",
+        correlation_id=correlation_id,
+        risk_tier="green",
+    )
+
+    result = await admin_desk.triage_incident(ctx, incident_id=incident_id)
+
+    if not result.success:
+        status = 404 if "not found" in (result.error or "").lower() else 500
+        return _ops_error(
+            code="NOT_FOUND" if status == 404 else "INTERNAL_ERROR",
+            message=result.error or "Triage failed",
+            correlation_id=correlation_id,
+            status_code=status,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "triage": result.data,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/provider-analysis")
+async def admin_provider_analysis(
+    request: Request,
+    provider: str | None = Query(None, description="Filter by provider name"),
+    limit: int = Query(100, ge=1, le=500),
+) -> JSONResponse:
+    """Admin Ava provider error analysis — detect patterns and spikes."""
+    correlation_id = _get_correlation_id(request)
+
+    # Auth check (Law #3: fail closed)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.provider_analysis",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    from aspire_orchestrator.skillpacks.ava_admin_desk import get_ava_admin_desk
+    from aspire_orchestrator.services.agent_sdk_base import AgentContext
+
+    admin_desk = get_ava_admin_desk()
+    ctx = AgentContext(
+        suite_id="system",
+        office_id="system",
+        correlation_id=correlation_id,
+        risk_tier="green",
+    )
+
+    result = await admin_desk.analyze_provider_errors(ctx, provider=provider, limit=limit)
+
+    if not result.success:
+        return _ops_error(
+            code="INTERNAL_ERROR",
+            message=result.error or "Provider analysis failed",
+            correlation_id=correlation_id,
+            status_code=500,
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "analysis": result.data,
+            "server_time": _now_iso(),
         },
     )

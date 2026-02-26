@@ -60,6 +60,64 @@ GROUP_KEY_MAP: dict[str, dict[str, str]] = {
     },
 }
 
+# Bridge: ASPIRE_-prefixed env var -> raw env var name
+# Settings uses env_prefix="ASPIRE_" (Pydantic), but SM injects raw names.
+# _align_settings_prefix() copies raw -> ASPIRE_ so both code paths work.
+_SETTINGS_PREFIX_MAP: dict[str, str] = {
+    # OpenAI
+    "ASPIRE_OPENAI_API_KEY": "OPENAI_API_KEY",
+    # Twilio
+    "ASPIRE_TWILIO_ACCOUNT_SID": "TWILIO_ACCOUNT_SID",
+    "ASPIRE_TWILIO_AUTH_TOKEN": "TWILIO_AUTH_TOKEN",
+    # ElevenLabs
+    "ASPIRE_ELEVENLABS_API_KEY": "ELEVENLABS_API_KEY",
+    # Deepgram
+    "ASPIRE_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
+    # LiveKit
+    "ASPIRE_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
+    "ASPIRE_LIVEKIT_API_SECRET": "LIVEKIT_SECRET",
+    # PandaDoc
+    "ASPIRE_PANDADOC_API_KEY": "PANDADOC_API_KEY",
+    # Anam
+    "ASPIRE_ANAM_API_KEY": "ANAM_API_KEY",
+}
+
+
+def _align_settings_prefix() -> None:
+    """Copy raw env vars to ASPIRE_-prefixed names for Pydantic Settings.
+
+    SM injects keys like OPENAI_API_KEY, but Settings reads ASPIRE_OPENAI_API_KEY.
+    This bridges the gap without breaking existing os.environ.get() callers.
+    Only copies if the ASPIRE_ key is not already set (no overwrite).
+    """
+    for aspire_key, raw_key in _SETTINGS_PREFIX_MAP.items():
+        raw_val = os.environ.get(raw_key)
+        if raw_val and not os.environ.get(aspire_key):
+            os.environ[aspire_key] = raw_val
+            logger.debug("Bridged %s -> %s", raw_key, aspire_key)
+
+
+def verify_settings_coverage() -> list[str]:
+    """Check which Settings fields are still empty after secrets load.
+
+    Returns list of empty field names. Logs warnings for each.
+    """
+    missing: list[str] = []
+    critical_fields = [
+        ("openai_api_key", "ASPIRE_OPENAI_API_KEY"),
+        ("elevenlabs_api_key", "ASPIRE_ELEVENLABS_API_KEY"),
+        ("deepgram_api_key", "ASPIRE_DEEPGRAM_API_KEY"),
+        ("livekit_api_key", "ASPIRE_LIVEKIT_API_KEY"),
+        ("twilio_account_sid", "ASPIRE_TWILIO_ACCOUNT_SID"),
+        ("pandadoc_api_key", "ASPIRE_PANDADOC_API_KEY"),
+    ]
+    for field_name, env_var in critical_fields:
+        if not os.environ.get(env_var):
+            missing.append(field_name)
+            logger.warning("Settings field '%s' (%s) is empty after secrets load", field_name, env_var)
+    return missing
+
+
 _last_fetch: float = 0
 _CACHE_TTL = 300  # 5 minutes
 _boto_client: Any = None
@@ -95,6 +153,8 @@ def load_secrets() -> None:
     # Local dev without AWS creds — use .env file
     if not is_production and not has_aws_creds:
         logger.info("Local dev mode — using .env file (no AWS creds)")
+        # Still bridge raw env vars → ASPIRE_-prefixed for Pydantic Settings
+        _align_settings_prefix()
         return
 
     # Production without AWS creds — fail closed (Law #3)
@@ -154,6 +214,9 @@ def load_secrets() -> None:
 
     _last_fetch = time.time()
     logger.info("Loaded %d secrets from %d SM groups (%s)", loaded_count, len(groups), env)
+
+    # Bridge raw env vars to ASPIRE_-prefixed for Pydantic Settings
+    _align_settings_prefix()
 
 
 def invalidate_cache() -> None:
