@@ -915,13 +915,41 @@ async def resume_execution(approval_id: str, request: Request) -> JSONResponse:
     if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', approval_id, re.I):
         return JSONResponse(status_code=400, content={"error": "INVALID_ID", "message": "Invalid approval ID format"})
 
-    # Auth from headers (same pattern as /v1/intents)
+    # Auth from headers (same pattern as /v1/intents — fail-closed on missing)
     suite_id = request.headers.get("x-suite-id", "")
     office_id = request.headers.get("x-office-id", "")
     actor_id = request.headers.get("x-actor-id", "")
+    correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
 
-    if not suite_id:
-        return JSONResponse(status_code=401, content={"error": "UNAUTHORIZED", "message": "Missing x-suite-id header"})
+    if not suite_id or not actor_id:
+        missing = []
+        if not suite_id:
+            missing.append("x-suite-id")
+        if not actor_id:
+            missing.append("x-actor-id")
+        # Law #2: emit denial receipt before 401
+        from aspire_orchestrator.services.receipt_store import store_receipts as _store
+        _store([{
+            "id": str(uuid.uuid4()),
+            "correlation_id": correlation_id,
+            "suite_id": suite_id or "unknown",
+            "office_id": office_id or "unknown",
+            "actor_type": "system",
+            "actor_id": "fail_closed_guard",
+            "action_type": "resume.execute",
+            "risk_tier": "yellow",
+            "tool_used": "orchestrator.resume",
+            "outcome": "DENIED",
+            "reason_code": "AUTH_REQUIRED",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "receipt_type": "auth_denial",
+            "receipt_hash": "",
+        }])
+        return JSONResponse(status_code=401, content={
+            "error": "AUTH_REQUIRED",
+            "message": f"Missing required headers: {', '.join(missing)}",
+            "correlation_id": correlation_id,
+        })
 
     try:
         from aspire_orchestrator.nodes.resume import resume_after_approval
