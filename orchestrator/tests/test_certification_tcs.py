@@ -39,7 +39,9 @@ from aspire_orchestrator.services.receipt_store import (
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI server."""
-    return TestClient(app)
+    c = TestClient(app)
+    c.headers.update({"x-actor-id": "test-actor-001"})
+    return c
 
 
 @pytest.fixture(autouse=True)

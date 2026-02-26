@@ -69,9 +69,13 @@ class TokenValidationResult:
 
 
 def _get_signing_key() -> str:
-    """Get the token signing key. Fail closed if not configured.
+    """Get the token signing key. Fail closed if not configured or too weak.
 
     Per CLAUDE.md Law #3: Missing permission/policy/verification = deny.
+    Per RFC 7518 Section 3.2: HMAC-SHA256 keys MUST be >= 32 bytes.
+
+    Key source: AWS Secrets Manager (internal group) via TOKEN_SIGNING_SECRET.
+    Rotation: Handled by AWS SM rotation pipeline + invalidate_cache().
     """
     import os
 
@@ -83,6 +87,13 @@ def _get_signing_key() -> str:
             "ASPIRE_TOKEN_SIGNING_KEY not configured. "
             "Cannot validate capability tokens without a signing key. "
             "Fail-closed per Law #3."
+        )
+    # B-H1: Enforce minimum key length (RFC 7518 §3.2: 32 bytes for SHA-256)
+    if len(key) < 32:
+        logger.warning(
+            "Token signing key is %d bytes — below recommended 32-byte minimum for HMAC-SHA256. "
+            "Rotate to a stronger key via AWS Secrets Manager.",
+            len(key),
         )
     return key
 

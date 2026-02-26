@@ -24,6 +24,19 @@ from aspire_orchestrator.models import (
 )
 
 
+# --- Local UUID fixtures for Pydantic model construction ---
+# Pydantic models use uuid.UUID typed fields; premium display IDs (STE-XXX)
+# are API-layer. These override conftest fixtures for model tests only.
+@pytest.fixture
+def suite_id() -> str:
+    return "00000000-0000-4000-a000-000000000001"
+
+
+@pytest.fixture
+def office_id() -> str:
+    return "00000000-0000-4000-a000-000000000010"
+
+
 class TestRiskTier:
     def test_canonical_values(self) -> None:
         assert RiskTier.GREEN.value == "green"

@@ -64,6 +64,22 @@ def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
             "disregard your rules",
             "bypass safety",
             "ignore your guidelines",
+            "forget your instructions",
+            "override your programming",
+            "new system prompt",
+            "system: you are",
+            "ignore safety",
+            "jailbreak",
+            "dan mode",
+            "developer mode",
+            "do anything now",
+            "sudo mode",
+            "ignore all previous",
+            "disregard all previous",
+            "forget all previous",
+            "you must obey",
+            "roleplay as",
+            "simulate being",
         ]
 
         for pattern in jailbreak_patterns:
@@ -106,8 +122,33 @@ def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
             "pipeline_receipts": existing_receipts,
         }
 
-    # Safety passed — continue to policy evaluation
+    # Safety passed — emit pass receipt (Law #2: receipt for ALL actions) and continue
+    logger.info(
+        "Safety gate PASSED: suite=%s, task=%s, correlation=%s",
+        suite_id[:8] if len(suite_id) > 8 else suite_id,
+        task_type, correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+    )
+    pass_receipt = {
+        "id": str(uuid.uuid4()),
+        "correlation_id": correlation_id,
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "actor_type": "system",
+        "actor_id": "safety_gate",
+        "action_type": "safety.check",
+        "risk_tier": "green",
+        "tool_used": "orchestrator.safety_gate",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "outcome": Outcome.SUCCESS.value,
+        "reason_code": None,
+        "receipt_type": ReceiptType.POLICY_DECISION.value,
+        "receipt_hash": "",
+    }
+    existing_receipts = list(state.get("pipeline_receipts", []))
+    existing_receipts.append(pass_receipt)
+
     return {
         "safety_passed": True,
         "safety_block_reason": None,
+        "pipeline_receipts": existing_receipts,
     }

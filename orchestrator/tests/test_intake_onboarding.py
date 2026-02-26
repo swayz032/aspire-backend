@@ -65,7 +65,9 @@ def clean_receipts():
 @pytest.fixture
 def client():
     """FastAPI test client."""
-    return TestClient(app)
+    c = TestClient(app)
+    c.headers.update({"x-actor-id": "test-actor-001"})
+    return c
 
 
 SUITE_A = str(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
@@ -984,6 +986,7 @@ class TestI7OrchestratorUserProfilePayload:
                 # No schema_version — voice shorthand
             },
             "auth_suite_id": SUITE_A,
+            "actor_id": "test-actor-001",
         }
 
         result = intake_node(state)
@@ -1009,7 +1012,8 @@ class TestI7OrchestratorUserProfilePayload:
                     "query": "test",
                     "userProfile": {"businessName": "Acme LLC"},
                 },
-            }
+            },
+            "actor_id": "test-actor-001",
         }
 
         result = intake_node(state)

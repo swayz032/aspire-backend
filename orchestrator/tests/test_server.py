@@ -14,7 +14,9 @@ from aspire_orchestrator.server import app
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI server."""
-    return TestClient(app)
+    c = TestClient(app)
+    c.headers.update({"x-actor-id": "test-actor-001", "x-suite-id": "STE-0001"})
+    return c
 
 
 def _make_valid_request(task_type: str = "receipts.search") -> dict:

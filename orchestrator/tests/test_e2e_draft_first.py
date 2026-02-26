@@ -37,10 +37,12 @@ from aspire_orchestrator.models import (
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — UUIDs required here because resume.py + calendar_client validate
+# uuid.UUID(suite_id) internally (defense-in-depth injection prevention).
+# Premium display IDs (STE-XXX) are API-layer; internal pipeline uses UUIDs.
 # ---------------------------------------------------------------------------
-SUITE_ID = "STE-0001"
-OFFICE_ID = "OFF-0001"
+SUITE_ID = "00000000-0000-4000-a000-000000000001"
+OFFICE_ID = "00000000-0000-4000-a000-000000000010"
 ACTOR_ID = "test_user"
 
 

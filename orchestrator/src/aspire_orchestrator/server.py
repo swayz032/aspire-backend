@@ -120,6 +120,19 @@ app.include_router(robots_router)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
 load_secrets()
 
+# Verify critical settings are populated (Policy Gate P0: fail-closed startup)
+# Empty provider keys = Ava gives generic "Done" responses (F1 root cause)
+from aspire_orchestrator.config.secrets import verify_settings_coverage
+_settings_warnings = verify_settings_coverage()
+if os.getenv("ASPIRE_ENV") == "production" and _settings_warnings:
+    # In production, missing critical settings = crash startup (Law #3)
+    for _w in _settings_warnings:
+        logger.error("CRITICAL SETTINGS MISSING: %s", _w)
+    raise SystemExit(1)
+elif _settings_warnings:
+    for _w in _settings_warnings:
+        logger.warning("Settings gap (dev mode, non-blocking): %s", _w)
+
 # Build the graph once at startup
 orchestrator_graph = build_orchestrator_graph()
 

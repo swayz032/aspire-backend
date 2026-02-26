@@ -17,10 +17,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Thread-safety for cache invalidation + reload (B-C3 fix)
+_secrets_lock = threading.Lock()
 
 # SM key name -> os.environ variable name
 KEY_MAP: dict[str, str] = {
@@ -110,6 +114,9 @@ def verify_settings_coverage() -> list[str]:
         ("livekit_api_key", "ASPIRE_LIVEKIT_API_KEY"),
         ("twilio_account_sid", "ASPIRE_TWILIO_ACCOUNT_SID"),
         ("pandadoc_api_key", "ASPIRE_PANDADOC_API_KEY"),
+        ("stripe_secret_key", "STRIPE_SECRET_KEY"),
+        ("supabase_service_role_key", "ASPIRE_SUPABASE_SERVICE_ROLE_KEY"),
+        ("token_signing_key", "TOKEN_SIGNING_SECRET"),
     ]
     for field_name, env_var in critical_fields:
         if not os.environ.get(env_var):
@@ -143,6 +150,8 @@ def load_secrets() -> None:
       - local dev + no AWS creds -> skip, use .env file
       - cache fresh -> skip (5-min TTL)
       - SM fetch failure in production -> RuntimeError (server won't start)
+
+    Thread-safe: concurrent calls serialize via _secrets_lock (B-C3 fix).
     """
     global _last_fetch
 
@@ -164,56 +173,57 @@ def load_secrets() -> None:
             "Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY."
         )
 
-    # Cache still fresh — skip
-    if time.time() - _last_fetch < _CACHE_TTL:
-        return
+    with _secrets_lock:
+        # Cache still fresh — skip (re-check inside lock to avoid double-fetch)
+        if time.time() - _last_fetch < _CACHE_TTL:
+            return
 
-    client = _get_client()
-    env = "prod" if is_production else "dev"
+        client = _get_client()
+        env = "prod" if is_production else "dev"
 
-    groups = [
-        ("stripe", f"aspire/{env}/stripe"),
-        ("supabase", f"aspire/{env}/supabase"),
-        ("openai", f"aspire/{env}/openai"),
-        ("twilio", f"aspire/{env}/twilio"),
-        ("internal", f"aspire/{env}/internal"),
-        ("providers", f"aspire/{env}/providers"),
-    ]
+        groups = [
+            ("stripe", f"aspire/{env}/stripe"),
+            ("supabase", f"aspire/{env}/supabase"),
+            ("openai", f"aspire/{env}/openai"),
+            ("twilio", f"aspire/{env}/twilio"),
+            ("internal", f"aspire/{env}/internal"),
+            ("providers", f"aspire/{env}/providers"),
+        ]
 
-    loaded_count = 0
+        loaded_count = 0
 
-    for group_name, path in groups:
-        try:
-            resp = client.get_secret_value(SecretId=path)
-            secrets = json.loads(resp["SecretString"])
+        for group_name, path in groups:
+            try:
+                resp = client.get_secret_value(SecretId=path)
+                secrets = json.loads(resp["SecretString"])
 
-            for k, v in secrets.items():
-                # Skip internal rotation metadata
-                if k.startswith("_"):
-                    continue
+                for k, v in secrets.items():
+                    # Skip internal rotation metadata
+                    if k.startswith("_"):
+                        continue
 
-                # Use group-specific mapping if available
-                group_map = GROUP_KEY_MAP.get(group_name, {})
-                env_var = group_map.get(k) or KEY_MAP.get(k) or k.upper()
+                    # Use group-specific mapping if available
+                    group_map = GROUP_KEY_MAP.get(group_name, {})
+                    env_var = group_map.get(k) or KEY_MAP.get(k) or k.upper()
 
-                os.environ[env_var] = str(v)
-                loaded_count += 1
+                    os.environ[env_var] = str(v)
+                    loaded_count += 1
 
-        except Exception as e:
-            msg = f"Failed to fetch {path} from SM"
-            critical_groups = {"stripe", "supabase", "internal"}
-            is_critical = group_name in critical_groups
+            except Exception as e:
+                msg = f"Failed to fetch {path} from SM"
+                critical_groups = {"stripe", "supabase", "internal"}
+                is_critical = group_name in critical_groups
 
-            if is_production or is_critical:
-                # Fail closed — critical groups required even in dev (Law #3)
-                logger.error("%s: %s", msg, type(e).__name__)
-                raise RuntimeError(f"Secrets Manager fetch failed for {path}") from e
-            else:
-                # Dev mode non-critical group — warn and continue
-                logger.warning("%s: %s", msg, type(e).__name__)
+                if is_production or is_critical:
+                    # Fail closed — critical groups required even in dev (Law #3)
+                    logger.error("%s: %s", msg, type(e).__name__)
+                    raise RuntimeError(f"Secrets Manager fetch failed for {path}") from e
+                else:
+                    # Dev mode non-critical group — warn and continue
+                    logger.warning("%s: %s", msg, type(e).__name__)
 
-    _last_fetch = time.time()
-    logger.info("Loaded %d secrets from %d SM groups (%s)", loaded_count, len(groups), env)
+        _last_fetch = time.time()
+        logger.info("Loaded %d secrets from %d SM groups (%s)", loaded_count, len(groups), env)
 
     # Bridge raw env vars to ASPIRE_-prefixed for Pydantic Settings
     _align_settings_prefix()
@@ -223,10 +233,12 @@ def invalidate_cache() -> None:
     """Invalidate the secrets cache — forces next load_secrets() call to re-fetch.
 
     Call when detecting provider auth failures (key may have been rotated).
+    Thread-safe: uses _secrets_lock (B-C3 fix).
     """
     global _last_fetch, _boto_client
-    _last_fetch = 0
-    _boto_client = None  # Force new client
+    with _secrets_lock:
+        _last_fetch = 0
+        _boto_client = None  # Force new client
     logger.info("Secrets cache invalidated — next load_secrets() will re-fetch from SM")
 
 

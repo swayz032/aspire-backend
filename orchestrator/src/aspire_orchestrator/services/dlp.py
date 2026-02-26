@@ -95,6 +95,10 @@ _RECEIPT_PROTECTED_FIELDS = frozenset({
 })
 
 
+class DLPInitializationError(Exception):
+    """Raised when DLP is required but not available (Law #3: fail-closed)."""
+
+
 class DLPService:
     """Presidio-based DLP service for PII redaction.
 
@@ -219,6 +223,7 @@ class DLPService:
         receipt: dict[str, Any],
         *,
         redact_fields: list[str] | None = None,
+        fail_closed: bool = False,
     ) -> dict[str, Any]:
         """Redact PII from a receipt dict before chain hashing.
 
@@ -227,7 +232,13 @@ class DLPService:
         2. Scan standard receipt text fields for any remaining PII
 
         Protected fields (IDs, hashes, timestamps) are never modified.
+
+        Args:
+            fail_closed: If True (YELLOW/RED tier), raises DLPInitializationError
+                if DLP is unavailable. If False (GREEN tier), returns unredacted.
         """
+        if fail_closed:
+            self.require_available()
         if not receipt:
             return receipt
 
@@ -262,6 +273,43 @@ class DLPService:
     def available(self) -> bool:
         """Check if DLP service is available."""
         return self._ensure_initialized()
+
+    def require_available(self) -> None:
+        """Assert DLP is available — raises DLPInitializationError if not.
+
+        Use this for YELLOW/RED tier operations where PII redaction is mandatory.
+        Law #3: fail-closed — missing DLP = deny execution.
+        Law #2: emit denial receipt before raising (MEDIUM-01 fix).
+        """
+        if not self._ensure_initialized():
+            # Emit denial receipt before raising (Law #2)
+            try:
+                import uuid as _uuid
+                from datetime import datetime as _dt, timezone as _tz
+                from aspire_orchestrator.services.receipt_store import store_receipts
+                denial_receipt = {
+                    "id": str(_uuid.uuid4()),
+                    "correlation_id": "dlp_init_failure",
+                    "suite_id": "system",
+                    "office_id": "system",
+                    "actor_type": "system",
+                    "actor_id": "dlp_service",
+                    "action_type": "dlp.require_available",
+                    "risk_tier": "green",
+                    "tool_used": "dlp.presidio",
+                    "created_at": _dt.now(_tz.utc).isoformat(),
+                    "outcome": "DENIED",
+                    "reason_code": "DLP_UNAVAILABLE",
+                    "error_message": f"DLP not available: {self._init_error}",
+                    "receipt_type": "policy_decision",
+                    "receipt_hash": "",
+                }
+                store_receipts([denial_receipt])
+            except Exception:
+                logger.warning("Failed to store DLP denial receipt (best-effort)")
+            raise DLPInitializationError(
+                f"DLP service not available (Law #3 fail-closed): {self._init_error}"
+            )
 
 
 # Module-level singleton (lazy init)

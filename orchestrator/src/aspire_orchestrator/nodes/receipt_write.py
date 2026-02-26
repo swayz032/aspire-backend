@@ -58,8 +58,19 @@ def receipt_write_node(state: OrchestratorState) -> dict[str, Any]:
         from aspire_orchestrator.services.dlp import get_dlp_service
 
         dlp = get_dlp_service()
-        if dlp.available:
-            redact_fields = state.get("redact_fields", [])
+        # Determine max risk tier across pipeline receipts
+        risk_tiers = {r.get("risk_tier", "green") for r in pipeline_receipts}
+        needs_fail_closed = bool(risk_tiers & {"yellow", "red"})
+        redact_fields = state.get("redact_fields", [])
+
+        if needs_fail_closed:
+            # YELLOW/RED tier: DLP MUST be available (Law #3, R-006 fix)
+            dlp.require_available()
+            pipeline_receipts = dlp.redact_receipts(
+                pipeline_receipts, redact_fields=redact_fields,
+            )
+        elif dlp.available:
+            # GREEN tier: best-effort redaction
             pipeline_receipts = dlp.redact_receipts(
                 pipeline_receipts, redact_fields=redact_fields,
             )

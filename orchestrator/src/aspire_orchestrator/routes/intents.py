@@ -151,12 +151,27 @@ async def classify_intent(request: Request) -> JSONResponse:
     # -- Auth context from Gateway headers (Law #3: missing = deny) ----------
     suite_id = request.headers.get("x-suite-id")
     office_id = request.headers.get("x-office-id")
-    actor_id = request.headers.get("x-actor-id", "unknown")
+    actor_id = request.headers.get("x-actor-id")
 
-    if not suite_id or not office_id:
+    if not suite_id or not office_id or not actor_id:
+        missing = [h for h, v in [("X-Suite-Id", suite_id), ("X-Office-Id", office_id), ("X-Actor-Id", actor_id)] if not v]
+        correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
+        # Law #2: emit denial receipt before returning 401
+        receipt = _build_receipt(
+            correlation_id=correlation_id,
+            suite_id=suite_id or "unknown",
+            office_id=office_id or "unknown",
+            actor_id="fail_closed_guard",
+            action_type="intent.classify",
+            outcome="denied",
+            reason_code="AUTH_REQUIRED",
+            details={"missing_headers": missing},
+        )
+        store_receipts([receipt])
         return _error_json(
             error="AUTH_REQUIRED",
-            message="Missing required auth headers: X-Suite-Id, X-Office-Id",
+            message=f"Missing required auth headers: {', '.join(missing)}",
+            correlation_id=correlation_id,
             status_code=401,
         )
 

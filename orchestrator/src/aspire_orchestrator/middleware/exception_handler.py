@@ -46,9 +46,14 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
         # ALWAYS use "system" for exception receipts — never trust x-suite-id
         # in the exception path (THREAT-002: prevents cross-tenant incident poisoning)
         suite_id = "system"
-        # Exception handler is system-level — use explicit system actor, never "unknown"
-        # (actor_id from header is best-effort enrichment for error receipts)
-        actor_id = request.headers.get("x-actor-id") or "system_error_handler"
+        # Exception handler is system-level — validate actor_id format (R-003 fix)
+        # Only accept UUID-like patterns or known system actor prefixes
+        import re
+        raw_actor = request.headers.get("x-actor-id", "")
+        if raw_actor and re.match(r'^[a-zA-Z0-9_-]{1,128}$', raw_actor):
+            actor_id = raw_actor
+        else:
+            actor_id = "system_error_handler"
         now = datetime.now(timezone.utc).isoformat()
         incident_id = str(uuid.uuid4())
 
@@ -90,11 +95,13 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
         }
 
         # Register incident in admin store (best-effort)
+        # Imports at module load would create circular dependency (admin imports server imports admin).
+        # Lazy import is intentional — but failures are logged with full stack trace.
         try:
             from aspire_orchestrator.routes.admin import register_incident
             register_incident(incident)
         except Exception as reg_err:
-            logger.warning("Failed to register incident %s: %s", incident_id, reg_err)
+            logger.exception("Failed to register incident %s", incident_id)
 
         # Store receipt for the failure (Law #2: receipt for all)
         receipt = {
@@ -119,7 +126,14 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
             from aspire_orchestrator.services.receipt_store import store_receipts
             store_receipts([receipt])
         except Exception as store_err:
-            logger.warning("Failed to store exception receipt: %s", store_err)
+            logger.exception("Failed to store exception receipt")
+            # Fallback: write receipt to stderr for container log collection (Law #2 last resort)
+            import sys
+            import json as _json
+            try:
+                print(_json.dumps({"fallback_receipt": receipt}), file=sys.stderr)
+            except Exception:
+                pass  # Truly catastrophic — nothing more we can do
 
         # Return sanitized response (Law #9: never expose internals)
         return JSONResponse(

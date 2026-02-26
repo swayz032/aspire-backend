@@ -71,7 +71,9 @@ from aspire_orchestrator.services.token_service import (
 @pytest.fixture
 def client():
     """FastAPI test client."""
-    return TestClient(app)
+    c = TestClient(app)
+    c.headers.update({"x-actor-id": "test-actor-001"})
+    return c
 
 
 @pytest.fixture(autouse=True)

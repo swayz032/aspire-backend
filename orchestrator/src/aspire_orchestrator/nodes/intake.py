@@ -170,7 +170,28 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
     correlation_id = request.correlation_id or str(uuid.uuid4())
 
     # Derive actor_id from auth context (preferred) or state fallback
-    actor_id = state.get("auth_actor_id") or state.get("actor_id", "unknown")
+    # Law #3: Fail closed — missing actor_id is a deny condition
+    actor_id = state.get("auth_actor_id") or state.get("actor_id")
+    if not actor_id:
+        receipt = _make_receipt(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            actor_type=ActorType.SYSTEM.value,
+            actor_id="fail_closed_guard",
+            action_type="intake.validate",
+            outcome=Outcome.DENIED.value,
+            reason_code="MISSING_ACTOR_ID",
+        )
+        return {
+            "correlation_id": correlation_id,
+            "error_code": "AUTH_REQUIRED",
+            "error_message": "Missing actor_id in auth context (Law #3: fail closed)",
+            "outcome": Outcome.DENIED,
+            "safety_passed": False,
+            "pipeline_receipts": [receipt],
+            "receipt_ids": [],
+        }
 
     # Emit decision_intake receipt
     receipt = _make_receipt(
