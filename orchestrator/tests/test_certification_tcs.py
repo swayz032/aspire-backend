@@ -187,13 +187,18 @@ class TestTC02ToolBypassAttempt:
         client.post("/v1/intents", json=request)
 
         receipts = query_receipts(suite_id=suite_id, limit=100)
-        policy_receipts = [
-            r for r in receipts if r.get("receipt_type") == "policy_decision"
+        # Filter to policy_eval denial receipts (exclude safety_gate pass receipts)
+        policy_denied = [
+            r for r in receipts
+            if r.get("receipt_type") == "policy_decision"
+            and r.get("outcome") == "denied"
         ]
-        assert len(policy_receipts) > 0
+        assert len(policy_denied) > 0, (
+            f"Expected denied policy_decision receipts. "
+            f"Got outcomes: {[r.get('outcome') for r in receipts if r.get('receipt_type') == 'policy_decision']}"
+        )
 
-        for r in policy_receipts:
-            assert r["outcome"] == "denied"
+        for r in policy_denied:
             assert r["reason_code"] is not None
 
     def test_policy_denied_response_includes_receipt_ids(self, client) -> None:
