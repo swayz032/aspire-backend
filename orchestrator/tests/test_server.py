@@ -41,20 +41,34 @@ class TestHealthEndpoints:
         assert data["service"] == "aspire-orchestrator"
 
     def test_readyz_returns_checks(self, client) -> None:
-        """Readyz returns dependency check details."""
+        """Readyz returns dependency check details (B-H10 enhanced tri-state)."""
         response = client.get("/readyz")
         data = response.json()
         assert data["service"] == "aspire-orchestrator"
         assert "checks" in data
+        # Core checks always present
         assert "signing_key_configured" in data["checks"]
         assert "graph_built" in data["checks"]
         assert "dlp_initialized" in data["checks"]
-        # Status is 200 if all checks pass, 503 if any fail
+        # B-H10 enhanced checks
+        assert "receipt_store" in data["checks"]
+        assert "policy_engine" in data["checks"]
+        # Tri-state status: ready / degraded / not_ready
+        # 200 if critical checks pass (signing_key, graph, receipt_store)
+        # 503 only if critical checks fail
+        critical_keys = {"signing_key_configured", "graph_built", "receipt_store"}
+        critical_ok = all(
+            data["checks"].get(k, False) for k in critical_keys
+        )
         assert response.status_code in (200, 503)
         if all(data["checks"].values()):
             assert data["status"] == "ready"
+        elif critical_ok:
+            assert data["status"] == "degraded"
+            assert response.status_code == 200
         else:
             assert data["status"] == "not_ready"
+            assert response.status_code == 503
 
     def test_livez(self, client) -> None:
         """Livez always returns 200 if the process is running."""

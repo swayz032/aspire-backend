@@ -65,6 +65,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
 from aspire_orchestrator.middleware.correlation import CorrelationIdMiddleware
+from aspire_orchestrator.middleware.rate_limiter import RateLimitMiddleware
 from aspire_orchestrator.graph import build_orchestrator_graph
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
@@ -102,6 +103,12 @@ app.add_middleware(
 # Global Exception Handler — catches unhandled exceptions, creates incident + receipt (Wave 1B)
 # Added AFTER CORS so it wraps all routes (Starlette: last added = outermost)
 app.add_middleware(GlobalExceptionMiddleware)
+
+# Rate Limiting — per-tenant sliding window (B-H7, Enterprise Remediation Wave 4)
+# 100 req/60s per tenant, health/metrics endpoints exempt
+_rate_limit = int(os.environ.get("ASPIRE_RATE_LIMIT", "100"))
+_rate_window = int(os.environ.get("ASPIRE_RATE_WINDOW_SECONDS", "60"))
+app.add_middleware(RateLimitMiddleware, limit=_rate_limit, window_seconds=_rate_window)
 
 # Correlation ID — extracts/generates X-Correlation-Id, propagates via contextvars (Wave 2A)
 # Added LAST so it runs FIRST (outermost): sets correlation ID before anything else
@@ -156,7 +163,15 @@ async def livez() -> dict[str, str]:
 
 @app.get("/readyz")
 async def readyz() -> JSONResponse:
-    """Readiness probe — checks critical dependencies are configured."""
+    """Readiness probe — checks critical dependencies are configured and reachable (B-H10).
+
+    Enhanced to verify downstream dependencies beyond just configuration:
+    - Signing key configured
+    - Graph built
+    - DLP initialized
+    - Receipt store reachable (in-memory always passes; Supabase checked if configured)
+    - Redis reachable (if configured)
+    """
     from aspire_orchestrator.config.settings import settings
 
     checks: dict[str, bool] = {
@@ -174,11 +189,46 @@ async def readyz() -> JSONResponse:
     except Exception:
         checks["dlp_initialized"] = False
 
+    # Check receipt store is functional (B-H10 enhancement)
+    try:
+        from aspire_orchestrator.services.receipt_store import query_receipts
+        # Quick read probe — if store is broken this will raise
+        query_receipts(suite_id="health_probe", limit=1)
+        checks["receipt_store"] = True
+    except Exception:
+        checks["receipt_store"] = False
+
+    # Check Redis connectivity (if configured)
+    redis_url = os.environ.get("REDIS_URL") or os.environ.get("ASPIRE_REDIS_URL")
+    if redis_url:
+        try:
+            import redis
+            r = redis.from_url(redis_url, socket_timeout=2)
+            r.ping()
+            checks["redis"] = True
+        except Exception:
+            checks["redis"] = False
+
+    # Check policy engine loaded
+    try:
+        matrix = get_policy_matrix()
+        checks["policy_engine"] = matrix is not None and len(matrix) > 0
+    except Exception:
+        checks["policy_engine"] = False
+
     all_ready = all(checks.values())
+    # Determine if partially ready (some non-critical deps down)
+    critical_checks = {
+        k: v for k, v in checks.items()
+        if k in ("signing_key_configured", "graph_built", "receipt_store")
+    }
+    critical_ready = all(critical_checks.values())
+
+    status = "ready" if all_ready else ("degraded" if critical_ready else "not_ready")
     return JSONResponse(
-        status_code=200 if all_ready else 503,
+        status_code=200 if critical_ready else 503,
         content={
-            "status": "ready" if all_ready else "not_ready",
+            "status": status,
             "service": "aspire-orchestrator",
             "checks": checks,
         },
