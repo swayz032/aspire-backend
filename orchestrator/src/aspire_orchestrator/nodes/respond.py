@@ -100,7 +100,7 @@ def _resolve_agent_id(state: OrchestratorState) -> str:
     # Map explicit agent names to persona IDs
     if explicit_agent and explicit_agent != "ava":
         _agent_name_map = {
-            "finn": "finn",
+            "finn": "finn_fm",
             "eli": "eli",
             "nora": "nora",
             "sarah": "sarah",
@@ -324,6 +324,35 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
         # Law #3: Fail gracefully — use template response if LLM fails
         logger.warning("LLM summarization failed for %s: %s — using template", agent_id, e)
         return fallback_text
+
+
+def _llm_conversational_reply(state: OrchestratorState, utterance: str) -> str:
+    """Generate a natural conversational reply for non-action input."""
+    agent_id = _resolve_agent_id(state)
+    persona = _load_agent_persona(agent_id)
+
+    prompt = (
+        f'The user said: "{utterance}"\n\n'
+        "This is a conversational message, not an action request. "
+        "Respond naturally as a professional AI assistant. Be warm, brief (1-2 sentences), "
+        "and offer to help with their business tasks. "
+        "Do NOT use markdown or bullet points. This will be spoken aloud via TTS.\n"
+        "Respond with ONLY the spoken text."
+    )
+
+    try:
+        messages: list[dict[str, str]] = []
+        if persona:
+            messages.append({"role": "system", "content": persona})
+        messages.append({"role": "user", "content": prompt})
+        content = _call_openai_sync(messages)
+        if content:
+            return content
+    except Exception as e:
+        logger.warning("Conversational LLM failed: %s", e)
+
+    # Deterministic fallback
+    return "Hey! I'm here to help. What would you like me to work on today?"
 
 
 def _call_openai_sync(
@@ -679,8 +708,50 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     )
 
     if not _execution_happened and state.get("utterance"):
-        intent_result = state.get("intent_result", {})
-        clarification = intent_result.get("clarification_prompt", "")
+        intent_result = state.get("intent_result") or {}
+        utterance = state.get("utterance", "")
+
+        # Detect conversational/greeting input vs. unclear action request
+        intent_type = intent_result.get("intent_type", "") if isinstance(intent_result, dict) else ""
+        is_conversational = (
+            intent_type in ("greeting", "chitchat", "conversational", "")
+            or len(utterance.split()) <= 4
+        )
+
+        # Handle __greeting__ sentinel from Desktop mount
+        if utterance == "__greeting__":
+            from datetime import datetime
+
+            hour = datetime.now().hour
+            time_greeting = (
+                "Good morning" if hour < 12
+                else "Good afternoon" if hour < 17
+                else "Good evening"
+            )
+            greeting_text = f"{time_greeting}! How can I help you today?"
+            response: dict[str, Any] = {
+                "text": greeting_text,
+                "correlation_id": correlation_id,
+                "request_id": request_id,
+                "receipt_ids": receipt_ids,
+                "assigned_agent": state.get("assigned_agent", "ava"),
+            }
+            return {"response": response}
+
+        if is_conversational:
+            # Natural conversational reply (not an unclear action)
+            conv_text = _llm_conversational_reply(state, utterance)
+            response = {
+                "text": conv_text,
+                "correlation_id": correlation_id,
+                "request_id": request_id,
+                "receipt_ids": receipt_ids,
+                "assigned_agent": state.get("assigned_agent", "ava"),
+            }
+            return {"response": response}
+
+        # Genuinely unclear action request — return clarification
+        clarification = intent_result.get("clarification_prompt", "") if isinstance(intent_result, dict) else ""
         if not clarification:
             clarification = (
                 "I wasn't quite sure how to handle that. "
@@ -692,10 +763,10 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             "(no capability_token_id, no execution_result). Returning clarification. "
             "task_type=%s, utterance=%.60s",
             state.get("task_type", "unknown"),
-            state.get("utterance", "")[:60],
+            utterance[:60],
         )
 
-        response: dict[str, Any] = {
+        response = {
             "error": "CLASSIFICATION_UNCLEAR",
             "message": "Pipeline did not reach execution — classify/route short-circuit",
             "text": clarification,
