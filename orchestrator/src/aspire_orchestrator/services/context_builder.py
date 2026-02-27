@@ -185,6 +185,42 @@ def build_advisor_context(
     catalog_version = catalog.get("version", "unknown")
     index_version = _CACHE.get("playbook_index", {}).get("version", "unknown")
 
+    # Financial knowledge context for Finn-related intents (graceful degradation)
+    financial_knowledge = None
+    _FINANCE_KEYWORDS = (
+        "finance", "budget", "cash", "revenue", "expense", "payroll", "tax",
+        "income", "profit", "loss", "invoice", "payment", "bank", "accounting",
+        "bookkeeping", "write-off", "deduction", "plaid", "stripe", "quickbooks",
+        "gusto", "adp", "forecast", "runway", "break-even", "depreciation",
+        "1099", "w-2", "quarterly", "estimated payment",
+    )
+    if any(kw in payload_text for kw in _FINANCE_KEYWORDS):
+        try:
+            from aspire_orchestrator.services.financial_retrieval_service import get_financial_retrieval_service
+
+            svc = get_financial_retrieval_service()
+            user_text = safe_payload.get("text", "") or safe_payload.get("message", "") or ""
+            if user_text:
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    pass
+                else:
+                    rag_result = asyncio.run(svc.retrieve(user_text, suite_id=suite_id))
+                    if rag_result and rag_result.chunks:
+                        financial_knowledge = {
+                            "chunk_count": len(rag_result.chunks),
+                            "domains": list({c.get("domain") for c in rag_result.chunks if c.get("domain")}),
+                            "context": svc.assemble_rag_context(rag_result),
+                            "cache_hit": rag_result.cache_hit,
+                        }
+        except Exception as e:
+            logger.warning("Financial knowledge context failed (non-fatal): %s", e)
+
     # Legal knowledge context for Clara-related intents (graceful degradation)
     legal_knowledge = None
     _LEGAL_KEYWORDS = ("contract", "nda", "legal", "clause", "sign", "agreement", "lease", "msa")
@@ -229,6 +265,8 @@ def build_advisor_context(
             "overload": overload,
         },
     }
+    if financial_knowledge:
+        result["financial_knowledge"] = financial_knowledge
     if legal_knowledge:
         result["legal_knowledge"] = legal_knowledge
     return result

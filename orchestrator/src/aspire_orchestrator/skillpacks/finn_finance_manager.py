@@ -128,6 +128,9 @@ def read_finance_snapshot(
         "net_income_cents": 0,
         "cash_position_cents": 0,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stub": True,
+        "data_source": "stub",
+        "message": "No financial data yet. Connect your providers in the Connections page to see real numbers.",
     }
 
     if include_tax:
@@ -164,13 +167,18 @@ def read_finance_exceptions(
 
     # Stub — real implementation queries Supabase for active exceptions
     exceptions: list[dict[str, Any]] = []
+    stub_message = "No exceptions detected. Connect your providers in the Connections page to enable real-time monitoring."
 
     receipt = _make_receipt(
         ctx=ctx, action_type="finance.exceptions.read",
         outcome="success", inputs=inputs,
         metadata={"exception_count": len(exceptions)},
     )
-    return SkillPackResult(success=True, data={"exceptions": exceptions}, receipt=receipt)
+    return SkillPackResult(
+        success=True,
+        data={"exceptions": exceptions, "stub": True, "data_source": "stub", "message": stub_message},
+        receipt=receipt,
+    )
 
 
 def draft_finance_packet(
@@ -497,3 +505,133 @@ class EnhancedFinnFinanceManager(EnhancedSkillPack):
             ctx=ctx, event_type="finance.delegation.recommend", step_type="classify",
             inputs={"action": "finance.delegation.recommend", "task_length": len(task_description)},
         )
+
+    async def search_financial_knowledge(
+        self, query: str, ctx: AgentContext,
+    ) -> AgentResult:
+        """Search finance knowledge base for relevant information. GREEN — read-only."""
+        if not query:
+            receipt = self.build_receipt(
+                ctx=ctx, event_type="finance.knowledge.search",
+                status="failed", inputs={"query": ""},
+            )
+            receipt["policy"] = {"decision": "deny", "reasons": ["EMPTY_QUERY"]}
+            await self.emit_receipt(receipt)
+            return AgentResult(success=False, receipt=receipt, error="Empty query")
+
+        from aspire_orchestrator.services.financial_retrieval_service import get_financial_retrieval_service
+
+        svc = get_financial_retrieval_service()
+        result = await svc.retrieve(query, suite_id=ctx.suite_id)
+
+        if result.chunks:
+            context = svc.assemble_rag_context(result)
+            return await self.execute_with_llm(
+                prompt=(
+                    f"You are Finn, the finance manager. The user asked: {query}\n\n"
+                    f"Relevant knowledge from your knowledge base:\n{context}\n\n"
+                    "Synthesize the knowledge into a clear, actionable answer. "
+                    "Reference specific rules, thresholds, or deadlines where applicable. "
+                    "If the user should consult a professional for their specific situation, say so."
+                ),
+                ctx=ctx, event_type="finance.knowledge.search", step_type="verify",
+                inputs={"action": "finance.knowledge.search", "query_length": len(query)},
+            )
+        else:
+            return await self.execute_with_llm(
+                prompt=(
+                    f"You are Finn, the finance manager. The user asked: {query}\n\n"
+                    "No specific knowledge base entries were found for this query. "
+                    "Provide general guidance based on your expertise. "
+                    "Recommend consulting a licensed CPA or tax professional "
+                    "for complex or situation-specific matters."
+                ),
+                ctx=ctx, event_type="finance.knowledge.search", step_type="verify",
+                inputs={"action": "finance.knowledge.search", "no_rag_results": True},
+            )
+
+    async def research_and_answer(
+        self, query: str, ctx: AgentContext,
+    ) -> AgentResult:
+        """Search RAG first, then delegate to Adam for live research if no results. YELLOW."""
+        if not query:
+            receipt = self.build_receipt(
+                ctx=ctx, event_type="finance.research",
+                status="failed", inputs={"query": ""},
+            )
+            receipt["policy"] = {"decision": "deny", "reasons": ["EMPTY_QUERY"]}
+            await self.emit_receipt(receipt)
+            return AgentResult(success=False, receipt=receipt, error="Empty query")
+
+        # 1. Try local RAG first
+        from aspire_orchestrator.services.financial_retrieval_service import get_financial_retrieval_service
+
+        svc = get_financial_retrieval_service()
+        rag_result = await svc.retrieve(query, suite_id=ctx.suite_id)
+
+        if rag_result.chunks:
+            # RAG has the answer — use it directly
+            context = svc.assemble_rag_context(rag_result)
+            return await self.execute_with_llm(
+                prompt=(
+                    f"You are Finn, the finance manager. The user asked: {query}\n\n"
+                    f"Relevant knowledge from your knowledge base:\n{context}\n\n"
+                    "Synthesize the knowledge into a clear, actionable answer. "
+                    "Reference specific rules, thresholds, or deadlines where applicable."
+                ),
+                ctx=ctx, event_type="finance.research", step_type="verify",
+                inputs={"action": "finance.research", "source": "rag", "chunk_count": len(rag_result.chunks)},
+            )
+
+        # 2. No RAG results — delegate to Adam for web research
+        logger.info("No RAG results for '%s' — delegating to Adam for research", query[:80])
+
+        fm_ctx = FinnFMContext(
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id or "default",
+            correlation_id=ctx.correlation_id or str(uuid.uuid4()),
+        )
+
+        delegation_result = dispatch_a2a_delegation(
+            fm_ctx,
+            to_agent="adam",
+            request_type="ResearchRequest",
+            payload={
+                "query": query,
+                "context": "financial_research",
+                "requested_by": "finn",
+                "urgency": "normal",
+            },
+        )
+
+        if delegation_result.success:
+            # Adam research dispatched — give user immediate general guidance + note that research is in progress
+            return await self.execute_with_llm(
+                prompt=(
+                    f"You are Finn, the finance manager. The user asked: {query}\n\n"
+                    "You don't have specific knowledge base entries for this question, "
+                    "so you've asked Adam (your research specialist) to look into it. "
+                    "Provide general guidance based on your expertise while noting that "
+                    "Adam is researching more specific and current information. "
+                    "Recommend consulting a licensed CPA or tax professional for complex matters."
+                ),
+                ctx=ctx, event_type="finance.research", step_type="verify",
+                inputs={
+                    "action": "finance.research",
+                    "source": "adam_delegation",
+                    "delegation_id": delegation_result.data.get("delegation_id"),
+                },
+            )
+        else:
+            # Delegation failed — fall back to general LLM answer
+            return await self.execute_with_llm(
+                prompt=(
+                    f"You are Finn, the finance manager. The user asked: {query}\n\n"
+                    "No specific knowledge base entries were found. "
+                    "Provide general guidance based on your expertise. "
+                    "Recommend consulting a licensed CPA or tax professional "
+                    "for complex or situation-specific matters."
+                ),
+                ctx=ctx, event_type="finance.research", step_type="verify",
+                inputs={"action": "finance.research", "source": "fallback", "delegation_error": delegation_result.error},
+            )

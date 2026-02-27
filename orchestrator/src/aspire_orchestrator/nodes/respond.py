@@ -286,6 +286,15 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
     execution_result = state.get("execution_result") or {}
     tool_used = state.get("tool_used", "unknown")
 
+    # Guard against empty/stub execution producing garbage responses
+    is_empty_execution = (
+        task_type in ("unknown", "")
+        and tool_used in ("unknown", "")
+        and (not execution_result or execution_result == {} or execution_result.get("stub"))
+    )
+    if is_empty_execution:
+        return _llm_conversational_reply(state, utterance)
+
     # Load the routed agent's persona for response generation
     agent_id = _resolve_agent_id(state)
     persona = _load_agent_persona(agent_id)
@@ -331,11 +340,22 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str) -> str:
     agent_id = _resolve_agent_id(state)
     persona = _load_agent_persona(agent_id)
 
+    _DISPLAY_NAMES = {
+        "finn_fm": "Finn", "ava": "Ava", "eli": "Eli",
+        "nora": "Nora", "sarah": "Sarah", "adam": "Adam",
+        "quinn": "Quinn", "tec": "Tec", "teressa": "Teressa",
+        "milo": "Milo", "clara": "Clara",
+    }
+    agent_name = _DISPLAY_NAMES.get(agent_id, "Ava")
+
     prompt = (
         f'The user said: "{utterance}"\n\n'
+        f"You are {agent_name}, speaking to the user directly.\n"
         "This is a conversational message, not an action request. "
-        "Respond naturally as a professional AI assistant. Be warm, brief (1-2 sentences), "
-        "and offer to help with their business tasks. "
+        "Respond in character using your persona's personality and expertise. "
+        "If the user asks who you are, introduce yourself warmly with your name, "
+        "role, and what you can help them with. "
+        "Keep it brief (1-3 sentences), warm, and natural. "
         "Do NOT use markdown or bullet points. This will be spoken aloud via TTS.\n"
         "Respond with ONLY the spoken text."
     )
@@ -713,9 +733,31 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
 
         # Detect conversational/greeting input vs. unclear action request
         intent_type = intent_result.get("intent_type", "") if isinstance(intent_result, dict) else ""
+
+        _GREETING_PATTERNS = frozenset({
+            # Basic greetings
+            "hey", "hi", "hello", "yo", "sup",
+            "good morning", "good afternoon", "good evening",
+            "what's up", "whats up", "how are you",
+            # Identity questions
+            "whats your name", "what's your name", "what is your name",
+            "who are you", "who is this", "who am i talking to",
+            "what are you", "what is your purpose",
+            "what do you do", "what can you do",
+            "tell me about yourself", "introduce yourself",
+            # Capability questions
+            "how can you help", "how can you help me",
+            "what are your capabilities", "what services do you offer",
+            # Courtesy
+            "help", "thanks", "thank you", "bye", "goodbye",
+            "see you", "later", "nice to meet you",
+        })
+        normalized = utterance.lower().strip().rstrip("!?.,")
+        _IDENTITY_SUBSTRINGS = ("your name", "who are you", "what do you do", "how can you help", "what can you")
         is_conversational = (
-            intent_type in ("greeting", "chitchat", "conversational", "")
-            or len(utterance.split()) <= 4
+            intent_type in ("greeting", "chitchat", "conversational")
+            or normalized in _GREETING_PATTERNS
+            or any(sub in normalized for sub in _IDENTITY_SUBSTRINGS)
         )
 
         # Handle __greeting__ sentinel from Desktop mount
