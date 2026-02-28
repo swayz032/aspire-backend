@@ -379,7 +379,7 @@ def _call_openai_sync(
     messages: list[dict[str, str]],
     *,
     model: str | None = None,
-    timeout: float = 8,
+    timeout: float = settings.openai_timeout_seconds,
 ) -> str:
     """Shared sync OpenAI SDK call for respond node LLM operations.
 

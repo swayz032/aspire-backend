@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     rag_vector_weight: float = 0.7
     rag_text_weight: float = 0.3
 
+    # --- Timeouts ---
+    openai_timeout_seconds: int = 15  # Railway adds latency; 8s was too short
+
     # --- Ava v1.5 Features ---
     ava_user_prompt_version: str | None = None     # AVA_USER_PROMPT_VERSION env var
     ava_admin_prompt_version: str | None = None    # AVA_ADMIN_PROMPT_VERSION env var
