@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aspireos.app/schemas/ava_result/1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "correlation_id", "route", "risk", "governance", "plan"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "request_id": {"type": "string"},
+    "correlation_id": {"type": "string"},
+    "route": {"type": "object"},
+    "risk": {
+      "type": "object",
+      "required": ["tier"],
+      "properties": {"tier": {"type": "string", "enum": ["green", "yellow", "red"]}}
+    },
+    "governance": {
+      "type": "object",
+      "required": ["approvals_required", "presence_required", "capability_token_required", "receipt_ids"],
+      "properties": {
+        "approvals_required": {"type": "array", "items": {"type": "string"}},
+        "presence_required": {"type": "boolean"},
+        "capability_token_required": {"type": "boolean"},
+        "receipt_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "plan": {"type": "object"}
+  }
+}

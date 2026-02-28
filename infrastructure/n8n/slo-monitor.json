@@ -1,0 +1,239 @@
+{
+  "name": "SLO Monitor \u2014 Every 5min",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+        }
+      },
+      "id": "interval-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabled = $env.N8N_WORKFLOW_SLO_MONITOR_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\nconst requestId = 'ops-slo-monitor-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = 'n8n-slo-monitor-' + new Date().toISOString().slice(0, 16);\nconst crypto = require('crypto');\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({ action: 'ops.slo_monitor', ts: new Date().toISOString().slice(0, 16) })).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'ops.slo_monitor' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/provider_call_log?select=duration_ms,status&created_at=gte.{{ new Date(Date.now() - 5 * 60 * 1000).toISOString() }}&order=created_at.desc&limit=100",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "fetch-metrics",
+      "name": "Fetch Recent Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const calls = $input.all().map(i => i.json);\nconst flat = Array.isArray(calls[0]) ? calls[0] : calls;\nif (flat.length === 0) return [{ json: { breach: false, message: 'No data', p95: 0, errorRate: 0, totalCalls: 0 } }];\n\nconst durations = flat.map(c => c.duration_ms || 0).sort((a, b) => a - b);\nconst p95Index = Math.ceil(durations.length * 0.95) - 1;\nconst p95 = durations[p95Index] || 0;\n\nconst failed = flat.filter(c => c.status === 'failed' || c.status === 'timeout').length;\nconst errorRate = (failed / flat.length) * 100;\n\nconst SLO_P95_MS = 5000;\nconst SLO_ERROR_RATE = 5;\n\nconst breach = p95 > SLO_P95_MS || errorRate > SLO_ERROR_RATE;\n\nreturn [{ json: { breach, p95, errorRate: Math.round(errorRate * 100) / 100, totalCalls: flat.length, sloP95: SLO_P95_MS, sloErrorRate: SLO_ERROR_RATE } }];"
+      },
+      "id": "calculate-slo",
+      "name": "Calculate SLO Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.breach }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-breach",
+      "name": "SLO Breached?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-slo-healthy-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-slo-monitor', action: { action_type: 'ops.slo_healthy', risk_tier: 'green', p95_ms: $json.p95, error_rate: $json.errorRate, total_calls: $json.totalCalls }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-healthy-receipt",
+      "name": "Emit Healthy Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-slo-breach-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-slo-monitor', action: { action_type: 'ops.slo_breach_detected', risk_tier: 'yellow', p95_ms: $json.p95, error_rate: $json.errorRate, total_calls: $json.totalCalls }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-breach-receipt",
+      "name": "Emit Breach Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-slo-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SKIPPED', correlation_id: 'n8n-slo-monitor-killed-' + new Date().toISOString().slice(0, 16), actor_type: 'SYSTEM', actor_id: 'n8n-slo-monitor', action: { action_type: 'ops.slo_monitor', reason: 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [440, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-slo-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'FAILED', correlation_id: 'n8n-slo-monitor', actor_type: 'SYSTEM', actor_id: 'n8n-slo-monitor', action: { action_type: 'ops.slo_monitor' }, result: { error_message: $json.message || 'SLO monitor failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-failure-receipt",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 600]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": { "main": [[{ "node": "Kill Switch + Prep", "type": "main", "index": 0 }]] },
+    "Kill Switch + Prep": { "main": [[{ "node": "Kill Switch Active?", "type": "main", "index": 0 }]] },
+    "Kill Switch Active?": {
+      "main": [
+        [{ "node": "Fetch Recent Metrics", "type": "main", "index": 0 }],
+        [{ "node": "Emit Kill Switch Receipt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Recent Metrics": { "main": [[{ "node": "Calculate SLO Metrics", "type": "main", "index": 0 }]] },
+    "Calculate SLO Metrics": { "main": [[{ "node": "SLO Breached?", "type": "main", "index": 0 }]] },
+    "SLO Breached?": {
+      "main": [
+        [{ "node": "Emit Healthy Receipt", "type": "main", "index": 0 }],
+        [{ "node": "Emit Breach Receipt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Error Trigger": { "main": [[{ "node": "Emit Failure Receipt", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ops" }, { "name": "slo" }]
+}

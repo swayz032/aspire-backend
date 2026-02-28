@@ -1,0 +1,50 @@
+mode: validate  # validate | smoke
+
+env_defaults:
+  staging:
+    base_url: "http://localhost:5173"
+  canary:
+    base_url: "http://localhost:5173"
+  production:
+    base_url: "http://localhost:5173"
+
+paths:
+  admin_portal_root: "./workspace/admin/zenith-operations-suite-main"
+  expo_app_root: "./workspace/expo/Aspire-UI-Expokit"
+  roadmap_root: "./workspace/roadmap/plan"
+  trustspine_root: "./workspace/trustspine"
+
+sentinels:
+  admin_portal:
+    - "package.json"
+    - "src/App.tsx"
+  expo_app:
+    - "package.json"
+    - "app.json"
+  roadmap:
+    - "Aspire-Production-Roadmap.md"
+    - "gates/gate-00-scope-lock.md"
+  trustspine:
+    - "ADR/ADR-0001_Canonical_Identity_Model.md"
+    - "PROMPTS/TRUSTSPINE_ONBOARDING_MASTER_PROMPT.md"
+
+scenarios:
+  enabled:
+    - sync_validate
+  repo_health:
+    admin_cmd: "npm ci && npm run lint && npm run typecheck"
+    expo_cmd: "npm ci && npm run lint && npm test"
+  api_smoke:
+    use_k6: true
+    health_path: "/health"
+    p95_ms: 800
+    max_5xx: 0
+  ui_smoke:
+    playwright_project: "chromium"
+    paths:
+      - "/"
+
+ingest:
+  enabled: false
+  url: ""
+  token: ""

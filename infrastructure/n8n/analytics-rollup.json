@@ -1,0 +1,218 @@
+{
+  "name": "Analytics Rollup \u2014 Nightly 3am",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "triggerAtHour": 3 }]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Nightly 3am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabled = $env.N8N_WORKFLOW_ANALYTICS_ROLLUP_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\nconst requestId = 'ops-analytics-rollup-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = 'n8n-analytics-rollup-' + new Date().toISOString().slice(0, 10);\nconst crypto = require('crypto');\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({ action: 'ops.analytics_rollup', date: new Date().toISOString().slice(0, 10) })).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'ops.analytics_rollup' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts?select=status,action->>action_type&created_at=gte.{{ new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }}&order=created_at.desc&limit=1000",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "fetch-daily-receipts",
+      "name": "Fetch Daily Receipts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/provider_call_log?select=provider,status,duration_ms&created_at=gte.{{ new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }}&order=created_at.desc&limit=1000",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "fetch-daily-provider-calls",
+      "name": "Fetch Daily Provider Calls",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const receipts = $('Fetch Daily Receipts').all().map(i => i.json);\nconst flatReceipts = Array.isArray(receipts[0]) ? receipts[0] : receipts;\nconst providerCalls = $('Fetch Daily Provider Calls').all().map(i => i.json);\nconst flatCalls = Array.isArray(providerCalls[0]) ? providerCalls[0] : providerCalls;\n\nconst receiptsByStatus = {};\nfor (const r of flatReceipts) {\n  const s = r.status || 'unknown';\n  receiptsByStatus[s] = (receiptsByStatus[s] || 0) + 1;\n}\n\nconst callsByProvider = {};\nlet totalDuration = 0;\nfor (const c of flatCalls) {\n  const p = c.provider || 'unknown';\n  if (!callsByProvider[p]) callsByProvider[p] = { total: 0, failed: 0, avgDuration: 0, durations: [] };\n  callsByProvider[p].total++;\n  callsByProvider[p].durations.push(c.duration_ms || 0);\n  if (c.status === 'failed' || c.status === 'timeout') callsByProvider[p].failed++;\n  totalDuration += (c.duration_ms || 0);\n}\n\nfor (const p of Object.keys(callsByProvider)) {\n  const d = callsByProvider[p].durations;\n  callsByProvider[p].avgDuration = Math.round(d.reduce((a, b) => a + b, 0) / d.length);\n  delete callsByProvider[p].durations;\n}\n\nreturn [{ json: {\n  date: new Date().toISOString().split('T')[0],\n  totalReceipts: flatReceipts.length,\n  receiptsByStatus,\n  totalProviderCalls: flatCalls.length,\n  callsByProvider,\n  avgCallDuration: flatCalls.length ? Math.round(totalDuration / flatCalls.length) : 0\n} }];"
+      },
+      "id": "aggregate-metrics",
+      "name": "Aggregate Daily Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-analytics-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-analytics-rollup', action: { action_type: 'ops.analytics_rollup', risk_tier: 'green', date: $json.date, total_receipts: $json.totalReceipts, total_provider_calls: $json.totalProviderCalls }, result: { metrics: $json }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt",
+      "name": "Emit Analytics Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-analytics-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SKIPPED', correlation_id: 'n8n-analytics-rollup-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-analytics-rollup', action: { action_type: 'ops.analytics_rollup', reason: 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 150]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [440, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-analytics-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'FAILED', correlation_id: 'n8n-analytics-rollup', actor_type: 'SYSTEM', actor_id: 'n8n-analytics-rollup', action: { action_type: 'ops.analytics_rollup' }, result: { error_message: $json.message || 'Analytics rollup failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-failure-receipt",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 700]
+    }
+  ],
+  "connections": {
+    "Nightly 3am": { "main": [[{ "node": "Kill Switch + Prep", "type": "main", "index": 0 }]] },
+    "Kill Switch + Prep": { "main": [[{ "node": "Kill Switch Active?", "type": "main", "index": 0 }]] },
+    "Kill Switch Active?": {
+      "main": [
+        [{ "node": "Fetch Daily Receipts", "type": "main", "index": 0 }, { "node": "Fetch Daily Provider Calls", "type": "main", "index": 0 }],
+        [{ "node": "Emit Kill Switch Receipt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Daily Receipts": { "main": [[{ "node": "Aggregate Daily Metrics", "type": "main", "index": 0 }]] },
+    "Fetch Daily Provider Calls": { "main": [[{ "node": "Aggregate Daily Metrics", "type": "main", "index": 0 }]] },
+    "Aggregate Daily Metrics": { "main": [[{ "node": "Emit Analytics Receipt", "type": "main", "index": 0 }]] },
+    "Error Trigger": { "main": [[{ "node": "Emit Failure Receipt", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ops" }, { "name": "analytics" }]
+}

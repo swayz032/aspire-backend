@@ -1,0 +1,22 @@
+{
+  "skillpack": "finn-finance-manager",
+  "version": "v1",
+  "type": "customer-facing",
+  "scope": [
+    "finance_snapshot_read",
+    "finance_exceptions_read",
+    "finance_proposal_create",
+    "finance_packet_draft",
+    "a2a_delegation"
+  ],
+  "side_effects": "none (proposal-only)",
+  "entrypoints": ["README.md", "SPEC.md", "TEST_PLAN.md"],
+  "required_policies": [
+    "backend/orchestrator/src/aspire_orchestrator/config/policy_matrix.yaml"
+  ],
+  "delegations": {
+    "allowed_agents": ["adam", "teressa", "milo", "eli"],
+    "max_depth": 2,
+    "via": "ava"
+  }
+}

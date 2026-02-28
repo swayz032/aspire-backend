@@ -1,0 +1,84 @@
+services:
+  n8n-db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: n8n_secure_password
+      POSTGRES_USER: n8n
+      POSTGRES_DB: n8n
+    ports:
+      - "5433:5432"  # Remapped: WSL2 Postgres owns 5432
+    volumes:
+      - n8n-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: admin
+      N8N_BASIC_AUTH_PASSWORD: "${N8N_BASIC_AUTH_PASSWORD:-aspire-n8n-dev}"
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-db
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: n8n_secure_password
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      # Allow Code nodes to access $env variables and crypto module
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      NODE_FUNCTION_ALLOW_BUILTIN: "crypto"
+      # --- Aspire workflow environment ---
+      SUPABASE_URL: "${SUPABASE_URL:?Set SUPABASE_URL in .env}"
+      SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY in .env}"
+      ASPIRE_GATEWAY_URL: "http://host.docker.internal:5000"
+      DEFAULT_SUITE_ID: "${DEFAULT_SUITE_ID:-c4eebdbd-e019-42c0-9143-077762e92bbc}"
+      DEFAULT_OFFICE_ID: "${DEFAULT_OFFICE_ID:-c4eebdbd-e019-42c0-9143-077762e92bbc}"
+      N8N_WEBHOOK_SECRET: "${N8N_WEBHOOK_SECRET:-aspire-n8n-dev-secret}"
+      N8N_ELI_WEBHOOK_SECRET: "${N8N_ELI_WEBHOOK_SECRET:-aspire-eli-dev-secret}"
+      N8N_SARAH_WEBHOOK_SECRET: "${N8N_SARAH_WEBHOOK_SECRET:-aspire-sarah-dev-secret}"
+      N8N_NORA_WEBHOOK_SECRET: "${N8N_NORA_WEBHOOK_SECRET:-aspire-nora-dev-secret}"
+      # Kill switches (all enabled by default for dev)
+      N8N_WORKFLOW_INTAKE_ACTIVATION_ENABLED: "true"
+      N8N_WORKFLOW_ADAM_DAILY_BRIEF_ENABLED: "true"
+      N8N_WORKFLOW_ADAM_PULSE_SCAN_ENABLED: "true"
+      N8N_WORKFLOW_ADAM_LIBRARY_CURATE_ENABLED: "true"
+      N8N_WORKFLOW_ADAM_FOCUS_WEEKLY_ENABLED: "true"
+      N8N_WORKFLOW_ADAM_EDUCATION_CURATE_ENABLED: "true"
+      N8N_WORKFLOW_ELI_EMAIL_TRIAGE_ENABLED: "true"
+      N8N_WORKFLOW_SARAH_CALL_HANDLER_ENABLED: "true"
+      N8N_WORKFLOW_QUINN_INVOICE_REMINDER_ENABLED: "true"
+      N8N_WORKFLOW_NORA_MEETING_SUMMARY_ENABLED: "true"
+      N8N_WORKFLOW_TERESSA_BOOKS_SYNC_ENABLED: "true"
+      # Rotation orchestrator
+      N8N_WORKFLOW_ROTATION_ORCHESTRATOR_ENABLED: "true"
+      N8N_WORKFLOW_ROTATION_MONITOR_ENABLED: "true"
+      ASPIRE_ROTATION_API_URL: "${ASPIRE_ROTATION_API_URL:-http://host.docker.internal:8080}"
+      AWS_ROTATION_TRIGGER_ACCESS_KEY_ID: "${AWS_ROTATION_TRIGGER_ACCESS_KEY_ID:-}"
+      AWS_ROTATION_TRIGGER_SECRET_ACCESS_KEY: "${AWS_ROTATION_TRIGGER_SECRET_ACCESS_KEY:-}"
+      # Ops workflow kill switches (all enabled by default)
+      N8N_WORKFLOW_RECEIPT_ARCHIVAL_ENABLED: "true"
+      N8N_WORKFLOW_BATCH_EMAIL_DIGEST_ENABLED: "true"
+      N8N_WORKFLOW_RECONCILIATION_ENABLED: "true"
+      N8N_WORKFLOW_CERT_CHECK_ENABLED: "true"
+      N8N_WORKFLOW_ANALYTICS_ROLLUP_ENABLED: "true"
+      N8N_WORKFLOW_PROVIDER_HEALTH_ENABLED: "true"
+      N8N_WORKFLOW_SLO_MONITOR_ENABLED: "true"
+    depends_on:
+      n8n-db:
+        condition: service_healthy
+    volumes:
+      - n8n-data:/home/node/.n8n
+
+volumes:
+  n8n-db-data:
+  n8n-data:

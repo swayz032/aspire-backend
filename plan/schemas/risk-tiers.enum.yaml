@@ -1,0 +1,273 @@
+# ============================================================================
+# ASPIRE RISK TIERS - CANONICAL DEFINITION
+# ============================================================================
+# Single Source of Truth for risk tier terminology across all systems
+# 
+# ENFORCEMENT: All SQL, JSON, TypeScript, and documentation MUST use these values
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-04
+# ============================================================================
+
+schema_version: "1.0.0"
+schema_name: "risk-tiers"
+description: |
+  Unified Risk Tier Definition for Aspire Governance System.
+  All systems MUST use these canonical values. Legacy aliases are provided
+  for migration purposes but should not be used in new code.
+
+# ============================================================================
+# CANONICAL RISK TIERS
+# ============================================================================
+risk_tiers:
+
+  # ---------------------------------------------------------------------------
+  # GREEN - Safe Automation Tier
+  # ---------------------------------------------------------------------------
+  GREEN:
+    canonical_value: "green"
+    legacy_aliases:
+      - "low"
+      - "safe"
+      - "autonomous"
+    approval_required: false
+    approval_mode: null
+    description: |
+      Safe automation - receipted but no user confirmation needed.
+      Actions in this tier execute autonomously with full audit trail.
+    
+    enforcement_rules:
+      - "Still requires capability token"
+      - "Still generates receipt"
+      - "Still subject to RLS isolation"
+    
+    examples:
+      - "Read calendar events"
+      - "Fetch contact information"
+      - "Search receipts history"
+      - "Generate meeting notes (read-only)"
+      - "Query research data"
+    
+    sql_check: "risk_tier IN ('green')"
+    typescript_type: "'green'"
+    json_schema_enum: ["green"]
+
+  # ---------------------------------------------------------------------------
+  # YELLOW - Confirmation Required Tier
+  # ---------------------------------------------------------------------------
+  YELLOW:
+    canonical_value: "yellow"
+    legacy_aliases:
+      - "medium"
+      - "confirmation"
+      - "pending"
+    approval_required: true
+    approval_mode: "voice_confirm"
+    description: |
+      Requires explicit user confirmation before execution.
+      User reviews the action plan and approves via voice or UI.
+    
+    enforcement_rules:
+      - "MUST show action preview to user"
+      - "MUST wait for explicit approval"
+      - "Approval stored in receipt"
+      - "Timeout defaults to DENY"
+    
+    examples:
+      - "Send email draft"
+      - "Create invoice (before sending)"
+      - "Schedule meeting"
+      - "Update user profile"
+      - "Categorize financial transaction"
+    
+    sql_check: "risk_tier IN ('yellow')"
+    typescript_type: "'yellow'"
+    json_schema_enum: ["yellow"]
+    
+    approval_timeout_seconds: 300  # 5 minutes default
+    timeout_action: "DENY"
+
+  # ---------------------------------------------------------------------------
+  # RED - Authority Required Tier
+  # ---------------------------------------------------------------------------
+  RED:
+    canonical_value: "red"
+    legacy_aliases:
+      - "high"
+      - "critical"
+      - "binding"
+      - "authority"
+    approval_required: true
+    approval_mode: "video_authority"
+    description: |
+      Binding actions requiring video presence for authority confirmation.
+      User MUST be visually present via Ava video session.
+    
+    enforcement_rules:
+      - "MUST have active Ava video session"
+      - "MUST verify presence heartbeat (<30s stale)"
+      - "MUST show full action details"
+      - "MUST record approval with video timestamp"
+      - "Dual approval required for some actions (e.g., payroll)"
+    
+    examples:
+      - "Send payment (any amount)"
+      - "Transfer >$1000"
+      - "Sign contract"
+      - "File taxes"
+      - "Delete data permanently"
+      - "Run payroll"
+      - "Grant elevated permissions"
+    
+    sql_check: "risk_tier IN ('red')"
+    typescript_type: "'red'"
+    json_schema_enum: ["red"]
+    
+    approval_timeout_seconds: 60  # 1 minute for high-risk
+    timeout_action: "DENY"
+    requires_video_presence: true
+    presence_heartbeat_max_stale_seconds: 30
+
+# ============================================================================
+# DEFAULT BEHAVIOR
+# ============================================================================
+defaults:
+  unknown_action: "yellow"  # When in doubt, require confirmation
+  missing_risk_tier: "DENY"  # If risk tier missing, fail closed
+  
+# ============================================================================
+# VALIDATION RULES
+# ============================================================================
+validation:
+  # SQL column definition
+  sql_definition: |
+    risk_tier TEXT NOT NULL CHECK (risk_tier IN ('green', 'yellow', 'red'))
+  
+  # TypeScript type definition
+  typescript_definition: |
+    type RiskTier = 'green' | 'yellow' | 'red';
+  
+  # JSON Schema definition
+  json_schema:
+    type: "string"
+    enum: ["green", "yellow", "red"]
+    description: "Risk tier classification for the action"
+  
+  # Banned patterns (will cause validator errors)
+  banned_patterns:
+    - pattern: "low|medium|high"
+      message: "Use canonical values: green, yellow, red"
+      severity: "error"
+    - pattern: "RiskTier.*=.*'low'"
+      message: "Legacy alias 'low' detected. Use 'green' instead."
+      severity: "error"
+    - pattern: "RiskTier.*=.*'medium'"
+      message: "Legacy alias 'medium' detected. Use 'yellow' instead."
+      severity: "error"
+    - pattern: "RiskTier.*=.*'high'"
+      message: "Legacy alias 'high' detected. Use 'red' instead."
+      severity: "error"
+
+# ============================================================================
+# DECISION MATRIX (Quick Reference)
+# ============================================================================
+decision_matrix:
+  - scenario: "Read user's calendar"
+    risk_tier: "green"
+    approval: "No"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Create calendar event"
+    risk_tier: "yellow"
+    approval: "Voice confirm"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Send email draft"
+    risk_tier: "yellow"
+    approval: "Voice confirm"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Create invoice"
+    risk_tier: "yellow"
+    approval: "Voice confirm"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Send payment"
+    risk_tier: "red"
+    approval: "Video authority"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Sign contract"
+    risk_tier: "red"
+    approval: "Video authority"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Search receipts"
+    risk_tier: "green"
+    approval: "No"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Update user profile"
+    risk_tier: "yellow"
+    approval: "Voice confirm"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Delete data"
+    risk_tier: "red"
+    approval: "Video authority"
+    receipt: "Yes"
+    token: "Yes"
+    
+  - scenario: "Transfer >$1000"
+    risk_tier: "red"
+    approval: "Video authority"
+    receipt: "Yes"
+    token: "Yes"
+
+# ============================================================================
+# MIGRATION GUIDE
+# ============================================================================
+migration:
+  from_legacy_values:
+    "low": "green"
+    "medium": "yellow"
+    "high": "red"
+    "safe": "green"
+    "confirmation": "yellow"
+    "critical": "red"
+    "binding": "red"
+    "authority": "red"
+    "autonomous": "green"
+    "pending": "yellow"
+  
+  sql_migration: |
+    -- Migration script for legacy risk tier values
+    UPDATE receipts SET risk_tier = 
+      CASE risk_tier 
+        WHEN 'low' THEN 'green'
+        WHEN 'medium' THEN 'yellow'
+        WHEN 'high' THEN 'red'
+        ELSE risk_tier 
+      END
+    WHERE risk_tier IN ('low', 'medium', 'high');
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #4: Risk Tiers Enforced"
+  claude_md_section: "## 4) Green / Yellow / Red Risk Tiers"
+  related_schemas:
+    - "receipts.schema.v1.yaml"
+    - "capability-token.schema.v1.yaml"
+  phase_introduced: "Phase 1"
+  gates_related:
+    - "Gate 3: Forced Escalation (video required for RED tier)"
+    - "Gate 5: Cold/Warm/Hot Authority UI Contract"

@@ -1,0 +1,406 @@
+{
+  "name": "Adam Library Curate — Weekly Sunday 8pm",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 20,
+              "triggerAtDay": 7
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Sunday 8pm",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabled = $env.N8N_WORKFLOW_ADAM_LIBRARY_CURATE_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\nconst requestId = 'adam-library-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = 'n8n-adam-library-curate-' + new Date().toISOString().slice(0, 10);\nconst crypto = require('crypto');\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({ intent: 'adam.library_curate', week: new Date().toISOString().slice(0, 10) })).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'adam.library_curate' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/suite_profiles?select=industry,industry_specialty,business_goals,pain_point,customer_type,sales_channel,team_size,income_range,referral_source&suite_id=eq.{{ $env.DEFAULT_SUITE_ID }}&limit=1",
+        "authentication": "none",
+        "options": {
+          "timeout": 10000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "load-profile",
+      "name": "Load Suite Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepData = $('Kill Switch + Prep').first().json;\nconst profiles = $input.first().json;\nconst profile = Array.isArray(profiles) && profiles.length > 0 ? profiles[0] : null;\n\nconst context = profile ? {\n  industry: profile.industry,\n  industrySpecialty: profile.industry_specialty,\n  incomeRange: profile.income_range,\n  referralSource: profile.referral_source,\n  businessGoals: profile.business_goals,\n  painPoint: profile.pain_point,\n  customerType: profile.customer_type,\n  salesChannel: profile.sales_channel,\n  teamSize: profile.team_size\n} : null;\n\n// Derive content categories from industry specialty for targeted curation\nconst serviceCategories = profile && profile.industry_specialty ? [profile.industry_specialty.toLowerCase().replace(/[^a-z0-9]+/g, '_')] : [];\n\nreturn [{ json: { ...prepData, context, serviceCategories } }];"
+      },
+      "id": "merge-profile",
+      "name": "Merge Profile Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $env.DEFAULT_SUITE_ID }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $env.DEFAULT_OFFICE_ID }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "adam-library-curate"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'adam.library_curate', agent: 'adam', suite_id: $env.DEFAULT_SUITE_ID, office_id: $env.DEFAULT_OFFICE_ID, request_id: $json.requestId, correlation_id: $json.correlationId, payload: { include_image_urls: true, sources: ['brave', 'tavily', 'exa'], content_types: ['blog', 'guide', 'whitepaper', 'tool'], service_categories: $json.serviceCategories }, context: $json.context }) }}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "call-orchestrator",
+      "name": "POST Intent → Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "J84m12hyzSwSHo6S",
+          "name": "Gateway Internal Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-library-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000', tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-adam-library-curate', action: { action_type: 'agent.adam.library_curate', risk_tier: 'green', include_image_urls: true, profile_loaded: $('Merge Profile Context').item.json.context !== null }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-success",
+      "name": "Emit Success Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-library-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SKIPPED', correlation_id: 'n8n-adam-library-curate-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-adam-library-curate', action: { action_type: 'agent.adam.library_curate', reason: 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        440,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-library-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'FAILED', correlation_id: 'n8n-adam-library-curate', actor_type: 'SYSTEM', actor_id: 'n8n-adam-library-curate', action: { action_type: 'agent.adam.library_curate' }, result: { error_message: $json.message || 'Library curation failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-failure",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Sunday 8pm": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + Prep": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Load Suite Profile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Kill Switch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Suite Profile": {
+      "main": [
+        [
+          {
+            "node": "Merge Profile Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Profile Context": {
+      "main": [
+        [
+          {
+            "node": "POST Intent → Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Intent → Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Success Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "agent"
+    },
+    {
+      "name": "adam"
+    },
+    {
+      "name": "founder-hub"
+    }
+  ]
+}

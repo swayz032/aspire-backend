@@ -1,0 +1,42 @@
+{
+  "proposal_id": "cp_2026_02_12_001",
+  "scope": {
+    "scope_type": "global",
+    "targets": {
+      "service": "ops-telemetry-facade"
+    },
+    "percent_canary": 10
+  },
+  "risk_tier": "yellow",
+  "diff": {
+    "type": "config_change",
+    "summary": "Enable canary for telemetry facade response caching (5s) to reduce backend load.",
+    "changes": [
+      {
+        "path": "telemetry.cache.ttl_seconds",
+        "from": 0,
+        "to": 5
+      }
+    ]
+  },
+  "tests_required": [
+    "redaction_enforcement_suite",
+    "tenant_isolation_suite",
+    "p95_latency_regression_guard"
+  ],
+  "rollout_plan": {
+    "strategy": "percent_canary",
+    "steps": [
+      { "percent": 10, "hold_minutes": 30 },
+      { "percent": 50, "hold_minutes": 60 },
+      { "percent": 100, "hold_minutes": 120 }
+    ]
+  },
+  "rollback_triggers": [
+    { "metric": "ops_facade.error_rate", "threshold": 0.02, "window_minutes": 10 },
+    { "metric": "ops_facade.p95_latency_ms", "threshold": 500, "window_minutes": 10 }
+  ],
+  "approvals_required": [
+    { "role": "incident_commander", "method": "text_or_voice", "min_count": 1 }
+  ]
+}

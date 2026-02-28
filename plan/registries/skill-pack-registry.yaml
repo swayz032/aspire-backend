@@ -1,0 +1,849 @@
+# ============================================================================
+# ASPIRE SKILL PACK REGISTRY - STATUS TRACKING
+# ============================================================================
+# Single Source of Truth for skill pack implementation status
+# 
+# PURPOSE: Track skill pack lifecycle from design → implementation → production
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-04
+# ============================================================================
+
+schema_version: "1.0.0"
+registry_name: "skill-pack-registry"
+certification_schema: "${ECOSYSTEM_ROOT}/platform/trust-spine/12_CERTIFICATION/pack_manifest.schema.json"
+manifest_template: "${ECOSYSTEM_ROOT}/platform/trust-spine/08_CLAUDE_JOB_KIT/PHASE_3_SKILL_PACKS_CERTIFICATION/TEMPLATES/PACK_MANIFEST_TEMPLATE.json"
+description: |
+  Comprehensive registry of all Aspire skill packs with their implementation
+  status, phase assignments, and certification status.
+
+manifest_path_note: |
+  manifest_path values are TARGET paths for Phase 2+ implementation.
+  These files do not exist until the skill pack enters 'implementing' status.
+  The 'status' field on each pack indicates current lifecycle state.
+  Use validate_skillpacks_registry.py to validate — packs in 'designed'
+  status are expected to have missing manifests.
+
+# ============================================================================
+# SKILL PACK LIFECYCLE STATES
+# ============================================================================
+lifecycle_states:
+  designed:
+    description: "Manifest and specifications defined"
+    phase_typical: "0A"
+  implementing:
+    description: "Active development in progress"
+    phase_typical: "1-2"
+  testing:
+    description: "Integration and certification testing"
+    phase_typical: "2-4"
+  certified:
+    description: "Passed TC-01/02/03 certification"
+    phase_typical: "4"
+  production:
+    description: "Deployed and operational"
+    phase_typical: "5+"
+
+# ============================================================================
+# CHANNEL SKILL PACKS (6)
+# ============================================================================
+channel_skill_packs:
+
+  # ---------------------------------------------------------------------------
+  # Sarah - Front Desk
+  # ---------------------------------------------------------------------------
+  sarah_front_desk:
+    id: "sarah_front_desk"
+    name: "Sarah (Front Desk)"
+    owner: "sarah"
+    category: "channel"
+    description: "Telephony, call routing, front desk reception"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Routes calls but doesn't execute binding actions"
+    
+    providers:
+      - name: "LiveKit"
+        purpose: "Voice/video telephony"
+        api_type: "WebRTC/SIP"
+    
+    manifest_path: "plan/skill-packs/sarah-front-desk/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-002"
+
+  # ---------------------------------------------------------------------------
+  # Eli - Inbox
+  # ---------------------------------------------------------------------------
+  eli_inbox:
+    id: "eli_inbox"
+    name: "Eli (Inbox)"
+    owner: "eli"
+    category: "channel"
+    description: "Email handling, triage, draft responses"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Drafts emails, doesn't send without approval"
+    
+    providers:
+      - name: "PolarisM"  # NOT Zoho - corrected
+        purpose: "Email IMAP/SMTP integration"
+        api_type: "IMAP/SMTP"
+    
+    manifest_path: "plan/skill-packs/eli-inbox/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-003"
+    
+    terminology_notes:
+      - "Provider is PolarisM, NOT Zoho"
+      - "All references to 'Zoho Mail' should be 'PolarisM'"
+
+  # ---------------------------------------------------------------------------
+  # Quinn - Invoicing
+  # ---------------------------------------------------------------------------
+  quinn_invoicing:
+    id: "quinn_invoicing"
+    name: "Quinn (Invoicing)"
+    owner: "quinn"
+    category: "channel"
+    description: "Invoice creation, Stripe Connect integration"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Creates invoices (YELLOW), sending is RED"
+    
+    providers:
+      - name: "Stripe"
+        purpose: "Invoice and payment processing"
+        api_type: "REST API"
+    
+    manifest_path: "plan/skill-packs/quinn-invoicing/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-004"
+
+  # ---------------------------------------------------------------------------
+  # Nora - Conference
+  # ---------------------------------------------------------------------------
+  nora_conference:
+    id: "nora_conference"
+    name: "Nora (Conference)"
+    owner: "nora"
+    category: "channel"
+    description: "Video meetings, LiveKit integration"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "GREEN"
+    risk_rationale: "Generates notes only, read-only meeting participation"
+    
+    providers:
+      - name: "LiveKit"
+        purpose: "Video conferencing"
+        api_type: "WebRTC"
+    
+    manifest_path: "plan/skill-packs/nora-conference/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-005"
+
+  # ---------------------------------------------------------------------------
+  # Adam - Research
+  # ---------------------------------------------------------------------------
+  adam_research:
+    id: "adam_research"
+    name: "Adam (Research)"
+    owner: "adam"
+    category: "channel"
+    description: "Vendor search, research queries"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "GREEN"
+    risk_rationale: "Read-only research, no state changes"
+    
+    providers:
+      - name: "Exa"
+        purpose: "Web search"
+        api_type: "REST API"
+      - name: "Brave"
+        purpose: "Web search (fallback)"
+        api_type: "REST API"
+    
+    manifest_path: "plan/skill-packs/adam-research/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-006"
+
+  # ---------------------------------------------------------------------------
+  # Tec - Documents
+  # ---------------------------------------------------------------------------
+  tec_documents:
+    id: "tec_documents"
+    name: "Tec (Documents)"
+    owner: "tec"
+    category: "channel"
+    description: "PDF generation, document processing"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "GREEN"
+    risk_rationale: "Generates documents (GREEN), sending is YELLOW"
+    
+    providers:
+      - name: "Internal"
+        purpose: "PDF generation"
+        api_type: "Library"
+    
+    manifest_path: "plan/skill-packs/tec-documents/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-007"
+
+# ============================================================================
+# FINANCE OFFICE SKILL PACKS (3)
+# ============================================================================
+finance_skill_packs:
+
+  # ---------------------------------------------------------------------------
+  # Finn - Money Desk
+  # ---------------------------------------------------------------------------
+  finn_money_desk:
+    id: "finn_money_desk"
+    name: "Finn (Money Desk)"
+    owner: "finn"
+    category: "finance"
+    description: "Money transfers, Moov/Plaid integration"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "RED"
+    risk_rationale: "Financial transfers require video authority"
+    
+    providers:
+      - name: "Moov"
+        purpose: "Money movement"
+        api_type: "REST API"
+      - name: "Plaid"
+        purpose: "Bank connectivity"
+        api_type: "REST API"
+    
+    manifest_path: "plan/skill-packs/finn-money-desk/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-008"
+    
+    special_requirements:
+      - "Video presence required for transfers >$1000"
+      - "Dual approval for large transfers"
+
+  # ---------------------------------------------------------------------------
+  # Milo - Payroll
+  # ---------------------------------------------------------------------------
+  milo_payroll:
+    id: "milo_payroll"
+    name: "Milo (Payroll)"
+    owner: "milo"
+    category: "finance"
+    description: "Payroll processing, Gusto integration"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "RED"
+    risk_rationale: "Payroll requires dual approval"
+    
+    providers:
+      - name: "Gusto"
+        purpose: "Payroll processing"
+        api_type: "REST API"
+    
+    manifest_path: "plan/skill-packs/milo-payroll/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-009"
+    
+    special_requirements:
+      - "Dual approval required"
+      - "Video presence mandatory"
+
+  # ---------------------------------------------------------------------------
+  # Teressa - Books
+  # ---------------------------------------------------------------------------
+  teressa_books:
+    id: "teressa_books"
+    name: "Teressa (Books)"
+    owner: "teressa"
+    category: "finance"
+    description: "Accounting, QuickBooks sync"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Categorization requires confirmation"
+    
+    providers:
+      - name: "QuickBooks"
+        purpose: "Accounting integration"
+        api_type: "REST API"
+    
+    manifest_path: "plan/skill-packs/teressa-books/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-010"
+
+# ============================================================================
+# LEGAL SKILL PACK (1)
+# ============================================================================
+legal_skill_packs:
+
+  # ---------------------------------------------------------------------------
+  # Clara - Legal
+  # ---------------------------------------------------------------------------
+  clara_legal:
+    id: "clara_legal"
+    name: "Clara (Legal)"
+    owner: "clara"
+    category: "legal"
+    description: "Contract management, PandaDoc signatures"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "RED"
+    risk_rationale: "Contract signing requires video authority"
+    
+    providers:
+      - name: "PandaDoc"
+        purpose: "Document signing"
+        api_type: "REST API"
+    
+    manifest_path: "plan/skill-packs/clara-legal/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-011"
+    
+    special_requirements:
+      - "Video presence mandatory for signing"
+
+# ============================================================================
+# INTERNAL ADMIN SKILL PACK (1 - NEW in v4.0)
+# ============================================================================
+internal_admin_skill_packs:
+
+  # ---------------------------------------------------------------------------
+  # mail_ops_desk - PolarisM Admin
+  # ---------------------------------------------------------------------------
+  mail_ops_desk:
+    id: "mail_ops_desk"
+    name: "mail_ops_desk (PolarisM Admin)"
+    owner: "mail_ops"
+    category: "internal_admin"
+    description: "Domain and mailbox management for PolarisM"
+    
+    phases:
+      designed: "0A"
+      implementing: "2"
+      testing: "2-3"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Admin operations require confirmation"
+    
+    providers:
+      - name: "PolarisM"  # NOT Zoho
+        purpose: "Mail administration"
+        api_type: "Admin API"
+    
+    manifest_path: "plan/skill-packs/mail-ops-desk/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "2-SC-014"
+    
+    added_in_version: "4.0"
+    terminology_notes:
+      - "Provider is PolarisM, NOT Zoho"
+
+# ============================================================================
+# INTERNAL SKILL PACKS (4 - NEW in v4.0)
+# ============================================================================
+internal_skill_packs:
+
+  sre_triage:
+    id: "sre_triage"
+    name: "SRE Triage"
+    owner: "sre"
+    category: "internal"
+    description: "SRE incident automation"
+    
+    phases:
+      designed: "4"
+      implementing: "4"
+      testing: "4"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Incident response requires confirmation"
+    
+    manifest_path: "plan/skill-packs/internal/sre-triage/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "4-SC-ISP-003"
+    added_in_version: "4.0"
+
+  qa_evals:
+    id: "qa_evals"
+    name: "QA Evaluations"
+    owner: "qa"
+    category: "internal"
+    description: "QA evaluation automation"
+    
+    phases:
+      designed: "4"
+      implementing: "4"
+      testing: "4"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "GREEN"
+    risk_rationale: "Evaluation is read-only assessment"
+    
+    manifest_path: "plan/skill-packs/internal/qa-evals/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "4-SC-ISP-001"
+    added_in_version: "4.0"
+
+  security_review:
+    id: "security_review"
+    name: "Security Review"
+    owner: "security"
+    category: "internal"
+    description: "Security review automation"
+    
+    phases:
+      designed: "4"
+      implementing: "4"
+      testing: "4"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "GREEN"
+    risk_rationale: "Review is read-only assessment"
+    
+    manifest_path: "plan/skill-packs/internal/security-review/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "4-SC-ISP-001"
+    added_in_version: "4.0"
+
+  release_manager:
+    id: "release_manager"
+    name: "Release Manager"
+    owner: "release"
+    category: "internal"
+    description: "Release management automation"
+    
+    phases:
+      designed: "4"
+      implementing: "4"
+      testing: "4"
+      certified: "4"
+      production: "5"
+    
+    status: "designed"
+    
+    risk_level: "YELLOW"
+    risk_rationale: "Releases require confirmation"
+    
+    manifest_path: "plan/skill-packs/internal/release-manager/manifest.json"
+    
+    certification:
+      tc_01_bounded_authority: null
+      tc_02_receipt_integrity: null
+      tc_03_pii_redaction: null
+      certified_date: null
+    
+    success_criteria_ref: "4-SC-ISP-004"
+    added_in_version: "4.0"
+
+# ============================================================================
+# API SERVICE INVENTORY (19 Services - ALL VERIFIED 2026-02-04)
+# ============================================================================
+api_services:
+  # Core Infrastructure (4)
+  supabase:
+    id: "supabase"
+    name: "Supabase"
+    category: "infrastructure"
+    status: "verified"
+    purpose: "Database, Auth, Edge Functions"
+    used_by: ["trust_spine", "all_skill_packs"]
+
+  upstash:
+    id: "upstash"
+    name: "Upstash"
+    category: "infrastructure"
+    status: "verified"
+    purpose: "Redis queues, outbox pattern"
+    used_by: ["trust_spine", "all_skill_packs"]
+
+  aws_s3:
+    id: "aws_s3"
+    name: "AWS S3"
+    category: "infrastructure"
+    status: "verified"
+    purpose: "Receipt artifacts, blob storage"
+    used_by: ["receipts", "tec_documents"]
+
+  openai:
+    id: "openai"
+    name: "OpenAI"
+    category: "llm"
+    status: "verified"
+    purpose: "LLM orchestration, Brain"
+    used_by: ["brain", "all_skill_packs"]
+
+  # LLM & AI Services (4)
+  anthropic:
+    id: "anthropic"
+    name: "Anthropic/Claude"
+    category: "llm"
+    status: "verified"
+    purpose: "Meeting of Minds, Council decisions"
+    used_by: ["council", "meeting_of_minds"]
+
+  google_gemini:
+    id: "google_gemini"
+    name: "Google Gemini"
+    category: "llm"
+    status: "verified"
+    purpose: "Meeting of Minds, multi-LLM council"
+    used_by: ["council", "meeting_of_minds"]
+
+  brave_search:
+    id: "brave_search"
+    name: "Brave Search"
+    category: "search"
+    status: "verified"
+    purpose: "Web search"
+    used_by: ["adam_research"]
+
+  tavily:
+    id: "tavily"
+    name: "Tavily"
+    category: "search"
+    status: "verified"
+    purpose: "Web search fallback"
+    used_by: ["adam_research"]
+
+  # Financial Services (4)
+  stripe:
+    id: "stripe"
+    name: "Stripe"
+    category: "financial"
+    status: "verified"
+    purpose: "Invoicing, payments, transfers"
+    used_by: ["quinn_invoicing", "finn_money_desk"]
+
+  plaid:
+    id: "plaid"
+    name: "Plaid"
+    category: "financial"
+    status: "verified"
+    purpose: "Bank connectivity, linking"
+    used_by: ["finn_money_desk"]
+
+  moov:
+    id: "moov"
+    name: "Moov"
+    category: "financial"
+    status: "verified"
+    purpose: "Money transfers"
+    used_by: ["finn_money_desk"]
+
+  quickbooks:
+    id: "quickbooks"
+    name: "QuickBooks"
+    category: "financial"
+    status: "verified"
+    purpose: "Accounting sync"
+    used_by: ["teressa_books"]
+
+  # Communication Services (4)
+  livekit:
+    id: "livekit"
+    name: "LiveKit"
+    category: "communication"
+    status: "verified"
+    purpose: "Video/voice telephony"
+    used_by: ["nora_conference", "sarah_front_desk"]
+
+  twilio:
+    id: "twilio"
+    name: "Twilio"
+    category: "communication"
+    status: "verified"
+    purpose: "Telephony, SMS"
+    used_by: ["sarah_front_desk"]
+
+  deepgram:
+    id: "deepgram"
+    name: "Deepgram"
+    category: "communication"
+    status: "verified"
+    purpose: "Speech-to-text"
+    used_by: ["nora_conference", "sarah_front_desk"]
+
+  elevenlabs:
+    id: "elevenlabs"
+    name: "ElevenLabs"
+    category: "communication"
+    status: "verified"
+    purpose: "Text-to-speech, Ava voice"
+    used_by: ["ava"]
+
+  # Specialized Services (4)
+  polarism:
+    id: "polarism"
+    name: "PolarisM"
+    category: "mail"
+    status: "verified"
+    purpose: "White-label email"
+    used_by: ["eli_inbox", "mail_ops_desk"]
+    note: "NOT Zoho - corrected terminology"
+
+  anam:
+    id: "anam"
+    name: "Anam"
+    category: "avatar"
+    status: "verified"
+    purpose: "Avatar integration, Ava presence"
+    used_by: ["ava"]
+
+  pandadoc:
+    id: "pandadoc"
+    name: "PandaDoc"
+    category: "legal"
+    status: "verified"
+    purpose: "Contracts, signatures"
+    used_by: ["clara_legal"]
+
+  gusto:
+    id: "gusto"
+    name: "Gusto"
+    category: "payroll"
+    status: "verified"
+    purpose: "Payroll processing"
+    used_by: ["milo_payroll"]
+
+# ============================================================================
+# SUMMARY STATISTICS
+# ============================================================================
+summary:
+  total_skill_packs: 15
+  total_api_services: 19
+
+  api_services_by_category:
+    infrastructure: 4
+    llm: 2
+    search: 2
+    financial: 4
+    communication: 4
+    mail: 1
+    avatar: 1
+    legal: 1
+    payroll: 1
+
+  by_category:
+    channel: 6
+    finance: 3
+    legal: 1
+    internal_admin: 1
+    internal: 4
+
+  by_risk_level:
+    green: 4
+    yellow: 7
+    red: 4
+
+  by_status:
+    designed: 15
+    implementing: 0
+    testing: 0
+    certified: 0
+    production: 0
+
+  certification_progress:
+    certified: 0
+    total: 15
+    percentage: 0
+
+  api_verification_status:
+    verified: 19
+    pending: 0
+    total: 19
+    verified_date: "2026-02-04"
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  main_roadmap: "plan/Aspire-Production-Roadmap.md"
+  success_criteria: "plan/00-success-criteria-index.md"
+  phase_2_detail: "plan/phases/phase-2-founder-mvp.md"
+  phase_4_detail: "plan/phases/phase-4-hardening.md"
+  terminology_glossary: "plan/schemas/terminology-glossary.yaml"

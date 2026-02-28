@@ -1,0 +1,203 @@
+# ============================================================================
+# ASPIRE PHASE MAPPING REGISTRY
+# ============================================================================
+# Maps MANIFEST Phase A-F ↔ Roadmap Phase 0A-6
+#
+# RESOLUTION: Deep scan conflict H5 — two phase systems unmapped
+# VERSION: 1.1.0
+# LAST UPDATED: 2026-02-10
+# ============================================================================
+
+schema_version: "1.1.0"
+registry_name: "phase-mapping"
+description: |
+  Cross-reference between MANIFEST build order (Phase A-F) and
+  Production Roadmap phases (Phase 0A-6). Both systems are valid;
+  MANIFEST describes the architectural build order, Roadmap describes
+  the operational timeline with week numbers.
+
+# ============================================================================
+# PHASE MAPPING
+# ============================================================================
+mapping:
+
+  # --- MANIFEST Phase A → Roadmap Phase 0B + Phase 1A ---
+  phase_a:
+    manifest:
+      id: "A"
+      name: "Trust Spine Foundation"
+      focus: "Migrations, RLS, receipts, outbox"
+      build_order: 1
+    roadmap:
+      phases: ["0B", "1A"]
+      weeks: "2-5"
+      name: "Trust Spine Deploy + Substrate Validation"
+    deliverables:
+      - "Trust Spine canonical migrations deployed (see CANONICAL_PATHS.md for exact counts)"
+      - "8 Edge Functions deployed"
+      - "RLS policies on all tenant-scoped tables"
+      - "Receipt hash-chain verified"
+      - "Outbox concurrency tested"
+
+  # --- MANIFEST Phase B → Roadmap Phase 1B ---
+  phase_b:
+    manifest:
+      id: "B"
+      name: "Executor + Provider Call Log"
+      focus: "Outbox worker, deterministic retries"
+      build_order: 2
+    roadmap:
+      phases: ["1B"]
+      weeks: "4-10"
+      name: "Intelligence Layer Integration"
+    deliverables:
+      - "LangGraph orchestrator operational"
+      - "Safety Gateway (NeMo + Presidio)"
+      - "Capability token minting"
+      - "Receipt integration with correlation_id"
+
+  # --- MANIFEST Phase C → Roadmap Phase 1B ---
+  phase_c:
+    manifest:
+      id: "C"
+      name: "Gateway Boundary"
+      focus: "Propose/approve/deny, tool allowlists, policy eval"
+      build_order: 3
+    roadmap:
+      phases: ["1B"]
+      weeks: "6-10"
+      name: "Platform Contracts + Backend APIs"
+    deliverables:
+      - "Intent Ingest API"
+      - "Capability Provider API"
+      - "Receipt + Evidence API"
+      - "Policy evaluation integration"
+      - "Backend APIs matching mobile contracts"
+
+  # --- MANIFEST Phase D → Roadmap Phase 2 (weeks 16-19) ---
+  phase_d:
+    manifest:
+      id: "D"
+      name: "Providers"
+      focus: "Merge providers into platform with gate boundaries"
+      build_order: 4
+    roadmap:
+      phases: ["2"]
+      weeks: "15-20"
+      name: "Finance + Legal Skill Packs"
+    deliverables:
+      - "Provider adapters (Stripe, QuickBooks, Moov, etc.)"
+      - "Outbox job submission pattern"
+      - "Provider certification tests"
+      - "Finance office skill packs (Finn, Milo, Teressa)"
+      - "Legal skill pack (Clara)"
+
+  # --- MANIFEST Phase E → Roadmap Phase 2 (weeks 8-15) ---
+  phase_e:
+    manifest:
+      id: "E"
+      name: "Desks / Skill Packs"
+      focus: "Proposal-only unless policy allows execution"
+      build_order: 5
+    roadmap:
+      phases: ["2"]
+      weeks: "8-14"
+      name: "Channel Skill Packs"
+    deliverables:
+      - "6 channel skill packs (Sarah, Eli, Quinn, Nora, Adam, Tec)"
+      - "Skill pack manifest compliance"
+      - "Outbox integration per skill pack"
+      - "Certification tests (TC-01, TC-02, TC-03)"
+
+  # --- MANIFEST Phase F → Roadmap Phase 3 ---
+  phase_f:
+    manifest:
+      id: "F"
+      name: "UI Wiring"
+      focus: "Authority Queue, receipts viewer, provider health"
+      build_order: 6
+    roadmap:
+      phases: ["3"]
+      weeks: "21-24"
+      name: "Mobile App Integration"
+    deliverables:
+      - "Authority Dashboard wired to backend"
+      - "Receipts viewer with hash verification"
+      - "LiveKit integration (Cold/Warm/Hot states)"
+      - "Degradation ladder"
+      - "Governance enforcement in mobile UI"
+
+# ============================================================================
+# PHASES NOT IN MANIFEST (Roadmap-only)
+# ============================================================================
+roadmap_only_phases:
+
+  phase_0:
+    name: "Foundation Sync"
+    weeks: "0"
+    description: "Fix naming conflicts, create canonical schemas, reorganize plan folder"
+    manifest_equivalent: null
+
+  phase_0a:
+    name: "Cloud Accounts"
+    weeks: "1"
+    description: "19 cloud accounts, API keys, repository setup"
+    manifest_equivalent: null
+    status: "COMPLETE"
+
+  phase_0b:
+    name: "Trust Spine Deploy + Desktop Integration"
+    weeks: "2"
+    description: "49 migrations, 5 Edge Functions, Desktop on Trust Spine, 27/27 RLS tests, www.aspireos.app live"
+    manifest_equivalent: "Phase A (partial)"
+    status: "COMPLETE"
+    completed_date: "2026-02-10"
+    evidence:
+      - "PR #1 merged (swayz032/Aspire-Desktop, SHA 952cfb4)"
+      - "27/27 RLS isolation + evil tests PASS"
+      - "www.aspireos.app health endpoint 200 OK"
+      - "Splinter lint: 0 WARNs"
+
+  phase_4:
+    name: "Production Certification"
+    weeks: "25-35"
+    description: "11 unified gates, 10/10 Bundle, pen testing, evil tests"
+    manifest_equivalent: null
+
+  phase_5:
+    name: "Beta Launch & Dogfooding"
+    weeks: "36-43"
+    description: "1,000+ receipts, 99% safety score, internal usage"
+    manifest_equivalent: null
+
+  phase_6:
+    name: "Scale & Expand"
+    weeks: "44-55"
+    description: "Cloud migration, Meeting of Minds, customer beta"
+    manifest_equivalent: null
+
+# ============================================================================
+# VISUAL MAPPING
+# ============================================================================
+visual_mapping: |
+  MANIFEST    ROADMAP        WEEKS     FOCUS
+  ────────    ──────────     ─────     ─────
+  (none)      Phase 0        Pre       Foundation Sync ✅
+  (none)      Phase 0A       1         Cloud Accounts ✅
+  Phase A  →  Phase 0B+1A    2-5       Trust Spine + Validation (0B ✅ 2026-02-10)
+  Phase B  →  Phase 1B       4-10      Orchestrator + Safety
+  Phase C  →  Phase 1B       6-10      Gateway + APIs
+  Phase E  →  Phase 2        8-14      Channel Skill Packs
+  Phase D  →  Phase 2        15-20     Provider Integration
+  Phase F  →  Phase 3        21-24     Mobile UI Wiring
+  (none)      Phase 4        25-35     Production Certification
+  (none)      Phase 5        36-43     Beta Launch
+  (none)      Phase 6        44-55     Scale & Expand
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  manifest_source: "MANIFEST build_order field"
+  roadmap_source: "plan/Aspire-Production-Roadmap.md"
+  conflict_resolved: "Deep Scan H5: Phase A-F unmapped to Phase 0A-6"

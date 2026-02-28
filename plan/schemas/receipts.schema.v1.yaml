@@ -1,0 +1,465 @@
+# ============================================================================
+# ASPIRE RECEIPTS SCHEMA - CANONICAL DEFINITION
+# ============================================================================
+# Single Source of Truth for receipt structure across all systems
+# 
+# ENFORCEMENT: All SQL tables, JSON payloads, and TypeScript types MUST match
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-04
+# ============================================================================
+
+schema_version: "1.0.0"
+schema_name: "receipts"
+description: |
+  Canonical Receipt Schema for Aspire Governance System.
+  Receipts are the immutable audit trail for all actions in the system.
+  This schema generates SQL migrations, JSON schemas, and TypeScript types.
+
+# ============================================================================
+# ASPIRE LAW COMPLIANCE
+# ============================================================================
+law_compliance:
+  law_2: "No Action Without a Receipt - 100% coverage, append-only"
+  law_3: "Fail Closed - Failures and denials also generate receipts"
+  enforcement:
+    - "NO UPDATE privileges on receipts table"
+    - "NO DELETE privileges on receipts table"
+    - "Hash-chaining for tamper detection"
+    - "Correlation IDs for distributed tracing"
+
+# ============================================================================
+# FIELD DEFINITIONS
+# ============================================================================
+fields:
+
+  # ---------------------------------------------------------------------------
+  # Identity Fields
+  # ---------------------------------------------------------------------------
+  id:
+    type: "uuid"
+    primary_key: true
+    description: "Unique receipt identifier"
+    sql: "id UUID PRIMARY KEY DEFAULT gen_random_uuid()"
+    typescript: "id: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+
+  correlation_id:
+    type: "uuid"
+    description: |
+      Distributed tracing ID - links related actions across services.
+      CANONICAL NAME: Use 'correlation_id' everywhere (not 'trace_id').
+    sql: "correlation_id UUID NOT NULL"
+    typescript: "correlationId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+    aliases:
+      deprecated:
+        - "trace_id"
+        - "traceId"
+      migration_note: "If you see 'trace_id', migrate to 'correlation_id'"
+
+  # ---------------------------------------------------------------------------
+  # Tenant Isolation Fields (Law #6)
+  # ---------------------------------------------------------------------------
+  suite_id:
+    type: "uuid"
+    description: "Business/organization identifier - top-level tenant"
+    sql: "suite_id UUID NOT NULL REFERENCES suites(id)"
+    typescript: "suiteId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+    rls_enforcement: true
+
+  office_id:
+    type: "uuid"
+    description: "Office/department within suite"
+    sql: "office_id UUID NOT NULL REFERENCES offices(id)"
+    typescript: "officeId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+    rls_enforcement: true
+
+  # ---------------------------------------------------------------------------
+  # Actor Information
+  # ---------------------------------------------------------------------------
+  actor_type:
+    type: "enum"
+    description: "Who initiated the action"
+    enum_values: ["user", "system", "agent", "scheduler"]
+    sql: "actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'system', 'agent', 'scheduler'))"
+    typescript: "actorType: 'user' | 'system' | 'agent' | 'scheduler'"
+    json_schema:
+      type: "string"
+      enum: ["user", "system", "agent", "scheduler"]
+    required: true
+
+  actor_id:
+    type: "string"
+    description: "Identifier of the actor (user_id, agent_name, etc.)"
+    sql: "actor_id TEXT NOT NULL"
+    typescript: "actorId: string"
+    json_schema:
+      type: "string"
+    required: true
+
+  # ---------------------------------------------------------------------------
+  # Action Classification
+  # ---------------------------------------------------------------------------
+  action_type:
+    type: "string"
+    description: |
+      Categorized action type (e.g., 'invoice.create', 'email.send', 'payment.transfer')
+      Format: domain.verb or domain.noun.verb
+    sql: "action_type TEXT NOT NULL"
+    typescript: "actionType: string"
+    json_schema:
+      type: "string"
+      pattern: "^[a-z_]+\\.[a-z_]+$"
+    required: true
+    examples:
+      - "invoice.create"
+      - "email.send"
+      - "payment.transfer"
+      - "calendar.event.create"
+      - "receipt.search"
+
+  risk_tier:
+    type: "enum"
+    description: "Risk classification - determines approval requirements"
+    enum_values: ["green", "yellow", "red"]
+    sql: "risk_tier TEXT NOT NULL CHECK (risk_tier IN ('green', 'yellow', 'red'))"
+    typescript: "riskTier: 'green' | 'yellow' | 'red'"
+    json_schema:
+      type: "string"
+      enum: ["green", "yellow", "red"]
+    required: true
+    cross_reference: "risk-tiers.enum.yaml"
+
+  # ---------------------------------------------------------------------------
+  # Tool & Capability Tracking (Law #5, Law #7)
+  # ---------------------------------------------------------------------------
+  tool_used:
+    type: "string"
+    description: "MCP tool or skill pack that executed the action"
+    sql: "tool_used TEXT NOT NULL"
+    typescript: "toolUsed: string"
+    json_schema:
+      type: "string"
+    required: true
+    examples:
+      - "stripe.invoice.create"
+      - "polaris.email.send"
+      - "livekit.call.start"
+
+  capability_token_id:
+    type: "uuid"
+    description: "ID of the capability token that authorized this action (Law #5)"
+    sql: "capability_token_id UUID"
+    typescript: "capabilityTokenId?: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: false
+    note: "May be null for GREEN tier autonomous actions"
+
+  capability_token_hash:
+    type: "string"
+    description: "SHA-256 hash of the capability token (for verification without storing token)"
+    sql: "capability_token_hash TEXT"
+    typescript: "capabilityTokenHash?: string"
+    json_schema:
+      type: "string"
+    required: false
+
+  # ---------------------------------------------------------------------------
+  # Timestamps (Immutable Timeline)
+  # ---------------------------------------------------------------------------
+  created_at:
+    type: "timestamp"
+    description: "When the receipt was created (action initiated)"
+    sql: "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+    typescript: "createdAt: string"
+    json_schema:
+      type: "string"
+      format: "date-time"
+    required: true
+    immutable: true
+
+  approved_at:
+    type: "timestamp"
+    description: "When the action was approved (if approval required)"
+    sql: "approved_at TIMESTAMPTZ"
+    typescript: "approvedAt?: string"
+    json_schema:
+      type: "string"
+      format: "date-time"
+    required: false
+
+  executed_at:
+    type: "timestamp"
+    description: "When the action was executed"
+    sql: "executed_at TIMESTAMPTZ"
+    typescript: "executedAt?: string"
+    json_schema:
+      type: "string"
+      format: "date-time"
+    required: false
+
+  # ---------------------------------------------------------------------------
+  # Approval Evidence (Law #4)
+  # ---------------------------------------------------------------------------
+  approval_evidence:
+    type: "jsonb"
+    description: |
+      Evidence of approval for YELLOW/RED tier actions.
+      Contains: approver_id, approval_method, timestamp, session_id (for video)
+    sql: "approval_evidence JSONB"
+    typescript: "approvalEvidence?: ApprovalEvidence"
+    json_schema:
+      type: "object"
+      properties:
+        approver_id:
+          type: "string"
+        approval_method:
+          type: "string"
+          enum: ["voice_confirm", "video_authority", "ui_button", "dual_approval"]
+        session_id:
+          type: "string"
+          format: "uuid"
+        approved_at:
+          type: "string"
+          format: "date-time"
+    required: false
+
+  # ---------------------------------------------------------------------------
+  # Outcome
+  # ---------------------------------------------------------------------------
+  outcome:
+    type: "enum"
+    description: "Result of the action"
+    enum_values: ["success", "denied", "failed", "timeout", "pending"]
+    sql: "outcome TEXT NOT NULL CHECK (outcome IN ('success', 'denied', 'failed', 'timeout', 'pending'))"
+    typescript: "outcome: 'success' | 'denied' | 'failed' | 'timeout' | 'pending'"
+    json_schema:
+      type: "string"
+      enum: ["success", "denied", "failed", "timeout", "pending"]
+    required: true
+
+  reason_code:
+    type: "string"
+    description: "Machine-readable code explaining the outcome"
+    sql: "reason_code TEXT"
+    typescript: "reasonCode?: string"
+    json_schema:
+      type: "string"
+    required: false
+    examples:
+      - "APPROVED"
+      - "DENIED_NO_PERMISSION"
+      - "DENIED_MISSING_TOKEN"
+      - "FAILED_API_ERROR"
+      - "TIMEOUT_NO_RESPONSE"
+      - "VIDEO_REQUIRED"
+      - "PRESENCE_EXPIRED"
+
+  # ---------------------------------------------------------------------------
+  # Redacted I/O (Law #9: Never log secrets/PII)
+  # ---------------------------------------------------------------------------
+  redacted_inputs:
+    type: "jsonb"
+    description: |
+      Input parameters with PII/secrets redacted via Presidio DLP.
+      NEVER contains: SSN, credit cards, passwords, API keys, raw PII
+    sql: "redacted_inputs JSONB"
+    typescript: "redactedInputs?: Record<string, unknown>"
+    json_schema:
+      type: "object"
+    required: false
+    security_note: "Presidio DLP applied before storage"
+
+  redacted_outputs:
+    type: "jsonb"
+    description: |
+      Output/response data with PII/secrets redacted via Presidio DLP.
+      NEVER contains: SSN, credit cards, passwords, API keys, raw PII
+    sql: "redacted_outputs JSONB"
+    typescript: "redactedOutputs?: Record<string, unknown>"
+    json_schema:
+      type: "object"
+    required: false
+    security_note: "Presidio DLP applied before storage"
+
+  # ---------------------------------------------------------------------------
+  # Hash Chain Integrity
+  # ---------------------------------------------------------------------------
+  previous_receipt_hash:
+    type: "string"
+    description: "SHA-256 hash of the previous receipt (for chain integrity)"
+    sql: "previous_receipt_hash TEXT"
+    typescript: "previousReceiptHash?: string"
+    json_schema:
+      type: "string"
+    required: false
+
+  receipt_hash:
+    type: "string"
+    description: "SHA-256 hash of this receipt (computed on insert)"
+    sql: "receipt_hash TEXT NOT NULL"
+    typescript: "receiptHash: string"
+    json_schema:
+      type: "string"
+    required: true
+
+# ============================================================================
+# SQL GENERATION
+# ============================================================================
+sql_generation:
+  table_name: "receipts"
+  
+  create_table: |
+    CREATE TABLE receipts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      correlation_id UUID NOT NULL,
+      suite_id UUID NOT NULL REFERENCES suites(id),
+      office_id UUID NOT NULL REFERENCES offices(id),
+      actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'system', 'agent', 'scheduler')),
+      actor_id TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      risk_tier TEXT NOT NULL CHECK (risk_tier IN ('green', 'yellow', 'red')),
+      tool_used TEXT NOT NULL,
+      capability_token_id UUID,
+      capability_token_hash TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      approved_at TIMESTAMPTZ,
+      executed_at TIMESTAMPTZ,
+      approval_evidence JSONB,
+      outcome TEXT NOT NULL CHECK (outcome IN ('success', 'denied', 'failed', 'timeout', 'pending')),
+      reason_code TEXT,
+      redacted_inputs JSONB,
+      redacted_outputs JSONB,
+      previous_receipt_hash TEXT,
+      receipt_hash TEXT NOT NULL
+    );
+  
+  indexes: |
+    CREATE INDEX idx_receipts_correlation_id ON receipts(correlation_id);
+    CREATE INDEX idx_receipts_suite_id ON receipts(suite_id);
+    CREATE INDEX idx_receipts_office_id ON receipts(office_id);
+    CREATE INDEX idx_receipts_created_at ON receipts(created_at);
+    CREATE INDEX idx_receipts_action_type ON receipts(action_type);
+    CREATE INDEX idx_receipts_outcome ON receipts(outcome);
+  
+  rls_policy: |
+    -- Enable RLS
+    ALTER TABLE receipts ENABLE ROW LEVEL SECURITY;
+    
+    -- Tenant isolation policy (Law #6)
+    CREATE POLICY receipts_tenant_isolation ON receipts
+      USING (suite_id = current_setting('app.current_suite_id')::uuid);
+    
+    -- No UPDATE/DELETE (Law #2: Immutable)
+    REVOKE UPDATE, DELETE ON receipts FROM PUBLIC;
+    REVOKE UPDATE, DELETE ON receipts FROM authenticated;
+    REVOKE UPDATE, DELETE ON receipts FROM service_role;
+
+# ============================================================================
+# TYPESCRIPT GENERATION
+# ============================================================================
+typescript_generation:
+  interface: |
+    interface Receipt {
+      id: string;
+      correlationId: string;
+      suiteId: string;
+      officeId: string;
+      actorType: 'user' | 'system' | 'agent' | 'scheduler';
+      actorId: string;
+      actionType: string;
+      riskTier: 'green' | 'yellow' | 'red';
+      toolUsed: string;
+      capabilityTokenId?: string;
+      capabilityTokenHash?: string;
+      createdAt: string;
+      approvedAt?: string;
+      executedAt?: string;
+      approvalEvidence?: ApprovalEvidence;
+      outcome: 'success' | 'denied' | 'failed' | 'timeout' | 'pending';
+      reasonCode?: string;
+      redactedInputs?: Record<string, unknown>;
+      redactedOutputs?: Record<string, unknown>;
+      previousReceiptHash?: string;
+      receiptHash: string;
+    }
+    
+    interface ApprovalEvidence {
+      approverId: string;
+      approvalMethod: 'voice_confirm' | 'video_authority' | 'ui_button' | 'dual_approval';
+      sessionId?: string;
+      approvedAt: string;
+    }
+  
+  type_exports: |
+    export type RiskTier = 'green' | 'yellow' | 'red';
+    export type ActorType = 'user' | 'system' | 'agent' | 'scheduler';
+    export type Outcome = 'success' | 'denied' | 'failed' | 'timeout' | 'pending';
+    export type ApprovalMethod = 'voice_confirm' | 'video_authority' | 'ui_button' | 'dual_approval';
+
+# ============================================================================
+# JSON SCHEMA GENERATION
+# ============================================================================
+json_schema_generation:
+  $schema: "https://json-schema.org/draft/2020-12/schema"
+  $id: "https://aspire.ai/schemas/receipt.v1.json"
+  title: "Aspire Receipt"
+  description: "Immutable audit trail record for Aspire governance system"
+  type: "object"
+  required:
+    - "id"
+    - "correlationId"
+    - "suiteId"
+    - "officeId"
+    - "actorType"
+    - "actorId"
+    - "actionType"
+    - "riskTier"
+    - "toolUsed"
+    - "createdAt"
+    - "outcome"
+    - "receiptHash"
+
+# ============================================================================
+# VALIDATION RULES
+# ============================================================================
+validation:
+  field_name_consistency:
+    canonical_names:
+      correlation_id: ["trace_id", "traceId", "correlationId"]
+      suite_id: ["suiteId", "tenant_id", "tenantId"]
+      office_id: ["officeId", "department_id"]
+      risk_tier: ["riskTier", "risk_level", "riskLevel"]
+    
+    error_on_legacy: true
+    migration_helper: true
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #2: No Action Without a Receipt"
+  claude_md_section: "## 2) No Action Without a Receipt"
+  related_schemas:
+    - "risk-tiers.enum.yaml"
+    - "capability-token.schema.v1.yaml"
+  phase_introduced: "Phase 0A (design), Phase 1 (implementation)"
+  gates_related:
+    - "Gate 6: Receipts Immutable"
+    - "Gate 8: Replay Demo"

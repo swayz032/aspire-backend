@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "required": [
+    "finding",
+    "severity",
+    "evidence",
+    "impact",
+    "confidence",
+    "recommended_next_step",
+    "escalation_rule"
+  ],
+  "properties": {
+    "finding": {
+      "type": "string"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "sev0",
+        "sev1",
+        "sev2",
+        "sev3"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "incident_id": {
+          "type": "string"
+        },
+        "receipt_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "trace_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provider_call_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rollout_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "impact": {
+      "type": "string"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "recommended_next_step": {
+      "type": "string"
+    },
+    "escalation_rule": {
+      "type": "string"
+    }
+  }
+}

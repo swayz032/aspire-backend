@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "slo.metric.rollup",
+  "description": "Aggregated SLO metrics rollup.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "slo.metric.rollup"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "window": {
+          "type": "string",
+          "enum": [
+            "5m",
+            "15m",
+            "1h",
+            "24h",
+            "7d"
+          ]
+        },
+        "metrics": {
+          "type": "object"
+        },
+        "suite_scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "suite"
+          ],
+          "default": "global"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "service",
+        "window",
+        "metrics"
+      ]
+    }
+  ]
+}

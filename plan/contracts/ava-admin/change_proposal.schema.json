@@ -1,0 +1,150 @@
+{
+  "type": "object",
+  "required": [
+    "proposal_id",
+    "scope",
+    "risk_tier",
+    "diff",
+    "tests_required",
+    "rollout_plan",
+    "rollback_triggers",
+    "approvals_required"
+  ],
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "scope_type"
+      ],
+      "properties": {
+        "scope_type": {
+          "type": "string",
+          "enum": [
+            "global",
+            "suite",
+            "office",
+            "segment"
+          ]
+        },
+        "suite_id": {
+          "type": "string"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "suite_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "segment_id": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "percent_canary": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "scope_type": {
+              "const": "global"
+            }
+          },
+          "required": [
+            "scope_type"
+          ]
+        },
+        {
+          "properties": {
+            "scope_type": {
+              "const": "suite"
+            }
+          },
+          "required": [
+            "scope_type",
+            "suite_id"
+          ]
+        },
+        {
+          "properties": {
+            "scope_type": {
+              "const": "office"
+            }
+          },
+          "required": [
+            "scope_type",
+            "suite_id",
+            "office_id"
+          ]
+        },
+        {
+          "properties": {
+            "scope_type": {
+              "const": "segment"
+            }
+          },
+          "required": [
+            "scope_type",
+            "segment_id"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "risk_tier": {
+      "type": "string",
+      "enum": [
+        "green",
+        "yellow",
+        "red"
+      ]
+    },
+    "diff": {
+      "type": "object",
+      "description": "before/after or patch"
+    },
+    "tests_required": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rollout_plan": {
+      "type": "object",
+      "properties": {
+        "canary_percent": {
+          "type": "number"
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "rollback_triggers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "approvals_required": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

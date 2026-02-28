@@ -1,0 +1,490 @@
+{
+  "name": "Adam Focus Weekly — Monday 7am",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7,
+              "triggerAtDay": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Monday 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabled = $env.N8N_WORKFLOW_ADAM_FOCUS_WEEKLY_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\nconst requestId = 'adam-focus-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = 'n8n-adam-focus-weekly-' + new Date().toISOString().slice(0, 10);\nconst crypto = require('crypto');\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({ intent: 'adam.focus.weekly', week: new Date().toISOString().slice(0, 10) })).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'adam.focus.weekly' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/suite_profiles?select=suite_id,industry,industry_specialty,business_goals,pain_point,customer_type,sales_channel,team_size,income_range,referral_source&onboarding_completed_at=not.is.null&consent_personalization=eq.true",
+        "authentication": "none",
+        "options": {
+          "timeout": 10000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "load-profiles",
+      "name": "Load Suite Profiles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const profiles = $input.first().json;\nconst prepData = $('Kill Switch + Prep').first().json;\n\nif (!Array.isArray(profiles) || profiles.length === 0) {\n  return [{ json: { skip: 'true', reason: 'no_eligible_profiles', correlationId: prepData.correlationId } }];\n}\n\n// Emit one item per profile for the orchestrator loop\nreturn profiles.map(profile => ({\n  json: {\n    skip: 'false',\n    suiteId: profile.suite_id,\n    requestId: prepData.requestId + '-' + profile.suite_id.slice(0, 8),\n    correlationId: prepData.correlationId,\n    idempotencyKey: prepData.idempotencyKey + '-' + profile.suite_id.slice(0, 8),\n    context: {\n      industry: profile.industry,\n      industrySpecialty: profile.industry_specialty,\n      incomeRange: profile.income_range,\n      referralSource: profile.referral_source,\n      businessGoals: profile.business_goals,\n      painPoint: profile.pain_point,\n      customerType: profile.customer_type,\n      salesChannel: profile.sales_channel,\n      teamSize: profile.team_size\n    }\n  }\n}));"
+      },
+      "id": "normalize-profiles",
+      "name": "Normalize Profiles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.skip }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-skip",
+      "name": "Any Profiles?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $json.suiteId }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $env.DEFAULT_OFFICE_ID }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "adam-focus-weekly"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'adam.focus.weekly', agent: 'adam', suite_id: $json.suiteId, office_id: $env.DEFAULT_OFFICE_ID, request_id: $json.requestId, correlation_id: $json.correlationId, payload: { week_of: new Date().toISOString().slice(0, 10), include_image_urls: true, sources: ['brave', 'tavily', 'exa'] }, context: $json.context }) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "call-orchestrator",
+      "name": "POST Intent → Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "J84m12hyzSwSHo6S",
+          "name": "Gateway Internal Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-focus-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($json.suiteId || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-adam-focus-weekly', action: { action_type: 'agent.adam.focus_weekly', risk_tier: 'green', include_image_urls: true }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-success",
+      "name": "Emit Success Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-focus-skip-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SKIPPED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-adam-focus-weekly', action: { action_type: 'agent.adam.focus_weekly', reason: 'no_eligible_profiles' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-skip",
+      "name": "Emit Skip Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-focus-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SKIPPED', correlation_id: 'n8n-adam-focus-weekly-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-adam-focus-weekly', action: { action_type: 'agent.adam.focus_weekly', reason: 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        440,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-adam-focus-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'FAILED', correlation_id: 'n8n-adam-focus-weekly', actor_type: 'SYSTEM', actor_id: 'n8n-adam-focus-weekly', action: { action_type: 'agent.adam.focus_weekly' }, result: { error_message: $json.message || 'Focus weekly generation failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-failure",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Monday 7am": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + Prep": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Load Suite Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Kill Switch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Suite Profiles": {
+      "main": [
+        [
+          {
+            "node": "Normalize Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Profiles": {
+      "main": [
+        [
+          {
+            "node": "Any Profiles?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Profiles?": {
+      "main": [
+        [
+          {
+            "node": "POST Intent → Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Skip Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Intent → Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Success Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "agent"
+    },
+    {
+      "name": "adam"
+    },
+    {
+      "name": "founder-hub"
+    },
+    {
+      "name": "focus"
+    }
+  ]
+}

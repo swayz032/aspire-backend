@@ -1,0 +1,258 @@
+# ============================================================================
+# ASPIRE CAPABILITY TOKEN SCHEMA - CANONICAL DEFINITION
+# ============================================================================
+# Single Source of Truth for capability token structure across all systems
+#
+# ENFORCEMENT: All token minting, validation, and verification MUST match
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-07
+# ============================================================================
+
+schema_version: "1.0.0"
+schema_name: "capability-token"
+description: |
+  Canonical Capability Token Schema for Aspire Governance System.
+  Tokens authorize bounded tool execution via the orchestrator.
+  Only the LangGraph orchestrator can mint tokens (Law #1 + Law #5).
+
+# ============================================================================
+# ASPIRE LAW COMPLIANCE
+# ============================================================================
+law_compliance:
+  law_1: "Single Brain Rule - Only orchestrator mints tokens"
+  law_5: "Capability Tokens - Short-lived, scoped, server-verified"
+  law_7: "Tools Are Hands - Tools reject calls without valid tokens"
+  enforcement:
+    - "Only LangGraph orchestrator mints tokens"
+    - "Tokens expire in <60 seconds"
+    - "Server-side verification required (no client-side trust)"
+    - "Token revocation supported"
+    - "Every token usage generates a receipt"
+
+# ============================================================================
+# FIELD DEFINITIONS
+# ============================================================================
+fields:
+
+  token_id:
+    type: "uuid"
+    description: "Unique identifier for this capability token"
+    sql: "token_id UUID PRIMARY KEY DEFAULT gen_random_uuid()"
+    typescript: "tokenId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+
+  suite_id:
+    type: "uuid"
+    description: "Business/organization this token is scoped to"
+    sql: "suite_id UUID NOT NULL REFERENCES suites(id)"
+    typescript: "suiteId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+
+  office_id:
+    type: "uuid"
+    description: "Office/department this token is scoped to"
+    sql: "office_id UUID NOT NULL REFERENCES offices(id)"
+    typescript: "officeId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+
+  tool:
+    type: "string"
+    description: "Fully qualified tool identifier (e.g., stripe.invoice.create)"
+    sql: "tool TEXT NOT NULL"
+    typescript: "tool: string"
+    json_schema:
+      type: "string"
+      pattern: "^[a-z_]+\\.[a-z_]+\\.[a-z_]+$"
+    required: true
+    examples:
+      - "stripe.invoice.create"
+      - "polaris.email.send"
+      - "livekit.call.start"
+      - "pandadoc.contract.sign"
+
+  scopes:
+    type: "array"
+    description: "Permission scopes granted by this token"
+    sql: "scopes TEXT[] NOT NULL"
+    typescript: "scopes: string[]"
+    json_schema:
+      type: "array"
+      items:
+        type: "string"
+      minItems: 1
+    required: true
+    examples:
+      - ["invoice.write"]
+      - ["email.send", "email.draft"]
+      - ["payment.transfer"]
+
+  issued_at:
+    type: "timestamp"
+    description: "When the token was minted"
+    sql: "issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+    typescript: "issuedAt: string"
+    json_schema:
+      type: "string"
+      format: "date-time"
+    required: true
+
+  expires_at:
+    type: "timestamp"
+    description: "When the token expires (MUST be <60s from issued_at)"
+    sql: "expires_at TIMESTAMPTZ NOT NULL"
+    typescript: "expiresAt: string"
+    json_schema:
+      type: "string"
+      format: "date-time"
+    required: true
+    constraint: "expires_at - issued_at < 60 seconds"
+
+  signature:
+    type: "string"
+    description: "HMAC-SHA256 cryptographic signature for verification"
+    sql: "signature TEXT NOT NULL"
+    typescript: "signature: string"
+    json_schema:
+      type: "string"
+    required: true
+    algorithm: "HMAC-SHA256"
+
+  revoked:
+    type: "boolean"
+    description: "Whether this token has been revoked"
+    sql: "revoked BOOLEAN NOT NULL DEFAULT FALSE"
+    typescript: "revoked: boolean"
+    json_schema:
+      type: "boolean"
+    required: false
+    default: false
+
+  correlation_id:
+    type: "uuid"
+    description: "Links this token to the originating receipt chain"
+    sql: "correlation_id UUID NOT NULL"
+    typescript: "correlationId: string"
+    json_schema:
+      type: "string"
+      format: "uuid"
+    required: true
+
+# ============================================================================
+# TOKEN LIFECYCLE
+# ============================================================================
+lifecycle:
+  minting:
+    authority: "LangGraph orchestrator ONLY"
+    trigger: "Approved action ready for execution"
+    steps:
+      - "Orchestrator receives approved plan"
+      - "Orchestrator validates risk tier and approval evidence"
+      - "Orchestrator mints token with <60s expiry"
+      - "Token signed with HMAC-SHA256"
+      - "Token passed to tool for execution"
+
+  validation:
+    location: "Server-side only (Edge Function / tool handler)"
+    checks:
+      - "Signature valid (HMAC-SHA256 verification)"
+      - "Not expired (current_time < expires_at)"
+      - "Not revoked (revoked = false)"
+      - "Scope matches requested action"
+      - "suite_id matches request context"
+      - "office_id matches request context"
+    failure_action: "Return 403 Forbidden + generate denial receipt"
+
+  revocation:
+    trigger: "Manual revocation or security event"
+    action: "Set revoked = true, generate revocation receipt"
+
+# ============================================================================
+# SQL GENERATION
+# ============================================================================
+sql_generation:
+  table_name: "capability_tokens"
+
+  create_table: |
+    CREATE TABLE capability_tokens (
+      token_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      suite_id UUID NOT NULL REFERENCES suites(id),
+      office_id UUID NOT NULL REFERENCES offices(id),
+      tool TEXT NOT NULL,
+      scopes TEXT[] NOT NULL,
+      issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      signature TEXT NOT NULL,
+      revoked BOOLEAN NOT NULL DEFAULT FALSE,
+      correlation_id UUID NOT NULL,
+      CONSTRAINT token_max_ttl CHECK (expires_at - issued_at < INTERVAL '60 seconds')
+    );
+
+  indexes: |
+    CREATE INDEX idx_tokens_suite_id ON capability_tokens(suite_id);
+    CREATE INDEX idx_tokens_expires_at ON capability_tokens(expires_at);
+    CREATE INDEX idx_tokens_correlation_id ON capability_tokens(correlation_id);
+
+  rls_policy: |
+    ALTER TABLE capability_tokens ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY tokens_tenant_isolation ON capability_tokens
+      USING (suite_id = current_setting('app.current_suite_id')::uuid);
+
+# ============================================================================
+# TYPESCRIPT GENERATION
+# ============================================================================
+typescript_generation:
+  interface: |
+    interface CapabilityToken {
+      tokenId: string;
+      suiteId: string;
+      officeId: string;
+      tool: string;
+      scopes: string[];
+      issuedAt: string;
+      expiresAt: string;
+      signature: string;
+      revoked: boolean;
+      correlationId: string;
+    }
+
+  type_exports: |
+    export type TokenScope = string;
+    export type TokenTool = string;
+
+# ============================================================================
+# JSON SCHEMA (Wire Format)
+# ============================================================================
+json_wire_format:
+  description: "Format sent to tools for execution authorization"
+  example: |
+    {
+      "token_id": "uuid",
+      "suite_id": "uuid",
+      "office_id": "uuid",
+      "tool": "stripe.invoice.create",
+      "scopes": ["invoice.write"],
+      "expires_at": "ISO8601 (<60s from issue)",
+      "signature": "hmac_sha256_signature"
+    }
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #5: Capability Tokens (Least Privilege)"
+  claude_md_section: "## 5) Capability Tokens (Least Privilege)"
+  related_schemas:
+    - "receipts.schema.v1.yaml"
+    - "risk-tiers.enum.yaml"
+  phase_introduced: "Phase 1B (implementation)"
+  gates_related:
+    - "Gate 7: RLS Isolation (token scoping)"

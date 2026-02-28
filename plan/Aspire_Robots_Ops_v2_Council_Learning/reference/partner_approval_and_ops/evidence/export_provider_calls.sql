@@ -1,0 +1,2 @@
+-- Export provider call log for a trace_id
+-- SELECT * FROM provider_call_log WHERE trace_id = :trace_id ORDER BY created_at;

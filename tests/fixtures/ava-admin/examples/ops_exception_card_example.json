@@ -1,0 +1,18 @@
+{
+  "exception_id": "oec_2026_02_12_009",
+  "class": "provider_error_spike",
+  "severity": "sev2",
+  "summary": "Stripe rate_limit errors spiking; retries increasing and outbox lag rising.",
+  "signals": {
+    "metric": "provider.error_rate",
+    "provider": "stripe",
+    "value": 0.18,
+    "window_minutes": 5
+  },
+  "recommended_actions": [
+    { "action": "enable_backoff_jitter", "risk_tier": "green" },
+    { "action": "reduce_canary_percent", "risk_tier": "yellow" },
+    { "action": "pause_noncritical_jobs", "risk_tier": "yellow" }
+  ],
+  "correlation_id": "6f3d7e5a-6f76-4c39-90d2-5d0e1dc5ad5a"
+}

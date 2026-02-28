@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "required": [
+    "incident_id",
+    "status",
+    "timeline",
+    "summary_operator",
+    "summary_engineer",
+    "evidence_pack"
+  ],
+  "properties": {
+    "incident_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "opened",
+        "acknowledged",
+        "mitigating",
+        "resolved",
+        "postmortem"
+      ]
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ts": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "receipt_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "summary_operator": {
+      "type": "string"
+    },
+    "summary_engineer": {
+      "type": "string"
+    },
+    "evidence_pack": {
+      "type": "object"
+    }
+  }
+}

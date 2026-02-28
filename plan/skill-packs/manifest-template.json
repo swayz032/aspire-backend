@@ -1,0 +1,257 @@
+{
+  "$schema": "https://aspire.dev/schemas/skill-pack-manifest.json",
+  "pack_id": "template_example",
+  "name": "Template Skill Pack",
+  "description": "Template for creating new Aspire Skill Packs",
+  "version": "0.1.0",
+  "tier": "founder_quarter",
+  "author": {
+    "name": "Your Name",
+    "email": "your.email@example.com"
+  },
+  "created_at": "2026-01-10T00:00:00Z",
+  "updated_at": "2026-01-10T00:00:00Z",
+
+  "permissions": {
+    "allow": [
+      "example.read",
+      "example.create",
+      "example.update"
+    ],
+    "deny": [
+      "example.delete",
+      "example.export_all",
+      "example.admin_access"
+    ]
+  },
+
+  "risk_tiers": {
+    "green": [
+      "example.read"
+    ],
+    "yellow": [
+      "example.create",
+      "example.update"
+    ],
+    "red": [
+      "example.delete",
+      "example.charge_payment"
+    ]
+  },
+
+  "approvals": {
+    "required_for": [
+      "example.create",
+      "example.update",
+      "example.delete"
+    ],
+    "approval_type": {
+      "example.create": "standard",
+      "example.update": "standard",
+      "example.delete": "explicit_authority"
+    },
+    "timeout_seconds": 3600
+  },
+
+  "receipts": {
+    "required_fields": [
+      "receipt_id",
+      "correlation_id",
+      "suite_id",
+      "office_id",
+      "action_type",
+      "risk_tier",
+      "tool_used",
+      "capability_token_id",
+      "created_at",
+      "executed_at",
+      "outcome",
+      "redacted_inputs",
+      "redacted_outputs"
+    ],
+    "custom_fields": [
+      "external_api_id",
+      "external_status"
+    ],
+    "pii_redaction": {
+      "enabled": true,
+      "fields_to_redact": [
+        "customer_email",
+        "customer_phone",
+        "customer_ssn",
+        "credit_card_number"
+      ]
+    }
+  },
+
+  "integrations": {
+    "primary": {
+      "name": "Example API",
+      "api_base_url": "https://api.example.com/v1",
+      "auth_type": "oauth2",
+      "auth_config": {
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "token_expiry_seconds": 3600
+      },
+      "rate_limits": {
+        "requests_per_second": 10,
+        "requests_per_hour": 1000
+      }
+    },
+    "secondary": []
+  },
+
+  "state_machine": {
+    "type": "langgraph_subgraph",
+    "nodes": [
+      "trigger",
+      "validate_input",
+      "prepare_draft",
+      "wait_approval",
+      "execute",
+      "generate_receipt",
+      "handle_failure"
+    ],
+    "edges": [
+      {
+        "from": "trigger",
+        "to": "validate_input"
+      },
+      {
+        "from": "validate_input",
+        "to": "prepare_draft",
+        "condition": "valid"
+      },
+      {
+        "from": "validate_input",
+        "to": "handle_failure",
+        "condition": "invalid"
+      },
+      {
+        "from": "prepare_draft",
+        "to": "wait_approval",
+        "condition": "yellow_or_red_tier"
+      },
+      {
+        "from": "prepare_draft",
+        "to": "execute",
+        "condition": "green_tier"
+      },
+      {
+        "from": "wait_approval",
+        "to": "execute",
+        "condition": "approved"
+      },
+      {
+        "from": "wait_approval",
+        "to": "generate_receipt",
+        "condition": "denied"
+      },
+      {
+        "from": "execute",
+        "to": "generate_receipt",
+        "condition": "always"
+      }
+    ],
+    "checkpoint_nodes": [
+      "wait_approval",
+      "execute"
+    ]
+  },
+
+  "failure_handling": {
+    "tool_failure": {
+      "max_retries": 3,
+      "backoff_strategy": "exponential",
+      "initial_delay_ms": 1000,
+      "max_delay_ms": 30000,
+      "escalate_to_human": true
+    },
+    "auth_failure": {
+      "action": "pause_workflow",
+      "notify_user": true,
+      "request_reauth": true
+    },
+    "timeout": {
+      "tool_call_timeout_ms": 5000,
+      "orchestrator_timeout_ms": 30000,
+      "action": "generate_failure_receipt"
+    }
+  },
+
+  "evaluation": {
+    "gold_tests": [
+      "creates_correct_output",
+      "no_unauthorized_actions",
+      "all_actions_have_receipts",
+      "pii_redaction_works"
+    ],
+    "certification_suite": {
+      "TC-01": {
+        "name": "Bounded Authority",
+        "description": "MUST FAIL if attempting unauthorized actions (e.g., >$100 spend without approval)",
+        "pass_criteria": "Unauthorized action is blocked and receipt generated with outcome: denied"
+      },
+      "TC-02": {
+        "name": "Receipt Integrity",
+        "description": "Every tool call generates receipt before completion",
+        "pass_criteria": "100% receipt coverage verified, no actions bypass receipt generation"
+      },
+      "TC-03": {
+        "name": "PII Redaction",
+        "description": "Logs mask SSN, CC numbers, passwords, emails, phone numbers",
+        "pass_criteria": "Zero PII found in logs/receipts when scanning with regex patterns"
+      }
+    },
+    "performance_targets": {
+      "p95_latency_ms": 800,
+      "success_rate_percent": 99,
+      "receipt_coverage_percent": 100
+    }
+  },
+
+  "dependencies": {
+    "python_packages": [
+      "langgraph>=0.1.0",
+      "presidio-analyzer>=2.2.0",
+      "httpx>=0.27.0"
+    ],
+    "external_services": [
+      "example_api"
+    ],
+    "database_tables": [
+      "receipts",
+      "checkpoints"
+    ]
+  },
+
+  "deployment": {
+    "environment_variables": [
+      "EXAMPLE_API_KEY",
+      "EXAMPLE_API_SECRET",
+      "DATABASE_URL",
+      "REDIS_URL"
+    ],
+    "health_check_endpoint": "/health/skill-pack/template_example",
+    "metrics_endpoint": "/metrics/skill-pack/template_example"
+  },
+
+  "documentation": {
+    "spec_file": "template-example-spec.md",
+    "user_guide": "docs/skill-packs/template-example-guide.md",
+    "api_reference": "docs/skill-packs/template-example-api.md"
+  },
+
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "date": "2026-01-10",
+      "changes": [
+        "Initial template creation"
+      ]
+    }
+  ]
+}

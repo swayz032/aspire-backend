@@ -1,0 +1,330 @@
+{
+  "name": "Nora Meeting Summary — Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nora-meeting-summary",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Meeting Ended Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "webhookId": "nora-meeting-summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Kill switch check\nconst enabled = $env.N8N_WORKFLOW_NORA_MEETING_SUMMARY_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\n\n// --- HMAC signature validation (canonical JSON) ---\nconst crypto = require('crypto');\nconst secret = $env.N8N_NORA_WEBHOOK_SECRET;\nconst signature = $input.first().json.headers['x-webhook-signature'] || '';\n\nfunction sortKeys(obj) {\n  if (Array.isArray(obj)) return obj.map(sortKeys);\n  if (obj !== null && typeof obj === 'object') {\n    return Object.keys(obj).sort().reduce((acc, key) => {\n      acc[key] = sortKeys(obj[key]);\n      return acc;\n    }, {});\n  }\n  return obj;\n}\n\nconst body = $input.first().json.body;\nconst canonicalBody = JSON.stringify(sortKeys(body));\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(canonicalBody).digest('hex');\n\nconst sigBuf = Buffer.from(signature);\nconst expBuf = Buffer.from(expected);\nif (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {\n  return [{ json: { killed: true, reason: 'hmac_validation_failed' } }];\n}\n\n// Extract and validate payload\nconst requestId = 'nora-summary-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = body.correlation_id || 'n8n-nora-meeting-' + (body.room_name || Date.now());\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify(sortKeys({ room_name: body.room_name, duration: body.duration }))).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'nora.summarize_meeting' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, room_name: body.room_name, duration: body.duration, transcript_url: body.transcript_url, suite_id: body.suite_id, office_id: body.office_id } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $json.suite_id || $env.DEFAULT_SUITE_ID }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $json.office_id || $env.DEFAULT_OFFICE_ID }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "nora-meeting-summary"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'nora.summarize_meeting', agent: 'nora', suite_id: $json.suite_id || $env.DEFAULT_SUITE_ID, office_id: $json.office_id || $env.DEFAULT_OFFICE_ID, request_id: $json.requestId, correlation_id: $json.correlationId, payload: { room_name: $json.room_name, duration: $json.duration, transcript_url: $json.transcript_url } }) }}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "call-orchestrator",
+      "name": "POST Intent → Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "J84m12hyzSwSHo6S",
+          "name": "Gateway Internal Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-nora-summary-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: $('Kill Switch + Prep').item.json.suite_id || 'ffffffff-0000-0000-0000-system000000', tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-nora-meeting-summary', action: { action_type: 'agent.nora.summarize_meeting', risk_tier: 'green', room_name: $('Kill Switch + Prep').item.json.room_name }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-success",
+      "name": "Emit Success Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-nora-summary-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SKIPPED', correlation_id: 'n8n-nora-meeting-summary-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-nora-meeting-summary', action: { action_type: 'agent.nora.summarize_meeting', reason: ($json.reason || 'kill_switch_disabled') }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        440,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-nora-summary-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'FAILED', correlation_id: 'n8n-nora-meeting-summary', actor_type: 'SYSTEM', actor_id: 'n8n-nora-meeting-summary', action: { action_type: 'agent.nora.summarize_meeting' }, result: { error_message: $json.message || 'Meeting summary failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        }
+      },
+      "id": "emit-receipt-failure",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Meeting Ended Webhook": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + Prep": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "POST Intent → Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Kill Switch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Intent → Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Success Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "agent"
+    },
+    {
+      "name": "nora"
+    },
+    {
+      "name": "conference"
+    }
+  ]
+}

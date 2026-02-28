@@ -1,0 +1,221 @@
+{
+  "name": "Stripe-QBO Reconciliation \u2014 Weekly Sunday",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "triggerAtDay": 0, "triggerAtHour": 6 }]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Weekly Sunday 6am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabled = $env.N8N_WORKFLOW_RECONCILIATION_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\nconst requestId = 'ops-reconciliation-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = 'n8n-reconciliation-' + new Date().toISOString().slice(0, 10);\nconst crypto = require('crypto');\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({ action: 'ops.stripe_qbo_reconciliation', date: new Date().toISOString().slice(0, 10) })).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'ops.stripe_qbo_reconciliation' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/finance_events?select=*&provider=eq.stripe&event_type=eq.payment&created_at=gte.{{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }}&order=created_at.desc",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "fetch-stripe-events",
+      "name": "Fetch Stripe Payments (7d)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/finance_events?select=*&provider=eq.quickbooks&event_type=eq.payment&created_at=gte.{{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }}&order=created_at.desc",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "fetch-qbo-events",
+      "name": "Fetch QBO Payments (7d)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 500]
+    },
+    {
+      "parameters": {
+        "mode": "combineBySql",
+        "combineBySql": {
+          "query": "SELECT * FROM input1 LEFT JOIN input2 ON input1.correlation_id = input2.correlation_id WHERE input2.correlation_id IS NULL"
+        }
+      },
+      "id": "merge-compare",
+      "name": "Find Unmatched",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-recon-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-reconciliation', action: { action_type: 'ops.stripe_qbo_reconciliation', risk_tier: 'green', unmatched_count: $input.all().length, period: '7d' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt",
+      "name": "Emit Recon Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-recon-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SKIPPED', correlation_id: 'n8n-reconciliation-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-reconciliation', action: { action_type: 'ops.stripe_qbo_reconciliation', reason: 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 150]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [440, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-recon-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'FAILED', correlation_id: 'n8n-reconciliation', actor_type: 'SYSTEM', actor_id: 'n8n-reconciliation', action: { action_type: 'ops.stripe_qbo_reconciliation' }, result: { error_message: $json.message || 'Reconciliation failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-failure-receipt",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 700]
+    }
+  ],
+  "connections": {
+    "Weekly Sunday 6am": { "main": [[{ "node": "Kill Switch + Prep", "type": "main", "index": 0 }]] },
+    "Kill Switch + Prep": { "main": [[{ "node": "Kill Switch Active?", "type": "main", "index": 0 }]] },
+    "Kill Switch Active?": {
+      "main": [
+        [{ "node": "Fetch Stripe Payments (7d)", "type": "main", "index": 0 }, { "node": "Fetch QBO Payments (7d)", "type": "main", "index": 0 }],
+        [{ "node": "Emit Kill Switch Receipt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Stripe Payments (7d)": { "main": [[{ "node": "Find Unmatched", "type": "main", "index": 0 }]] },
+    "Fetch QBO Payments (7d)": { "main": [[{ "node": "Find Unmatched", "type": "main", "index": 1 }]] },
+    "Find Unmatched": { "main": [[{ "node": "Emit Recon Receipt", "type": "main", "index": 0 }]] },
+    "Error Trigger": { "main": [[{ "node": "Emit Failure Receipt", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "ops" }, { "name": "finance" }]
+}

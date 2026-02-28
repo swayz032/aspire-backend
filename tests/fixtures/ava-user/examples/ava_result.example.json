@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "request_id": "req_01HZY...",
+  "correlation_id": "corr_01HZY...",
+  "route": {"skill_pack": "eli_inbox"},
+  "risk": {"tier": "green"},
+  "governance": {
+    "approvals_required": [],
+    "presence_required": false,
+    "capability_token_required": false,
+    "receipt_ids": ["rcpt_01HZY..."]
+  },
+  "plan": {
+    "drafts": [
+      {"type": "email_draft", "subject": "Re: ...", "body": "..."}
+    ]
+  }
+}

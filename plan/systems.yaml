@@ -1,0 +1,684 @@
+meta:
+  generated_on: '2026-01-03'
+  timezone: America/New_York
+  purpose: Lean install and production-readiness inventory for Aspire (Claude Code friendly).
+  stages:
+    v1: "Prototype core loop end-to-end (Intent\u2192Approval\u2192Execute\u2192Receipt)."
+    soon: Add production hardening and governance add-ons once v1 loop works.
+    later: Optional/preserved systems; add only when they reduce risk or unlock revenue.
+systems:
+- name: .claude/hooks/*
+  category: Claude Code Hooks
+  city_role: Automation rails
+  description: Optional deterministic hooks to run format/lint/tests after edits or at stop.
+  stage: soon
+  install_order: 0
+  hosting: n/a
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on: []
+  notes: Keep non-blocking at first; make blocking once CI is stable.
+- name: CLAUDE.md (Aspire Laws)
+  category: Repo Governance
+  city_role: City charter
+  description: 'Repo-wide laws Claude Code must follow: Single Brain, receipts, fail-closed, capability tokens,
+    RLS, tiers.'
+  stage: v1
+  install_order: 1
+  hosting: n/a
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on: []
+  notes: Create in repo root. Keep short + enforceable.
+- name: AGENTS.md
+  category: Repo Governance
+  city_role: Org chart
+  description: Human-readable index of Claude Code subagents and when to use them.
+  stage: v1
+  install_order: 2
+  hosting: n/a
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on: []
+  notes: ''
+- name: .claude/agents/*
+  category: Claude Code Subagents
+  city_role: Specialized workers
+  description: 'Project-level subagents: system-architect, receipt-ledger-auditor, policy-gate-engineer, mcp-toolsmith,
+    test-engineer, security-reviewer, release-sre, proof-artifacts-builder (optional).'
+  stage: v1
+  install_order: 3
+  hosting: n/a
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - CLAUDE.md (Aspire Laws)
+  notes: Generate via /agents in Claude Code or copy prewritten files.
+- name: Expo (React Native mobile)
+  category: Client/UI
+  city_role: City Hall front desk
+  description: Founder Console app with Authority/Inbox/Receipts/More and Cold/Warm/Hot call UI.
+  stage: v1
+  install_order: 10
+  hosting: either
+  free_tier_possible: 'yes'
+  open_source_option: 'yes'
+  depends_on:
+  - CLAUDE.md (Aspire Laws)
+  notes: ''
+- name: Receipt UI / Work Ledger
+  category: Client/UI
+  city_role: Public records office
+  description: 'UI to view receipts: why, evidence, approvals, outcomes, uncertainty.'
+  stage: v1
+  install_order: 11
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: LiveKit (WebRTC)
+  category: Realtime
+  city_role: Phone network
+  description: Realtime voice/video transport. Warm state voice-first.
+  stage: soon
+  install_order: 20
+  hosting: managed_or_self
+  free_tier_possible: 'yes'
+  open_source_option: 'yes'
+  depends_on:
+  - Expo (React Native mobile)
+  notes: Start with voice; gate video (Hot) for authority moments.
+- name: LangGraph (Orchestrator)
+  category: Orchestration
+  city_role: City Brain
+  description: Single decision authority; runs governance loop and mints capability tokens.
+  stage: v1
+  install_order: 30
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Postgres 16
+  - Redis 7 (AOF)
+  notes: This is the only 'brain'.
+- name: OpenAI Models (reasoning)
+  category: LLM
+  city_role: The Mind
+  description: Model calls (backend-only) for planning, drafting, reasoning, structured outputs.
+  stage: v1
+  install_order: 31
+  hosting: managed
+  free_tier_possible: 'no'
+  open_source_option: 'no'
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: OpenAI Agents SDK
+  category: LLM
+  city_role: Organs (workers)
+  description: Bounded workers for research/triage/draft; orchestrator supervises.
+  stage: v1
+  install_order: 32
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - OpenAI Models (reasoning)
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: LangChain (utility)
+  category: LLM
+  city_role: Clerks/adapters
+  description: Helpers for prompts/tools/RAG wiring. Use only if it reduces effort.
+  stage: soon
+  install_order: 33
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: MCP runtime + tool manifests
+  category: Tool Plane
+  city_role: Hands framework
+  description: 'Model Context Protocol: tools as the only executors. Each tool gated by capability tokens.'
+  stage: v1
+  install_order: 40
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: 'MCP: DB read/write tool (internal)'
+  category: Tool Plane
+  city_role: Records access
+  description: Controlled DB access for orchestrator; never from client.
+  stage: v1
+  install_order: 41
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - MCP runtime + tool manifests
+  - Postgres 16
+  notes: ''
+- name: 'MCP: Email (Gmail/Outlook)'
+  category: Tool Plane
+  city_role: Mailroom
+  description: Send/read emails with strict scopes + receipts + redaction.
+  stage: soon
+  install_order: 42
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - MCP runtime + tool manifests
+  - Policy Gate (core)
+  notes: ''
+- name: 'MCP: Calendar'
+  category: Tool Plane
+  city_role: Scheduling office
+  description: Create/update events. Yellow tier by default.
+  stage: soon
+  install_order: 43
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - MCP runtime + tool manifests
+  - Policy Gate (core)
+  notes: ''
+- name: n8n (request-only workflows)
+  category: Automation
+  city_role: Nervous system
+  description: Webhooks, retries, timers, batch jobs. Must not decide.
+  stage: soon
+  install_order: 50
+  hosting: either
+  free_tier_possible: unknown
+  open_source_option: 'yes'
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: Use for digests, timers, retries; orchestrator still approves execution.
+- name: Essential workflows pack
+  category: Automation
+  city_role: Reflex routines
+  description: Daily digest, invoice follow-ups, reminders, support triage, failure monitor.
+  stage: soon
+  install_order: 51
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - n8n (request-only workflows)
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: Postgres 16
+  category: Data
+  city_role: City database
+  description: Source of truth for tenants, objects, receipts, approvals.
+  stage: v1
+  install_order: 60
+  hosting: managed_or_self
+  free_tier_possible: 'yes'
+  open_source_option: 'yes'
+  depends_on: []
+  notes: Supabase is a managed option.
+- name: pgvector
+  category: Data
+  city_role: Memory index
+  description: Vector search inside Postgres.
+  stage: v1
+  install_order: 61
+  hosting: managed_or_self
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Postgres 16
+  notes: ''
+- name: Korvus
+  category: Data
+  city_role: Librarian
+  description: Postgres vector store / retrieval layer (v1 memory spine).
+  stage: soon
+  install_order: 62
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Postgres 16
+  - pgvector
+  notes: ''
+- name: Redis 7 (AOF)
+  category: Data
+  city_role: Fast memory
+  description: Cache, queues, session state; persistence via AOF.
+  stage: soon
+  install_order: 63
+  hosting: managed_or_self
+  free_tier_possible: 'yes'
+  open_source_option: 'yes'
+  depends_on: []
+  notes: ''
+- name: Receipt Ledger (append-only)
+  category: Governance
+  city_role: Notary ledger
+  description: Immutable, hash-chained receipts; every action/denial/failure recorded.
+  stage: v1
+  install_order: 70
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Postgres 16
+  notes: Consider periodic anchoring (optional).
+- name: Event sourcing / replay demo
+  category: Governance
+  city_role: Time machine
+  description: Reconstruct workflows from receipts/logs for proof.
+  stage: soon
+  install_order: 71
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: RAR + AGCP (research/advice gating)
+  category: Governance
+  city_role: Standards board
+  description: Require evidence/cross-validation + uncertainty labels before advice.
+  stage: soon
+  install_order: 72
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - LangGraph (Orchestrator)
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: Policy Gate (core)
+  category: Security/Governance
+  city_role: Court
+  description: Rules engine that blocks/permits actions based on risk tier, scopes, context.
+  stage: v1
+  install_order: 80
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: Capability Tokens (signed, short-lived)
+  category: Security/Governance
+  city_role: Work permits
+  description: Least-privilege tokens scoped to tenant+tool+action; minted by orchestrator only.
+  stage: v1
+  install_order: 81
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Policy Gate (core)
+  notes: ''
+- name: Tenant isolation (RLS)
+  category: Security/Governance
+  city_role: Zoning
+  description: Row Level Security + tests to prevent cross-tenant access.
+  stage: v1
+  install_order: 82
+  hosting: managed_or_self
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Postgres 16
+  notes: ''
+- name: Private network boundary
+  category: Security/Governance
+  city_role: City walls
+  description: Tools not publicly reachable; block shadow execution.
+  stage: soon
+  install_order: 83
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - MCP runtime + tool manifests
+  notes: ''
+- name: OPA (Open Policy Agent) OR Cedar
+  category: Governance Add-on
+  city_role: Law compiler
+  description: Policy-as-code runtime to make rules versioned/testable/auditable.
+  stage: soon
+  install_order: 90
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Policy Gate (core)
+  notes: Choose one; keep behind a policy interface.
+- name: OpenFGA (authz graph)
+  category: Governance Add-on
+  city_role: Permissions map
+  description: Relationship-based authorization when permissions get complex.
+  stage: soon
+  install_order: 91
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Tenant isolation (RLS)
+  notes: Start simple; add when packs/roles explode.
+- name: Safety Gateway (prompt injection + content checks)
+  category: Governance Add-on
+  city_role: Border scanners
+  description: Screens hostile prompts/docs and blocks unsafe tool plans.
+  stage: soon
+  install_order: 92
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: DLP/PII redaction (Presidio pattern)
+  category: Governance Add-on
+  city_role: Privacy filter
+  description: Detect/redact PII before logs/receipts/model calls where possible.
+  stage: soon
+  install_order: 93
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: Secrets Manager (Vault/KMS pattern)
+  category: Governance Add-on
+  city_role: Key vault
+  description: Centralize secrets, rotate keys, issue short-lived creds.
+  stage: soon
+  install_order: 94
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on: []
+  notes: ''
+- name: Guardrails layer (safety + policy)
+  category: Governance Add-on
+  city_role: Safety inspector
+  description: Separate safety constraints from business logic; block risky outputs.
+  stage: soon
+  install_order: 95
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Safety Gateway (prompt injection + content checks)
+  notes: ''
+- name: Monitoring (Opik Monitor or equivalent)
+  category: Ops
+  city_role: Power dashboard
+  description: Metrics/alerts for services and tool success.
+  stage: soon
+  install_order: 100
+  hosting: either
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - LangGraph (Orchestrator)
+  notes: ''
+- name: Circuit Breakers
+  category: Ops
+  city_role: Shutoff valves
+  description: Fail closed when providers misbehave; protect budgets + trust.
+  stage: soon
+  install_order: 101
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Monitoring (Opik Monitor or equivalent)
+  notes: ''
+- name: OpenTelemetry
+  category: Ops
+  city_role: Trace map
+  description: End-to-end traces across services; aligns with correlation_id.
+  stage: soon
+  install_order: 102
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: LLM Tracing (Phoenix or LangSmith)
+  category: Ops
+  city_role: AI black box
+  description: Trace agent steps and tool calls for debugging and regressions.
+  stage: soon
+  install_order: 103
+  hosting: either
+  free_tier_possible: unknown
+  open_source_option: 'yes'
+  depends_on:
+  - OpenTelemetry
+  notes: ''
+- name: Evals (OpenAI Evals / TruLens / Ragas)
+  category: Ops
+  city_role: Inspector tests
+  description: Automated evals as release gates; catch regressions.
+  stage: soon
+  install_order: 104
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - LLM Tracing (Phoenix or LangSmith)
+  notes: ''
+- name: SLO dashboard + error budgets
+  category: Ops
+  city_role: Reliability scoreboard
+  description: Define p95 latency, error rate targets, tool success rate; enforce budgets.
+  stage: soon
+  install_order: 105
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - Monitoring (Opik Monitor or equivalent)
+  notes: ''
+- name: Incident runbooks + postmortems
+  category: Ops
+  city_role: Fire department
+  description: Respond + learn fast. Required for production.
+  stage: soon
+  install_order: 106
+  hosting: n/a
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on: []
+  notes: ''
+- name: CI/CD (EAS / Fastlane / GH Actions)
+  category: Build/Release
+  city_role: Shipping docks
+  description: Automated builds, tests, and release gates.
+  stage: soon
+  install_order: 110
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: n/a
+  depends_on:
+  - Evals (OpenAI Evals / TruLens / Ragas)
+  - Test suites
+  notes: ''
+- name: Supabase (managed Postgres)
+  category: Platform
+  city_role: Managed records office
+  description: Managed Postgres/Auth/Storage option for v1.
+  stage: soon
+  install_order: 111
+  hosting: managed
+  free_tier_possible: 'yes'
+  open_source_option: 'no'
+  depends_on:
+  - Postgres 16
+  notes: Optional; recommended for solo speed.
+- name: Test suites
+  category: Quality
+  city_role: Building inspector toolkit
+  description: Unit + integration + e2e + evil tests.
+  stage: v1
+  install_order: 120
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - CLAUDE.md (Aspire Laws)
+  notes: ''
+- name: Anam (avatar)
+  category: Realtime
+  city_role: Receptionist face
+  description: Avatar layer for 1-on-1 sessions. Optional for v1.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - LiveKit (WebRTC)
+  notes: ''
+- name: DocuSign
+  category: External Provider
+  city_role: Signature counter
+  description: E-sign provider for binding docs. Red tier.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - Policy Gate (core)
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: HeyGen (alt avatar)
+  category: Realtime
+  city_role: Alt face vendor
+  description: Alternative avatar provider; keep swappable.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - LiveKit (WebRTC)
+  notes: ''
+- name: 'MCP: Stripe'
+  category: Tool Plane
+  city_role: Treasury window
+  description: Payments/invoices. Red tier by default.
+  stage: later
+  install_order: null
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on:
+  - MCP runtime + tool manifests
+  - Policy Gate (core)
+  notes: ''
+- name: Notarize.com (RON)
+  category: External Provider
+  city_role: Remote notary
+  description: Remote online notarization provider. Red tier.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - Policy Gate (core)
+  - Receipt Ledger (append-only)
+  notes: ''
+- name: Qdrant (optional)
+  category: Data
+  city_role: Spare vector warehouse
+  description: Alternative vector DB if you outgrow pgvector.
+  stage: later
+  install_order: null
+  hosting: either
+  free_tier_possible: unknown
+  open_source_option: 'yes'
+  depends_on: []
+  notes: ''
+- name: QuickBooks
+  category: External Provider
+  city_role: Accounting office
+  description: Accounting/finance data source + validation.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - Policy Gate (core)
+  notes: ''
+- name: RAG add-ons (MemoRAG/GraphRAG/RAGFlow/etc.)
+  category: Data
+  city_role: Archive wing
+  description: Advanced retrieval systems. Defer until core loop is stable.
+  stage: later
+  install_order: null
+  hosting: self_host
+  free_tier_possible: n/a
+  open_source_option: 'yes'
+  depends_on:
+  - Postgres 16
+  notes: ''
+- name: Render (legacy / optional)
+  category: Platform
+  city_role: Old power plant
+  description: Optional hosting if it reduces effort.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: n/a
+  depends_on: []
+  notes: ''
+- name: Unity (spatial layer)
+  category: Optional
+  city_role: City skyline renderer
+  description: Metaverse/rooms layer. Excluded from lean Founder Quarter v1.
+  stage: later
+  install_order: null
+  hosting: either
+  free_tier_possible: n/a
+  open_source_option: n/a
+  depends_on: []
+  notes: ''
+- name: Unity Cloud Build
+  category: Optional
+  city_role: 3D build farm
+  description: Automated Unity builds.
+  stage: later
+  install_order: null
+  hosting: managed
+  free_tier_possible: unknown
+  open_source_option: unknown
+  depends_on:
+  - Unity (spatial layer)
+  notes: ''
+- name: Web PWA (React)
+  category: Client/UI
+  city_role: Back-office portal
+  description: Optional admin/ops portal; not required for v1 if mobile is enough.
+  stage: later
+  install_order: null
+  hosting: either
+  free_tier_possible: unknown
+  open_source_option: 'yes'
+  depends_on: []
+  notes: ''

@@ -1,0 +1,144 @@
+# Tax Rules Registry — US / 2026
+# Versioned, citation-backed rules for Finn Finance Manager tax planning.
+# No hardcoded annual numeric rates — rates are looked up from authoritative sources.
+
+version: "2026-01"
+jurisdiction: US
+tax_year: 2026
+
+deduction_categories:
+  - id: home_office
+    name: Home Office Deduction
+    citation: "IRS Publication 587"
+    methods:
+      - simplified: "$5 per sq ft, max 300 sq ft ($1,500)"
+      - regular: "Actual expenses prorated by business use percentage"
+    eligibility:
+      - "Regular and exclusive use for business"
+      - "Principal place of business OR meeting place for clients"
+    substantiation:
+      - "Measurement of home office area"
+      - "Total home square footage"
+      - "Utility bills, rent/mortgage statements"
+    risk_rating: low
+    notes: "Simplified method is lower audit risk"
+
+  - id: vehicle
+    name: Vehicle Expenses
+    citation: "IRS Publication 463, Topic 510"
+    methods:
+      - standard_mileage: "Check IRS standard mileage rate for current year"
+      - actual_expense: "Gas, insurance, repairs, depreciation prorated by business miles"
+    eligibility:
+      - "Vehicle used for business purposes"
+      - "Must choose method in first year of use"
+    substantiation:
+      - "Mileage log (date, destination, business purpose, miles)"
+      - "Receipts for actual expenses if using actual method"
+    risk_rating: medium
+    notes: "Mileage log is the single most important substantiation document"
+
+  - id: meals
+    name: Business Meals
+    citation: "IRS Publication 463"
+    methods:
+      - standard: "50% of actual meal cost (generally)"
+    eligibility:
+      - "Directly related to business or associated with business"
+      - "Not lavish or extravagant"
+      - "Business owner or employee present"
+    substantiation:
+      - "Receipt with date, amount, place"
+      - "Business purpose notation"
+      - "Names of attendees"
+    risk_rating: medium
+    notes: "Missing business purpose notation is the #1 disallowance reason"
+
+  - id: health_insurance
+    name: Self-Employed Health Insurance
+    citation: "IRS Publication 535"
+    methods:
+      - deduction: "100% of premiums for self, spouse, dependents"
+    eligibility:
+      - "Self-employed with net profit"
+      - "Not eligible for employer-subsidized plan"
+    substantiation:
+      - "Insurance premium statements (Form 1095-A/B/C)"
+      - "Proof of self-employment income"
+    risk_rating: low
+    notes: "Deduction cannot exceed net profit from business"
+
+  - id: retirement
+    name: Retirement Contributions
+    citation: "IRS Publication 560"
+    methods:
+      - sep_ira: "Up to 25% of net self-employment income (check current limit)"
+      - solo_401k: "Employee + employer contributions (check current limits)"
+      - simple_ira: "Check current employee contribution limit + employer match"
+    eligibility:
+      - "Self-employed or business owner"
+      - "Plan established before contribution deadline"
+    substantiation:
+      - "Plan documents"
+      - "Contribution receipts"
+      - "Form 5498 from custodian"
+    risk_rating: low
+    notes: "SEP-IRA is simplest to administer for sole proprietors"
+
+  - id: equipment
+    name: Equipment & Section 179
+    citation: "IRS Publication 946, Section 179"
+    methods:
+      - section_179: "Immediate deduction (check current year limit)"
+      - bonus_depreciation: "Check current year bonus depreciation percentage"
+      - macrs: "Standard depreciation over asset life"
+    eligibility:
+      - "Tangible personal property used >50% for business"
+      - "Purchased (not leased) in the tax year"
+    substantiation:
+      - "Purchase receipts"
+      - "Business use log if mixed use"
+    risk_rating: low
+    notes: "Section 179 requires the asset to be placed in service during the tax year"
+
+red_flags:
+  - id: excessive_meals
+    description: "Meals exceeding 10% of gross revenue"
+    severity: high
+    action: "Review and document business purpose for all meals"
+    citation: "IRS Audit Technique Guide"
+
+  - id: home_office_large
+    description: "Home office deduction exceeding 30% of home costs"
+    severity: medium
+    action: "Verify measurements and exclusive use documentation"
+
+  - id: vehicle_100_business
+    description: "Claiming 100% business use of vehicle"
+    severity: high
+    action: "Verify no personal use or document minimal personal use"
+
+  - id: missing_1099s
+    description: "Payments >$600 to contractors without 1099 filing"
+    severity: critical
+    action: "Issue 1099-NEC forms before deadline"
+    citation: "IRS Publication 15-A"
+
+quarterly_checklist:
+  q1:
+    - "Review prior year return for carryforward items"
+    - "Estimate Q1 tax payment"
+    - "Verify contractor 1099s filed by Jan 31"
+  q2:
+    - "Estimate Q2 tax payment"
+    - "Mid-year review of deduction tracking"
+    - "Review health insurance premium payments"
+  q3:
+    - "Estimate Q3 tax payment"
+    - "Review retirement contribution strategy"
+    - "Assess equipment purchases for Section 179"
+  q4:
+    - "Estimate Q4 tax payment"
+    - "Maximize retirement contributions before deadline"
+    - "Review year-end deduction opportunities"
+    - "Gather documents for CPA packet"

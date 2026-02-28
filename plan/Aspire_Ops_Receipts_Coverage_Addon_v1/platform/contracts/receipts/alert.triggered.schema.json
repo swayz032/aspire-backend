@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "alert.triggered",
+  "description": "Alert triggered from monitoring.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "alert.triggered"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "alert_name": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ]
+        },
+        "service": {
+          "type": "string"
+        },
+        "signal_ref": {
+          "type": "string"
+        },
+        "incident_receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "alert_name",
+        "severity",
+        "service"
+      ]
+    }
+  ]
+}

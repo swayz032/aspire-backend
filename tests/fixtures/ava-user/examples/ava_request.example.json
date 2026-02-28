@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "suite_123",
+  "office_id": "office_7",
+  "request_id": "req_01HZY...",
+  "correlation_id": "corr_01HZY...",
+  "timestamp": "2026-02-12T20:00:00-05:00",
+  "task_type": "inbox_triage",
+  "payload": {
+    "thread_ids": ["t_1", "t_2"],
+    "intent": "Summarize and draft replies as drafts only"
+  }
+}

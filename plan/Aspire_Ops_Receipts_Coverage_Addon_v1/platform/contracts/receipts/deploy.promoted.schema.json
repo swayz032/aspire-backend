@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "deploy.promoted",
+  "description": "Canary promoted to full rollout.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "deploy.promoted"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "release_id": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string",
+          "enum": [
+            "dev",
+            "staging",
+            "prod"
+          ]
+        },
+        "promotion_time": {
+          "type": "string"
+        },
+        "metrics_snapshot_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "release_id",
+        "environment"
+      ]
+    }
+  ]
+}

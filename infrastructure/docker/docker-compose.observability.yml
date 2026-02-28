@@ -1,0 +1,35 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel/otel-collector.config.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+      - "8889:8889"  # Prometheus exporter
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.50.1
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./otel/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-aspire-grafana-dev}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./otel/grafana-provisioning:/etc/grafana/provisioning
+    restart: unless-stopped
+
+volumes:
+  grafana-data:

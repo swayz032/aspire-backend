@@ -1,0 +1,331 @@
+{
+  "name": "Sarah Call Handler — Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sarah-call-handler",
+        "responseMode": "lastNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Call Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "webhookId": "sarah-call-handler"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Kill switch check\nconst enabled = $env.N8N_WORKFLOW_SARAH_CALL_HANDLER_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, reason: 'kill_switch_disabled' } }];\n}\n\n// --- HMAC signature validation (canonical JSON) ---\nconst crypto = require('crypto');\nconst secret = $env.N8N_SARAH_WEBHOOK_SECRET;\nconst signature = $input.first().json.headers['x-webhook-signature'] || '';\n\nfunction sortKeys(obj) {\n  if (Array.isArray(obj)) return obj.map(sortKeys);\n  if (obj !== null && typeof obj === 'object') {\n    return Object.keys(obj).sort().reduce((acc, key) => {\n      acc[key] = sortKeys(obj[key]);\n      return acc;\n    }, {});\n  }\n  return obj;\n}\n\nconst body = $input.first().json.body;\nconst canonicalBody = JSON.stringify(sortKeys(body));\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(canonicalBody).digest('hex');\n\nconst sigBuf = Buffer.from(signature);\nconst expBuf = Buffer.from(expected);\nif (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {\n  return [{ json: { killed: true, reason: 'hmac_validation_failed' } }];\n}\n\n// Extract and validate payload\nconst requestId = 'sarah-call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = body.correlation_id || 'n8n-sarah-call-' + (body.call_sid || Date.now());\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify(sortKeys({ call_sid: body.call_sid || body.CallSid, from: body.from_number || body.From, to: body.to_number || body.To }))).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'sarah.handle_call' + payloadHash).digest('hex');\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, call_sid: body.call_sid || body.CallSid, from_number: body.from_number || body.From, to_number: body.to_number || body.To, suite_id: body.suite_id, office_id: body.office_id } }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + HMAC + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $json.suite_id || $env.DEFAULT_SUITE_ID }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $json.office_id || $env.DEFAULT_OFFICE_ID }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "sarah-call-handler"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'sarah.handle_call', agent: 'sarah', suite_id: $json.suite_id || $env.DEFAULT_SUITE_ID, office_id: $json.office_id || $env.DEFAULT_OFFICE_ID, request_id: $json.requestId, correlation_id: $json.correlationId, payload: { call_sid: $json.call_sid, from_number: $json.from_number, to_number: $json.to_number } }) }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "call-orchestrator",
+      "name": "POST Intent → Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "J84m12hyzSwSHo6S",
+          "name": "Gateway Internal Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-sarah-call-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: $('Kill Switch + HMAC + Prep').item.json.suite_id || 'ffffffff-0000-0000-0000-system000000', tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-sarah-call-handler', action: { action_type: 'agent.sarah.handle_call', risk_tier: 'yellow', call_sid: $('Kill Switch + HMAC + Prep').item.json.call_sid }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-success",
+      "name": "Emit Success Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-sarah-call-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SKIPPED', correlation_id: 'n8n-sarah-call-handler-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-sarah-call-handler', action: { action_type: 'agent.sarah.handle_call', reason: ($json.reason || 'kill_switch_disabled') }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        440,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-sarah-call-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'FAILED', correlation_id: 'n8n-sarah-call-handler', actor_type: 'SYSTEM', actor_id: 'n8n-sarah-call-handler', action: { action_type: 'agent.sarah.handle_call' }, result: { error_message: $json.message || 'Call handling failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-failure",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Call Webhook": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + HMAC + Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + HMAC + Prep": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "POST Intent → Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Kill Switch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Intent → Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Success Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "agent"
+    },
+    {
+      "name": "sarah"
+    },
+    {
+      "name": "telephony"
+    }
+  ]
+}

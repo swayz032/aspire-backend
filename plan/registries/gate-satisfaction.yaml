@@ -1,0 +1,418 @@
+# ============================================================================
+# ASPIRE GATE SATISFACTION REGISTRY
+# ============================================================================
+# Tracks the 10 production gates (Gates 1-10) and their satisfaction status per phase.
+# NOTE: Gate 00 (Scope Lock) is a product gate tracked separately in plan/gates/gate-00-scope-lock.md.
+# Total gates including Gate 00: 11 (00-10). See plan/gates/README.md for full list.
+#
+# PURPOSE: Ensure phases cannot complete without gate satisfaction
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-04
+# ============================================================================
+
+schema_version: "1.0.0"
+registry_name: "gate-satisfaction"
+description: |
+  Comprehensive tracking of all 10 production gates (Gates 1-10) required for Aspire.
+  Gate 00 (Scope Lock) is a product gate, not a production gate, and is tracked
+  separately in plan/gates/gate-00-scope-lock.md. See plan/gates/README.md for
+  the full 11-gate (00-10) index.
+  Gates MUST be satisfied before a phase can be considered complete.
+  This registry enforces Law #10 (Production Gates - No Exceptions).
+
+# ============================================================================
+# GATE DEFINITIONS
+# ============================================================================
+gates:
+
+  # ---------------------------------------------------------------------------
+  # GATE 1: UI Surfaces
+  # ---------------------------------------------------------------------------
+  gate_1:
+    id: 1
+    name: "UI Surfaces"
+    description: "6 UI surfaces enumerated and implemented"
+    
+    requirements:
+      - "Ava Header (presence indicator, state display)"
+      - "Workspace (main interaction area)"
+      - "Chat (text/voice input)"
+      - "Authority Dashboard (approval/rejection interface)"
+      - "Workbench (task management)"
+      - "Receipts (audit trail viewer)"
+    
+    success_criteria:
+      - "All 6 surfaces render correctly"
+      - "State transitions work (Cold/Warm/Hot)"
+      - "Accessibility compliant (WCAG 2.1 AA)"
+    
+    phase_introduced: "3"
+    phase_required_by: "3"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    success_criteria_ref: "3-SC-001, 3-SC-002, 3-SC-003, 3-SC-004"
+
+  # ---------------------------------------------------------------------------
+  # GATE 2: Call State
+  # ---------------------------------------------------------------------------
+  gate_2:
+    id: 2
+    name: "Call State"
+    description: "Cold/Warm/Hot interaction states functional"
+    
+    requirements:
+      - "Cold state: Async/text, lowest authority"
+      - "Warm state: Voice-first, default state"
+      - "Hot state: Video presence, highest authority"
+    
+    success_criteria:
+      - "State transitions triggered correctly"
+      - "Authority levels enforced per state"
+      - "UI reflects current state"
+    
+    phase_introduced: "3"
+    phase_required_by: "3"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    success_criteria_ref: "3-SC-002"
+
+  # ---------------------------------------------------------------------------
+  # GATE 3: Forced Escalation
+  # ---------------------------------------------------------------------------
+  gate_3:
+    id: 3
+    name: "Forced Escalation"
+    description: "Video required for RED tier (binding) approvals"
+    
+    requirements:
+      - "RED tier actions MUST have active video session"
+      - "Video presence heartbeat verification (<30s stale)"
+      - "Graceful degradation if video unavailable"
+    
+    success_criteria:
+      - "RED tier blocked without video"
+      - "Heartbeat expiry triggers denial"
+      - "Escalation UI clearly visible"
+    
+    phase_introduced: "1"
+    phase_required_by: "3"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    aspire_law_ref: "Law #4: Risk Tiers Enforced"
+    success_criteria_ref: "3-SC-004"
+
+  # ---------------------------------------------------------------------------
+  # GATE 4: Degradation Ladder
+  # ---------------------------------------------------------------------------
+  gate_4:
+    id: 4
+    name: "Degradation Ladder"
+    description: "4-level fallback: Video → Audio → Async → Text"
+    
+    requirements:
+      - "Auto-downshift on technical failure"
+      - "Battery-triggered degradation"
+      - "Network quality detection"
+      - "User preference override"
+    
+    success_criteria:
+      - "Video → Audio: <5s transition"
+      - "Audio → Async: <3s transition"
+      - "Async → Text: Immediate fallback"
+      - "Authority levels adjust per mode"
+    
+    phase_introduced: "3"
+    phase_required_by: "3"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    success_criteria_ref: "3-SC-005"
+
+  # ---------------------------------------------------------------------------
+  # GATE 5: Cold/Warm/Hot Authority UI Contract
+  # ---------------------------------------------------------------------------
+  gate_5:
+    id: 5
+    name: "Cold/Warm/Hot Authority UI Contract"
+    description: "Consistent UX across all interaction states"
+    
+    requirements:
+      - "Authority indicators visible in all states"
+      - "Approval UI adapts to state capabilities"
+      - "Consistent approval/rejection semantics"
+    
+    success_criteria:
+      - "Same action, different UX per state"
+      - "No authority escalation confusion"
+      - "User always knows current state"
+    
+    phase_introduced: "3"
+    phase_required_by: "3"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    aspire_law_ref: "Law #8: Cold/Warm/Hot Interaction States"
+    success_criteria_ref: "3-SC-004"
+
+  # ---------------------------------------------------------------------------
+  # GATE 6: Receipts Immutable
+  # ---------------------------------------------------------------------------
+  gate_6:
+    id: 6
+    name: "Receipts Immutable"
+    description: "Append-only, hash-chained, NO UPDATE/DELETE"
+    
+    requirements:
+      - "NO UPDATE privileges on receipts table"
+      - "NO DELETE privileges on receipts table"
+      - "Hash-chain integrity for tamper detection"
+      - "100% action coverage"
+    
+    success_criteria:
+      - "UPDATE attempts fail with policy error"
+      - "DELETE attempts fail with policy error"
+      - "Hash chain verification passes"
+      - "Every action generates receipt"
+    
+    phase_introduced: "1"
+    phase_required_by: "1"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    aspire_law_ref: "Law #2: No Action Without a Receipt"
+    success_criteria_ref: "1-SC-002"
+
+  # ---------------------------------------------------------------------------
+  # GATE 7: RLS Isolation
+  # ---------------------------------------------------------------------------
+  gate_7:
+    id: 7
+    name: "RLS Isolation"
+    description: "Multi-tenant security with Row-Level Security"
+    
+    requirements:
+      - "RLS enabled on all tenant-scoped tables"
+      - "Suite/Office isolation enforced"
+      - "Zero cross-tenant leakage"
+    
+    success_criteria:
+      - "Evil tests: 100% pass rate"
+      - "Cross-tenant SELECT fails"
+      - "Cross-tenant UPDATE fails"
+      - "Cross-tenant DELETE fails"
+    
+    phase_introduced: "1"
+    phase_required_by: "1"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    aspire_law_ref: "Law #6: Tenant Isolation (Suite/Office Zoning)"
+    success_criteria_ref: "1-MEM-004"
+
+  # ---------------------------------------------------------------------------
+  # GATE 8: Replay Demo
+  # ---------------------------------------------------------------------------
+  gate_8:
+    id: 8
+    name: "Replay Demo"
+    description: "Deterministic state reconstruction from receipts alone"
+    
+    requirements:
+      - "State can be reconstructed from receipt history"
+      - "No external dependencies for replay"
+      - "100% receipt coverage required"
+    
+    success_criteria:
+      - "Fresh system + receipts = identical state"
+      - "Replay time < 10x original execution time"
+      - "Audit trail fully traceable"
+    
+    phase_introduced: "4"
+    phase_required_by: "4"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    aspire_law_ref: "Law #2: No Action Without a Receipt"
+    success_criteria_ref: "4-SC-004"
+
+  # ---------------------------------------------------------------------------
+  # GATE 9: SLO Dashboard
+  # ---------------------------------------------------------------------------
+  gate_9:
+    id: 9
+    name: "SLO Dashboard"
+    description: "Live metrics tracking for production reliability"
+    
+    requirements:
+      - "p50/p95/p99 latency metrics"
+      - "Tool success rate tracking"
+      - "Receipt coverage percentage"
+      - "Error budget burn rate"
+    
+    success_criteria:
+      - "p95 latency < 800ms"
+      - "99% tool success rate"
+      - "100% receipt coverage"
+      - "<1% error rate"
+    
+    phase_introduced: "4"
+    phase_required_by: "4"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    success_criteria_ref: "4-SC-005"
+
+  # ---------------------------------------------------------------------------
+  # GATE 10: Incident Runbooks
+  # ---------------------------------------------------------------------------
+  gate_10:
+    id: 10
+    name: "Incident Runbooks"
+    description: "Outage procedures + game-day simulation"
+    
+    requirements:
+      - "5 runbooks documented (min)"
+      - "Escalation procedures defined"
+      - "Communication templates ready"
+      - "Quarterly game-day simulation"
+    
+    success_criteria:
+      - "Runbooks cover top 5 failure modes"
+      - "On-call rotation defined"
+      - "MTTR < 30 minutes for P1"
+      - "Game-day completed successfully"
+    
+    phase_introduced: "4"
+    phase_required_by: "4"
+    
+    status: "NOT_STARTED"
+    satisfaction_date: null
+    evidence_path: null
+    
+    success_criteria_ref: "4-SC-006"
+
+# ============================================================================
+# PHASE → GATE MAPPING
+# ============================================================================
+phase_gate_requirements:
+
+  phase_0a:
+    required_gates: []
+    inherited_gates: []
+    notes: "No gates required (infrastructure setup only)"
+
+  phase_0b:
+    required_gates: []
+    inherited_gates: []
+    notes: "No gates required (infrastructure setup only)"
+
+  phase_1:
+    required_gates: [6, 7]
+    inherited_gates: []
+    notes: |
+      Gate 6 (Receipts Immutable) - Must be satisfied for Phase 1 completion
+      Gate 7 (RLS Isolation) - Must be satisfied for Phase 1 completion
+
+  phase_2:
+    required_gates: []
+    inherited_gates: [6, 7]
+    notes: "Inherits Gate 6 + 7 from Phase 1"
+
+  phase_3:
+    required_gates: [1, 2, 3, 4, 5]
+    inherited_gates: [6, 7]
+    notes: |
+      Gates 1-5 (UI/Authority) - Must be satisfied for Phase 3 completion
+      Inherits Gate 6 + 7 from Phase 1
+
+  phase_4:
+    required_gates: [8, 9, 10]
+    inherited_gates: [1, 2, 3, 4, 5, 6, 7]
+    notes: |
+      Gates 8-10 (Production) - Must be satisfied for Phase 4 completion
+      ALL 10 gates must be satisfied by end of Phase 4
+
+  phase_5:
+    required_gates: []
+    inherited_gates: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    notes: "All 10 gates must remain satisfied"
+
+  phase_6:
+    required_gates: []
+    inherited_gates: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    notes: "All 10 gates must remain satisfied"
+
+# ============================================================================
+# GATE SATISFACTION SUMMARY
+# ============================================================================
+summary:
+  total_gates: 10
+  
+  by_status:
+    satisfied: 0
+    in_progress: 0
+    not_started: 10
+  
+  by_phase_introduced:
+    phase_1: [6, 7]
+    phase_3: [1, 2, 3, 4, 5]
+    phase_4: [8, 9, 10]
+  
+  critical_path:
+    - "Phase 1: Gates 6, 7 must be satisfied"
+    - "Phase 3: Gates 1-5 must be satisfied (all UI/Authority gates)"
+    - "Phase 4: Gates 8-10 must be satisfied (all Production gates)"
+    - "Phase 5+: All 10 gates must remain satisfied"
+
+# ============================================================================
+# VALIDATION RULES
+# ============================================================================
+validation:
+  phase_completion_rule: |
+    A phase CANNOT be marked complete unless:
+    1. All required_gates for that phase are SATISFIED
+    2. All inherited_gates remain SATISFIED
+    3. Evidence paths are documented for each gate
+  
+  gate_regression_rule: |
+    Once a gate is SATISFIED, it must remain SATISFIED.
+    Any regression requires:
+    1. Immediate escalation
+    2. Phase rollback consideration
+    3. Incident report generation
+  
+  enforcement:
+    - "CI/CD blocks deployment if gates regress"
+    - "Weekly gate status review required"
+    - "Evidence artifacts versioned in git"
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #10: Production Gates (No Exceptions)"
+  claude_md_section: "## 10) Production Gates (No Exceptions)"
+  main_roadmap: "plan/Aspire-Production-Roadmap.md"
+  success_criteria: "plan/00-success-criteria-index.md"
+  gates_detail: "plan/gates/README.md"

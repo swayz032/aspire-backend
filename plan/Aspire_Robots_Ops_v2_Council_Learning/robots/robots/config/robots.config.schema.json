@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RobotsConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "suite", "paths", "scenarios"],
+  "properties": {
+    "mode": {"type": "string", "enum": ["validate", "smoke"]},
+    "suite": {"type": "string"},
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admin_portal_root", "expo_app_root", "roadmap_root", "trustspine_root"],
+      "properties": {
+        "admin_portal_root": {"type": "string"},
+        "expo_app_root": {"type": "string"},
+        "roadmap_root": {"type": "string"},
+        "trustspine_root": {"type": "string"}
+      }
+    },
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "staging_base_url": {"type": "string"},
+        "canary_base_url": {"type": "string"},
+        "production_base_url": {"type": "string"}
+      }
+    },
+    "ingest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "url": {"type": "string"},
+        "token": {"type": "string"}
+      }
+    },
+    "scenarios": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

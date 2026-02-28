@@ -1,0 +1,25 @@
+# Aspire Alert Rules — Phase 0B Baseline
+# Map each alert to an incident runbook in Gate 4 runbooks folder.
+
+groups:
+  - name: aspire-alerts
+    rules:
+      - alert: OutboxQueueStuck
+        expr: outbox_oldest_pending_age_seconds > 300
+        for: 5m
+        labels:
+          severity: page
+          runbook: RUNBOOK_OUTBOX_STUCK
+        annotations:
+          summary: "Outbox queue appears stuck"
+          description: "Oldest pending job > 5 minutes. Investigate executor health, DB locks, and provider outages."
+
+      - alert: ApprovalLatencyHigh
+        expr: approval_latency_p95_seconds > 900
+        for: 15m
+        labels:
+          severity: ticket
+          runbook: RUNBOOK_APPROVAL_LATENCY
+        annotations:
+          summary: "Approval latency elevated"
+          description: "P95 approval latency > 15 minutes. Investigate UX friction and notification delivery."

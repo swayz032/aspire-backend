@@ -1,0 +1,312 @@
+{
+  "Comment": "Aspire Secret Rotation — 7-step state machine. n8n triggers via API Gateway, this state machine does the actual rotation. Vendor keys never leave AWS.",
+  "StartAt": "ValidateInput",
+  "States": {
+    "ValidateInput": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            { "Variable": "$.secret_id", "IsPresent": true },
+            { "Variable": "$.adapter", "IsPresent": true }
+          ],
+          "Next": "CreateNewKey"
+        }
+      ],
+      "Default": "ValidationFailed"
+    },
+
+    "ValidationFailed": {
+      "Type": "Pass",
+      "Result": {
+        "Error": "VALIDATION_ERROR",
+        "Cause": "Missing required fields: secret_id, adapter"
+      },
+      "ResultPath": "$.error_info",
+      "Next": "ValidationFailedAlert"
+    },
+
+    "ValidationFailedAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_failure_topic}",
+        "Subject": "CRITICAL: Aspire Rotation Validation Failed",
+        "Message": "Rotation request rejected — missing required fields (secret_id or adapter). This indicates a malformed request from n8n or API caller."
+      },
+      "ResultPath": null,
+      "Next": "EmitValidationFailureReceipt"
+    },
+
+    "EmitValidationFailureReceipt": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "emit_receipt",
+        "secret_id": "unknown",
+        "adapter": "unknown",
+        "correlation_id": "validation-failed",
+        "outcome": "failed",
+        "error_info.$": "$.error_info"
+      },
+      "ResultPath": "$.failure_receipt",
+      "Next": "FailExecution"
+    },
+
+    "CreateNewKey": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "create_key",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "triggered_by.$": "$.triggered_by"
+      },
+      "ResultPath": "$.create_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed", "Lambda.ServiceException"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "RotationFailed",
+          "ResultPath": "$.error_info"
+        }
+      ],
+      "Next": "WritePendingVersion"
+    },
+
+    "WritePendingVersion": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "write_pending",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "new_key_data.$": "$.create_result.new_key_data",
+        "old_key_id.$": "$.create_result.old_key_id"
+      },
+      "ResultPath": "$.pending_result",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "RotationFailed",
+          "ResultPath": "$.error_info"
+        }
+      ],
+      "Next": "TestNewKey"
+    },
+
+    "TestNewKey": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "test_key",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "pending_version_id.$": "$.pending_result.version_id"
+      },
+      "ResultPath": "$.test_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["TestKeyRetryable"],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "RollbackPending",
+          "ResultPath": "$.error_info"
+        }
+      ],
+      "Next": "PromoteToCurrent"
+    },
+
+    "PromoteToCurrent": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "promote",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "pending_version_id.$": "$.pending_result.version_id"
+      },
+      "ResultPath": "$.promote_result",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "RotationFailed",
+          "ResultPath": "$.error_info"
+        }
+      ],
+      "Next": "OverlapWait"
+    },
+
+    "OverlapWait": {
+      "Type": "Wait",
+      "Comment": "Dual-key overlap window — services pick up new key via cache TTL refresh",
+      "SecondsPath": "$.promote_result.overlap_seconds",
+      "Next": "CutoverVerification"
+    },
+
+    "CutoverVerification": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "verify_cutover",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id"
+      },
+      "ResultPath": "$.cutover_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["CutoverRetryable"],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 5,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "CutoverFailedAlert",
+          "ResultPath": "$.error_info"
+        }
+      ],
+      "Next": "RevokeOldKey"
+    },
+
+    "RevokeOldKey": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "revoke_old",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "old_key_id.$": "$.create_result.old_key_id"
+      },
+      "ResultPath": "$.revoke_result",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "RevokeFailedAlert",
+          "ResultPath": "$.error_info"
+        }
+      ],
+      "Next": "EmitReceipt"
+    },
+
+    "EmitReceipt": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "emit_receipt",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "outcome": "success",
+        "create_result.$": "$.create_result",
+        "test_result.$": "$.test_result",
+        "revoke_result.$": "$.revoke_result"
+      },
+      "ResultPath": "$.receipt",
+      "Next": "NotifySuccess"
+    },
+
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_events_topic}",
+        "Subject": "Aspire Rotation Success",
+        "Message.$": "States.Format('Rotation complete for {} ({}). Receipt: {}. Correlation: {}', $.adapter, $.secret_id, $.receipt.receipt_id, $.correlation_id)"
+      },
+      "End": true
+    },
+
+    "RollbackPending": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "rollback_pending",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "pending_version_id.$": "$.pending_result.version_id"
+      },
+      "ResultPath": "$.rollback_result",
+      "Next": "RotationFailed"
+    },
+
+    "CutoverFailedAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_failure_topic}",
+        "Subject": "CRITICAL: Aspire Rotation Cutover Failed",
+        "Message.$": "States.Format('Cutover verification failed for {} ({}). New key is CURRENT but old key revocation skipped. Manual investigation required. Correlation: {}', $.adapter, $.secret_id, $.correlation_id)"
+      },
+      "ResultPath": null,
+      "Next": "EmitFailureReceipt"
+    },
+
+    "RevokeFailedAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_failure_topic}",
+        "Subject": "WARNING: Aspire Old Key Revocation Failed",
+        "Message.$": "States.Format('Old key revocation failed for {} ({}). New key is active and tested. Old key may still be valid. Correlation: {}', $.adapter, $.secret_id, $.correlation_id)"
+      },
+      "ResultPath": null,
+      "Next": "EmitFailureReceipt"
+    },
+
+    "RotationFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_failure_topic}",
+        "Subject": "CRITICAL: Aspire Secret Rotation Failed",
+        "Message.$": "States.Format('Rotation FAILED for {} ({}). No key change was made (fail-closed). Error: {}. Correlation: {}', $.adapter, $.secret_id, $.error_info.Cause, $.correlation_id)"
+      },
+      "ResultPath": null,
+      "Next": "EmitFailureReceipt"
+    },
+
+    "EmitFailureReceipt": {
+      "Type": "Task",
+      "Resource": "${rotation_handler_arn}",
+      "Parameters": {
+        "step": "emit_receipt",
+        "secret_id.$": "$.secret_id",
+        "adapter.$": "$.adapter",
+        "correlation_id.$": "$.correlation_id",
+        "outcome": "failed",
+        "error_info.$": "$.error_info"
+      },
+      "ResultPath": "$.failure_receipt",
+      "Next": "FailExecution"
+    },
+
+    "FailExecution": {
+      "Type": "Fail",
+      "Error": "ROTATION_FAILED",
+      "Cause": "Secret rotation failed — see SNS notification and receipt for details"
+    }
+  }
+}

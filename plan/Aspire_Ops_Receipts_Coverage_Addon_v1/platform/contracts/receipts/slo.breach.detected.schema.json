@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "slo.breach.detected",
+  "description": "SLO breach detected (should open or link to incident).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "slo.breach.detected"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "slo_name": {
+          "type": "string"
+        },
+        "window": {
+          "type": "string"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "observed": {
+          "type": "number"
+        },
+        "error_budget_remaining": {
+          "type": "number"
+        },
+        "incident_receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "service",
+        "slo_name",
+        "window",
+        "threshold",
+        "observed"
+      ]
+    }
+  ]
+}

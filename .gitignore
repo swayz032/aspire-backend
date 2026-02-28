@@ -36,5 +36,21 @@ coverage/
 .env.production
 secrets.vault.json
 
+# Infrastructure secrets (never commit)
+infrastructure/docker/.env
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Binary artifacts (keep out of git)
+*.zip
+*.pdf
+infrastructure/aws/rotation/builds/
+
+# Temp/cache
+tmp_*.json
+scripts/__pycache__/
+plan/temp_ecosystem_scan/
+
 # Misc
 *.log

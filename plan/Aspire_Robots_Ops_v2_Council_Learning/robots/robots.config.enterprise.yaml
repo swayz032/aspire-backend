@@ -1,0 +1,17 @@
+# Enterprise robots config overlay (template)
+# Keep the original robots.config.yaml unchanged.
+version: 1
+sentinels:
+  # Canonical core pack (after unzip):
+  # Aspire_Core_Platform_v1/platform/Aspire_Handoff_v1/...
+  trustspine:
+    - "platform/Aspire_Handoff_v1/trust-spine/00_START_HERE/README.md"
+    - "platform/Aspire_Handoff_v1/trust-spine/08_CLAUDE_JOB_KIT/ADR"
+    - "platform/Aspire_Handoff_v1/contracts/receipts/receipt.schema.json"
+  control_plane:
+    - "platform/Aspire_Handoff_v1/control-plane/db/migrations/0001_control_plane_tables.sql"
+  gateway:
+    - "platform/Aspire_Handoff_v1/gateway"
+ingest:
+  endpoint: "/robots/ingest"
+  method: "POST"

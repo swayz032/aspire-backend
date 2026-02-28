@@ -1,0 +1,128 @@
+# ============================================================================
+# ASPIRE TENANT IDENTITY - CANONICAL DEFINITION
+# ============================================================================
+# Single Source of Truth for tenant identity hierarchy
+#
+# RESOLUTION: Deep scan conflict C3 — suite_id vs tenant_id
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-07
+# ============================================================================
+
+schema_version: "1.0.0"
+schema_name: "tenant-identity"
+description: |
+  Canonical Tenant Identity Definition for Aspire Governance System.
+  Resolves the suite_id vs tenant_id naming conflict.
+  suite_id is PRIMARY. tenant_id is AUTO-SYNCED via database trigger.
+
+# ============================================================================
+# IDENTITY HIERARCHY
+# ============================================================================
+hierarchy:
+  level_1:
+    name: "Suite"
+    field: "suite_id"
+    type: "uuid"
+    description: |
+      Top-level business/organization identifier.
+      This is the PRIMARY tenant isolation boundary.
+      All RLS policies use suite_id.
+    canonical: true
+    examples:
+      - "Plumbing Pro LLC"
+      - "Creative Design Studio"
+      - "Legal Eagles Partnership"
+
+  level_2:
+    name: "Office"
+    field: "office_id"
+    type: "uuid"
+    description: |
+      Department/division within a Suite.
+      Sub-isolation boundary for team-level separation.
+    canonical: true
+    examples:
+      - "Main Office"
+      - "Finance Department"
+      - "Operations Team"
+
+# ============================================================================
+# NAMING RESOLUTION (Deep Scan C3)
+# ============================================================================
+naming_resolution:
+  primary_field: "suite_id"
+  legacy_field: "tenant_id"
+  relationship: "suite_id IS the tenant identifier"
+
+  sync_mechanism:
+    type: "database_trigger"
+    function_name: "trust_sync_tenant_id_from_suite()"
+    behavior: |
+      When suite_id is set/changed, tenant_id is automatically
+      populated with the same value. This ensures backward
+      compatibility with any code referencing tenant_id while
+      establishing suite_id as the canonical field.
+
+  trigger_sql: |
+    CREATE OR REPLACE FUNCTION trust_sync_tenant_id_from_suite()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.tenant_id := NEW.suite_id;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+  migration_guidance:
+    new_code: "Always use suite_id"
+    existing_code: "tenant_id continues to work via trigger sync"
+    rls_policies: "Always use suite_id in RLS policies"
+    api_contracts: "Accept both suite_id and tenant_id, normalize to suite_id"
+
+# ============================================================================
+# RLS ENFORCEMENT PATTERN
+# ============================================================================
+rls_pattern:
+  session_variable: "app.current_suite_id"
+  policy_template: |
+    CREATE POLICY {table}_tenant_isolation ON {table}
+      USING (suite_id = current_setting('app.current_suite_id')::uuid);
+
+  tables_requiring_rls:
+    - "receipts"
+    - "capability_tokens"
+    - "approvals"
+    - "outbox_jobs"
+    - "offices"
+    - "skill_pack_configs"
+    - "intents"
+
+# ============================================================================
+# VALIDATION RULES
+# ============================================================================
+validation:
+  banned_patterns:
+    - pattern: "tenant_id.*=.*current_setting"
+      message: "Use suite_id in RLS policies, not tenant_id"
+      severity: "warning"
+    - pattern: "WHERE tenant_id"
+      message: "Prefer suite_id for queries. tenant_id is a sync alias."
+      severity: "warning"
+
+  required_patterns:
+    - pattern: "suite_id UUID NOT NULL"
+      message: "All tenant-scoped tables must have suite_id"
+      severity: "error"
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #6: Tenant Isolation (Suite/Office Zoning)"
+  claude_md_section: "## 6) Tenant Isolation (Suite/Office Zoning)"
+  related_schemas:
+    - "receipts.schema.v1.yaml"
+    - "capability-token.schema.v1.yaml"
+  conflict_resolved: "Deep Scan C3: suite_id vs tenant_id"
+  phase_introduced: "Phase 0B (deployment), Phase 1A (validation)"
+  gates_related:
+    - "Gate 7: RLS Isolation"

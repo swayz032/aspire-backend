@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "entitlement.usage.capped",
+  "description": "Usage cap set/enforced for a suite.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "entitlement.usage.capped"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "suite_id": {
+          "type": "string"
+        },
+        "cap_name": {
+          "type": "string"
+        },
+        "cap_value": {
+          "type": "number"
+        },
+        "period": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month"
+          ]
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "suite_id",
+        "cap_name",
+        "cap_value"
+      ]
+    }
+  ]
+}

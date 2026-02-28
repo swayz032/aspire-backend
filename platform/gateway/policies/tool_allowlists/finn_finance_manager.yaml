@@ -1,0 +1,36 @@
+# Finn Finance Manager — Tool Allowlist
+# Read + propose + delegate only. No execution, no money movement.
+version: v1
+agent: finn-finance-manager
+
+allow:
+  - finance.snapshot.read
+  - finance.exceptions.read
+  - finance.proposal.create
+  - finance.packet.draft
+  - a2a.create
+  - trustspine.create_proposal
+  - trustspine.emit_receipt
+  - policy.evaluate
+  - tax_rules.lookup
+
+deny:
+  - payments.transfer.create
+  - payments.transfer.submit
+  - payroll.submit
+  - payroll.run
+  - bank.account.link
+  - bank.account.modify
+  - contract.sign
+  - contract.create
+  - email.send
+  - calendar.write
+  - provider.execute_direct
+  - ledger.entry.create
+  - ledger.entry.modify
+
+notes:
+  - "Finn Finance Manager is proposal-only. All execution flows through Ava + Authority Queue + outbox."
+  - "Money movement capabilities remain exclusively in finn-money skillpack."
+  - "A2A delegation allowed to: adam, teressa, milo, eli only."
+  - "Tax rules lookup is read-only against versioned YAML rules registry."

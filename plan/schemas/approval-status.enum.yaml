@@ -1,0 +1,103 @@
+# ============================================================================
+# ASPIRE APPROVAL STATUS - CANONICAL DEFINITION
+# ============================================================================
+# Single Source of Truth for approval status values
+#
+# RESOLUTION: Deep scan conflict H1 — denied vs rejected
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-07
+# ============================================================================
+
+schema_version: "1.0.0"
+schema_name: "approval-status"
+description: |
+  Canonical Approval Status Enum for Aspire Governance System.
+  SQL database schema is the source of truth.
+  CLAUDE.md uses "denied" in outcome — that refers to the receipt outcome,
+  not the approval status. Approval status uses "rejected".
+
+# ============================================================================
+# CANONICAL VALUES
+# ============================================================================
+approval_statuses:
+
+  PENDING:
+    canonical_value: "pending"
+    description: "Approval request submitted, awaiting user decision"
+    terminal: false
+
+  APPROVED:
+    canonical_value: "approved"
+    description: "User approved the action for execution"
+    terminal: true
+
+  REJECTED:
+    canonical_value: "rejected"
+    description: "User explicitly rejected the action"
+    terminal: true
+    note: |
+      SQL uses "rejected" (not "denied"). The receipt outcome uses "denied"
+      to indicate the overall action was denied. These are different fields:
+      - approval_status = "rejected" (the approval decision)
+      - outcome = "denied" (the receipt outcome)
+
+  EXPIRED:
+    canonical_value: "expired"
+    description: "Approval timed out without user response"
+    terminal: true
+    timeout_behavior: "Fail closed — no approval = denial (Law #3)"
+
+  CANCELED:
+    canonical_value: "canceled"
+    description: "Approval request withdrawn before decision"
+    terminal: true
+
+# ============================================================================
+# SEMANTIC DISTINCTION
+# ============================================================================
+semantic_note: |
+  "rejected" vs "denied" disambiguation:
+
+  | Field             | Value      | Context                                  |
+  |-------------------|------------|------------------------------------------|
+  | approval_status   | rejected   | User explicitly said "no" to the request |
+  | outcome (receipt) | denied     | The action did not execute for any reason |
+
+  An action can be "denied" (outcome) because:
+  - approval_status = "rejected" (user said no)
+  - approval_status = "expired" (timed out)
+  - Missing capability token
+  - Policy evaluation returned DENY
+  - Missing permission
+
+# ============================================================================
+# SQL DEFINITION
+# ============================================================================
+sql:
+  column: "approval_status TEXT NOT NULL CHECK (approval_status IN ('pending', 'approved', 'rejected', 'expired', 'canceled'))"
+  default: "'pending'"
+
+# ============================================================================
+# TYPESCRIPT DEFINITION
+# ============================================================================
+typescript:
+  type: "type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'canceled';"
+
+# ============================================================================
+# JSON SCHEMA
+# ============================================================================
+json_schema:
+  type: "string"
+  enum: ["pending", "approved", "rejected", "expired", "canceled"]
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #4: Risk Tiers Enforced (approval gates)"
+  related_schemas:
+    - "receipts.schema.v1.yaml"
+    - "outcome-status.enum.yaml"
+    - "risk-tiers.enum.yaml"
+  conflict_resolved: "Deep Scan H1: denied vs rejected"
+  phase_introduced: "Phase 1"

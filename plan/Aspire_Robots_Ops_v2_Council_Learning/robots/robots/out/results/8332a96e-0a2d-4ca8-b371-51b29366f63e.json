@@ -1,0 +1,22 @@
+{
+  "id": "8332a96e-0a2d-4ca8-b371-51b29366f63e",
+  "env": "staging",
+  "suite": "aspire_robots",
+  "status": "passed",
+  "startedAt": "2026-01-19T03:34:21Z",
+  "finishedAt": "2026-01-19T03:34:21Z",
+  "versionRef": "local",
+  "summary": "sync_validate:passed",
+  "scenarios": [
+    {
+      "name": "sync_validate",
+      "status": "passed",
+      "summary": "sentinels OK (8 files checked)",
+      "evidence": []
+    }
+  ],
+  "meta": {
+    "mode": "validate",
+    "config": "robots.config.yaml"
+  }
+}

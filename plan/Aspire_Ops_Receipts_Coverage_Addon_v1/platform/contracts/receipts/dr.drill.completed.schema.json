@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dr.drill.completed",
+  "description": "Disaster recovery drill completed.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "dr.drill.completed"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "scenario": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "fail"
+          ]
+        },
+        "rto_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rpo_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runbook_ref": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "scenario",
+        "status",
+        "rto_minutes",
+        "rpo_minutes"
+      ]
+    }
+  ]
+}

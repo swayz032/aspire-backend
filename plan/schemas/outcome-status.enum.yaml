@@ -1,0 +1,98 @@
+# ============================================================================
+# ASPIRE OUTCOME STATUS - CANONICAL DEFINITION
+# ============================================================================
+# Single Source of Truth for receipt outcome values
+#
+# RESOLUTION: Deep scan conflict H2
+# VERSION: 1.0.0
+# LAST UPDATED: 2026-02-07
+# ============================================================================
+
+schema_version: "1.0.0"
+schema_name: "outcome-status"
+description: |
+  Canonical Outcome Status Enum for Aspire Receipt System.
+  CLAUDE.md is the source of truth for outcome values.
+  These are the values used in the receipts table outcome column.
+
+# ============================================================================
+# CANONICAL VALUES (CLAUDE.md is truth)
+# ============================================================================
+outcome_statuses:
+
+  SUCCESS:
+    canonical_value: "success"
+    description: "Action executed successfully"
+    generates_receipt: true
+
+  DENIED:
+    canonical_value: "denied"
+    description: "Action was denied before execution"
+    generates_receipt: true
+    reasons:
+      - "approval_status = rejected (user said no)"
+      - "approval_status = expired (timed out)"
+      - "Missing capability token"
+      - "Policy evaluation returned DENY"
+      - "Fail-closed default (Law #3)"
+
+  FAILED:
+    canonical_value: "failed"
+    description: "Action attempted execution but failed"
+    generates_receipt: true
+    reasons:
+      - "External API error"
+      - "Network timeout"
+      - "Invalid parameters"
+      - "Provider unavailable"
+
+  TIMEOUT:
+    canonical_value: "timeout"
+    description: "Action timed out during execution"
+    generates_receipt: true
+    note: "Different from approval timeout (which produces denied)"
+
+  PENDING:
+    canonical_value: "pending"
+    description: "Action is in progress, awaiting completion"
+    generates_receipt: true
+    note: "Terminal state will be updated to success/failed/timeout"
+
+# ============================================================================
+# LAW #2 ENFORCEMENT
+# ============================================================================
+law_2_note: |
+  Every outcome generates a receipt. There is no outcome that skips receipts.
+  "denied" and "failed" outcomes are just as important as "success" outcomes
+  for the audit trail. Law #2 requires 100% coverage.
+
+# ============================================================================
+# SQL DEFINITION
+# ============================================================================
+sql:
+  column: "outcome TEXT NOT NULL CHECK (outcome IN ('success', 'denied', 'failed', 'timeout', 'pending'))"
+
+# ============================================================================
+# TYPESCRIPT DEFINITION
+# ============================================================================
+typescript:
+  type: "type Outcome = 'success' | 'denied' | 'failed' | 'timeout' | 'pending';"
+
+# ============================================================================
+# JSON SCHEMA
+# ============================================================================
+json_schema:
+  type: "string"
+  enum: ["success", "denied", "failed", "timeout", "pending"]
+
+# ============================================================================
+# CROSS-REFERENCE
+# ============================================================================
+cross_references:
+  aspire_law: "Law #2: No Action Without a Receipt"
+  claude_md_section: "## 2) No Action Without a Receipt"
+  related_schemas:
+    - "receipts.schema.v1.yaml"
+    - "approval-status.enum.yaml"
+  conflict_resolved: "Deep Scan H2: outcome status normalization"
+  phase_introduced: "Phase 1"

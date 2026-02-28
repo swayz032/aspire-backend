@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "deploy.started",
+  "description": "Deployment initiated.",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "deploy.started"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "release_id": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string",
+          "enum": [
+            "dev",
+            "staging",
+            "prod"
+          ]
+        },
+        "actor": {
+          "type": "string",
+          "description": "who initiated (ava|human|system)"
+        },
+        "change_proposal_id": {
+          "type": "string"
+        },
+        "canary_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "release_id",
+        "environment",
+        "actor"
+      ]
+    }
+  ]
+}

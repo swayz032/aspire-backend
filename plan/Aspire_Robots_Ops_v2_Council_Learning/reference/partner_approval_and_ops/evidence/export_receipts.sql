@@ -1,0 +1,2 @@
+-- Export receipts for a trace_id
+-- SELECT * FROM receipts WHERE trace_id = :trace_id ORDER BY created_at;

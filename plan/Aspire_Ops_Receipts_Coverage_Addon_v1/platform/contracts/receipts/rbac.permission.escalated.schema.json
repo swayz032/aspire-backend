@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rbac.permission.escalated",
+  "description": "Privilege escalation event (should usually require approval).",
+  "allOf": [
+    {
+      "$ref": "./receipt.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": {
+          "const": "rbac.permission.escalated"
+        },
+        "office_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "suite_id": {
+          "type": "string"
+        },
+        "target_office_id": {
+          "type": "string"
+        },
+        "from_role": {
+          "type": "string"
+        },
+        "to_role": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "approval_receipt_id": {
+          "type": "string"
+        },
+        "requires_ava_video": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "receipt_type",
+        "office_id",
+        "trace_id",
+        "suite_id",
+        "target_office_id",
+        "from_role",
+        "to_role",
+        "reason"
+      ]
+    }
+  ]
+}

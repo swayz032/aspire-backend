@@ -1,0 +1,337 @@
+{
+  "name": "Secret Rotation Orchestrator \u2014 Scheduled",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "triggerAtHour": 2 }]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Daily 2am UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Kill switch check + request prep for rotation orchestrator\nconst enabled = $env.N8N_WORKFLOW_ROTATION_ORCHESTRATOR_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: 'true', reason: 'kill_switch_disabled' } }];\n}\n\nconst requestId = 'ops-rotation-orch-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = 'n8n-rotation-orchestrator-' + new Date().toISOString().slice(0, 10);\nconst crypto = require('crypto');\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({\n  action: 'ops.secret_rotation_orchestrate',\n  date: new Date().toISOString().slice(0, 10)\n})).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(\n  requestId + 'ops.secret_rotation_orchestrate' + payloadHash\n).digest('hex');\n\nreturn [{ json: {\n  killed: 'false',\n  requestId,\n  correlationId,\n  idempotencyKey,\n  timestamp: new Date().toISOString()\n} }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "kill-check-01",
+              "operator": { "type": "string", "operation": "equals" },
+              "leftValue": "={{ $json.killed }}",
+              "rightValue": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build rotation job list with jitter to avoid thundering herd.\nconst schedule = [\n  { secret_id: 'stripe', adapter: 'stripe', rotation_interval_days: 30 },\n  { secret_id: 'twilio', adapter: 'twilio', rotation_interval_days: 90 },\n  { secret_id: 'openai', adapter: 'openai', rotation_interval_days: 90 },\n  { secret_id: 'internal', adapter: 'internal', rotation_interval_days: 90 },\n  { secret_id: 'supabase', adapter: 'supabase', rotation_interval_days: 90 }\n];\n\nconst parentCorrelationId = $('Kill Switch + Prep').item.json.correlationId;\nconst parentRequestId = $('Kill Switch + Prep').item.json.requestId;\n\nconst jobs = schedule.map((s, idx) => {\n  const jitterMs = Math.floor(Math.random() * 60 * 60 * 1000);\n  const jitterSeconds = Math.floor(jitterMs / 1000);\n  return {\n    secret_id: s.secret_id,\n    adapter: s.adapter,\n    rotation_interval_days: s.rotation_interval_days,\n    correlation_id: parentCorrelationId + '-' + s.secret_id,\n    parent_correlation_id: parentCorrelationId,\n    parent_request_id: parentRequestId,\n    triggered_by: 'n8n-schedule',\n    jitter_seconds: jitterSeconds,\n    job_index: idx,\n    total_jobs: schedule.length\n  };\n});\n\nreturn jobs.map(j => ({ json: j }));"
+      },
+      "id": "build-rotation-jobs",
+      "name": "Build Rotation Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "loop-over-jobs",
+      "name": "Loop Over Jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": { "resume": "timeInterval", "amount": "={{ Number($json.jitter_seconds) }}", "unit": "seconds" },
+      "id": "wait-jitter",
+      "name": "Wait Jitter",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate per-job idempotency key and prepare the request body.\nconst crypto = require('crypto');\nconst job = $input.item.json;\nconst today = new Date().toISOString().slice(0, 10);\n\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify({\n  secret_id: job.secret_id,\n  adapter: job.adapter,\n  date: today\n})).digest('hex');\n\nconst jobIdempotencyKey = crypto.createHash('sha256').update(\n  job.parent_request_id + 'ops.trigger_rotation.' + job.secret_id + payloadHash\n).digest('hex');\n\nreturn [{ json: {\n  ...job,\n  idempotency_key: jobIdempotencyKey,\n  request_body: {\n    secret_id: job.secret_id,\n    adapter: job.adapter,\n    correlation_id: job.correlation_id,\n    triggered_by: job.triggered_by,\n    idempotency_key: jobIdempotencyKey,\n    rotation_interval_days: job.rotation_interval_days\n  }\n} }];"
+      },
+      "id": "prepare-rotation-request",
+      "name": "Prepare Rotation Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROTATION_API_URL }}/rotate",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Correlation-ID", "value": "={{ $json.correlation_id }}" },
+            { "name": "X-Idempotency-Key", "value": "={{ $json.idempotency_key }}" },
+            { "name": "X-N8N-Workflow-ID", "value": "rotation-orchestrator" },
+            { "name": "X-AWS-Access-Key-ID", "value": "={{ $env.AWS_ROTATION_TRIGGER_ACCESS_KEY_ID }}" },
+            { "name": "X-AWS-Secret-Access-Key", "value": "={{ $env.AWS_ROTATION_TRIGGER_SECRET_ACCESS_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "trigger-rotation-api",
+      "name": "POST Rotate \u2014 Rotation API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "response-check-01",
+              "operator": { "type": "string", "operation": "equals" },
+              "leftValue": "={{ $json.error ? 'fail' : 'ok' }}",
+              "rightValue": "ok"
+            }
+          ]
+        }
+      },
+      "id": "check-response",
+      "name": "Rotation Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1980, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-rotation-ok-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Prepare Rotation Request').item.json.correlation_id, actor_type: 'SYSTEM', actor_id: 'n8n-rotation-orchestrator', action: { action_type: 'ops.trigger_rotation', risk_tier: 'red', secret_id: $('Prepare Rotation Request').item.json.secret_id, adapter: $('Prepare Rotation Request').item.json.adapter, idempotency_key: $('Prepare Rotation Request').item.json.idempotency_key }, created_at: new Date().toISOString() }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "emit-receipt-rotation-ok",
+      "name": "Emit Rotation Success Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-suite-id", "value": "={{ $env.DEFAULT_SUITE_ID }}" },
+            { "name": "x-office-id", "value": "={{ $env.DEFAULT_OFFICE_ID }}" },
+            { "name": "x-correlation-id", "value": "={{ $('Prepare Rotation Request').item.json.correlation_id }}" },
+            { "name": "x-n8n-workflow-id", "value": "rotation-orchestrator" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'ops.rotation_failure_alert', agent: 'system', suite_id: $env.DEFAULT_SUITE_ID, office_id: $env.DEFAULT_OFFICE_ID, request_id: $('Prepare Rotation Request').item.json.parent_request_id, correlation_id: $('Prepare Rotation Request').item.json.correlation_id, payload: { alert_type: 'rotation_trigger_failed', secret_id: $('Prepare Rotation Request').item.json.secret_id, adapter: $('Prepare Rotation Request').item.json.adapter, error: $json.message || $json.error || 'Rotation API returned error', severity: 'critical', notify_channel: 'ops' } }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "alert-rotation-failure",
+      "name": "Alert Rotation Failure \u2014 Gateway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 500],
+      "credentials": { "httpHeaderAuth": { "id": "J84m12hyzSwSHo6S", "name": "Gateway Internal Key" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-rotation-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'FAILED', correlation_id: $('Prepare Rotation Request').item.json.correlation_id, actor_type: 'SYSTEM', actor_id: 'n8n-rotation-orchestrator', action: { action_type: 'ops.trigger_rotation', risk_tier: 'red', secret_id: $('Prepare Rotation Request').item.json.secret_id, adapter: $('Prepare Rotation Request').item.json.adapter }, result: { error_message: $json.message || $json.error || 'Rotation trigger failed' }, created_at: new Date().toISOString() }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "emit-receipt-rotation-fail",
+      "name": "Emit Rotation Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2420, 500],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-rotation-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SKIPPED', correlation_id: 'n8n-rotation-orchestrator-killed-' + new Date().toISOString().slice(0, 10) + '-' + Date.now(), actor_type: 'SYSTEM', actor_id: 'n8n-rotation-orchestrator', action: { action_type: 'ops.secret_rotation_orchestrate', reason: $json.reason || 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill Switch Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [440, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-rotation-orch-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'FAILED', correlation_id: 'n8n-rotation-orchestrator-error-' + new Date().toISOString().slice(0, 10) + '-' + Date.now(), actor_type: 'SYSTEM', actor_id: 'n8n-rotation-orchestrator', action: { action_type: 'ops.secret_rotation_orchestrate' }, result: { error_message: 'Rotation orchestrator workflow failed' }, created_at: new Date().toISOString() }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "emit-receipt-error",
+      "name": "Emit Error Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 600],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-rotation-batch-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-rotation-orchestrator', action: { action_type: 'ops.secret_rotation_batch_complete', risk_tier: 'red', request_id: $('Kill Switch + Prep').item.json.requestId, idempotency_key: $('Kill Switch + Prep').item.json.idempotencyKey }, created_at: new Date().toISOString() }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "emit-receipt-batch-done",
+      "name": "Emit Batch Complete Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 300],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Daily 2am UTC": { "main": [[{ "node": "Kill Switch + Prep", "type": "main", "index": 0 }]] },
+    "Kill Switch + Prep": { "main": [[{ "node": "Kill Switch Active?", "type": "main", "index": 0 }]] },
+    "Kill Switch Active?": {
+      "main": [
+        [{ "node": "Emit Kill Switch Receipt", "type": "main", "index": 0 }],
+        [{ "node": "Build Rotation Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Rotation Jobs": { "main": [[{ "node": "Loop Over Jobs", "type": "main", "index": 0 }]] },
+    "Loop Over Jobs": {
+      "main": [
+        [{ "node": "Wait Jitter", "type": "main", "index": 0 }],
+        [{ "node": "Emit Batch Complete Receipt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait Jitter": { "main": [[{ "node": "Prepare Rotation Request", "type": "main", "index": 0 }]] },
+    "Prepare Rotation Request": { "main": [[{ "node": "POST Rotate \u2014 Rotation API", "type": "main", "index": 0 }]] },
+    "POST Rotate \u2014 Rotation API": { "main": [[{ "node": "Rotation Succeeded?", "type": "main", "index": 0 }]] },
+    "Rotation Succeeded?": {
+      "main": [
+        [{ "node": "Emit Rotation Success Receipt", "type": "main", "index": 0 }],
+        [{ "node": "Alert Rotation Failure \u2014 Gateway", "type": "main", "index": 0 }]
+      ]
+    },
+    "Emit Rotation Success Receipt": { "main": [[{ "node": "Loop Over Jobs", "type": "main", "index": 0 }]] },
+    "Alert Rotation Failure \u2014 Gateway": { "main": [[{ "node": "Emit Rotation Failure Receipt", "type": "main", "index": 0 }]] },
+    "Emit Rotation Failure Receipt": { "main": [[{ "node": "Loop Over Jobs", "type": "main", "index": 0 }]] },
+    "Error Trigger": { "main": [[{ "node": "Emit Error Receipt", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

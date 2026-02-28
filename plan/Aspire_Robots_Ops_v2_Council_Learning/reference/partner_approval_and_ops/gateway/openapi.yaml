@@ -1,0 +1,16 @@
+openapi: 3.0.3
+info:
+  title: Aspire Gateway API
+  version: 0.1.0
+paths:
+  /webhooks/{provider}:
+    post:
+      summary: Provider webhook ingestion (signature verified, idempotent)
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+components: {}

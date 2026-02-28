@@ -1,0 +1,35 @@
+version: v1
+agent: finn-finance-manager
+capabilities:
+  - name: read_finance_snapshot
+    description: Read financial snapshots (cash position, forecast, revenue/expenses)
+    risk_tier: green
+  - name: read_finance_exceptions
+    description: Read ranked finance exceptions across all lanes
+    risk_tier: green
+  - name: draft_finance_packet
+    description: Generate CPA-ready packets and tax planning artifacts
+    risk_tier: green
+  - name: create_finance_proposal
+    description: Create finance proposals for Authority Queue
+    risk_tier: yellow
+  - name: create_a2a_work_item
+    description: Delegate work to other agents via Ava A2A
+    risk_tier: yellow
+
+constraints:
+  - "Proposal-only: Finn Finance Manager never executes side effects."
+  - "No money movement capabilities — those remain in finn-money skillpack."
+  - "No provider write scopes."
+  - "Tax planning is evidence-backed guidance, not professional representation."
+  - "A2A delegation limited to: adam, teressa, milo, eli."
+  - "Max delegation depth: 2 (Finn → Ava → target)."
+
+explicitly_excluded:
+  - payments.transfer.create
+  - payments.transfer.submit
+  - payroll.submit
+  - bank.account.link
+  - bank.account.modify
+  - contract.sign
+  - provider.execute_direct
