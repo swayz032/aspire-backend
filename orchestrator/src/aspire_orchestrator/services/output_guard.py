@@ -126,6 +126,7 @@ def guard_output(
     surface: str = "user",
     skillpack_id: str = "ava",
     tool_results: list[dict[str, Any]] | None = None,
+    channel: str = "chat",
 ) -> str:
     """Strip phantom execution claims and enforce consultant plan scaffold.
 
@@ -136,6 +137,8 @@ def guard_output(
         surface: "user" or "admin"
         skillpack_id: Agent routing target (for plan scaffold delegation step)
         tool_results: Optional tool execution results for quality checks
+        channel: Interaction channel — "voice", "chat", "video". Scaffold is
+                 skipped for voice/chat/video to keep responses natural for TTS.
 
     Returns:
         Guarded text with execution claims removed if no receipts confirm them.
@@ -173,7 +176,13 @@ def guard_output(
             )
 
     # User surface: enforce consultant plan scaffold (v1.5 ensureUserPlanSections)
-    if surface == "user" and outcome in ("pending", "approval_required", "success"):
+    # Skip scaffold for conversational channels — it injects markdown that TTS reads
+    # literally and makes chat responses sound robotic
+    if (
+        surface == "user"
+        and outcome in ("pending", "approval_required", "success")
+        and channel not in ("voice", "chat", "video", "text")
+    ):
         scaffolded, scaffold_changed = _ensure_plan_scaffold(text, skillpack_id)
         if scaffold_changed:
             text = scaffolded

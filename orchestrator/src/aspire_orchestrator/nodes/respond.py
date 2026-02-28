@@ -267,6 +267,38 @@ def _generate_response_text(state: OrchestratorState) -> str:
     return "I've processed your request."
 
 
+_FORMAT_STRIP_PHRASES = [
+    "return json only",
+    "output json only",
+    "json only",
+    "matching the shared output schema",
+]
+
+
+def _strip_format_instructions(persona_text: str) -> str:
+    """Remove JSON/structured format instructions from persona for voice/chat.
+
+    Persona files may contain 'Return JSON only' or similar instructions that
+    force the LLM to output structured data instead of natural language. These
+    must be stripped when generating conversational responses for voice/chat.
+    """
+    lines = persona_text.split("\n")
+    filtered: list[str] = []
+    skip_section = False
+    for line in lines:
+        lower = line.lower().strip()
+        if any(p in lower for p in _FORMAT_STRIP_PHRASES):
+            skip_section = lower.startswith("##")
+            continue
+        if skip_section:
+            if line.strip().startswith("##"):
+                skip_section = False
+            else:
+                continue
+        filtered.append(line)
+    return "\n".join(filtered)
+
+
 def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
     """Generate persona-aware response text via LLM (Summary step).
 
@@ -298,6 +330,8 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
     # Load the routed agent's persona for response generation
     agent_id = _resolve_agent_id(state)
     persona = _load_agent_persona(agent_id)
+    if persona:
+        persona = _strip_format_instructions(persona)
 
     # Build the summarization prompt
     prompt = (
@@ -321,7 +355,7 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        content = _call_openai_sync(messages)
+        content = _call_openai_sync(messages, model=settings.router_model_general)
 
         if content:
             logger.info("LLM summarization success for %s (len=%d)", agent_id, len(content))
@@ -339,6 +373,8 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str) -> str:
     """Generate a natural conversational reply for non-action input."""
     agent_id = _resolve_agent_id(state)
     persona = _load_agent_persona(agent_id)
+    if persona:
+        persona = _strip_format_instructions(persona)
 
     _DISPLAY_NAMES = {
         "finn_fm": "Finn", "ava": "Ava", "eli": "Eli",
@@ -365,7 +401,7 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str) -> str:
         if persona:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
-        content = _call_openai_sync(messages)
+        content = _call_openai_sync(messages, model=settings.router_model_general)
         if content:
             return content
     except Exception as e:
@@ -856,6 +892,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         text=response_text,
         receipts=list(state.get("pipeline_receipts", [])),
         outcome=outcome_val,
+        channel=_channel,
     )
 
     # Build governance metadata

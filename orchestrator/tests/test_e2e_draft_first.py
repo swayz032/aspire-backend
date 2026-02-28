@@ -868,16 +868,17 @@ class TestErrorSanitization:
 # Enterprise Hardening: Output Guard Plan Scaffold
 # ===========================================================================
 class TestOutputGuardScaffold:
-    """Output guard enforces consultant plan scaffold on user surface."""
+    """Output guard enforces consultant plan scaffold on structured UI surface."""
 
-    def test_scaffold_applied_on_user_surface(self) -> None:
-        """User surface without scaffold sections gets scaffold appended."""
+    def test_scaffold_applied_on_structured_ui(self) -> None:
+        """Structured UI surface without scaffold sections gets scaffold appended."""
         from aspire_orchestrator.services.output_guard import guard_output
 
         text = "Here's my analysis of your business situation."
         result = guard_output(
             text=text, receipts=[{"outcome": "success"}],
             outcome="success", surface="user", skillpack_id="quinn",
+            channel="structured_ui",
         )
 
         assert "Snapshot:" in result
@@ -885,6 +886,34 @@ class TestOutputGuardScaffold:
         assert "Delegate:" in result
         assert "Checkpoint:" in result
         assert "quinn" in result  # skillpack_id in delegate step
+
+    def test_scaffold_skipped_for_chat_channel(self) -> None:
+        """Chat channel does NOT get scaffold — keeps responses natural for TTS."""
+        from aspire_orchestrator.services.output_guard import guard_output
+
+        text = "Here's my analysis of your business situation."
+        result = guard_output(
+            text=text, receipts=[{"outcome": "success"}],
+            outcome="success", surface="user", skillpack_id="quinn",
+            channel="chat",
+        )
+
+        assert "Snapshot:" not in result
+        assert "NBA:" not in result
+
+    def test_scaffold_skipped_for_voice_channel(self) -> None:
+        """Voice channel does NOT get scaffold — markdown breaks TTS."""
+        from aspire_orchestrator.services.output_guard import guard_output
+
+        text = "Here's my analysis of your business situation."
+        result = guard_output(
+            text=text, receipts=[{"outcome": "success"}],
+            outcome="success", surface="user", skillpack_id="quinn",
+            channel="voice",
+        )
+
+        assert "Snapshot:" not in result
+        assert "NBA:" not in result
 
     def test_scaffold_not_applied_on_admin_surface(self) -> None:
         """Admin surface doesn't get consultant scaffold."""
@@ -911,19 +940,20 @@ class TestOutputGuardScaffold:
         )
         result = guard_output(
             text=text, receipts=[{"outcome": "success"}],
-            outcome="success", surface="user",
+            outcome="success", surface="user", channel="structured_ui",
         )
 
         # Should NOT have the scaffold appended (already present)
         assert result.count("Snapshot:") <= 1
 
     def test_scaffold_on_pending_outcome(self) -> None:
-        """Pending outcome on user surface also gets scaffold."""
+        """Pending outcome on structured UI surface also gets scaffold."""
         from aspire_orchestrator.services.output_guard import guard_output
 
         text = "I've drafted an invoice for review."
         result = guard_output(
             text=text, receipts=[], outcome="pending", surface="user",
+            channel="structured_ui",
         )
 
         assert "Snapshot:" in result
