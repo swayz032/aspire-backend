@@ -109,6 +109,7 @@ def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
             "reason_code": AspireErrorCode.SAFETY_BLOCKED.value,
             "receipt_type": ReceiptType.POLICY_DECISION.value,
             "receipt_hash": "",
+            "result": {"blocked": True, "reason": block_reason},
         }
         existing_receipts = list(state.get("pipeline_receipts", []))
         existing_receipts.append(receipt)
@@ -143,6 +144,7 @@ def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
         "reason_code": None,
         "receipt_type": ReceiptType.POLICY_DECISION.value,
         "receipt_hash": "",
+        "result": {"passed": True},
     }
     existing_receipts = list(state.get("pipeline_receipts", []))
     existing_receipts.append(pass_receipt)

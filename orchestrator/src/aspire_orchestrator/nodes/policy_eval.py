@@ -213,4 +213,5 @@ def _make_policy_receipt(
         "reason_code": reason_code,
         "receipt_type": ReceiptType.POLICY_DECISION.value,
         "receipt_hash": "",
+        "result": {"decision": outcome, "risk_tier": risk_tier, "reason": reason_code},
     }
