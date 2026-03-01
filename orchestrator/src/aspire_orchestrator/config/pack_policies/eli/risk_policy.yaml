@@ -16,6 +16,12 @@ actions:
     approval_required: false
     description: "Classify email by urgency and category"
 
+  email.draft:
+    risk_tier: yellow
+    approval_required: true
+    description: "Draft email response"
+
+  # Backward-compatible alias for older action naming.
   email.draft.create:
     risk_tier: yellow
     approval_required: true
