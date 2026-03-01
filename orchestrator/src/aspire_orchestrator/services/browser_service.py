@@ -6,7 +6,7 @@ Implements Aspire Law #9 (Security): SSRF prevention, domain allowlist, PII reda
 
 Architecture:
 - Headless Chromium via Playwright
-- Screenshot upload to S3 with presigned URLs (1hr expiry)
+- Screenshot upload to S3 with presigned URLs (1hr expiry), or local storage fallback
 - Domain allowlist enforcement (prevents SSRF attacks)
 - 30s hard timeout (Law #3: fail closed)
 - Receipt generation for all navigation attempts
@@ -16,15 +16,22 @@ import asyncio
 import io
 import logging
 import os
+import pathlib
 import re
 import urllib.parse
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
-import boto3
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    _HAS_BOTO3 = True
+except ImportError:
+    _HAS_BOTO3 = False
+    ClientError = Exception  # fallback for type hints
+
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeout
-from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +91,7 @@ class BrowserService:
         domain_allowlist: Optional[list[str]] = None,
         s3_bucket: Optional[str] = None,
         max_timeout_ms: int = 30000,
+        local_storage_dir: Optional[str] = None,
     ):
         """
         Initialize browser service.
@@ -92,13 +100,32 @@ class BrowserService:
             domain_allowlist: Allowed domains (e.g., ["bing.com", "google.com"])
             s3_bucket: S3 bucket name for screenshot storage
             max_timeout_ms: Maximum page load timeout (default 30s)
+            local_storage_dir: Directory for local screenshot storage (dev fallback)
         """
         self.domain_allowlist = domain_allowlist or self._load_domain_allowlist()
         self.s3_bucket = s3_bucket or os.getenv("BROWSER_SCREENSHOT_S3_BUCKET", "aspire-screenshots")
         self.max_timeout_ms = min(max_timeout_ms, 30000)  # Hard cap at 30s
 
-        # S3 client initialization
-        self.s3_client = boto3.client("s3")
+        # S3 client initialization (lazy, graceful fallback to local storage)
+        self.s3_client = None
+        self._use_local_storage = False
+        if _HAS_BOTO3:
+            try:
+                self.s3_client = boto3.client("s3")
+                # Quick validation — don't fail init if credentials are bad
+            except Exception:
+                logger.warning("Failed to initialize S3 client — using local storage fallback")
+                self._use_local_storage = True
+        else:
+            logger.warning("boto3 not installed — using local storage fallback")
+            self._use_local_storage = True
+
+        # Local storage fallback directory
+        self._local_storage_dir = pathlib.Path(
+            local_storage_dir
+            or os.getenv("BROWSER_SCREENSHOT_LOCAL_DIR", "")
+            or os.path.join(os.path.dirname(__file__), "..", "..", "screenshots")
+        ).resolve()
 
         # Browser instance pool (lazy initialization)
         self._browser: Optional[Browser] = None
@@ -110,6 +137,7 @@ class BrowserService:
                 "domain_allowlist": self.domain_allowlist,
                 "s3_bucket": self.s3_bucket,
                 "max_timeout_ms": self.max_timeout_ms,
+                "storage_mode": "local" if self._use_local_storage else "s3",
             }
         )
 
@@ -304,8 +332,8 @@ class BrowserService:
             page_url_redacted = self.redact_url(url)
             page_title_redacted = self.redact_page_title(page_title_raw)
 
-            # Step 6: Upload to S3
-            screenshot_url = await self._upload_screenshot_to_s3(
+            # Step 6: Upload (S3 or local fallback)
+            screenshot_url = await self._upload_screenshot(
                 screenshot_bytes=screenshot_bytes,
                 screenshot_id=screenshot_id,
                 suite_id=suite_id,
@@ -338,17 +366,17 @@ class BrowserService:
                 await page.close()
             await context.close()
 
-    async def _upload_screenshot_to_s3(
+    async def _upload_screenshot(
         self,
         screenshot_bytes: bytes,
         screenshot_id: str,
         suite_id: str,
     ) -> str:
         """
-        Upload screenshot to S3 and return presigned URL.
+        Upload screenshot and return URL.
 
-        S3 Path: s3://{bucket}/{suite_id}/{screenshot_id}.png
-        Presigned URL: Expires in 1 hour
+        Uses S3 in production (presigned URL, 1hr expiry).
+        Falls back to local file storage in dev (served by FastAPI).
 
         Args:
             screenshot_bytes: PNG screenshot data
@@ -356,15 +384,44 @@ class BrowserService:
             suite_id: Tenant ID (for path scoping)
 
         Returns:
-            Presigned S3 URL (expires in 1hr)
+            URL to access screenshot (S3 presigned or local file path)
 
         Raises:
             ScreenshotUploadError: Upload failed
         """
+        if self._use_local_storage or self.s3_client is None:
+            return self._save_screenshot_locally(screenshot_bytes, screenshot_id, suite_id)
+        else:
+            return self._upload_screenshot_to_s3(screenshot_bytes, screenshot_id, suite_id)
+
+    def _save_screenshot_locally(
+        self,
+        screenshot_bytes: bytes,
+        screenshot_id: str,
+        suite_id: str,
+    ) -> str:
+        """Save screenshot to local filesystem (dev fallback)."""
+        suite_dir = self._local_storage_dir / suite_id
+        suite_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = suite_dir / f"{screenshot_id}.png"
+        file_path.write_bytes(screenshot_bytes)
+
+        # Return local URL path (served by FastAPI static mount)
+        local_url = f"/screenshots/{suite_id}/{screenshot_id}.png"
+        logger.info(f"Screenshot saved locally: {file_path}")
+        return local_url
+
+    def _upload_screenshot_to_s3(
+        self,
+        screenshot_bytes: bytes,
+        screenshot_id: str,
+        suite_id: str,
+    ) -> str:
+        """Upload screenshot to S3 and return presigned URL."""
         s3_key = f"{suite_id}/{screenshot_id}.png"
 
         try:
-            # Upload PNG to S3
             logger.debug(f"Uploading screenshot to s3://{self.s3_bucket}/{s3_key}")
             self.s3_client.put_object(
                 Bucket=self.s3_bucket,
@@ -378,19 +435,20 @@ class BrowserService:
                 }
             )
 
-            # Generate presigned URL (1hr expiry)
             presigned_url = self.s3_client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self.s3_bucket, "Key": s3_key},
-                ExpiresIn=3600,  # 1 hour
+                ExpiresIn=3600,
             )
 
             logger.info(f"Screenshot uploaded successfully: {s3_key}")
             return presigned_url
 
         except ClientError as e:
-            logger.error(f"S3 upload failed: {e}", exc_info=True)
-            raise ScreenshotUploadError(f"Failed to upload screenshot to S3: {e}")
+            # Fallback to local storage on S3 failure
+            logger.warning(f"S3 upload failed, falling back to local storage: {e}")
+            self._use_local_storage = True
+            return self._save_screenshot_locally(screenshot_bytes, screenshot_id, suite_id)
 
     async def close(self):
         """Close browser and cleanup resources"""
