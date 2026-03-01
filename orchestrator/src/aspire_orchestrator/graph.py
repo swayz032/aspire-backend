@@ -81,6 +81,7 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         "intent_result": intent_result.model_dump(),
         "action_type": intent_result.action_type,
     }
+    requested_agent = state.get("requested_agent")
 
     # Update task_type so downstream policy_eval uses the classified action
     if intent_result.action_type and intent_result.action_type != "unknown":
@@ -110,6 +111,20 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         explicit_task_type,
     )
 
+    # If caller requested a specific specialist desk (Finn/Eli/etc),
+    # preserve that persona target for conversational path handling.
+    if (
+        isinstance(requested_agent, str)
+        and requested_agent
+        and requested_agent != "ava"
+        and (
+            result.get("action_type") == "unknown"
+            or result["intent_result"].get("intent_type") in ("conversation", "knowledge", "advice", "hybrid")
+        )
+    ):
+        result["agent_target"] = requested_agent
+        result["intent_result"]["agent_target"] = requested_agent
+
     return result
 
 
@@ -125,10 +140,21 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
     intent_data = state.get("intent_result", {})
     intent_result = IntentResult(**intent_data)
 
+    request = state.get("request")
+    current_agent = "ava"
+    if hasattr(request, "payload") and isinstance(request.payload, dict):
+        current_agent = (
+            request.payload.get("requested_agent")
+            or request.payload.get("agent")
+            or "ava"
+        )
+    elif isinstance(request, dict):
+        current_agent = request.get("requested_agent") or request.get("agent") or "ava"
+
     context = {
         "suite_id": state.get("suite_id"),
         "office_id": state.get("office_id"),
-        "current_agent": "ava",
+        "current_agent": current_agent,
     }
 
     router = get_skill_router()

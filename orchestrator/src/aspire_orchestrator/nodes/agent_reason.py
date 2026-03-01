@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,75 @@ _PERSONAS_DIR = Path(__file__).parent.parent / "config" / "pack_personas"
 
 _AWARENESS_FILE = Path(__file__).parent.parent / "config" / "aspire_awareness.md"
 _AWARENESS_CACHE: str | None = None
+_LAST_EPISODE_TURN_SNAPSHOT: dict[str, int] = {}
+_ENABLE_BACKGROUND_MEMORY_PERSISTENCE = (
+    os.getenv("ENABLE_BACKGROUND_MEMORY_PERSISTENCE", "true").strip().lower()
+    not in {"0", "false", "off"}
+)
+
+
+async def _persist_memory_layers(
+    *,
+    session_id: str,
+    suite_id: str,
+    actor_id: str,
+    agent_id: str,
+) -> None:
+    """Persist semantic/episodic memory in the background.
+
+    This runs non-blocking from the conversational path so user latency is
+    unaffected while long-term memory still improves over time.
+    """
+    if not session_id or suite_id in ("", "unknown") or actor_id in ("", "unknown"):
+        return
+
+    try:
+        from aspire_orchestrator.services.episodic_memory import get_episodic_memory
+        from aspire_orchestrator.services.semantic_memory import get_semantic_memory
+        from aspire_orchestrator.services.working_memory import get_working_memory
+
+        wm = get_working_memory()
+        em = get_episodic_memory()
+        sm = get_semantic_memory()
+
+        turns = await wm.get_recent_turns(session_id, suite_id, max_turns=20)
+        if len(turns) < 2:
+            return
+
+        turns_payload = [
+            {
+                "role": turn.role,
+                "content": turn.content,
+                "agent_id": turn.agent_id,
+                "timestamp": turn.timestamp,
+            }
+            for turn in turns
+        ]
+
+        await sm.extract_and_store(
+            turns=turns_payload,
+            suite_id=suite_id,
+            user_id=actor_id,
+            agent_id=agent_id,
+        )
+
+        # Summarize periodically to avoid expensive storage writes every turn.
+        turn_count = len(turns_payload)
+        key = f"{suite_id}:{session_id}:{agent_id}"
+        last_snapshot = _LAST_EPISODE_TURN_SNAPSHOT.get(key, 0)
+        if turn_count >= 12 and (turn_count - last_snapshot) >= 10:
+            episode_id = await em.summarize_and_store(
+                turns=turns_payload,
+                session_id=session_id,
+                suite_id=suite_id,
+                user_id=actor_id,
+                agent_id=agent_id,
+            )
+            if episode_id:
+                _LAST_EPISODE_TURN_SNAPSHOT[key] = turn_count
+
+    except Exception as e:
+        logger.warning("Background memory persistence failed (non-fatal): %s", e)
 
 
 def _load_persona(agent_id: str) -> str:
@@ -184,7 +254,10 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     - No approval flow needed
     """
     utterance = state.get("utterance", "")
+    requested_agent = state.get("requested_agent")
     agent_id = state.get("agent_target", "ava") or "ava"
+    if isinstance(requested_agent, str) and requested_agent and requested_agent != "ava":
+        agent_id = requested_agent
     intent_type = state.get("intent_type", "conversation")
 
     logger.info(
@@ -335,6 +408,20 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
             )
         except Exception as e:
             logger.warning("Working memory save failed (non-fatal): %s", e)
+
+        # Non-blocking long-term memory persistence (semantic + episodic).
+        if _ENABLE_BACKGROUND_MEMORY_PERSISTENCE:
+            try:
+                asyncio.create_task(
+                    _persist_memory_layers(
+                        session_id=session_id,
+                        suite_id=suite_id,
+                        actor_id=actor_id,
+                        agent_id=agent_id,
+                    )
+                )
+            except Exception as e:
+                logger.warning("Failed to schedule background memory persistence: %s", e)
 
     # 9. Generate receipt (Law #2)
     receipt = _make_conversation_receipt(state, agent_id, intent_type, len(response_text))

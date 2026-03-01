@@ -91,9 +91,9 @@ def _resolve_agent_id(state: OrchestratorState) -> str:
     # Desktop proxy sends agent field in the original request payload
     request = state.get("request")
     if isinstance(request, dict):
-        explicit_agent = request.get("agent")
+        explicit_agent = request.get("requested_agent") or request.get("agent")
     elif hasattr(request, "payload") and isinstance(request.payload, dict):
-        explicit_agent = request.payload.get("agent")
+        explicit_agent = request.payload.get("requested_agent") or request.payload.get("agent")
     else:
         explicit_agent = None
 
