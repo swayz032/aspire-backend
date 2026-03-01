@@ -226,4 +226,14 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
     }
     if utterance:
         result["utterance"] = utterance
+
+    # --- Conversational Intelligence: Extract user context ---
+    if isinstance(request.payload, dict):
+        user_profile = request.payload.get("user_profile")
+        if user_profile:
+            result["user_profile"] = user_profile
+        session_id = request.payload.get("session_id")
+        if session_id:
+            result["session_id"] = session_id
+
     return result

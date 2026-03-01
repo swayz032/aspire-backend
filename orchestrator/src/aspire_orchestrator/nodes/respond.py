@@ -190,7 +190,6 @@ def _generate_response_text(state: OrchestratorState) -> str:
             "livekit": "LiveKit",
             "deepgram": "Deepgram",
             "twilio": "Twilio",
-            "moov": "Moov",
             "plaid": "Plaid",
             "gusto": "Gusto",
             "qbo": "QuickBooks",
@@ -752,6 +751,20 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     # Success case — construct AvaResult
     risk_tier = state.get("risk_tier", RiskTier.GREEN)
     risk_tier_val = risk_tier.value if isinstance(risk_tier, RiskTier) else str(risk_tier)
+
+    # ── Conversation path short-circuit (Wave 1) ──────────────────────
+    # If agent_reason_node produced a response, use it directly.
+    # Skip template/LLM summarize — the agent already reasoned.
+    conversation_response = state.get("conversation_response")
+    if conversation_response:
+        response: dict[str, Any] = {
+            "text": conversation_response,
+            "correlation_id": correlation_id,
+            "request_id": request_id,
+            "receipt_ids": receipt_ids,
+            "assigned_agent": state.get("agent_target") or state.get("assigned_agent", "ava"),
+        }
+        return {"response": response}
 
     # ── Phantom execution guard ──────────────────────────────────────
     # If pipeline reached respond without executing (no token minted,

@@ -59,6 +59,10 @@ skill_packs:
     capability_scopes: [email:read, email:triage, comms:draft_email, comms:send_email]
     tools: [polaris.email.read, internal.email.triage, polaris.email.draft, polaris.email.send]
     per_suite_enabled: true
+    knowledge_domains:
+      - domain: communication
+        table: communication_knowledge_chunks
+        retrieval_service: CommunicationRetrievalService
 
   quinn_invoicing:
     id: quinn_invoicing
@@ -101,6 +105,10 @@ skill_packs:
     capability_scopes: [research:search, research:places, research:compare, research:rfq]
     tools: [brave.search, tavily.search, google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode, internal.document.generate]
     per_suite_enabled: true
+    knowledge_domains:
+      - domain: general
+        table: general_knowledge_chunks
+        retrieval_service: GeneralRetrievalService
 
   tec_documents:
     id: tec_documents
@@ -133,20 +141,10 @@ skill_packs:
     capability_scopes: [finance:snapshot:read, finance:exceptions:read, finance:packet:draft, finance:proposal:create, a2a:create]
     tools: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.dispatch]
     per_suite_enabled: true
-
-  finn_money_desk:
-    id: finn_money_desk
-    name: "Finn (Money Desk)"
-    owner: finn
-    category: finance
-    risk_tier: red
-    status: registered
-    description: "Payment sending, fund transfers, owner draws, payment reconciliation via Moov/Plaid"
-    actions: [payment.send, payment.transfer, payment.owner_draw, payment.reconcile]
-    providers: [moov, plaid, stripe]
-    capability_scopes: [payments:initiate, payments:transfer, payments:owner_draw, payments:reconcile]
-    tools: [moov.payment.send, plaid.payment.send, moov.transfer.create, moov.account.read, plaid.accounts.get]
-    per_suite_enabled: true
+    knowledge_domains:
+      - domain: finance
+        table: finance_knowledge_chunks
+        retrieval_service: FinancialRetrievalService
 
   milo_payroll:
     id: milo_payroll
@@ -193,6 +191,10 @@ skill_packs:
     capability_scopes: [contracts:generate, contracts:review, contracts:sign, contracts:send, contracts:session, contracts:compliance, templates:read]
     tools: [pandadoc.templates.list, pandadoc.templates.details, pandadoc.contract.generate, pandadoc.contract.read, pandadoc.contract.sign, pandadoc.contract.send, pandadoc.contract.session]
     per_suite_enabled: true
+    knowledge_domains:
+      - domain: legal
+        table: legal_knowledge_chunks
+        retrieval_service: LegalRetrievalService
 
 # ──────────────────────────────────────────────
 # ADMIN SKILL PACK (1)
@@ -329,18 +331,10 @@ tools:
     provider: mapbox
     category: research
     risk_tier: green
-  moov.payment.send:
-    provider: moov
-    category: payments
-    risk_tier: red
-  plaid.payment.send:
+  plaid.accounts.get:
     provider: plaid
-    category: payments
-    risk_tier: red
-  moov.transfer.create:
-    provider: moov
-    category: payments
-    risk_tier: red
+    category: finance
+    risk_tier: green
   pandadoc.templates.list:
     provider: pandadoc
     category: contracts
@@ -503,17 +497,6 @@ providers:
     base_url: "https://api.stripe.com/v1"
     rate_limit_rpm: 100
     timeout_ms: 10000
-    retry_strategy: exponential_backoff
-    idempotency_support: true
-
-  moov:
-    id: moov
-    name: "Moov"
-    category: financial
-    auth_type: oauth2
-    base_url: "https://api.moov.io"
-    rate_limit_rpm: 60
-    timeout_ms: 15000
     retry_strategy: exponential_backoff
     idempotency_support: true
 

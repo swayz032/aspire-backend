@@ -59,7 +59,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from aspire_orchestrator.config.secrets import load_secrets
@@ -274,12 +274,63 @@ async def metrics(request: Request) -> Response:
 # =============================================================================
 
 
-@app.post("/v1/intents")
-async def process_intent(request: Request) -> JSONResponse:
+async def stream_agent_activity(initial_state: dict[str, Any]) -> Any:
+    """Generator for Server-Sent Events streaming during orchestrator execution.
+
+    Emits intermediate agent activity events as the graph executes.
+    Used for Canvas Chat Mode live updates (Wave 4 + Wave 5).
+    """
+    import asyncio
+    from aspire_orchestrator.skillpacks.adam_research import set_activity_event_callback
+
+    # Event queue for collecting Adam's activity events
+    event_queue: list[dict[str, Any]] = []
+
+    def collect_event(event: dict[str, Any]) -> None:
+        """Callback to collect activity events from Adam (Wave 5)."""
+        event_queue.append(event)
+
+    # Set up callback for Adam to emit events (Wave 5)
+    set_activity_event_callback(collect_event)
+
+    # Emit initial "thinking" event
+    yield f"data: {json.dumps({'type': 'thinking', 'message': 'Processing request...', 'icon': 'thinking', 'timestamp': int(time.time() * 1000)})}\n\n"
+
+    try:
+        # Execute graph (Adam events collected via callback)
+        result = await orchestrator_graph.ainvoke(initial_state)
+
+        # Emit collected Adam events
+        for event in event_queue:
+            yield f"data: {json.dumps(event)}\n\n"
+
+        # Emit final "done" event
+        response = result.get("response", {})
+        if response.get("error"):
+            yield f"data: {json.dumps({'type': 'error', 'message': response.get('message', 'Request failed'), 'icon': 'error', 'timestamp': int(time.time() * 1000)})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'done', 'message': 'Request completed', 'icon': 'done', 'timestamp': int(time.time() * 1000)})}\n\n"
+
+        # Emit final response
+        yield f"data: {json.dumps({'type': 'response', 'data': response})}\n\n"
+
+    except Exception as e:
+        logger.exception("Streaming error: %s", e)
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'icon': 'error', 'timestamp': int(time.time() * 1000)})}\n\n"
+    finally:
+        # Clean up callback
+        set_activity_event_callback(None)
+
+
+@app.post("/v1/intents", response_model=None)
+async def process_intent(request: Request, stream: bool = Query(default=False)) -> JSONResponse | StreamingResponse:
     """Process an AvaOrchestratorRequest through the orchestrator graph.
 
     The graph executes the full pipeline:
     Intake -> Safety -> Policy -> Approval -> TokenMint -> Execute -> ReceiptWrite -> Respond
+
+    Query Parameters:
+        stream: If true, return Server-Sent Events stream with intermediate agent activity (Wave 4).
     """
     try:
         body = await request.json()
@@ -344,6 +395,18 @@ async def process_intent(request: Request) -> JSONResponse:
     # it as a top-level state field (approval_check reads state["approval_evidence"]).
     if isinstance(body, dict) and "approval_evidence" in body:
         initial_state["approval_evidence"] = body["approval_evidence"]
+
+    # Wave 4: If stream=true, return SSE stream instead of JSON response
+    if stream:
+        return StreamingResponse(
+            stream_agent_activity(initial_state),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            },
+        )
 
     start_time = time.monotonic()
     try:

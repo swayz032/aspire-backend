@@ -103,5 +103,12 @@ class OrchestratorState(TypedDict, total=False):
     qa_meta_receipt: dict[str, Any] | None  # QA verification receipt (Law #2)
     qa_retry_count: int  # Retry counter for QA loop re-execution
 
+    # --- Conversational Intelligence (Wave 1) ---
+    intent_type: str | None          # "action" | "conversation" | "knowledge" | "advice" | "hybrid"
+    agent_target: str | None         # suggested agent: "ava" | "finn" | "eli" | "quinn" | etc.
+    conversation_response: str | None # output from agent_reason_node
+    user_profile: dict[str, Any] | None  # injected from Desktop request
+    session_id: str | None           # for memory scoping
+
     # --- Accumulated receipts for the full pipeline ---
     pipeline_receipts: list[dict[str, Any]]

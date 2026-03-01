@@ -79,6 +79,8 @@ class IntentResult(BaseModel):
         default=None,
         description="For debugging (redacted in production)",
     )
+    intent_type: str = Field(default="action", description="action | conversation | knowledge | advice | hybrid")
+    agent_target: str | None = Field(default=None, description="Suggested agent for this query (ava, finn, eli, etc.)")
 
 
 # =============================================================================
@@ -131,7 +133,7 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 - invoice.create, invoice.send, invoice.void → quinn_invoicing
 - quote.create, quote.send → quinn_invoicing
 - meeting.schedule → nora_conference
-- payment.send, payment.transfer → finn_money_desk
+- payment.send, payment.transfer → (discontinued — no provider)
 - contract.generate, contract.send, contract.review, contract.sign → clara_legal
 - tax.file → (internal, filing)
 - payroll.run → milo_payroll
@@ -149,7 +151,20 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 3. If the utterance is ambiguous between two actions, pick the safer (lower risk tier) one and set confidence 0.5-0.85 with a clarification_prompt.
 4. If no action matches at all, use action_type "unknown" with confidence 0.0.
 5. Never fabricate actions not in the catalog.
-6. For skill_pack, use the pack ID from the mapping above. If no specific pack, use "internal"."""
+6. For skill_pack, use the pack ID from the mapping above. If no specific pack, use "internal".
+7. Always include "intent_type" and "agent_target" in your response.
+
+## Intent Type Classification
+In addition to action_type, classify the intent_type:
+- "intent_type": one of "action", "conversation", "knowledge", "advice", "hybrid"
+  - "action": user wants to DO something (create invoice, send email, schedule meeting)
+  - "conversation": general chat, greeting, identity question ("who are you?", "hello", "thanks")
+  - "knowledge": domain knowledge question ("what is a tax write-off?", "how do I file quarterly taxes?")
+  - "advice": strategic advisory request ("what strategies should I use for cash flow?", "should I hire a contractor?")
+  - "hybrid": involves both reasoning AND potential action ("research tax write-offs and create a summary document")
+- "agent_target": which agent is best suited to handle this query
+  - "ava" for general/orchestration, "finn" for finance/tax, "eli" for email/communication, "quinn" for invoicing, "nora" for meetings, "sarah" for calls, "clara" for legal, "adam" for research, "tec" for documents, "teressa" for accounting, "milo" for payroll
+  - Default to "ava" if unclear"""
 
 
 # =============================================================================
@@ -171,8 +186,6 @@ _ACTION_TO_PACK: dict[str, str] = {
     "calendar.list": "nora_conference",
     "research.search": "adam_research",
     "research.places": "adam_research",
-    "payment.send": "finn_money_desk",
-    "payment.transfer": "finn_money_desk",
     "contract.generate": "clara_legal",
     "contract.send": "clara_legal",
     "contract.review": "clara_legal",
@@ -453,17 +466,26 @@ class IntentClassifier:
         # Clamp confidence to valid range
         confidence = max(0.0, min(1.0, float(raw_confidence)))
 
-        # Unknown action → escalate
+        # Extract conversational intelligence fields
+        intent_type = raw.get("intent_type", "action")
+        agent_target = raw.get("agent_target", "ava")
+
+        # Unknown action → escalate (but preserve intent_type routing)
         if action_type == "unknown" or action_type not in self._risk_tiers:
+            # If intent_type signals intentional routing (not failure), set
+            # confidence to 0.85 so the orchestrator routes instead of dead-ending.
+            is_conversational = intent_type in ("conversation", "knowledge", "advice")
             return IntentResult(
                 action_type="unknown",
                 skill_pack="internal",
-                confidence=0.0,
+                confidence=0.85 if is_conversational else 0.0,
                 entities=raw.get("entities", {}),
                 risk_tier=RiskTier.YELLOW,  # Default unknown to YELLOW (safe)
                 requires_clarification=False,
                 clarification_prompt=None,
                 raw_llm_response=raw,
+                intent_type=intent_type,
+                agent_target=agent_target,
             )
 
         # Authoritative risk tier from policy matrix (LLM cannot override)
@@ -489,6 +511,8 @@ class IntentClassifier:
             requires_clarification=requires_clarification,
             clarification_prompt=clarification_prompt,
             raw_llm_response=raw,
+            intent_type=intent_type,
+            agent_target=agent_target,
         )
 
     def _fail_closed_result(self, *, reason: str) -> IntentResult:
@@ -507,6 +531,8 @@ class IntentClassifier:
             requires_clarification=False,
             clarification_prompt=None,
             raw_llm_response=None,
+            intent_type="action",
+            agent_target=None,
         )
 
 

@@ -1,15 +1,21 @@
 """Aspire LangGraph Orchestrator Graph — the Single Brain (Law #1).
 
-Phase 3 canonical flow (12 nodes):
-  Intake → Safety → Classify → Route → ParamExtract → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+Dual-path flow (13 nodes):
+  ACTION PATH (12 nodes):
+    Intake → Safety → Classify → Route → ParamExtract → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+
+  CONVERSATION PATH (4 nodes):
+    Intake → Safety → Classify → AgentReason → Respond
 
 Backwards-compatible flow (8 nodes, when utterance is not set):
   Intake → Safety → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
 
 Conditional routing:
   - safety_gate: BLOCKED → respond (with safety denial receipt)
-  - classify: low confidence (<0.5) → respond (escalation)
+  - classify: action + high confidence → route (ACTION PATH)
+  - classify: conversation/knowledge/advice → agent_reason (CONVERSATION PATH)
   - classify: requires_clarification → respond (clarification prompt)
+  - classify: unknown + no intent_type → agent_reason (default, don't dead-end)
   - route: deny_reason set → respond (routing denied)
   - param_extract: PARAM_EXTRACTION_FAILED → respond (missing fields prompt)
   - policy_eval: DENIED → respond (with policy denial receipt)
@@ -36,6 +42,7 @@ from aspire_orchestrator.nodes.approval_check import approval_check_node
 from aspire_orchestrator.nodes.token_mint import token_mint_node
 from aspire_orchestrator.nodes.execute import execute_node
 from aspire_orchestrator.nodes.receipt_write import receipt_write_node
+from aspire_orchestrator.nodes.agent_reason import agent_reason_node
 from aspire_orchestrator.nodes.respond import respond_node
 from aspire_orchestrator.state import OrchestratorState
 
@@ -239,24 +246,31 @@ def _route_after_safety(state: OrchestratorState) -> str:
 
 
 def _route_after_classify(state: OrchestratorState) -> str:
-    """Route after classification.
+    """Route after classification — dual-path: ACTION vs CONVERSATION.
 
-    Low confidence (<0.5) or unknown → respond (escalation).
-    Requires clarification → respond (with clarification prompt).
-    Otherwise → route node.
+    1. Action with good confidence → route (ACTION PATH)
+    2. Requires clarification → respond (clarification prompt)
+    3. Conversation/knowledge/advice intent → agent_reason (CONVERSATION PATH)
+    4. Default unknown → agent_reason (don't dead-end)
     """
     intent_result = state.get("intent_result", {})
     confidence = intent_result.get("confidence", 0.0)
     requires_clarification = intent_result.get("requires_clarification", False)
     action_type = intent_result.get("action_type", "unknown")
+    intent_type = intent_result.get("intent_type", "")
 
-    if action_type == "unknown" or confidence < 0.5:
-        return "respond"
+    # ACTION PATH: known action with sufficient confidence
+    if action_type != "unknown" and confidence >= 0.5:
+        if requires_clarification:
+            return "respond"
+        return "route"
 
-    if requires_clarification:
-        return "respond"
+    # CONVERSATION PATH: classifier identified conversational intent
+    if intent_type in ("conversation", "knowledge", "advice", "hybrid"):
+        return "agent_reason"
 
-    return "route"
+    # Default: route to agent_reason rather than dead-ending
+    return "agent_reason"
 
 
 def _route_after_route(state: OrchestratorState) -> str:
@@ -334,16 +348,19 @@ def _route_after_qa(state: OrchestratorState) -> str:
 
 
 def build_orchestrator_graph() -> StateGraph:
-    """Build the Aspire orchestrator StateGraph with 12 nodes.
+    """Build the Aspire orchestrator StateGraph with 13 nodes.
 
-    Phase 3 adds param_extract between route and policy_eval.
+    Dual-path architecture:
+    - ACTION PATH: classify → route → param_extract → policy → approval → execute
+    - CONVERSATION PATH: classify → agent_reason → respond
+
     Backwards compatible: if utterance is not set, classify/route/param_extract are skipped.
 
     Returns a compiled graph ready for invocation.
     """
     graph = StateGraph(OrchestratorState)
 
-    # Add all 12 nodes (8 existing + 3 Brain Layer + 1 param_extract)
+    # Add all 13 nodes (8 existing + 3 Brain Layer + 1 param_extract + 1 agent_reason)
     graph.add_node("intake", intake_node)
     graph.add_node("safety_gate", safety_gate_node)
     graph.add_node("classify", classify_node)
@@ -355,6 +372,7 @@ def build_orchestrator_graph() -> StateGraph:
     graph.add_node("execute", execute_node)
     graph.add_node("receipt_write", receipt_write_node)
     graph.add_node("qa", qa_node)
+    graph.add_node("agent_reason", agent_reason_node)
     graph.add_node("respond", respond_node)
 
     # Set entry point
@@ -376,11 +394,15 @@ def build_orchestrator_graph() -> StateGraph:
         "respond": "respond",
     })
 
-    # classify → route OR respond (low confidence / clarification needed)
+    # classify → route (ACTION) OR agent_reason (CONVERSATION) OR respond (clarification)
     graph.add_conditional_edges("classify", _route_after_classify, {
         "route": "route",
+        "agent_reason": "agent_reason",
         "respond": "respond",
     })
+
+    # agent_reason → respond (conversation path always ends at respond)
+    graph.add_edge("agent_reason", "respond")
 
     # route → param_extract OR respond (routing denied)
     graph.add_conditional_edges("route", _route_after_route, {
