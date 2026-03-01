@@ -269,9 +269,9 @@ class TestFallbackChain:
 class TestDeskRoutingOverrides:
     """Test desk-specific model override logic."""
 
-    def test_finn_desk_always_uses_high_risk_guard(self, router):
-        """Finn (money desk) should always use high_risk_guard for high risk."""
-        decision = router.route("classify", "high", desk="finn_moneydesk")
+    def test_milo_desk_always_uses_high_risk_guard(self, router):
+        """Milo (payroll desk) should always use high_risk_guard for high risk."""
+        decision = router.route("classify", "high", desk="milo_payrolldesk")
         assert decision.selected_profile == ModelProfile.HIGH_RISK_GUARD
 
     def test_adam_desk_uses_cheap_classifier_for_classify(self, router):

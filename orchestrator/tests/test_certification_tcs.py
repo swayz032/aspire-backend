@@ -298,7 +298,7 @@ class TestTC04RedTierNoPresence:
         suite_id = "tc04-suite-001"
         request = _make_request(
             suite_id=suite_id,
-            task_type="payment.send",
+            task_type="payroll.run",
         )
 
         response = client.post("/v1/intents", json=request)
@@ -315,7 +315,7 @@ class TestTC04RedTierNoPresence:
         suite_id = "tc04-suite-002"
         request = _make_request(
             suite_id=suite_id,
-            task_type="payment.send",
+            task_type="payroll.run",
         )
 
         client.post("/v1/intents", json=request)

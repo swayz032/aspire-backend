@@ -41,6 +41,7 @@ _DOMAIN_SERVICE_MAP: dict[str, str] = {
     "finance": "finance",
     "general": "general",
     "communication": "communication",
+    "conference": "conference",
 }
 
 # Agent → primary domain mapping (from skill_pack_manifests.yaml knowledge_domains)
@@ -53,7 +54,7 @@ _AGENT_DOMAINS: dict[str, list[str]] = {
     "quinn": ["finance"],
     "teressa": ["finance"],
     "milo": ["finance"],
-    "nora": [],
+    "nora": ["conference"],
     "sarah": [],
     "tec": [],
     "mail_ops": [],
@@ -169,6 +170,14 @@ class RetrievalRouter:
                     get_communication_retrieval_service,
                 )
                 svc = get_communication_retrieval_service()
+                result = await svc.retrieve(query, suite_id=suite_id)
+                return (domain, result.chunks)
+
+            elif domain == "conference":
+                from aspire_orchestrator.services.conference_retrieval_service import (
+                    get_conference_retrieval_service,
+                )
+                svc = get_conference_retrieval_service()
                 result = await svc.retrieve(query, suite_id=suite_id)
                 return (domain, result.chunks)
 

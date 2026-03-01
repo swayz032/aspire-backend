@@ -10,7 +10,6 @@ Providers and their compliance:
 - PandaDoc: SOC2 Type II
 - LiveKit: SOC2 Type II
 - Twilio: SOC2 Type II, HIPAA
-- Moov: PCI-DSS, SOC2 Type II
 - Plaid: SOC2 Type II
 
 Aspire-owned controls:
@@ -82,10 +81,6 @@ SUBPROCESSORS: list[SubprocessorEntry] = [
     SubprocessorEntry(
         "twilio", ["communications", "personal"], ["SOC2 Type II", "HIPAA"],
         True, "2025-11-15", "green",
-    ),
-    SubprocessorEntry(
-        "moov", ["financial"], ["PCI-DSS", "SOC2 Type II"],
-        True, "2026-01-01", "green",
     ),
     SubprocessorEntry(
         "plaid", ["financial"], ["SOC2 Type II"],

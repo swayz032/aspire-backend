@@ -1,6 +1,6 @@
 """End-to-end tests for Draft-First Execution Model (W0-W6).
 
-Validates the 12-node pipeline with draft-first semantics:
+Validates the 13-node pipeline with draft-first semantics:
   intake -> safety_gate -> classify -> route -> param_extract ->
   policy_eval -> approval_check -> token_mint -> execute ->
   receipt_write -> qa -> respond
@@ -195,8 +195,8 @@ class TestFailClosed:
 
     @pytest.mark.asyncio
     async def test_red_tier_requires_presence(self, graph) -> None:
-        """RED tier (payment) without approval -> PRESENCE_REQUIRED."""
-        request = _make_request(task_type="payment.send")
+        """RED tier (payroll) without approval -> PRESENCE_REQUIRED."""
+        request = _make_request(task_type="payroll.run")
         result = await graph.ainvoke({"request": request, "actor_id": ACTOR_ID})
 
         response = result["response"]
@@ -526,7 +526,7 @@ class TestContextBuilder:
 # Pipeline Receipt Chain Integrity
 # ===========================================================================
 class TestPipelineReceipts:
-    """Receipt chain integrity across the 12-node pipeline."""
+    """Receipt chain integrity across the 13-node pipeline."""
 
     @pytest.mark.asyncio
     async def test_all_receipts_have_hashes(self, graph) -> None:
@@ -569,19 +569,20 @@ class TestPipelineReceipts:
 # 12-Node Pipeline Verification
 # ===========================================================================
 class TestPipelineNodes:
-    """Verify the 12-node pipeline structure."""
+    """Verify the 13-node pipeline structure."""
 
-    def test_graph_has_12_nodes(self, graph) -> None:
-        """Pipeline must have 12 nodes including param_extract."""
+    def test_graph_has_13_nodes(self, graph) -> None:
+        """Pipeline must have 13 nodes including agent_reason (dual-path)."""
         nodes = list(graph.nodes.keys())
         # Filter out internal LangGraph nodes like __start__, __end__
         pipeline_nodes = [n for n in nodes if not n.startswith("__")]
-        assert len(pipeline_nodes) == 12
+        assert len(pipeline_nodes) == 13
 
         expected = {
             "intake", "safety_gate", "classify", "route",
             "param_extract", "policy_eval", "approval_check",
             "token_mint", "execute", "receipt_write", "qa", "respond",
+            "agent_reason",
         }
         assert set(pipeline_nodes) == expected
 
@@ -704,7 +705,7 @@ class TestDraftSummary:
     def test_payment_summary(self) -> None:
         from aspire_orchestrator.nodes.approval_check import _build_draft_summary
 
-        s = _build_draft_summary("payment.send", {"amount_cents": 100000})
+        s = _build_draft_summary("invoice.create", {"amount_cents": 100000})
         assert "$1000.00" in s
 
 
@@ -1091,11 +1092,11 @@ class TestNarrationExpanded:
         from aspire_orchestrator.services.narration import compose_narration
 
         text = compose_narration(
-            outcome="denied", task_type="payment.send",
-            tool_used="moov.transfer", execution_params={},
+            outcome="denied", task_type="payroll.run",
+            tool_used="gusto.payroll.run", execution_params={},
             execution_result=None, draft_id=None, risk_tier="red",
         )
-        assert "blocked" in text.lower() or "can't" in text.lower()
+        assert "blocked" in text.lower() or "denied" in text.lower() or "can't" in text.lower()
 
     def test_owner_name_in_narration(self) -> None:
         from aspire_orchestrator.services.narration import compose_narration

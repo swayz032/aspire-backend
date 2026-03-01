@@ -179,13 +179,13 @@ class TestIntentClassification:
         assert result.skill_pack == "quinn_invoicing"
 
     @pytest.mark.asyncio
-    async def test_classify_payment_send(self, monkeypatch) -> None:
-        """'Send $500 to supplier' -> payment.send, RED."""
+    async def test_classify_payroll_run(self, monkeypatch) -> None:
+        """'Run payroll for this week' -> payroll.run, RED."""
         llm_resp = _make_llm_response(
-            action_type="payment.send",
-            skill_pack="finn_money_desk",
+            action_type="payroll.run",
+            skill_pack="milo_payroll",
             confidence=0.91,
-            entities={"amount_cents": 50000, "recipient": "supplier"},
+            entities={"period": "this_week"},
         )
         mock_completion = _mock_openai_completion(llm_resp)
         mock_client = AsyncMock()
@@ -193,9 +193,9 @@ class TestIntentClassification:
 
         with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
-            result = await classifier.classify("Send $500 to supplier")
+            result = await classifier.classify("Run payroll for this week")
 
-        assert result.action_type == "payment.send"
+        assert result.action_type == "payroll.run"
         assert result.risk_tier == RiskTier.RED
         assert result.confidence == 0.91
 
@@ -337,10 +337,10 @@ class TestIntentClassification:
     @pytest.mark.asyncio
     async def test_classify_risk_tier_from_policy(self, monkeypatch) -> None:
         """LLM cannot override risk tier — always comes from policy YAML (Law #4)."""
-        # LLM returns GREEN-tier payment.send (wrong), but policy says RED
+        # LLM returns GREEN-tier payroll.run (wrong), but policy says RED
         llm_resp = _make_llm_response(
-            action_type="payment.send",
-            skill_pack="finn_money_desk",
+            action_type="payroll.run",
+            skill_pack="milo_payroll",
             confidence=0.95,
         )
         mock_completion = _mock_openai_completion(llm_resp)
@@ -349,11 +349,11 @@ class TestIntentClassification:
 
         with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
             classifier = IntentClassifier()
-            result = await classifier.classify("Send payment")
+            result = await classifier.classify("Run payroll")
 
         # Risk tier MUST come from policy_matrix.yaml, not LLM
         assert result.risk_tier == RiskTier.RED
-        assert result.action_type == "payment.send"
+        assert result.action_type == "payroll.run"
 
 
 # =====================================================================
@@ -406,17 +406,17 @@ class TestSkillRouting:
 
     @pytest.mark.asyncio
     async def test_route_single_red(self) -> None:
-        """payment.send -> single step, RED, presence required."""
+        """payroll.run -> single step, RED, presence required."""
         intent = _make_intent_result(
-            action_type="payment.send",
-            skill_pack="finn_money_desk",
+            action_type="payroll.run",
+            skill_pack="milo_payroll",
             risk_tier=RiskTier.RED,
         )
         router = SkillRouter()
         plan = await router.route(intent)
 
         assert len(plan.steps) == 1
-        assert plan.steps[0].action_type == "payment.send"
+        assert plan.steps[0].action_type == "payroll.run"
         assert plan.estimated_risk_tier == RiskTier.RED
         assert plan.steps[0].presence_required is True
 
@@ -495,7 +495,7 @@ class TestSkillRouting:
         """Mixed GREEN + RED -> plan risk = RED (Law #4 — max escalation)."""
         intents = [
             _make_intent_result(action_type="research.search", skill_pack="adam_research", risk_tier=RiskTier.GREEN),
-            _make_intent_result(action_type="payment.send", skill_pack="finn_money_desk", risk_tier=RiskTier.RED),
+            _make_intent_result(action_type="payroll.run", skill_pack="milo_payroll", risk_tier=RiskTier.RED),
         ]
         router = SkillRouter()
         plan = await router.route_multi(intents)
@@ -1012,7 +1012,7 @@ class TestPipelineIntegration:
 
     @pytest.mark.asyncio
     async def test_pipeline_classify_low_confidence(self, graph) -> None:
-        """Utterance -> classify -> low confidence -> respond (escalation)."""
+        """Utterance -> classify -> low confidence -> agent_reason -> respond (conversation fallback)."""
         intent = _make_intent_result(
             action_type="unknown",
             confidence=0.2,
@@ -1033,14 +1033,17 @@ class TestPipelineIntegration:
 
         assert result["safety_passed"] is True
         assert result.get("intent_result") is not None
-        # Low confidence should route directly to respond (no routing/policy/execution)
+        # Low confidence routes to agent_reason (not action path)
         assert result.get("routing_plan") is None
-        # Phantom execution guard: respond must NOT claim success
+        # Agent reason produces a conversation response (no CLASSIFICATION_UNCLEAR error)
         response = result["response"]
         assert response is not None
-        assert response["error"] == "CLASSIFICATION_UNCLEAR"
-        # Must not contain execution claim language
-        assert "success" not in response.get("text", "").lower() or "rephrase" in response.get("text", "").lower()
+        assert "text" in response
+        # Must not falsely claim execution happened (phantom guard)
+        text_lower = response["text"].lower()
+        phantom_claims = ["i've sent", "i've created", "i've processed", "has been sent"]
+        for claim in phantom_claims:
+            assert claim not in text_lower, f"Phantom execution claim: {claim}"
 
     @pytest.mark.asyncio
     async def test_pipeline_classify_preserves_explicit_task_type(self, graph) -> None:

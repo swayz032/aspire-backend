@@ -1,40 +1,32 @@
-# Finn Money Desk — Risk Policy
-# ALL payment operations RED; reconciliation GREEN
+# Finn Finance Manager — Risk Policy
+# Strategic financial intelligence: snapshots, exceptions, proposals, delegation
 
-pack_id: finn-money
-default_risk_tier: red
-max_risk_tier: red
+pack_id: finn-finance-manager
+default_risk_tier: yellow
+max_risk_tier: yellow
 
 actions:
-  payment.send:
-    risk_tier: red
-    approval_required: true
-    dual_approval_required: true
-    presence_required: true
-    binding_fields: [recipient, amount_cents, currency]
-    description: "Send payment via Moov"
-
-  payment.transfer:
-    risk_tier: red
-    approval_required: true
-    dual_approval_required: true
-    presence_required: true
-    binding_fields: [from_account, to_account, amount_cents]
-    description: "Transfer funds between accounts"
-
-  payment.owner_draw:
-    risk_tier: red
-    approval_required: true
-    dual_approval_required: true
-    presence_required: true
-    binding_fields: [owner_id, amount_cents]
-    description: "Process owner draw (cash reserve validation required)"
-
-  payment.reconcile:
+  finance.snapshot.read:
     risk_tier: green
     approval_required: false
-    description: "Reconcile payment with invoice (read-only matching)"
+    description: "Read aggregated financial snapshot"
 
-idempotency:
-  required: true
-  key_pattern: "finn:{suite_id}:{action}:{amount}:{recipient}"
+  finance.exceptions.read:
+    risk_tier: green
+    approval_required: false
+    description: "Read active financial exceptions/alerts"
+
+  finance.packet.draft:
+    risk_tier: yellow
+    approval_required: true
+    description: "Draft a finance proposal packet"
+
+  finance.proposal.create:
+    risk_tier: yellow
+    approval_required: true
+    description: "Create a formal change proposal"
+
+  a2a.create:
+    risk_tier: yellow
+    approval_required: true
+    description: "Delegate analysis to another agent"

@@ -3,7 +3,6 @@
 Providers using OAuth2:
   - QuickBooks (Intuit OAuth2)
   - Gusto (Gusto OAuth2)
-  - Moov (Moov OAuth2)
   - Google (Google OAuth2 service accounts)
 
 Per Risk Register R1:

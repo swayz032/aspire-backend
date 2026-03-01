@@ -62,7 +62,7 @@
     "providers": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "External provider integrations (e.g., 'stripe', 'moov', 'plaid')"
+      "description": "External provider integrations (e.g., 'stripe', 'plaid', 'gusto')"
     },
     "actions": {
       "type": "array",

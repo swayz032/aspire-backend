@@ -8,11 +8,7 @@ Tests for:
      - Expiration enforcement, cross-tenant isolation
      - Status checking, unauthorized role rejection
 
-  2. EnhancedFinnMoneyDesk (8 tests):
-     - classify_transfer_risk, plan_payment, verify_reconciliation
-     - initiate_dual_approval, fail-closed validations
-
-  3. EnhancedMiloPayroll (8 tests):
+  2. EnhancedMiloPayroll (8 tests):
      - validate_payroll_run, estimate_tax_impact, plan_payroll_correction
      - initiate_dual_approval, fail-closed validations
 
@@ -334,86 +330,6 @@ class TestDualApprovalReceipts:
 
 
 # =============================================================================
-# EnhancedFinnMoneyDesk Tests
-# =============================================================================
-
-
-class TestEnhancedFinnMoneyDesk:
-    @pytest.fixture
-    def pack(self):
-        from aspire_orchestrator.skillpacks.finn_money_desk import EnhancedFinnMoneyDesk
-        return _create_pack(EnhancedFinnMoneyDesk)
-
-    @pytest.mark.asyncio
-    async def test_classify_transfer_risk_success(self, pack, red_ctx):
-        pack.call_llm = AsyncMock(return_value=_mock_llm_success("Risk score: 7/10"))
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-1")
-        result = await pack.classify_transfer_risk(
-            {"amount_cents": 50000, "from_account": "a1", "to_account": "a2"}, red_ctx
-        )
-        assert result.success is True
-        assert result.receipt["event_type"] == "payment.risk_classify"
-
-    @pytest.mark.asyncio
-    async def test_classify_transfer_missing_amount_denied(self, pack, red_ctx):
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-2")
-        result = await pack.classify_transfer_risk({}, red_ctx)
-        assert result.success is False
-
-    @pytest.mark.asyncio
-    async def test_plan_payment_success(self, pack, red_ctx):
-        pack.call_llm = AsyncMock(return_value=_mock_llm_success("Payment plan"))
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-3")
-        result = await pack.plan_payment(
-            {"payee": "Vendor LLC", "amount_cents": 10000, "method": "ach"}, red_ctx
-        )
-        assert result.success is True
-        assert result.receipt["event_type"] == "payment.plan"
-
-    @pytest.mark.asyncio
-    async def test_plan_payment_exceeds_limit_denied(self, pack, red_ctx):
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-4")
-        result = await pack.plan_payment(
-            {"payee": "Big Corp", "amount_cents": 99_999_999, "method": "wire"}, red_ctx
-        )
-        assert result.success is False
-        assert "EXCEEDS" in str(result.receipt.get("policy", {}).get("reasons", []))
-
-    @pytest.mark.asyncio
-    async def test_verify_reconciliation_success(self, pack, red_ctx):
-        pack.call_llm = AsyncMock(return_value=_mock_llm_success("Match: 98%"))
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-5")
-        result = await pack.verify_reconciliation(
-            {"id": "p1", "amount_cents": 5000}, {"id": "i1", "amount_cents": 5000}, red_ctx
-        )
-        assert result.success is True
-
-    @pytest.mark.asyncio
-    async def test_verify_reconciliation_missing_data_denied(self, pack, red_ctx):
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-6")
-        result = await pack.verify_reconciliation({}, {}, red_ctx)
-        assert result.success is False
-
-    def test_initiate_dual_approval(self, pack, red_ctx):
-        result = pack.initiate_dual_approval(
-            "payment.transfer", BINDING_FIELDS, red_ctx
-        )
-        assert result["success"] is True
-        assert result["status"] == "pending"
-        assert "owner" in result["remaining_roles"]
-        # Clean up singleton
-        get_dual_approval_service().clear_store()
-
-    @pytest.mark.asyncio
-    async def test_invalid_method_denied(self, pack, red_ctx):
-        pack._trust_spine.emit_receipt = AsyncMock(return_value="r-7")
-        result = await pack.plan_payment(
-            {"payee": "V", "amount_cents": 1000, "method": "bitcoin"}, red_ctx
-        )
-        assert result.success is False
-
-
-# =============================================================================
 # EnhancedMiloPayroll Tests
 # =============================================================================
 
@@ -574,28 +490,25 @@ class TestRedPackContract:
     """All RED packs must inherit EnhancedSkillPack with tier=red."""
 
     def test_all_red_packs_have_red_tier(self):
-        from aspire_orchestrator.skillpacks.finn_money_desk import EnhancedFinnMoneyDesk
         from aspire_orchestrator.skillpacks.milo_payroll import EnhancedMiloPayroll
         from aspire_orchestrator.skillpacks.clara_legal import EnhancedClaraLegal
 
-        for cls in [EnhancedFinnMoneyDesk, EnhancedMiloPayroll, EnhancedClaraLegal]:
+        for cls in [EnhancedMiloPayroll, EnhancedClaraLegal]:
             pack = _create_pack(cls)
             assert pack.default_risk_tier == "red", f"{cls.__name__} should be RED tier"
 
     def test_all_red_packs_have_dual_approval(self):
-        from aspire_orchestrator.skillpacks.finn_money_desk import EnhancedFinnMoneyDesk
         from aspire_orchestrator.skillpacks.milo_payroll import EnhancedMiloPayroll
         from aspire_orchestrator.skillpacks.clara_legal import EnhancedClaraLegal
 
-        for cls in [EnhancedFinnMoneyDesk, EnhancedMiloPayroll, EnhancedClaraLegal]:
+        for cls in [EnhancedMiloPayroll, EnhancedClaraLegal]:
             pack = _create_pack(cls)
             assert hasattr(pack, "initiate_dual_approval"), f"{cls.__name__} missing dual approval"
 
     def test_all_red_packs_have_rule_pack(self):
-        from aspire_orchestrator.skillpacks.finn_money_desk import EnhancedFinnMoneyDesk
         from aspire_orchestrator.skillpacks.milo_payroll import EnhancedMiloPayroll
         from aspire_orchestrator.skillpacks.clara_legal import EnhancedClaraLegal
 
-        for cls in [EnhancedFinnMoneyDesk, EnhancedMiloPayroll, EnhancedClaraLegal]:
+        for cls in [EnhancedMiloPayroll, EnhancedClaraLegal]:
             pack = _create_pack(cls)
             assert hasattr(pack, "_rule_pack"), f"{cls.__name__} missing rule pack reference"

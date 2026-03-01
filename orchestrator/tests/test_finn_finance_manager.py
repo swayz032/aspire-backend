@@ -521,10 +521,11 @@ class TestPolicyMatrixIntegration:
         assert result.deny_reason is not None
 
     def test_finn_cannot_access_payment_send(self, matrix) -> None:
-        """Finn Finance Manager should NOT have access to payment.send (Money Desk)."""
+        """payment.send action removed (Money Desk discontinued). Unknown actions denied."""
         result = matrix.evaluate("payment.send")
-        assert result.risk_tier == RiskTier.RED
-        # payment.send is Red tier — Finn Finance Manager (Yellow max) doesn't use it
+        assert not result.allowed
+        assert result.deny_reason is not None
+        # payment.send removed from system — policy engine denies unknown actions
 
     def test_finn_cannot_access_payroll_run(self, matrix) -> None:
         """Finn Finance Manager should NOT have access to payroll.run (Milo)."""
@@ -573,11 +574,11 @@ class TestEvilTests:
         )
         assert receipt["suite_id"] == SUITE_A
 
-    def test_delegation_to_finn_money_denied(self, delegation_svc: FinnDelegationService) -> None:
-        """Cannot delegate to finn-money (not in allowlist)."""
+    def test_delegation_to_unknown_agent_denied(self, delegation_svc: FinnDelegationService) -> None:
+        """Cannot delegate to unknown agent (not in allowlist)."""
         request = DelegationRequest(
             suite_id=SUITE_A, office_id=OFFICE, correlation_id=CORR_ID,
-            to_agent="finn-money", request_type="ResearchRequest",
+            to_agent="nonexistent-agent", request_type="ResearchRequest",
             payload={}, risk_tier="green",
         )
         result = delegation_svc.validate_delegation(request)

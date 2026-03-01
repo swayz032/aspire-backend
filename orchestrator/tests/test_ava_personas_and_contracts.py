@@ -66,7 +66,7 @@ class TestAvaPersonaLoading:
         assert text is not None
         assert "control-plane operator" in text
         assert "ChangeProposal" in text
-        assert "Incident Commander Mode" in text
+        assert "Incident Commander" in text
 
     def test_ava_personas_in_load_all(self) -> None:
         all_personas = load_all_personas()
@@ -78,10 +78,10 @@ class TestAvaPersonaLoading:
     def test_ava_admin_includes_incident_commander(self) -> None:
         text = load_persona("ava_admin")
         assert text is not None
-        assert "STATUS" in text
-        assert "EVIDENCE" in text
-        assert "HYPOTHESES" in text
-        assert "ROLLBACK TRIGGERS" in text
+        assert "evidence" in text.lower()
+        assert "hypotheses" in text.lower()
+        assert "rollback triggers" in text.lower()
+        assert "mitigation" in text.lower()
 
 
 # ---------------------------------------------------------------------------

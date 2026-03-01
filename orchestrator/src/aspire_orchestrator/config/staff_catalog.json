@@ -87,7 +87,7 @@
       "chat_visible": true,
       "proposal_only": true,
       "implemented": true,
-      "skillpack_id": "finn-money",
+      "skillpack_id": "finn-finance-manager",
       "hard_rules": ["never_execute_money_movement"],
       "default_risk_floor": "red"
     },

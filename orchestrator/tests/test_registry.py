@@ -47,8 +47,8 @@ class TestRegistryLoading:
         assert registry.version == "1.0.0"
 
     def test_loads_all_skill_packs(self, registry: ControlPlaneRegistry):
-        """All 12 customer-facing + admin skill packs loaded."""
-        assert len(registry.skill_packs) == 12
+        """All 11 customer-facing + admin skill packs loaded."""
+        assert len(registry.skill_packs) == 11
 
     def test_loads_all_tools(self, registry: ControlPlaneRegistry):
         """All tool definitions loaded."""
@@ -110,12 +110,11 @@ class TestSkillPackLookup:
         ("nora_conference", "nora", "channel", RiskTier.YELLOW),
         ("adam_research", "adam", "channel", RiskTier.GREEN),
         ("tec_documents", "tec", "channel", RiskTier.YELLOW),
-        ("finn_money_desk", "finn", "finance", RiskTier.RED),
+        ("finn_finance_manager", "finn", "finance", RiskTier.YELLOW),
         ("milo_payroll", "milo", "finance", RiskTier.RED),
         ("teressa_books", "teressa", "finance", RiskTier.YELLOW),
         ("clara_legal", "clara", "legal", RiskTier.RED),
         ("mail_ops_desk", "mail_ops", "internal_admin", RiskTier.YELLOW),
-        ("finn_finance_manager", "finn", "finance", RiskTier.YELLOW),
     ]
 
     @pytest.mark.parametrize("pack_id,owner,category,risk_tier", EXPECTED_PACKS)
@@ -154,8 +153,6 @@ class TestActionRouting:
         ("invoice.create", "quinn_invoicing", "quinn"),
         ("meeting.schedule", "nora_conference", "nora"),
         ("research.search", "adam_research", "adam"),
-        ("payment.send", "finn_money_desk", "finn"),
-        ("payment.transfer", "finn_money_desk", "finn"),
         ("payroll.run", "milo_payroll", "milo"),
         ("books.sync", "teressa_books", "teressa"),
         ("contract.generate", "clara_legal", "clara"),
@@ -190,10 +187,10 @@ class TestActionRouting:
 
     def test_route_includes_tools(self, registry: ControlPlaneRegistry):
         """Routing result includes tool identifiers."""
-        result = registry.route_action("payment.send")
+        result = registry.route_action("invoice.create")
         assert result.found
         assert len(result.tools) > 0
-        assert "moov.payment.send" in result.tools
+        assert "stripe.invoice.create" in result.tools
 
     def test_route_includes_providers(self, registry: ControlPlaneRegistry):
         """Routing result includes provider names."""
@@ -216,7 +213,7 @@ class TestFiltering:
         assert len(channel_packs) == 6
 
         finance_packs = registry.list_skill_packs(category="finance")
-        assert len(finance_packs) == 4
+        assert len(finance_packs) == 3
 
         legal_packs = registry.list_skill_packs(category="legal")
         assert len(legal_packs) == 1
@@ -227,7 +224,7 @@ class TestFiltering:
         assert len(green_packs) == 1  # adam
 
         red_packs = registry.list_skill_packs(risk_tier=RiskTier.RED)
-        assert len(red_packs) == 3  # finn_money, milo, clara
+        assert len(red_packs) == 2  # milo, clara
 
         yellow_packs = registry.list_skill_packs(risk_tier=RiskTier.YELLOW)
         assert len(yellow_packs) == 8  # sarah, eli, quinn, nora, tec, teressa, mail_ops, finn_finance_manager
@@ -235,7 +232,7 @@ class TestFiltering:
     def test_filter_by_status(self, registry: ControlPlaneRegistry):
         """All packs are in 'registered' status for Phase 1."""
         registered = registry.list_skill_packs(status="registered")
-        assert len(registered) == 12
+        assert len(registered) == 11
 
         active = registry.list_skill_packs(status="active")
         assert len(active) == 0
@@ -243,7 +240,7 @@ class TestFiltering:
     def test_combined_filters(self, registry: ControlPlaneRegistry):
         """Multiple filters combine correctly."""
         result = registry.list_skill_packs(category="finance", risk_tier=RiskTier.RED)
-        assert len(result) == 2  # finn, milo
+        assert len(result) == 1  # milo only
 
     def test_no_match_returns_empty(self, registry: ControlPlaneRegistry):
         """Filters with no matches return empty list."""
@@ -262,7 +259,7 @@ class TestCapabilityDiscovery:
     def test_lists_all_capabilities(self, registry: ControlPlaneRegistry):
         """list_capabilities returns all registered skill packs."""
         caps = registry.list_capabilities()
-        assert len(caps) == 12
+        assert len(caps) == 11
 
     def test_capability_has_required_fields(self, registry: ControlPlaneRegistry):
         """Each capability entry has the required discovery fields."""
@@ -295,7 +292,7 @@ class TestStats:
     def test_stats_totals(self, registry: ControlPlaneRegistry):
         """Stats include correct totals."""
         stats = registry.get_stats()
-        assert stats["total_skill_packs"] == 12
+        assert stats["total_skill_packs"] == 11
         assert stats["total_tools"] >= 33
         assert stats["total_providers"] >= 14
         assert stats["total_actions_mapped"] >= 17
@@ -305,7 +302,7 @@ class TestStats:
         stats = registry.get_stats()
         by_cat = stats["by_category"]
         assert by_cat.get("channel") == 6
-        assert by_cat.get("finance") == 4
+        assert by_cat.get("finance") == 3
         assert by_cat.get("legal") == 1
 
     def test_stats_by_risk_tier(self, registry: ControlPlaneRegistry):
@@ -314,7 +311,7 @@ class TestStats:
         by_risk = stats["by_risk_tier"]
         assert by_risk.get("green") == 1
         assert by_risk.get("yellow") == 8
-        assert by_risk.get("red") == 3
+        assert by_risk.get("red") == 2
 
 
 # =============================================================================
@@ -351,9 +348,6 @@ class TestToolProviderLookup:
     def test_red_tier_tools_match_manifest(self, registry: ControlPlaneRegistry):
         """RED tier tools are correctly classified."""
         red_tools = [
-            "moov.payment.send",
-            "plaid.payment.send",
-            "moov.transfer.create",
             "pandadoc.contract.sign",
             "gusto.payroll.run",
             "tax.filing.submit",

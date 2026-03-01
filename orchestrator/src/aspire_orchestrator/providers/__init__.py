@@ -11,7 +11,7 @@ Provider hierarchy:
   BaseProviderClient (abstract)
     +-- ApiKeyClient (Stripe, PandaDoc, Brave, Tavily, LiveKit, Twilio,
     |                 Deepgram, ElevenLabs, Google Places, TomTom, HERE,
-    |                 Foursquare, Mapbox, Moov, Plaid)
+    |                 Foursquare, Mapbox, Plaid)
     +-- OAuth2Client (QuickBooks, Gusto, Google)
     +-- NoAuthClient (OSM Overpass, Puppeteer)
     +-- S2SHmacClient (Domain Rail — already implemented in domain_rail_client.py)

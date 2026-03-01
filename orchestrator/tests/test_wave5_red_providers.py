@@ -1,6 +1,6 @@
-"""Wave 5 RED Provider Tests — Finn (Money Desk) + Milo (Payroll).
+"""Wave 5 RED Provider Tests — Plaid + Gusto (Milo Payroll).
 
-Tests for Moov, Plaid, and Gusto provider clients.
+Tests for Plaid and Gusto provider clients.
 RED tier operations require explicit authority + strong confirmation UX.
 
 Per CLAUDE.md:
@@ -11,7 +11,6 @@ Per CLAUDE.md:
   - Law #9: Never log secrets, PII redacted
 
 Test categories:
-  - Moov: account.read, transfer.create (RED), transfer.status
   - Plaid: accounts.get, transactions.get, transfer.create (RED)
   - Gusto: read_company, read_payrolls, payroll.run (RED)
   - Each category tests: success, validation, receipt emission, fail-closed
@@ -35,13 +34,6 @@ from aspire_orchestrator.providers.base_client import (
     ProviderResponse,
 )
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
-from aspire_orchestrator.providers.moov_client import (
-    MoovClient,
-    execute_moov_account_read,
-    execute_moov_transfer_create,
-    execute_moov_transfer_status,
-    _get_client as moov_get_client,
-)
 from aspire_orchestrator.providers.plaid_client import (
     PlaidClient,
     execute_plaid_accounts_get,
@@ -104,518 +96,6 @@ def _mock_error_response(
         error_code=error_code,
         error_message=body.get("error", f"HTTP {status_code}"),
     )
-
-
-# =============================================================================
-# Moov Client Tests (25+)
-# =============================================================================
-
-
-class TestMoovClient:
-    """Test Moov Financial client configuration."""
-
-    def test_provider_config(self):
-        client = MoovClient()
-        assert client.provider_id == "moov"
-        assert client.base_url == "https://api.moov.io"
-        assert client.timeout_seconds == 15.0
-        assert client.max_retries == 2
-        assert client.idempotency_support is True
-
-    @pytest.mark.asyncio
-    async def test_auth_headers_with_key(self):
-        client = MoovClient()
-        with patch("aspire_orchestrator.providers.moov_client.settings") as mock_settings:
-            mock_settings.moov_api_key = "test-moov-key"
-            req = ProviderRequest(method="GET", path="/test")
-            headers = await client._authenticate_headers(req)
-            assert headers == {"Authorization": "Bearer test-moov-key"}
-
-    @pytest.mark.asyncio
-    async def test_auth_headers_missing_key_fails_closed(self):
-        """Law #3: Missing API key -> fail-closed."""
-        client = MoovClient()
-        with patch("aspire_orchestrator.providers.moov_client.settings") as mock_settings:
-            mock_settings.moov_api_key = ""
-            req = ProviderRequest(method="GET", path="/test")
-            with pytest.raises(ProviderError) as exc_info:
-                await client._authenticate_headers(req)
-            assert exc_info.value.code == InternalErrorCode.AUTH_INVALID_KEY
-
-    def test_parse_error_idempotency_conflict(self):
-        client = MoovClient()
-        code = client._parse_error(409, {"error": "conflict"})
-        assert code == InternalErrorCode.DOMAIN_IDEMPOTENCY_CONFLICT
-
-    def test_parse_error_insufficient_funds(self):
-        client = MoovClient()
-        code = client._parse_error(422, {"error": "Insufficient funds in account"})
-        assert code == InternalErrorCode.DOMAIN_INSUFFICIENT_FUNDS
-
-    def test_parse_error_rate_limit(self):
-        client = MoovClient()
-        code = client._parse_error(429, {})
-        assert code == InternalErrorCode.RATE_LIMITED
-
-
-class TestMoovAccountRead:
-    """Test moov.account.read executor."""
-
-    @pytest.mark.asyncio
-    async def test_success(self, suite_id, office_id, correlation_id):
-        mock_response = _mock_success_response({
-            "accountID": "acct_123",
-            "displayName": "Business Checking",
-            "status": "active",
-            "capabilities": ["send", "receive"],
-        })
-
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_account_read(
-                payload={"account_id": "acct_123"},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.SUCCESS
-        assert result.tool_id == "moov.account.read"
-        assert result.data["account_id"] == "acct_123"
-        assert result.data["display_name"] == "Business Checking"
-        assert result.data["status"] == "active"
-        assert result.receipt_data  # Law #2
-
-    @pytest.mark.asyncio
-    async def test_missing_account_id(self, suite_id, office_id, correlation_id):
-        """Validation: missing account_id -> fail with receipt."""
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_account_read(
-                payload={},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "account_id" in result.error
-        assert result.receipt_data  # Law #2
-        assert result.receipt_data["reason_code"] == "INPUT_MISSING_REQUIRED"
-
-    @pytest.mark.asyncio
-    async def test_receipt_has_green_tier(self, suite_id, office_id, correlation_id):
-        """account.read is GREEN tier."""
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_account_read(
-                payload={},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.receipt_data["risk_tier"] == "green"
-
-    @pytest.mark.asyncio
-    async def test_api_error_response(self, suite_id, office_id, correlation_id):
-        """Provider error still emits receipt (Law #2)."""
-        mock_response = _mock_error_response(
-            {"error": "not_found"},
-            status_code=404,
-            error_code=InternalErrorCode.DOMAIN_NOT_FOUND,
-        )
-
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_account_read(
-                payload={"account_id": "acct_nonexistent"},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert result.receipt_data
-        assert result.receipt_data["outcome"] == "failed"
-
-
-class TestMoovTransferCreate:
-    """Test moov.transfer.create executor (RED tier)."""
-
-    @pytest.mark.asyncio
-    async def test_success_with_idempotency(self, suite_id, office_id, correlation_id):
-        mock_response = _mock_success_response({
-            "transferID": "xfer_abc",
-            "status": "pending",
-            "amount": {"value": 10000, "currency": "USD"},
-            "createdOn": "2026-02-13T12:00:00Z",
-        })
-
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 10000,
-                    "currency": "usd",
-                    "description": "Monthly payment",
-                    "idempotency_key": "idem_key_123",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.SUCCESS
-        assert result.tool_id == "moov.transfer.create"
-        assert result.data["transfer_id"] == "xfer_abc"
-        assert result.data["status"] == "pending"
-        assert result.receipt_data
-        assert result.receipt_data["risk_tier"] == "red"
-
-    @pytest.mark.asyncio
-    async def test_binding_fields_in_receipt(self, suite_id, office_id, correlation_id):
-        """RED tier receipts must include binding fields for post-hoc verification."""
-        mock_response = _mock_success_response({
-            "transferID": "xfer_bind",
-            "status": "pending",
-            "amount": {"value": 5000, "currency": "USD"},
-        })
-
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 5000,
-                    "currency": "eur",
-                    "description": "EU payment",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        binding = result.receipt_data["binding_fields"]
-        assert binding["source_account_id"] == "acct_src"
-        assert binding["destination_account_id"] == "acct_dst"
-        assert binding["amount_cents"] == 5000
-        assert binding["currency"] == "EUR"
-
-    @pytest.mark.asyncio
-    async def test_missing_source_account(self, suite_id, office_id, correlation_id):
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 100,
-                    "currency": "usd",
-                    "description": "test",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "source_account_id" in result.error
-
-    @pytest.mark.asyncio
-    async def test_missing_destination(self, suite_id, office_id, correlation_id):
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "amount_cents": 100,
-                    "currency": "usd",
-                    "description": "test",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "destination_account_id" in result.error
-
-    @pytest.mark.asyncio
-    async def test_missing_amount(self, suite_id, office_id, correlation_id):
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "currency": "usd",
-                    "description": "test",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "amount_cents" in result.error
-
-    @pytest.mark.asyncio
-    async def test_missing_currency(self, suite_id, office_id, correlation_id):
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 100,
-                    "description": "test",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "currency" in result.error
-
-    @pytest.mark.asyncio
-    async def test_missing_description(self, suite_id, office_id, correlation_id):
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 100,
-                    "currency": "usd",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "description" in result.error
-
-    @pytest.mark.asyncio
-    async def test_negative_amount_rejected(self, suite_id, office_id, correlation_id):
-        """Evil: negative amount must be rejected with INPUT_INVALID_FORMAT."""
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": -100,
-                    "currency": "usd",
-                    "description": "evil negative",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert result.receipt_data["reason_code"] == "INPUT_INVALID_FORMAT"
-
-    @pytest.mark.asyncio
-    async def test_zero_amount_rejected(self, suite_id, office_id, correlation_id):
-        """Evil: zero amount must be rejected."""
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 0,
-                    "currency": "usd",
-                    "description": "evil zero",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert result.receipt_data["reason_code"] == "INPUT_INVALID_FORMAT"
-
-    @pytest.mark.asyncio
-    async def test_red_tier_in_receipt(self, suite_id, office_id, correlation_id):
-        """transfer.create must always carry risk_tier=red in receipt."""
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={},  # Will fail validation, but receipt still has red tier
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.receipt_data["risk_tier"] == "red"
-
-    @pytest.mark.asyncio
-    async def test_api_failure_emits_receipt(self, suite_id, office_id, correlation_id):
-        """API error still generates receipt (Law #2)."""
-        mock_response = _mock_error_response(
-            {"error": "insufficient funds"},
-            status_code=422,
-            error_code=InternalErrorCode.DOMAIN_INSUFFICIENT_FUNDS,
-        )
-
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_create(
-                payload={
-                    "source_account_id": "acct_src",
-                    "destination_account_id": "acct_dst",
-                    "amount_cents": 10000,
-                    "currency": "usd",
-                    "description": "payment",
-                },
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert result.receipt_data["outcome"] == "failed"
-        assert "binding_fields" in result.receipt_data
-
-
-class TestMoovTransferStatus:
-    """Test moov.transfer.status executor."""
-
-    @pytest.mark.asyncio
-    async def test_success(self, suite_id, office_id, correlation_id):
-        mock_response = _mock_success_response({
-            "transferID": "xfer_abc",
-            "status": "completed",
-            "amount": {"value": 5000, "currency": "USD"},
-            "source": {"accountID": "acct_src"},
-            "destination": {"accountID": "acct_dst"},
-        })
-
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_status(
-                payload={"transfer_id": "xfer_abc"},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.SUCCESS
-        assert result.data["transfer_id"] == "xfer_abc"
-        assert result.data["status"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_missing_transfer_id(self, suite_id, office_id, correlation_id):
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_status(
-                payload={},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.outcome == Outcome.FAILED
-        assert "transfer_id" in result.error
-
-    @pytest.mark.asyncio
-    async def test_green_tier_in_receipt(self, suite_id, office_id, correlation_id):
-        """transfer.status is GREEN tier."""
-        with patch("aspire_orchestrator.providers.moov_client._get_client") as mock_gc:
-            client = MagicMock(spec=MoovClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
-            client.provider_id = "moov"
-            mock_gc.return_value = client
-
-            result = await execute_moov_transfer_status(
-                payload={},
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-            )
-
-        assert result.receipt_data["risk_tier"] == "green"
 
 
 # =============================================================================
@@ -735,7 +215,7 @@ class TestPlaidAccountsGet:
             client = MagicMock(spec=PlaidClient)
             client._request = AsyncMock(return_value=mock_response)
             client._inject_auth = MagicMock(side_effect=lambda b: {**b, "client_id": "c", "secret": "s"})
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -755,7 +235,7 @@ class TestPlaidAccountsGet:
     async def test_missing_access_token(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -777,7 +257,7 @@ class TestPlaidAccountsGet:
             client = MagicMock(spec=PlaidClient)
             client._request = AsyncMock(return_value=mock_response)
             client._inject_auth = MagicMock(side_effect=lambda b: {**b, "client_id": "c", "secret": "s"})
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -815,7 +295,7 @@ class TestPlaidTransactionsGet:
             client = MagicMock(spec=PlaidClient)
             client._request = AsyncMock(return_value=mock_response)
             client._inject_auth = MagicMock(side_effect=lambda b: {**b, "client_id": "c", "secret": "s"})
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -839,7 +319,7 @@ class TestPlaidTransactionsGet:
     async def test_missing_start_date(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -857,7 +337,7 @@ class TestPlaidTransactionsGet:
     async def test_missing_access_token(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -875,7 +355,7 @@ class TestPlaidTransactionsGet:
     async def test_missing_all_params(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -907,7 +387,7 @@ class TestPlaidTransferCreate:
             client = MagicMock(spec=PlaidClient)
             client._request = AsyncMock(return_value=mock_response)
             client._inject_auth = MagicMock(side_effect=lambda b: {**b, "client_id": "c", "secret": "s"})
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -936,7 +416,7 @@ class TestPlaidTransferCreate:
             client = MagicMock(spec=PlaidClient)
             client._request = AsyncMock(return_value=mock_response)
             client._inject_auth = MagicMock(side_effect=lambda b: {**b, "client_id": "c", "secret": "s"})
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -960,7 +440,7 @@ class TestPlaidTransferCreate:
     async def test_missing_access_token(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -982,7 +462,7 @@ class TestPlaidTransferCreate:
     async def test_missing_account_id(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -1005,7 +485,7 @@ class TestPlaidTransferCreate:
         """Evil: negative amount -> INPUT_INVALID_FORMAT."""
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -1029,7 +509,7 @@ class TestPlaidTransferCreate:
         """Evil: zero amount -> INPUT_INVALID_FORMAT."""
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -1053,7 +533,7 @@ class TestPlaidTransferCreate:
         """Evil: non-numeric amount -> INPUT_INVALID_FORMAT."""
         with patch("aspire_orchestrator.providers.plaid_client._get_client") as mock_gc:
             client = MagicMock(spec=PlaidClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -1087,7 +567,7 @@ class TestPlaidTransferCreate:
             client = MagicMock(spec=PlaidClient)
             client._request = AsyncMock(return_value=mock_response)
             client._inject_auth = MagicMock(side_effect=inject_and_capture)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = PlaidClient.make_receipt_data.__get__(client)
             client.provider_id = "plaid"
             mock_gc.return_value = client
 
@@ -1231,7 +711,7 @@ class TestGustoReadCompany:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1251,7 +731,7 @@ class TestGustoReadCompany:
     async def test_missing_company_id(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1269,7 +749,7 @@ class TestGustoReadCompany:
     async def test_green_tier_receipt(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1302,7 +782,7 @@ class TestGustoReadPayrolls:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1335,7 +815,7 @@ class TestGustoReadPayrolls:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1363,7 +843,7 @@ class TestGustoReadPayrolls:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(side_effect=capture_request)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1385,7 +865,7 @@ class TestGustoReadPayrolls:
     async def test_missing_company_id(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1415,7 +895,7 @@ class TestGustoPayrollRun:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1443,7 +923,7 @@ class TestGustoPayrollRun:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1465,7 +945,7 @@ class TestGustoPayrollRun:
     async def test_missing_company_id(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1483,7 +963,7 @@ class TestGustoPayrollRun:
     async def test_missing_payroll_id(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1501,7 +981,7 @@ class TestGustoPayrollRun:
     async def test_missing_both_params(self, suite_id, office_id, correlation_id):
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1521,7 +1001,7 @@ class TestGustoPayrollRun:
         """payroll.run must always be RED tier in receipt."""
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1546,7 +1026,7 @@ class TestGustoPayrollRun:
         with patch("aspire_orchestrator.providers.gusto_client._get_client") as mock_gc:
             client = MagicMock(spec=GustoClient)
             client._request = AsyncMock(return_value=mock_response)
-            client.make_receipt_data = MoovClient.make_receipt_data.__get__(client)
+            client.make_receipt_data = GustoClient.make_receipt_data.__get__(client)
             client.provider_id = "gusto"
             mock_gc.return_value = client
 
@@ -1570,12 +1050,6 @@ class TestGustoPayrollRun:
 class TestToolExecutorRegistryWiring:
     """Verify Wave 5 tools are registered in the tool executor."""
 
-    def test_moov_tools_registered(self):
-        from aspire_orchestrator.services.tool_executor import is_live_tool, get_live_tools
-        assert is_live_tool("moov.account.read")
-        assert is_live_tool("moov.transfer.create")
-        assert is_live_tool("moov.transfer.status")
-
     def test_plaid_tools_registered(self):
         from aspire_orchestrator.services.tool_executor import is_live_tool
         assert is_live_tool("plaid.accounts.get")
@@ -1588,11 +1062,10 @@ class TestToolExecutorRegistryWiring:
         assert is_live_tool("gusto.read_payrolls")
         assert is_live_tool("gusto.payroll.run")
 
-    def test_all_nine_tools_in_live_list(self):
+    def test_all_six_tools_in_live_list(self):
         from aspire_orchestrator.services.tool_executor import get_live_tools
         live = get_live_tools()
         wave5_tools = [
-            "moov.account.read", "moov.transfer.create", "moov.transfer.status",
             "plaid.accounts.get", "plaid.transactions.get", "plaid.transfer.create",
             "gusto.read_company", "gusto.read_payrolls", "gusto.payroll.run",
         ]

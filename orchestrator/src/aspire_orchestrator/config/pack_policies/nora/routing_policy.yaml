@@ -6,7 +6,7 @@ pack_id: nora-conference
 risk_triggers:
   money_movement:
     keywords: ["payment", "transfer", "send money", "wire", "pay", "invoice"]
-    route_to: finn-money
+    route_to: finn-finance-manager
     risk_tier: red
     action: "escalate_to_specialist"
 

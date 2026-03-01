@@ -221,10 +221,10 @@ class TestE2PrivilegeEscalation:
     """Evil tests: attempt to execute higher-tier actions without gates."""
 
     def test_red_action_without_approval_denied(self, client) -> None:
-        """RED-tier action (payment.send) without approval is denied."""
+        """RED-tier action (contract.sign) without approval is denied."""
         request = _make_request(
             suite_id="evil-e2-001",
-            task_type="payment.send",
+            task_type="contract.sign",
         )
         response = client.post("/v1/intents", json=request)
         data = response.json()
@@ -255,7 +255,7 @@ class TestE2PrivilegeEscalation:
         """Client-supplied risk_tier in payload must be ignored by orchestrator."""
         request = _make_request(
             suite_id="evil-e2-004",
-            task_type="payment.send",
+            task_type="contract.sign",
             payload={"risk_tier": "green"},  # Attacker tries to downgrade
         )
         response = client.post("/v1/intents", json=request)
@@ -457,14 +457,14 @@ class TestE3TokenAttacks:
             ttl_seconds=45,
         )
         # Attacker changes tool after signing
-        token["tool"] = "payment.send"
-        token["scopes"] = ["payment.write"]
+        token["tool"] = "contract.sign"
+        token["scopes"] = ["contracts.sign"]
 
         result = validate_token(
             token,
             expected_suite_id="evil-e3-008",
             expected_office_id="office-001",
-            required_scope="payment.write",
+            required_scope="contracts.sign",
         )
         assert not result.valid
         assert result.error == TokenValidationError.SIGNATURE_INVALID

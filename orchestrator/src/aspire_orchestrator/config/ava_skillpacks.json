@@ -67,10 +67,10 @@
       "default_timeout_ms": 120000
     },
     {
-      "id": "finn-money",
+      "id": "finn-finance-manager",
       "name": "Finn",
-      "version": "1.0.0",
-      "description": "Money Movement desk (proposal-only; execution gated by approvals + presence).",
+      "version": "3.1.0",
+      "description": "Unified finance manager — strategy, analysis, payments (proposal-only; execution gated by approvals + presence).",
       "allowed_tools": ["openai_sdk", "policy.evaluate", "trustspine.create_proposal", "trustspine.request_approval", "trustspine.emit_receipt"],
       "default_timeout_ms": 60000
     },

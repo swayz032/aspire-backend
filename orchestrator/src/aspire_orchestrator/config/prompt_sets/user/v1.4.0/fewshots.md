@@ -71,7 +71,7 @@
   "status": "fatal_error",
   "outputs": {
     "correlation_id": "task_999",
-    "route": { "skillpack_id": "finn-money", "confidence": 0.78, "reason_codes": ["money.movement","execassist.governed"] },
+    "route": { "skillpack_id": "finn-finance-manager", "confidence": 0.78, "reason_codes": ["money.movement","execassist.governed"] },
     "risk": { "tier": "red", "required_presence": "ava_video" },
     "governance": {
       "approval_required": true,

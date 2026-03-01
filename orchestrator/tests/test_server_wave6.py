@@ -62,8 +62,8 @@ class TestRegistryCapabilities:
         res = await client.get("/v1/registry/capabilities")
         assert res.status_code == 200
         body = res.json()
-        assert body["count"] == 12
-        assert len(body["capabilities"]) == 12
+        assert body["count"] == 11
+        assert len(body["capabilities"]) == 11
 
     @pytest.mark.asyncio
     async def test_filter_by_category(self, client):
@@ -80,7 +80,7 @@ class TestRegistryCapabilities:
         res = await client.get("/v1/registry/capabilities?risk_tier=red")
         assert res.status_code == 200
         body = res.json()
-        assert body["count"] == 3
+        assert body["count"] == 2
         assert all(c["risk_tier"] == "red" for c in body["capabilities"])
 
     @pytest.mark.asyncio
@@ -96,7 +96,7 @@ class TestRegistryCapabilities:
         res = await client.get("/v1/registry/capabilities")
         body = res.json()
         assert "stats" in body
-        assert body["stats"]["total_skill_packs"] == 12
+        assert body["stats"]["total_skill_packs"] == 11
 
 
 class TestRegistrySkillPacks:
@@ -144,10 +144,10 @@ class TestRegistryRouting:
     @pytest.mark.asyncio
     async def test_route_includes_tools(self, client):
         """Route response includes tool identifiers."""
-        res = await client.get("/v1/registry/route/payment.send")
+        res = await client.get("/v1/registry/route/invoice.create")
         body = res.json()
         assert body["found"] is True
-        assert "moov.payment.send" in body["tools"]
+        assert "stripe.invoice.create" in body["tools"]
 
 
 # =============================================================================

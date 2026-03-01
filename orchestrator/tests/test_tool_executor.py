@@ -93,7 +93,7 @@ class TestToolRegistry:
 
     def test_is_live_tool_false(self):
         """Unimplemented tools report as stub."""
-        assert is_live_tool("moov.payment.send") is False
+        assert is_live_tool("slack.message.send") is False
         assert is_live_tool("slack.message.send") is False
         assert is_live_tool("nonexistent.tool") is False
 

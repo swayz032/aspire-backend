@@ -58,7 +58,7 @@ class TestYAMLLoading:
 
     def test_has_red_actions(self, matrix: PolicyMatrix) -> None:
         red = matrix.list_actions(RiskTier.RED)
-        assert len(red) >= 8  # 8 RED actions defined
+        assert len(red) >= 6  # 6 RED actions defined (payment.* removed)
 
     def test_total_actions_count(self, matrix: PolicyMatrix) -> None:
         all_actions = matrix.list_actions()
@@ -155,14 +155,14 @@ class TestYellowTierEvaluation:
 
 
 class TestRedTierEvaluation:
-    def test_payment_send_is_red(self, matrix: PolicyMatrix) -> None:
-        result = matrix.evaluate("payment.send")
+    def test_contract_sign_is_red(self, matrix: PolicyMatrix) -> None:
+        result = matrix.evaluate("contract.sign")
         assert result.allowed is True
         assert result.risk_tier == RiskTier.RED
         assert result.approval_required is True
         assert result.presence_required is True
 
-    def test_contract_sign_is_red(self, matrix: PolicyMatrix) -> None:
+    def test_contract_sign_is_red_alternative(self, matrix: PolicyMatrix) -> None:
         result = matrix.evaluate("contract.sign")
         assert result.allowed is True
         assert result.risk_tier == RiskTier.RED
@@ -174,11 +174,11 @@ class TestRedTierEvaluation:
         assert result.risk_tier == RiskTier.RED
 
     def test_red_has_spend_fields(self, matrix: PolicyMatrix) -> None:
-        action = matrix.get_action("payment.send")
+        action = matrix.get_action("payroll.run")
         assert action is not None
         assert action.approval_type == "spend"
-        assert "recipient" in action.approval_binding_fields
-        assert "amount_cents" in action.approval_binding_fields
+        assert "payroll_id" in action.approval_binding_fields
+        assert "total_amount" in action.approval_binding_fields
 
     def test_payroll_redacts_sensitive(self, matrix: PolicyMatrix) -> None:
         result = matrix.evaluate("payroll.run")
@@ -221,7 +221,7 @@ class TestIntrospection:
     def test_list_all_actions(self, matrix: PolicyMatrix) -> None:
         all_actions = matrix.list_actions()
         assert "calendar.read" in all_actions
-        assert "payment.send" in all_actions
+        assert "contract.sign" in all_actions
         assert "invoice.create" in all_actions
 
     def test_list_green_only(self, matrix: PolicyMatrix) -> None:
@@ -235,14 +235,14 @@ class TestIntrospection:
         assert matrix.get_action("nonexistent") is None
 
     def test_action_has_category(self, matrix: PolicyMatrix) -> None:
-        action = matrix.get_action("payment.send")
+        action = matrix.get_action("contract.sign")
         assert action is not None
-        assert action.category == "payments"
+        assert action.category == "contracts"
 
     def test_action_has_capability_scope(self, matrix: PolicyMatrix) -> None:
-        action = matrix.get_action("payment.send")
+        action = matrix.get_action("contract.sign")
         assert action is not None
-        assert action.capability_scope == "payments:initiate"
+        assert action.capability_scope == "contracts:sign"
 
 
 # ===========================================================================

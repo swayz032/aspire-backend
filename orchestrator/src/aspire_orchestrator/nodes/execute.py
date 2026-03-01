@@ -68,7 +68,6 @@ def _resolve_agent_from_routing(state: OrchestratorState) -> str:
         "adam_research": "adam",
         "tec_documents": "tec",
         "finn_finance_manager": "finn",
-        "finn_money_desk": "finn",
         "milo_payroll": "milo",
         "teressa_books": "teressa",
         "clara_legal": "clara",

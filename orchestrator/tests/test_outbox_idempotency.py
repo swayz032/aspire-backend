@@ -539,7 +539,7 @@ class TestExecuteNodeOutbox:
         state = _make_execute_state(
             risk_tier="red",
             task_type="payment.send",
-            tool="moov.transfer.create",
+            tool="gusto.payroll.run",
             idempotency_key="idem-red-001",
         )
         result = await execute_node(state)
@@ -556,7 +556,7 @@ class TestExecuteNodeOutbox:
         state = _make_execute_state(
             risk_tier="red",
             task_type="payment.send",
-            tool="moov.transfer.create",
+            tool="gusto.payroll.run",
             idempotency_key="idem-red-receipt",
         )
         result = await execute_node(state)

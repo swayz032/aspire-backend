@@ -89,12 +89,7 @@ from aspire_orchestrator.providers.quickbooks_client import (
     execute_qbo_journal_entry_create,
 )
 
-# Wave 5: Finn (Money Desk) providers — Moov + Plaid (RED tier)
-from aspire_orchestrator.providers.moov_client import (
-    execute_moov_account_read,
-    execute_moov_transfer_create,
-    execute_moov_transfer_status,
-)
+# Wave 5: Plaid provider (Moov discontinued)
 from aspire_orchestrator.providers.plaid_client import (
     execute_plaid_accounts_get,
     execute_plaid_transactions_get,
@@ -743,11 +738,8 @@ _BOOKS_EXECUTORS: dict[str, ToolExecutorFn] = {
     "qbo.journal_entry.create": execute_qbo_journal_entry_create,
 }
 
-# Phase 2 Wave 5: Payment tools (RED — Finn Money Desk pack)
+# Phase 2 Wave 5: Payment tools (Moov discontinued, Plaid retained for reads)
 _PAYMENT_EXECUTORS: dict[str, ToolExecutorFn] = {
-    "moov.account.read": execute_moov_account_read,
-    "moov.transfer.create": execute_moov_transfer_create,
-    "moov.transfer.status": execute_moov_transfer_status,
     "plaid.accounts.get": execute_plaid_accounts_get,
     "plaid.transactions.get": execute_plaid_transactions_get,
     "plaid.transfer.create": execute_plaid_transfer_create,

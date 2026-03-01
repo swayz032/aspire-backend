@@ -91,6 +91,10 @@ skill_packs:
     capability_scopes: [meetings:schedule, meeting:create_room, meeting:summarize]
     tools: [livekit.meeting.schedule, livekit.room.create, deepgram.transcribe]
     per_suite_enabled: true
+    knowledge_domains:
+      - domain: conference
+        table: conference_knowledge_chunks
+        retrieval_service: ConferenceRetrievalService
 
   adam_research:
     id: adam_research

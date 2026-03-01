@@ -33,8 +33,35 @@ from aspire_orchestrator.services.search_router import (
     route_places_search,
 )
 from aspire_orchestrator.services.tool_executor import execute_tool
+from aspire_orchestrator.services.browser_service import (
+    get_browser_service,
+    DomainDeniedError,
+    NavigationTimeoutError,
+    ScreenshotUploadError,
+)
 
 logger = logging.getLogger(__name__)
+
+# Wave 5: Activity Event Callback for Canvas Chat Mode streaming
+_activity_event_callback: callable | None = None
+
+
+def set_activity_event_callback(callback: callable | None) -> None:
+    """Set global callback for emitting agent activity events (Wave 5)."""
+    global _activity_event_callback
+    _activity_event_callback = callback
+
+
+def _emit_activity_event(event_type: str, message: str, icon: str = "info") -> None:
+    """Emit activity event to Canvas Chat Mode stream (Wave 5)."""
+    if _activity_event_callback:
+        _activity_event_callback({
+            "type": event_type,
+            "message": message,
+            "icon": icon,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            "agent": "adam",
+        })
 
 ACTOR_ADAM = "skillpack:adam-research"
 RECEIPT_VERSION = "1.0"
@@ -126,6 +153,12 @@ class AdamResearchSkillPack:
                 error="Missing required parameter: query",
             )
 
+        # Wave 5: Emit "thinking" event
+        _emit_activity_event("thinking", f"Searching web for: {query.strip()}", "search")
+
+        # Wave 5: Emit "tool_call" event
+        _emit_activity_event("tool_call", "Calling Brave Search API", "code")
+
         result: ToolExecutionResult = await route_web_search(
             payload={"query": query.strip()},
             correlation_id=context.correlation_id,
@@ -135,6 +168,11 @@ class AdamResearchSkillPack:
             capability_token_id=context.capability_token_id,
             capability_token_hash=context.capability_token_hash,
         )
+
+        # Wave 5: Emit "step" event with result count
+        if result.outcome == Outcome.SUCCESS:
+            result_count = len(result.data.get("results", []))
+            _emit_activity_event("step", f"Found {result_count} results, ranking by relevance", "list")
 
         status = "ok" if result.outcome == Outcome.SUCCESS else "failed"
         receipt = _emit_receipt(
@@ -148,6 +186,12 @@ class AdamResearchSkillPack:
                 "tool_id": result.tool_id,
             },
         )
+
+        # Wave 5: Emit "done" event
+        if result.outcome == Outcome.SUCCESS:
+            _emit_activity_event("done", "Research complete", "checkmark")
+        else:
+            _emit_activity_event("error", f"Research failed: {result.error}", "error")
 
         return SkillPackResult(
             success=result.outcome == Outcome.SUCCESS,
@@ -614,3 +658,237 @@ class EnhancedAdamResearch(EnhancedSkillPack):
                 "business_name": business_context.get("business_name", ""),
             },
         )
+
+    async def browser_navigate(
+        self,
+        url: str,
+        ctx: AgentContext,
+    ) -> AgentResult:
+        """Navigate browser to URL and capture screenshot (Hybrid Browser View — Wave 2).
+
+        Uses browser_service.py for Playwright-based screenshot capture.
+        Emits browser_screenshot SSE event for real-time Canvas Mode display.
+
+        YELLOW tier — external site visit requires user approval.
+
+        Args:
+            url: Target URL (must pass domain allowlist)
+            ctx: Agent execution context
+
+        Returns:
+            AgentResult with screenshot URL and metadata
+
+        Law compliance:
+            - Law #2: Emits receipt for all navigation attempts (success/deny/fail)
+            - Law #3: Fails closed on invalid URL (DomainDeniedError)
+            - Law #4: YELLOW risk tier (user approval required before execution)
+            - Law #9: Domain allowlist enforced, PII redacted from page_url/page_title
+        """
+        # Validate inputs (Law #3: fail closed)
+        if not url or not url.strip():
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.browser_navigate",
+                status="denied",
+                inputs={"action": "research.browser_navigate", "url": ""},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_URL"]
+            await self.emit_receipt(receipt)
+            return AgentResult(
+                success=False,
+                receipt=receipt,
+                error="Missing required parameter: url",
+            )
+
+        screenshot_id = str(uuid.uuid4())
+        url_clean = url.strip()
+
+        # Emit activity event: thinking
+        _emit_activity_event(
+            event_type="thinking",
+            message=f"Navigating browser to {url_clean}...",
+            icon="browser",
+        )
+
+        try:
+            # Get browser service singleton
+            browser_service = get_browser_service()
+
+            # Emit activity event: tool_call
+            _emit_activity_event(
+                event_type="tool_call",
+                message=f"Launching Playwright browser (screenshot_id: {screenshot_id[:8]}...)",
+                icon="code",
+            )
+
+            # Navigate and capture screenshot
+            screenshot_result = await browser_service.navigate_and_screenshot(
+                url=url_clean,
+                screenshot_id=screenshot_id,
+                suite_id=ctx.suite_id,
+                viewport_width=1280,
+                viewport_height=800,
+            )
+
+            # Emit browser_screenshot SSE event for Canvas Mode (Wave 3)
+            if _activity_event_callback:
+                _activity_event_callback({
+                    "type": "browser_screenshot",
+                    "screenshot_url": screenshot_result.screenshot_url,
+                    "screenshot_id": screenshot_result.screenshot_id,
+                    "page_url": screenshot_result.page_url,
+                    "page_title": screenshot_result.page_title,
+                    "viewport_width": screenshot_result.viewport_width,
+                    "viewport_height": screenshot_result.viewport_height,
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                    "agent": "adam",
+                })
+
+            # Emit activity event: done
+            _emit_activity_event(
+                event_type="done",
+                message=f"Screenshot captured: {screenshot_result.page_title}",
+                icon="checkmark",
+            )
+
+            # Build receipt (Law #2)
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.browser_navigate",
+                status="ok",
+                inputs={
+                    "action": "research.browser_navigate",
+                    "url": screenshot_result.page_url,  # Redacted URL (no query params)
+                },
+                metadata={
+                    "screenshot_id": screenshot_result.screenshot_id,
+                    "screenshot_url": screenshot_result.screenshot_url,
+                    "page_title": screenshot_result.page_title,  # PII-redacted
+                    "viewport_width": screenshot_result.viewport_width,
+                    "viewport_height": screenshot_result.viewport_height,
+                    "page_load_time_ms": screenshot_result.page_load_time_ms,
+                },
+            )
+            await self.emit_receipt(receipt)
+
+            return AgentResult(
+                success=True,
+                data={
+                    "screenshot_id": screenshot_result.screenshot_id,
+                    "screenshot_url": screenshot_result.screenshot_url,
+                    "page_url": screenshot_result.page_url,
+                    "page_title": screenshot_result.page_title,
+                    "page_load_time_ms": screenshot_result.page_load_time_ms,
+                },
+                receipt=receipt,
+            )
+
+        except DomainDeniedError as e:
+            # Domain not in allowlist (SSRF blocked)
+            logger.warning(f"Browser navigation denied: {e}", extra={"url": url_clean})
+
+            _emit_activity_event(
+                event_type="error",
+                message=f"Navigation denied: {str(e)}",
+                icon="alert",
+            )
+
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.browser_navigate",
+                status="denied",
+                inputs={"action": "research.browser_navigate", "url": url_clean},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["DOMAIN_NOT_ALLOWED"]
+            receipt["policy"]["details"] = str(e)
+            await self.emit_receipt(receipt)
+
+            return AgentResult(
+                success=False,
+                receipt=receipt,
+                error=f"Domain denied: {str(e)}",
+            )
+
+        except NavigationTimeoutError as e:
+            # Page load timeout (>30s)
+            logger.error(f"Browser navigation timeout: {e}", extra={"url": url_clean})
+
+            _emit_activity_event(
+                event_type="error",
+                message=f"Navigation timeout: {str(e)}",
+                icon="alert",
+            )
+
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.browser_navigate",
+                status="failed",
+                inputs={"action": "research.browser_navigate", "url": url_clean},
+            )
+            receipt["policy"]["decision"] = "allow"
+            receipt["policy"]["failure_reason"] = "TIMEOUT"
+            await self.emit_receipt(receipt)
+
+            return AgentResult(
+                success=False,
+                receipt=receipt,
+                error=f"Navigation timeout: {str(e)}",
+            )
+
+        except ScreenshotUploadError as e:
+            # S3 upload failed
+            logger.error(f"Screenshot upload failed: {e}", extra={"url": url_clean})
+
+            _emit_activity_event(
+                event_type="error",
+                message=f"Screenshot upload failed: {str(e)}",
+                icon="alert",
+            )
+
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.browser_navigate",
+                status="failed",
+                inputs={"action": "research.browser_navigate", "url": url_clean},
+            )
+            receipt["policy"]["decision"] = "allow"
+            receipt["policy"]["failure_reason"] = "UPLOAD_FAILED"
+            await self.emit_receipt(receipt)
+
+            return AgentResult(
+                success=False,
+                receipt=receipt,
+                error=f"Screenshot upload failed: {str(e)}",
+            )
+
+        except Exception as e:
+            # Unexpected error (catch-all)
+            logger.error(
+                f"Browser navigation failed: {e}",
+                exc_info=True,
+                extra={"url": url_clean}
+            )
+
+            _emit_activity_event(
+                event_type="error",
+                message=f"Navigation failed: {str(e)}",
+                icon="alert",
+            )
+
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.browser_navigate",
+                status="failed",
+                inputs={"action": "research.browser_navigate", "url": url_clean},
+            )
+            receipt["policy"]["decision"] = "allow"
+            receipt["policy"]["failure_reason"] = "UNEXPECTED_ERROR"
+            await self.emit_receipt(receipt)
+
+            return AgentResult(
+                success=False,
+                receipt=receipt,
+                error=f"Unexpected error: {str(e)}",
+            )

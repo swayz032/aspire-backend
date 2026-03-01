@@ -12,6 +12,7 @@
       "required_fields_delta": ["milestones", "pricing"],
       "pandadoc_template_uuid": "Pc5saWpynSmb4NT63FPZPS",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "role_map": {"Contractor": "sender", "Approver": "client"},
       "special_tokens": {
         "Project.Name": ["project_name", "scope", "title"],
@@ -66,6 +67,7 @@
       "required_fields_delta": ["scope_description"],
       "pandadoc_template_uuid": "7V367zKUvGHFtgnoqT2e7V",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "company", "email"]
@@ -80,6 +82,7 @@
       "required_fields_delta": ["scope_description", "project_timeline"],
       "pandadoc_template_uuid": "xzFYgP5NuaQhfTwsmByuDX",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "company", "email"]
@@ -94,6 +97,7 @@
       "required_fields_delta": ["scope_description", "budget"],
       "pandadoc_template_uuid": "RMqD3gn7qZRZRPVcMbdnUQ",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "company", "address", "city", "state", "zip", "email"]
@@ -108,6 +112,7 @@
       "required_fields_delta": ["scope_description", "budget"],
       "pandadoc_template_uuid": "Yxd5Hd8GxvAkCLvUjN9TwC",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "email"]
@@ -122,6 +127,7 @@
       "required_fields_delta": ["scope_description", "contract_value", "schedule"],
       "pandadoc_template_uuid": "7kruQeak5EaHZBy92CC4qT",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "role_map": {"Contractor": "sender", "Owner": "client"},
       "special_tokens": {
         "Project.Name": ["project_name", "scope", "title"],
@@ -147,6 +153,7 @@
       "required_fields_delta": ["services_scope", "fee_schedule"],
       "pandadoc_template_uuid": "rp2knmUFyfhAghLF8E9iB5",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "company", "email"]
@@ -161,6 +168,7 @@
       "required_fields_delta": ["tax_year", "filing_type"],
       "pandadoc_template_uuid": "FLsK6snwy6yPjU4jajrJ5E",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "email"]
@@ -176,6 +184,7 @@
       "required_fields_delta": ["property_address", "lease_term", "monthly_rent"],
       "pandadoc_template_uuid": "VuVk8KwBFLCAJNWhvnofA7",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "role_map": {"Sublessor": "sender", "Sublessee": "client"},
       "required_party_data": {
         "sender": ["full_name", "company", "address", "city", "state", "zip", "email"],
@@ -192,6 +201,7 @@
       "required_fields_delta": ["purpose", "term_length"],
       "pandadoc_template_uuid": "aVPGZtb2PCBxvrZokgeRri",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "document_sections": {
         "notices_clause": "Both parties must provide mailing addresses for legal notices delivery",
         "governing_law": "Jurisdiction state determines governing law and venue for disputes",
@@ -211,6 +221,7 @@
       "required_fields_delta": ["disclosing_party", "purpose", "term_length"],
       "pandadoc_template_uuid": "sq8j7CH94xPRu6UbDUm6u8",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "role_map": {"Owner": "sender", "Recipient": "client"},
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
@@ -226,6 +237,7 @@
       "required_fields_delta": ["taxpayer_name", "business_type"],
       "pandadoc_template_uuid": "dg8UdHiAcncid5KhBTUB7i",
       "attorney_approved": false,
+      "pricing_table_name": "Pricing Table 1",
       "required_party_data": {
         "sender": ["full_name", "company", "email"],
         "client": ["full_name", "email"]

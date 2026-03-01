@@ -524,12 +524,14 @@ actions:
   # Contracts (draft creation is GREEN — no binding action, just a PandaDoc draft)
   # Sending the contract (contract.send) remains YELLOW — requires Authority Queue approval
   contract.generate:
-    risk_tier: green
+    risk_tier: yellow
     tools: [pandadoc.contract.generate]
     capability_scope: contracts:generate
     category: contracts
     approval:
-      type: none
+      type: explicit
+      message: "Generate contract: {template_name} for {client_name}?"
+      binding_fields: [template_type, parties]
     params:
       required: [template_type, parties]
     redact_fields: [party_names, address]
@@ -619,61 +621,9 @@ actions:
   # RED tier — Requires authority + presence verification
   # ──────────────────────────────────────────────
 
-  # Payments
-  payment.send:
-    risk_tier: red
-    tools: [moov.payment.send, plaid.payment.send]
-    capability_scope: payments:initiate
-    category: payments
-    approval:
-      type: spend
-      binding_fields: [recipient, amount_cents, currency]
-      spend_fields: [amount_cents, currency]
-      max_spend_cents: 5000000
-    params:
-      required: [recipient, amount_cents, currency]
-      constraints:
-        currency_enum: [USD]
-        amount_cents_min: 100
-    redact_fields: [recipient, amount_cents, memo]
-
-  payment.transfer:
-    risk_tier: red
-    tools: [moov.transfer.create]
-    capability_scope: payments:transfer
-    category: payments
-    approval:
-      type: spend
-      binding_fields: [from_account, to_account, amount_cents]
-      dual_approval: true
-      required_approvers: [owner, accountant]
-    redact_fields: [from_account, to_account, amount_cents]
-
-  payment.owner_draw:
-    risk_tier: red
-    tools: [moov.transfer.create]
-    capability_scope: payments:owner_draw
-    category: payments
-    approval:
-      type: spend
-      binding_fields: [owner_id, amount_cents]
-      spend_fields: [amount_cents]
-      max_spend_cents: 5000000
-    params:
-      required: [owner_id, amount_cents]
-      constraints:
-        amount_cents_min: 100
-        validate_cash_reserves: true
-    redact_fields: [owner_id, amount_cents]
-
-  payment.reconcile:
-    risk_tier: green
-    tools: [moov.account.read, plaid.accounts.get]
-    capability_scope: payments:reconcile
-    category: payments
-    approval:
-      type: none
-    redact_fields: []
+  # Payments (discontinued — Moov removed, payment.transfer removed)
+  # payment.send / payment.transfer / payment.owner_draw / payment.reconcile
+  # are disabled until a new payment provider is integrated.
 
   # Contracts (sign — irreversible)
   contract.sign:

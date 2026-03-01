@@ -274,52 +274,214 @@ async def metrics(request: Request) -> Response:
 # =============================================================================
 
 
-async def stream_agent_activity(initial_state: dict[str, Any]) -> Any:
+async def stream_agent_activity(
+    initial_state: dict[str, Any],
+    *,
+    suite_id: str,
+    office_id: str,
+    actor_id: str,
+    correlation_id: str,
+) -> Any:
     """Generator for Server-Sent Events streaming during orchestrator execution.
 
-    Emits intermediate agent activity events as the graph executes.
-    Used for Canvas Chat Mode live updates (Wave 4 + Wave 5).
+    Enterprise-grade SSE with:
+      - Connection tracking (max 100 per tenant, Law #3)
+      - Heartbeat every 15s (prevents proxy/load-balancer timeout)
+      - Per-stream rate limiting (max 10 events/second)
+      - PII redaction on all messages (Law #9)
+      - Receipt generation for stream lifecycle (Law #2)
+      - Correlation ID propagation
+
+    Used for Canvas Chat Mode live updates (Wave 4 + Wave 5 + SSE Enterprise).
     """
     import asyncio
     from aspire_orchestrator.skillpacks.adam_research import set_activity_event_callback
+    from aspire_orchestrator.services.sse_manager import (
+        format_sse_event,
+        get_connection_tracker,
+        build_stream_receipt,
+        StreamRateLimiter,
+        HEARTBEAT_INTERVAL_SECONDS,
+    )
 
-    # Event queue for collecting Adam's activity events
+    stream_id = str(uuid.uuid4())
+    tracker = get_connection_tracker()
+    rate_limiter = StreamRateLimiter()
+
+    # -- Connection limit check (Law #3: fail closed) --------------------------
+    if not tracker.try_connect(
+        suite_id,
+        stream_id,
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+    ):
+        # Law #2: Receipt for denied connection
+        deny_receipt = build_stream_receipt(
+            action_type="stream.denied",
+            suite_id=suite_id,
+            office_id=office_id,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            outcome="DENIED",
+            stream_id=stream_id,
+            reason_code="CONNECTION_LIMIT_EXCEEDED",
+            details={"limit": 100, "current": tracker.get_connection_count(suite_id)},
+        )
+        try:
+            store_receipts([deny_receipt])
+        except Exception:
+            pass  # Receipt failure must not mask the denial
+        yield format_sse_event({
+            "type": "error",
+            "message": "Connection limit exceeded for tenant",
+            "code": "CONNECTION_LIMIT_EXCEEDED",
+            "timestamp": int(time.time() * 1000),
+        })
+        return
+
+    # -- Receipt for stream initiation (Law #2) --------------------------------
+    initiation_receipt = build_stream_receipt(
+        action_type="stream.initiate",
+        suite_id=suite_id,
+        office_id=office_id,
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        outcome="success",
+        stream_id=stream_id,
+    )
+    receipt_id = initiation_receipt["id"]
+    try:
+        store_receipts([initiation_receipt])
+    except Exception:
+        pass  # Receipt failure must not block streaming
+
+    # -- Event queue for collecting Adam's activity events ---------------------
     event_queue: list[dict[str, Any]] = []
 
     def collect_event(event: dict[str, Any]) -> None:
         """Callback to collect activity events from Adam (Wave 5)."""
         event_queue.append(event)
 
-    # Set up callback for Adam to emit events (Wave 5)
     set_activity_event_callback(collect_event)
 
-    # Emit initial "thinking" event
-    yield f"data: {json.dumps({'type': 'thinking', 'message': 'Processing request...', 'icon': 'thinking', 'timestamp': int(time.time() * 1000)})}\n\n"
+    # Emit initial "connected" event with receipt_id
+    yield format_sse_event({
+        "type": "connected",
+        "receipt_id": receipt_id,
+        "stream_id": stream_id,
+        "correlation_id": correlation_id,
+        "timestamp": int(time.time() * 1000),
+    })
+
+    last_heartbeat = time.monotonic()
 
     try:
         # Execute graph (Adam events collected via callback)
         result = await orchestrator_graph.ainvoke(initial_state)
 
-        # Emit collected Adam events
+        # Emit collected Adam events (rate-limited)
         for event in event_queue:
-            yield f"data: {json.dumps(event)}\n\n"
+            if rate_limiter.check():
+                tracker.increment_event_count(stream_id)
+                yield format_sse_event(event)
+            else:
+                # Rate limited — skip event but log
+                logger.debug(
+                    "SSE rate limited: skipping event for stream %s",
+                    stream_id[:8],
+                )
 
-        # Emit final "done" event
+            # Heartbeat check between events
+            now = time.monotonic()
+            if now - last_heartbeat > HEARTBEAT_INTERVAL_SECONDS:
+                yield format_sse_event({"type": "heartbeat", "timestamp": int(time.time() * 1000)})
+                last_heartbeat = now
+
+        # Emit final status event
         response = result.get("response", {})
         if response.get("error"):
-            yield f"data: {json.dumps({'type': 'error', 'message': response.get('message', 'Request failed'), 'icon': 'error', 'timestamp': int(time.time() * 1000)})}\n\n"
+            yield format_sse_event({
+                "type": "error",
+                "message": response.get("message", "Request failed"),
+                "icon": "error",
+                "timestamp": int(time.time() * 1000),
+            })
         else:
-            yield f"data: {json.dumps({'type': 'done', 'message': 'Request completed', 'icon': 'done', 'timestamp': int(time.time() * 1000)})}\n\n"
+            yield format_sse_event({
+                "type": "done",
+                "message": "Request completed",
+                "icon": "done",
+                "timestamp": int(time.time() * 1000),
+            })
 
-        # Emit final response
-        yield f"data: {json.dumps({'type': 'response', 'data': response})}\n\n"
+        # Emit final response payload
+        yield format_sse_event({"type": "response", "data": response})
+
+        # Law #2: Receipt for stream completion
+        completion_receipt = build_stream_receipt(
+            action_type="stream.complete",
+            suite_id=suite_id,
+            office_id=office_id,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            outcome="success",
+            stream_id=stream_id,
+            details={
+                "event_count": len(event_queue),
+                "stream_id": stream_id,
+            },
+        )
+        try:
+            store_receipts([completion_receipt])
+        except Exception:
+            pass
+
+    except asyncio.CancelledError:
+        # Client disconnected — graceful cleanup
+        logger.info("SSE stream cancelled (client disconnect): %s", stream_id[:8])
+        try:
+            store_receipts([build_stream_receipt(
+                action_type="stream.cancelled",
+                suite_id=suite_id,
+                office_id=office_id,
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+                outcome="success",
+                stream_id=stream_id,
+                reason_code="CLIENT_DISCONNECT",
+            )])
+        except Exception:
+            pass
 
     except Exception as e:
-        logger.exception("Streaming error: %s", e)
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'icon': 'error', 'timestamp': int(time.time() * 1000)})}\n\n"
+        logger.exception("SSE stream error: %s", e)
+        yield format_sse_event({
+            "type": "error",
+            "message": "Stream interrupted",
+            "icon": "error",
+            "timestamp": int(time.time() * 1000),
+        })
+
+        # Law #2: Receipt for stream error
+        try:
+            store_receipts([build_stream_receipt(
+                action_type="stream.error",
+                suite_id=suite_id,
+                office_id=office_id,
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+                outcome="FAILED",
+                stream_id=stream_id,
+                reason_code="STREAM_ERROR",
+                details={"error_type": type(e).__name__},
+            )])
+        except Exception:
+            pass
+
     finally:
-        # Clean up callback
+        # Clean up: callback + connection tracking
         set_activity_event_callback(None)
+        tracker.disconnect(suite_id, stream_id)
 
 
 @app.post("/v1/intents", response_model=None)
@@ -396,15 +558,23 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
     if isinstance(body, dict) and "approval_evidence" in body:
         initial_state["approval_evidence"] = body["approval_evidence"]
 
-    # Wave 4: If stream=true, return SSE stream instead of JSON response
+    # Wave 4 + SSE Enterprise: If stream=true, return SSE stream instead of JSON response
     if stream:
+        office_id = request.headers.get("x-office-id", "")
         return StreamingResponse(
-            stream_agent_activity(initial_state),
+            stream_agent_activity(
+                initial_state,
+                suite_id=suite_id or "unknown",
+                office_id=office_id,
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",  # Disable nginx buffering
+                "X-Correlation-Id": correlation_id,
             },
         )
 
@@ -1296,3 +1466,352 @@ async def client_event_ingest(request: Request) -> JSONResponse:
             "correlation_id": correlation_id,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Browser Automation Endpoints (Hybrid Browser View — Wave 4)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/browser/navigate")
+async def browser_navigate_endpoint(request: Request):
+    """Navigate browser to URL and capture screenshot (Wave 4).
+
+    Directly invokes browser_service for admin/testing purposes.
+    Production flow: User intent → LangGraph → Adam skill pack → browser_service
+
+    Request body:
+        {
+            "url": "https://www.bing.com/search?q=aspire",
+            "suite_id": "uuid",
+            "viewport_width": 1280,  // optional
+            "viewport_height": 800    // optional
+        }
+
+    Response:
+        {
+            "success": true,
+            "screenshot_id": "uuid",
+            "screenshot_url": "https://s3.../screenshot.png",
+            "page_url": "https://www.bing.com/search",  // redacted
+            "page_title": "Bing Search Results",
+            "receipt_id": "uuid"
+        }
+
+    Security:
+        - Domain allowlist enforced (SSRF prevention)
+        - PII redaction on page_url and page_title
+        - Receipt generated for all navigation attempts
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid JSON body"},
+        )
+
+    url = body.get("url", "").strip()
+    suite_id = body.get("suite_id", "").strip()
+    viewport_width = body.get("viewport_width", 1280)
+    viewport_height = body.get("viewport_height", 800)
+
+    # Validate required fields
+    if not url:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Missing required field: url"},
+        )
+
+    if not suite_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Missing required field: suite_id"},
+        )
+
+    screenshot_id = str(uuid.uuid4())
+    correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+
+    try:
+        from aspire_orchestrator.services.browser_service import (
+            get_browser_service,
+            DomainDeniedError,
+            NavigationTimeoutError,
+            ScreenshotUploadError,
+        )
+
+        browser_service = get_browser_service()
+
+        # Navigate and capture screenshot
+        screenshot_result = await browser_service.navigate_and_screenshot(
+            url=url,
+            screenshot_id=screenshot_id,
+            suite_id=suite_id,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
+        )
+
+        # Generate receipt (Law #2)
+        receipt_id = str(uuid.uuid4())
+        receipt = {
+            "id": receipt_id,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": "",
+            "actor_type": "system",
+            "actor_id": "browser_endpoint",
+            "action_type": "browser.navigate",
+            "risk_tier": "yellow",
+            "tool_used": "browser_service",
+            "capability_token_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": "success",
+            "reason_code": "SCREENSHOT_CAPTURED",
+            "receipt_type": "action",
+            "receipt_hash": "",
+            "action": {"url": screenshot_result.page_url},  # Redacted URL
+            "result": {
+                "screenshot_id": screenshot_result.screenshot_id,
+                "screenshot_url": screenshot_result.screenshot_url,
+                "page_title": screenshot_result.page_title,  # PII-redacted
+                "page_load_time_ms": screenshot_result.page_load_time_ms,
+            },
+        }
+        store_receipts([receipt])
+
+        logger.info(
+            "Browser navigation successful",
+            extra={
+                "screenshot_id": screenshot_id,
+                "page_url": screenshot_result.page_url,
+                "correlation_id": correlation_id,
+            }
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "screenshot_id": screenshot_result.screenshot_id,
+                "screenshot_url": screenshot_result.screenshot_url,
+                "page_url": screenshot_result.page_url,
+                "page_title": screenshot_result.page_title,
+                "viewport_width": screenshot_result.viewport_width,
+                "viewport_height": screenshot_result.viewport_height,
+                "page_load_time_ms": screenshot_result.page_load_time_ms,
+                "receipt_id": receipt_id,
+            }
+        )
+
+    except DomainDeniedError as e:
+        # Domain not in allowlist (SSRF blocked)
+        logger.warning(f"Browser navigation denied: {e}", extra={"url": url})
+
+        receipt_id = str(uuid.uuid4())
+        receipt = {
+            "id": receipt_id,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": "",
+            "actor_type": "system",
+            "actor_id": "browser_endpoint",
+            "action_type": "browser.navigate",
+            "risk_tier": "yellow",
+            "tool_used": "browser_service",
+            "capability_token_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": "denied",
+            "reason_code": "DOMAIN_NOT_ALLOWED",
+            "receipt_type": "action",
+            "receipt_hash": "",
+            "action": {"url": url},
+            "result": {"error": str(e)},
+        }
+        store_receipts([receipt])
+
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "error": f"Domain denied: {str(e)}",
+                "receipt_id": receipt_id,
+            }
+        )
+
+    except NavigationTimeoutError as e:
+        # Page load timeout (>30s)
+        logger.error(f"Browser navigation timeout: {e}", extra={"url": url})
+
+        receipt_id = str(uuid.uuid4())
+        receipt = {
+            "id": receipt_id,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": "",
+            "actor_type": "system",
+            "actor_id": "browser_endpoint",
+            "action_type": "browser.navigate",
+            "risk_tier": "yellow",
+            "tool_used": "browser_service",
+            "capability_token_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": "failed",
+            "reason_code": "TIMEOUT",
+            "receipt_type": "action",
+            "receipt_hash": "",
+            "action": {"url": url},
+            "result": {"error": str(e)},
+        }
+        store_receipts([receipt])
+
+        return JSONResponse(
+            status_code=504,
+            content={
+                "success": False,
+                "error": f"Navigation timeout: {str(e)}",
+                "receipt_id": receipt_id,
+            }
+        )
+
+    except ScreenshotUploadError as e:
+        # S3 upload failed
+        logger.error(f"Screenshot upload failed: {e}", extra={"url": url})
+
+        receipt_id = str(uuid.uuid4())
+        receipt = {
+            "id": receipt_id,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": "",
+            "actor_type": "system",
+            "actor_id": "browser_endpoint",
+            "action_type": "browser.navigate",
+            "risk_tier": "yellow",
+            "tool_used": "browser_service",
+            "capability_token_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": "failed",
+            "reason_code": "UPLOAD_FAILED",
+            "receipt_type": "action",
+            "receipt_hash": "",
+            "action": {"url": url},
+            "result": {"error": str(e)},
+        }
+        store_receipts([receipt])
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": f"Screenshot upload failed: {str(e)}",
+                "receipt_id": receipt_id,
+            }
+        )
+
+    except Exception as e:
+        # Unexpected error
+        logger.error(f"Browser navigation failed: {e}", exc_info=True, extra={"url": url})
+
+        receipt_id = str(uuid.uuid4())
+        receipt = {
+            "id": receipt_id,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": "",
+            "actor_type": "system",
+            "actor_id": "browser_endpoint",
+            "action_type": "browser.navigate",
+            "risk_tier": "yellow",
+            "tool_used": "browser_service",
+            "capability_token_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": "failed",
+            "reason_code": "UNEXPECTED_ERROR",
+            "receipt_type": "action",
+            "receipt_hash": "",
+            "action": {"url": url},
+            "result": {"error": str(e)},
+        }
+        store_receipts([receipt])
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": f"Unexpected error: {str(e)}",
+                "receipt_id": receipt_id,
+            }
+        )
+
+
+@app.get("/v1/browser/screenshot/{screenshot_id}")
+async def get_screenshot_endpoint(screenshot_id: str, request: Request):
+    """Retrieve presigned S3 URL for existing screenshot (Wave 4).
+
+    Path params:
+        screenshot_id: UUID of screenshot
+
+    Response:
+        {
+            "screenshot_url": "https://s3.../screenshot.png",
+            "expires_at": 1234567890  // Unix timestamp
+        }
+
+    Security:
+        - Presigned URL acts as capability token (no additional auth required)
+        - URL expires in 1 hour
+        - S3 path is tenant-scoped (suite_id embedded in S3 key)
+    """
+    # Note: In production, this endpoint should validate suite_id from X-Suite-Id header
+    # and verify the screenshot belongs to the requesting tenant. For now, we rely on
+    # presigned URL security (S3 path includes suite_id, URL is unguessable).
+
+    suite_id = request.headers.get("x-suite-id", "")
+
+    if not suite_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Missing X-Suite-Id header"},
+        )
+
+    try:
+        from aspire_orchestrator.services.browser_service import get_browser_service
+        import boto3
+        from datetime import timedelta
+
+        browser_service = get_browser_service()
+        s3_key = f"{suite_id}/{screenshot_id}.png"
+
+        # Generate new presigned URL (1hr expiry)
+        presigned_url = browser_service.s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": browser_service.s3_bucket, "Key": s3_key},
+            ExpiresIn=3600,  # 1 hour
+        )
+
+        expires_at = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+
+        logger.info(
+            "Screenshot presigned URL generated",
+            extra={"screenshot_id": screenshot_id, "suite_id": suite_id[:8]}
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "screenshot_url": presigned_url,
+                "expires_at": expires_at,
+            }
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Failed to generate presigned URL: {e}",
+            exc_info=True,
+            extra={"screenshot_id": screenshot_id}
+        )
+
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Screenshot not found or access denied"},
+        )

@@ -635,3 +635,5 @@ class EnhancedFinnFinanceManager(EnhancedSkillPack):
                 ctx=ctx, event_type="finance.research", step_type="verify",
                 inputs={"action": "finance.research", "source": "fallback", "delegation_error": delegation_result.error},
             )
+
+

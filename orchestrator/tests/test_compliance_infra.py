@@ -338,10 +338,10 @@ class TestIntegration:
         factory = SkillPackFactory()  # default path
         result = factory.load_all()
 
-        # All 12 packs from the real manifest should register
+        # All 11 packs from the real manifest should register
         assert result.receipt["outcome"] == "success"
         assert len(result.failed) == 0
-        assert len(result.registered) >= 12
+        assert len(result.registered) >= 11
 
         # Spot-check known packs
         pack_ids = [r.pack_id for r in result.registered]

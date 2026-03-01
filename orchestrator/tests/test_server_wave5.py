@@ -250,7 +250,7 @@ class TestPolicyEvaluateEndpoint:
     def test_red_action(self, client) -> None:
         response = client.post(
             "/v1/policy/evaluate",
-            json={"action_type": "payment.send"},
+            json={"action_type": "contract.sign"},
         )
         data = response.json()
         assert data["allowed"] is True
@@ -278,10 +278,10 @@ class TestPolicyEvaluateEndpoint:
     def test_returns_capability_scope(self, client) -> None:
         response = client.post(
             "/v1/policy/evaluate",
-            json={"action_type": "payment.send"},
+            json={"action_type": "contract.sign"},
         )
         data = response.json()
-        assert data["capability_scope"] == "payments:initiate"
+        assert data["capability_scope"] == "contracts:sign"
 
     def test_returns_redact_fields(self, client) -> None:
         response = client.post(
@@ -496,9 +496,9 @@ class TestE2EYellowTierFlow:
 
 
 class TestE2ERedTierFlow:
-    """Red tier actions (e.g., payment.send) require approval + presence."""
+    """Red tier actions (e.g., contract.sign) require approval + presence."""
 
-    def _make_request(self, suite_id: str, task_type: str = "payment.send") -> dict:
+    def _make_request(self, suite_id: str, task_type: str = "contract.sign") -> dict:
         return {
             "schema_version": "1.0",
             "suite_id": suite_id,
@@ -507,7 +507,7 @@ class TestE2ERedTierFlow:
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "task_type": task_type,
-            "payload": {"amount": 5000, "recipient": "vendor-001"},
+            "payload": {"contract_id": "doc-001", "signer_name": "Test User", "signer_email": "test@example.com"},
         }
 
     def test_red_without_approval_returns_error(self, client) -> None:
