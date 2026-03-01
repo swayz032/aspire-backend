@@ -59,8 +59,12 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     pandadoc_api_key: str = ""
     pandadoc_webhook_secret: str = ""
+    pandadoc_credential_last_rotated: str | None = None  # ISO8601 date — rotation policy is 30 days
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
+
+    # Security — credential rotation enforcement
+    credential_strict_mode: bool = False  # CREDENTIAL_STRICT_MODE=1 in production
 
     # --- Adam Research geo/places provider keys ---
     google_maps_api_key: str = ""
@@ -74,8 +78,7 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_s3_region: str = "us-east-1"
 
-    # --- Finn Money Desk provider keys ---
-    moov_api_key: str = ""
+    # --- Plaid provider keys ---
     plaid_client_id: str = ""
     plaid_secret: str = ""
 
@@ -85,8 +88,6 @@ class Settings(BaseSettings):
     quickbooks_base_url: str = ""  # Default: sandbox. Set to prod URL in production.
     gusto_client_id: str = ""
     gusto_client_secret: str = ""
-    moov_client_id: str = ""
-    moov_client_secret: str = ""
 
     # --- Clara RAG Knowledge Base ---
     embedding_model: str = "text-embedding-3-large"
