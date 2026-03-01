@@ -298,7 +298,7 @@ def _strip_format_instructions(persona_text: str) -> str:
     return "\n".join(filtered)
 
 
-def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
+def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = "chat") -> str:
     """Generate persona-aware response text via LLM (Summary step).
 
     Calls the LLM with the routed agent's persona to produce a natural
@@ -324,7 +324,7 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
         and (not execution_result or execution_result == {} or execution_result.get("stub"))
     )
     if is_empty_execution:
-        return _llm_conversational_reply(state, utterance)
+        return _llm_conversational_reply(state, utterance, channel=channel)
 
     # Load the routed agent's persona for response generation
     agent_id = _resolve_agent_id(state)
@@ -354,7 +354,7 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        content = _call_openai_sync(messages, model=settings.router_model_general)
+        content = _call_openai_sync(messages, model=settings.router_model_general, channel=channel)
 
         if content:
             logger.info("LLM summarization success for %s (len=%d)", agent_id, len(content))
@@ -368,7 +368,7 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str) -> str:
         return fallback_text
 
 
-def _llm_conversational_reply(state: OrchestratorState, utterance: str) -> str:
+def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel: str = "chat") -> str:
     """Generate a natural conversational reply for non-action input."""
     agent_id = _resolve_agent_id(state)
     persona = _load_agent_persona(agent_id)
@@ -400,7 +400,7 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str) -> str:
         if persona:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
-        content = _call_openai_sync(messages, model=settings.router_model_general)
+        content = _call_openai_sync(messages, model=settings.router_model_general, channel=channel)
         if content:
             return content
     except Exception as e:
@@ -415,10 +415,13 @@ def _call_openai_sync(
     *,
     model: str | None = None,
     timeout: float = settings.openai_timeout_seconds,
+    channel: str = "chat",
 ) -> str:
     """Shared sync OpenAI SDK call for respond node LLM operations.
 
     Handles reasoning model logic (developer role, no temperature, 4096 min tokens).
+    Injects channel-based verbosity instruction for GPT-5 models (the verbosity
+    API parameter is Responses-API-only; Chat Completions uses system instructions).
     Returns content string or empty string on failure.
     """
     import os
@@ -434,13 +437,43 @@ def _call_openai_sync(
 
     _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
-    # Rewrite system role to developer for reasoning models
+    # Channel-based verbosity instruction (GPT-5 prompting guide pattern).
+    # Voice needs concise output for TTS; chat/video get moderate detail.
+    _VERBOSITY_INSTRUCTIONS: dict[str, str] = {
+        "voice": (
+            "Verbosity: LOW. Keep responses to 1-2 sentences max. "
+            "No filler, no preamble, no lists. This will be spoken aloud via TTS."
+        ),
+        "chat": (
+            "Verbosity: MEDIUM. Keep responses to 3-5 sentences. "
+            "Be informative but concise. No unnecessary padding."
+        ),
+        "video": (
+            "Verbosity: MEDIUM. Keep responses to 2-4 sentences. "
+            "Be clear and direct for video conversation."
+        ),
+    }
+    verbosity_instruction = _VERBOSITY_INSTRUCTIONS.get(channel, _VERBOSITY_INSTRUCTIONS["chat"])
+
+    # Rewrite system role to developer for reasoning models and inject verbosity
     processed_messages = []
+    verbosity_injected = False
     for msg in messages:
-        if msg["role"] == "system" and _is_reasoning:
-            processed_messages.append({"role": "developer", "content": msg["content"]})
+        if msg["role"] == "system":
+            # Append verbosity instruction to the existing system/developer message
+            content_with_verbosity = msg["content"] + "\n\n" + verbosity_instruction
+            if _is_reasoning:
+                processed_messages.append({"role": "developer", "content": content_with_verbosity})
+            else:
+                processed_messages.append({"role": "system", "content": content_with_verbosity})
+            verbosity_injected = True
         else:
             processed_messages.append(msg)
+
+    # If no system message existed, prepend the verbosity instruction
+    if not verbosity_injected:
+        role = "developer" if _is_reasoning else "system"
+        processed_messages.insert(0, {"role": role, "content": verbosity_instruction})
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -469,8 +502,7 @@ def _load_agent_persona(agent_id: str) -> str:
 
     Special cases:
       - "ava" → ava_user_system_prompt.md (user-facing Ava)
-      - "finn" when task is finance.* → finn_fm_system_prompt.md (Finance Manager)
-      - "finn" otherwise → finn_system_prompt.md (Money Desk)
+      - "finn" / "finn_fm" → finn_fm_system_prompt.md (Finn — both Money Desk and Finance Manager share one persona)
 
     Returns minimal built-in persona if file not found.
     """
@@ -482,7 +514,7 @@ def _load_agent_persona(agent_id: str) -> str:
     _persona_map: dict[str, str] = {
         "ava": "ava_user_system_prompt.md",
         "ava_admin": "ava_admin_system_prompt.md",
-        "finn": "finn_system_prompt.md",
+        "finn": "finn_fm_system_prompt.md",
         "finn_fm": "finn_fm_system_prompt.md",
         "eli": "eli_system_prompt.md",
         "quinn": "quinn_system_prompt.md",
@@ -521,7 +553,7 @@ def _load_agent_persona(agent_id: str) -> str:
     )
 
 
-def _generate_approval_prompt(state: OrchestratorState) -> str:
+def _generate_approval_prompt(state: OrchestratorState, channel: str = "chat") -> str:
     """Generate inline approval prompt for YELLOW tier (WARM state).
 
     Ecosystem rule: YELLOW actions are presented as drafts inline in the
@@ -582,7 +614,7 @@ def _generate_approval_prompt(state: OrchestratorState) -> str:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        content = _call_openai_sync(messages)
+        content = _call_openai_sync(messages, channel=channel)
 
         if content:
             logger.info("LLM approval prompt success for %s", agent_id)
@@ -595,7 +627,7 @@ def _generate_approval_prompt(state: OrchestratorState) -> str:
         return fallback_text
 
 
-def _generate_presence_prompt(state: OrchestratorState) -> str:
+def _generate_presence_prompt(state: OrchestratorState, channel: str = "chat") -> str:
     """Generate video escalation prompt for RED tier (HOT state).
 
     Ecosystem rule: RED actions (payments >$5000, contracts, payroll, filings)
@@ -653,7 +685,7 @@ def _generate_presence_prompt(state: OrchestratorState) -> str:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        content = _call_openai_sync(messages)
+        content = _call_openai_sync(messages, channel=channel)
 
         if content:
             logger.info("LLM presence prompt success for %s", agent_id)
@@ -707,10 +739,13 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 risk_tier=risk_tier_val,
                 channel=_channel_ap,
             )
-            text = narration if narration else _generate_approval_prompt(state)
+            text = narration if narration else _generate_approval_prompt(state, channel=_channel_ap)
         elif error_code == "PRESENCE_REQUIRED":
             # RED tier → HOT state → Ava escalates to video
-            text = _generate_presence_prompt(state)
+            _req_pr = state.get("request")
+            _req_pr_payload = (_req_pr.get("payload", {}) if isinstance(_req_pr, dict) else getattr(_req_pr, "payload", {})) or {}
+            _channel_pr = _req_pr_payload.get("channel", "chat")
+            text = _generate_presence_prompt(state, channel=_channel_pr)
         else:
             _error_messages: dict[str, str] = {
                 "POLICY_DENIED": "Your security policy doesn't allow this action.",
@@ -831,7 +866,11 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
 
         if is_conversational:
             # Natural conversational reply (not an unclear action)
-            conv_text = _llm_conversational_reply(state, utterance)
+            # Extract channel for verbosity adaptation
+            _req_conv = state.get("request")
+            _req_conv_payload = (_req_conv.get("payload", {}) if isinstance(_req_conv, dict) else getattr(_req_conv, "payload", {})) or {}
+            _channel_conv = _req_conv_payload.get("channel", "chat")
+            conv_text = _llm_conversational_reply(state, utterance, channel=_channel_conv)
             response = {
                 "text": conv_text,
                 "correlation_id": correlation_id,
@@ -898,7 +937,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         # Step 2: Build template fallback (fast, deterministic)
         template_text = _generate_response_text(state)
         # Step 3: Use LLM with agent persona for natural response (preferred)
-        response_text = _llm_summarize(state, fallback_text=template_text)
+        response_text = _llm_summarize(state, fallback_text=template_text, channel=_channel)
 
     # Output guard: strip phantom execution claims
     response_text = guard_output(
