@@ -66,7 +66,7 @@ from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
 from aspire_orchestrator.middleware.correlation import CorrelationIdMiddleware
 from aspire_orchestrator.middleware.rate_limiter import RateLimitMiddleware
-from aspire_orchestrator.graph import build_orchestrator_graph
+from aspire_orchestrator.graph import build_orchestrator_graph, get_checkpointer_runtime
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
 from aspire_orchestrator.services.receipt_chain import verify_chain
@@ -216,6 +216,18 @@ async def readyz() -> JSONResponse:
     except Exception:
         checks["policy_engine"] = False
 
+    # Check LangGraph checkpointer mode/runtime
+    try:
+        cp = get_checkpointer_runtime()
+        checks["langgraph_checkpointer"] = bool(cp.get("backend"))
+        if cp.get("mode") == "postgres":
+            checks["langgraph_checkpoint_store"] = bool(settings.langgraph_postgres_dsn)
+        else:
+            checks["langgraph_checkpoint_store"] = True
+    except Exception:
+        checks["langgraph_checkpointer"] = False
+        checks["langgraph_checkpoint_store"] = False
+
     all_ready = all(checks.values())
     # Determine if partially ready (some non-critical deps down)
     critical_checks = {
@@ -231,6 +243,7 @@ async def readyz() -> JSONResponse:
             "status": status,
             "service": "aspire-orchestrator",
             "checks": checks,
+            "checkpointer": get_checkpointer_runtime(),
         },
     )
 

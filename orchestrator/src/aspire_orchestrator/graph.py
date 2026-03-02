@@ -30,10 +30,12 @@ This graph is the ONLY decision authority. No other component decides or execute
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from aspire_orchestrator.config.settings import settings
 
 from aspire_orchestrator.nodes.intake import intake_node
 from aspire_orchestrator.nodes.safety_gate import safety_gate_node
@@ -51,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 # Maximum QA retries before escalation (matches QALoop._DEFAULT_MAX_RETRIES)
 _QA_MAX_RETRIES = 1
+_CHECKPOINTER_RUNTIME: dict[str, str] = {
+    "mode": "memory",
+    "backend": "MemorySaver",
+}
 
 
 # =============================================================================
@@ -460,4 +466,42 @@ def build_orchestrator_graph() -> StateGraph:
 
     # Enable thread-scoped checkpointing so HITL/resume and multi-turn continuity
     # can use LangGraph's configurable.thread_id contract.
-    return graph.compile(checkpointer=MemorySaver())
+    checkpointer = _build_checkpointer()
+    return graph.compile(checkpointer=checkpointer)
+
+
+def get_checkpointer_runtime() -> dict[str, str]:
+    """Expose checkpointer runtime metadata for readiness diagnostics."""
+    return dict(_CHECKPOINTER_RUNTIME)
+
+
+def _build_checkpointer() -> Any:
+    """Build checkpointer from environment (memory|postgres)."""
+    mode = (settings.langgraph_checkpointer or "memory").strip().lower()
+    aspire_env = os.environ.get("ASPIRE_ENV", "").strip().lower()
+    if aspire_env == "production" and mode != "postgres":
+        raise RuntimeError(
+            "Production requires ASPIRE_LANGGRAPH_CHECKPOINTER=postgres (memory is dev-only).",
+        )
+    if mode == "postgres":
+        dsn = (settings.langgraph_postgres_dsn or "").strip()
+        if not dsn:
+            raise RuntimeError(
+                "ASPIRE_LANGGRAPH_POSTGRES_DSN is required when ASPIRE_LANGGRAPH_CHECKPOINTER=postgres",
+            )
+        try:
+            from langgraph.checkpoint.postgres import PostgresSaver
+        except Exception as e:
+            raise RuntimeError(
+                "Postgres checkpointer requested but langgraph.checkpoint.postgres is unavailable. "
+                "Install langgraph-postgres checkpointer dependency.",
+            ) from e
+
+        saver = PostgresSaver.from_conn_string(dsn)
+        _CHECKPOINTER_RUNTIME["mode"] = "postgres"
+        _CHECKPOINTER_RUNTIME["backend"] = "PostgresSaver"
+        return saver
+
+    _CHECKPOINTER_RUNTIME["mode"] = "memory"
+    _CHECKPOINTER_RUNTIME["backend"] = "MemorySaver"
+    return MemorySaver()

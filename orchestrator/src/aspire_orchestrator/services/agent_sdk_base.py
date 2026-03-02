@@ -28,6 +28,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aspire_orchestrator.services.openai_client import generate_text_async
+
 logger = logging.getLogger(__name__)
 
 
@@ -277,8 +279,6 @@ class AspireAgentBase:
         """
         import os
 
-        import openai
-
         effective_risk = risk_tier or self._default_risk_tier
         effective_system = system_prompt or self._persona or ""
 
@@ -345,22 +345,16 @@ class AspireAgentBase:
             effective_max_tokens = 4096
 
         try:
-            client = openai.AsyncOpenAI(
+            content = await generate_text_async(
+                model=model,
+                messages=messages,
                 api_key=api_key,
                 base_url=base_url,
-                timeout=float(timeout),
+                timeout_seconds=float(timeout),
+                max_output_tokens=effective_max_tokens,
+                temperature=None if _is_reasoning else route_temperature,
+                prefer_responses_api=True,
             )
-
-            kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": messages,
-                "max_completion_tokens": effective_max_tokens,
-            }
-            if not _is_reasoning:
-                kwargs["temperature"] = route_temperature
-
-            response = await client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content or "" if response.choices else ""
 
             return {
                 "content": content,
@@ -370,22 +364,23 @@ class AspireAgentBase:
                 "receipt": route_receipt,
             }
 
-        except openai.APITimeoutError:
-            logger.error("LLM call timeout for agent %s after %ds", self._agent_id, timeout)
-            return {
-                "content": "",
-                "model_used": model,
-                "profile_used": profile_used,
-                "error": "llm_timeout",
-                "receipt": route_receipt,
-            }
         except Exception as e:
-            logger.error("LLM call failed for agent %s: %s", self._agent_id, type(e).__name__)
+            err_type = type(e).__name__
+            if "Timeout" in err_type:
+                logger.error("LLM call timeout for agent %s after %ds", self._agent_id, timeout)
+                return {
+                    "content": "",
+                    "model_used": model,
+                    "profile_used": profile_used,
+                    "error": "llm_timeout",
+                    "receipt": route_receipt,
+                }
+            logger.error("LLM call failed for agent %s: %s", self._agent_id, err_type)
             return {
                 "content": "",
                 "model_used": model,
                 "profile_used": profile_used,
-                "error": f"llm_error: {type(e).__name__}",
+                "error": f"llm_error: {err_type}",
                 "receipt": route_receipt,
             }
 

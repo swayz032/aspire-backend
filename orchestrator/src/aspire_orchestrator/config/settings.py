@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     router_model_general: str = "gpt-5"             # FAST_GENERAL profile
     router_model_reasoner: str = "gpt-5.2"          # PRIMARY_REASONER profile
     router_model_high_risk: str = "gpt-5.2"         # HIGH_RISK_GUARD profile
+    openai_use_chat_fallback: bool = True           # Legacy fallback if Responses API fails
+    model_fallback_map: str = ""                    # Optional JSON map for model failover
+
+    # --- LangGraph persistence ---
+    langgraph_checkpointer: str = "memory"          # memory | postgres
+    langgraph_postgres_dsn: str = ""                # Required when checkpointer=postgres
 
     # Capability Tokens
     token_signing_key: str = ""  # HMAC-SHA256 key — MUST be set in production

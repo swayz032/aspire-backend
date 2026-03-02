@@ -37,6 +37,7 @@ import openai
 from pydantic import BaseModel, Field
 
 from aspire_orchestrator.models import RiskTier
+from aspire_orchestrator.services.openai_client import generate_json_async
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 
 logger = logging.getLogger(__name__)
@@ -394,48 +395,19 @@ class IntentClassifier:
         if _is_reasoning and max_tokens < 4096:
             effective_max_tokens = 4096
 
-        client = openai.AsyncOpenAI(
-            api_key=self._api_key,
+        parsed = await generate_json_async(
+            model=model,
+            messages=messages,
+            api_key=self._api_key or "",
             base_url=base_url,
-            timeout=float(timeout),
+            timeout_seconds=float(timeout),
+            max_output_tokens=effective_max_tokens,
+            temperature=None if _is_reasoning else temperature,
+            prefer_responses_api=True,
         )
-
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "response_format": {"type": "json_object"},
-            "max_completion_tokens": effective_max_tokens,
-        }
-        if not _is_reasoning:
-            kwargs["temperature"] = temperature
-
-        response = await client.chat.completions.create(**kwargs)
-
-        choice = response.choices[0] if response.choices else None
-        content = choice.message.content or "" if choice else ""
-        finish_reason = choice.finish_reason or "unknown" if choice else "unknown"
-
-        if not content:
-            logger.error(
-                "LLM response empty — finish_reason=%s, model=%s. "
-                "Reasoning models may exhaust token budget on chain-of-thought.",
-                finish_reason, model,
-            )
-            return {}
-
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            # Reasoning models sometimes wrap JSON in markdown code fences
-            import re
-            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    pass
-            logger.error("LLM returned non-JSON content (len=%d): %.200s", len(content), content)
-            return {}
+        if not parsed:
+            logger.error("LLM returned empty/invalid JSON for intent classifier (model=%s)", model)
+        return parsed
 
     def _build_user_message(
         self,
@@ -549,3 +521,6 @@ def get_intent_classifier(*, reload: bool = False) -> IntentClassifier:
     if _cached_classifier is None or reload:
         _cached_classifier = IntentClassifier()
     return _cached_classifier
+
+
+

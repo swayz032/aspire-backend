@@ -43,6 +43,7 @@ from aspire_orchestrator.models import (
     RiskTier,
 )
 from aspire_orchestrator.services.narration import compose_narration
+from aspire_orchestrator.services.openai_client import generate_text_sync
 from aspire_orchestrator.services.output_guard import guard_output
 from aspire_orchestrator.state import OrchestratorState
 
@@ -426,8 +427,6 @@ def _call_openai_sync(
     """
     import os
 
-    import openai
-
     api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return ""
@@ -475,23 +474,16 @@ def _call_openai_sync(
         role = "developer" if _is_reasoning else "system"
         processed_messages.insert(0, {"role": role, "content": verbosity_instruction})
 
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": processed_messages,
-        "max_completion_tokens": 4096,
-    }
-    if not _is_reasoning:
-        kwargs["temperature"] = 0.3
-
-    client = openai.OpenAI(
+    return generate_text_sync(
+        model=model,
+        messages=processed_messages,
         api_key=api_key,
         base_url=settings.openai_base_url,
-        timeout=timeout,
-    )
-
-    response = client.chat.completions.create(**kwargs)
-    content = response.choices[0].message.content or "" if response.choices else ""
-    return content.strip()
+        timeout_seconds=timeout,
+        max_output_tokens=4096,
+        temperature=None if _is_reasoning else 0.3,
+        prefer_responses_api=True,
+    ).strip()
 
 
 def _load_agent_persona(agent_id: str) -> str:

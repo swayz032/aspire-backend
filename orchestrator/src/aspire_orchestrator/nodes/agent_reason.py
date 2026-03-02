@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -350,30 +352,24 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
 
     # 6. Call LLM
     try:
-        from aspire_orchestrator.config.settings import settings
-
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-
         model = settings.ava_llm_model or "gpt-5-mini"
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
         # Reasoning models need "developer" role and no temperature
         msg_role = "developer" if _is_reasoning else "system"
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": [
+        response_text = await generate_text_async(
+            model=model,
+            messages=[
                 {"role": msg_role, "content": system_message},
                 {"role": "user", "content": utterance},
             ],
-            "max_completion_tokens": 500,
-        }
-        if not _is_reasoning:
-            kwargs["temperature"] = 0.7
-
-        response = await client.chat.completions.create(**kwargs)
-
-        response_text = response.choices[0].message.content or ""
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout_seconds=float(settings.openai_timeout_seconds),
+            max_output_tokens=500,
+            temperature=None if _is_reasoning else 0.7,
+            prefer_responses_api=True,
+        )
 
     except Exception as e:
         logger.error("agent_reason LLM call failed: %s", e)
