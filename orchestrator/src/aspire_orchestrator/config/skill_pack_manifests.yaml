@@ -38,7 +38,7 @@ skill_packs:
     owner: sarah
     category: channel
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Telephony, call routing, call transfer, front desk reception, visitor logging"
     actions: [call.route, call.transfer, visitor.log]
     providers: [twilio]
@@ -52,7 +52,7 @@ skill_packs:
     owner: eli
     category: channel
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Email handling, triage, draft responses, send emails"
     actions: [email.read, email.triage, email.draft, email.send]
     providers: [polarism]
@@ -70,7 +70,7 @@ skill_packs:
     owner: quinn
     category: channel
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Invoice creation, quote sending, payment tracking via Stripe Connect"
     actions: [invoice.create, invoice.send, invoice.void, quote.create, quote.send]
     providers: [stripe]
@@ -84,7 +84,7 @@ skill_packs:
     owner: nora
     category: channel
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Video meetings, room management, transcription, post-meeting summaries"
     actions: [meeting.schedule, meeting.create_room, meeting.summarize]
     providers: [livekit, deepgram, elevenlabs]
@@ -102,7 +102,7 @@ skill_packs:
     owner: adam
     category: channel
     risk_tier: green
-    status: registered
+    status: active
     description: "Vendor search, web research, places lookup, vendor comparison, RFQ generation"
     actions: [research.search, research.places, research.compare, research.rfq]
     providers: [brave, tavily, google_places, tomtom, here, foursquare, osm_overpass, mapbox]
@@ -120,7 +120,7 @@ skill_packs:
     owner: tec
     category: channel
     risk_tier: yellow
-    status: registered
+    status: active
     description: "PDF generation, document preview, document sharing"
     actions: [document.generate, document.preview, document.share]
     providers: [puppeteer, s3, polarism]
@@ -138,7 +138,7 @@ skill_packs:
     owner: finn
     category: finance
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Strategic finance manager — snapshots, exceptions, proposals, A2A delegation, tax strategy"
     actions: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.create]
     providers: [internal]
@@ -156,7 +156,7 @@ skill_packs:
     owner: milo
     category: finance
     risk_tier: red
-    status: registered
+    status: active
     description: "Payroll processing via Gusto — snapshot, schedule, deadline check, payroll run"
     actions: [payroll.snapshot, payroll.schedule, payroll.deadline, payroll.run]
     providers: [gusto]
@@ -170,7 +170,7 @@ skill_packs:
     owner: teressa
     category: finance
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Accounting, QuickBooks sync, transaction categorization, financial reports, journal entries"
     actions: [books.sync, books.categorize, books.report, books.journal_entry]
     providers: [quickbooks]
@@ -188,7 +188,7 @@ skill_packs:
     owner: clara
     category: legal
     risk_tier: red
-    status: registered
+    status: active
     description: "Contract management, review, compliance tracking, e-signatures via PandaDoc. Template library browsing and field discovery."
     actions: [contract.generate, contract.review, contract.sign, contract.send, contract.session, contract.compliance, templates.list, templates.details]
     providers: [pandadoc]
@@ -210,7 +210,7 @@ skill_packs:
     owner: mail_ops
     category: internal_admin
     risk_tier: yellow
-    status: registered
+    status: active
     description: "Domain and mailbox management for PolarisM"
     actions: [domain.check, domain.verify, domain.dns.create, domain.purchase, domain.delete, mail.account.create, mail.account.read]
     providers: [polarism]
@@ -745,3 +745,4 @@ providers:
     timeout_ms: 5000
     retry_strategy: none
     idempotency_support: false
+
