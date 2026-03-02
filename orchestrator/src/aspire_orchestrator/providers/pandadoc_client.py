@@ -46,6 +46,7 @@ from aspire_orchestrator.providers.base_client import (
     ProviderRequest,
 )
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
+from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.services.receipt_store import store_receipts
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
@@ -1582,9 +1583,16 @@ async def _llm_fill_missing_tokens(
         if not _is_reasoning:
             create_kwargs["temperature"] = 0.0
 
-        response = await client.chat.completions.create(**create_kwargs)
-
-        content = response.choices[0].message.content or ""
+        content = await generate_text_async(
+            model=create_kwargs["model"],
+            messages=create_kwargs["messages"],
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout_seconds=float(settings.openai_timeout_seconds),
+            max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
+            temperature=create_kwargs.get("temperature"),
+            prefer_responses_api=True,
+        )
         raw_values = _extract_json_from_llm_response(content, dict)
         if raw_values is not None:
             if isinstance(raw_values, dict):
@@ -2255,7 +2263,7 @@ async def _llm_parse_pricing(
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
         system_role = "developer" if _is_reasoning else "system"
 
-        response = await client.chat.completions.create(
+        content = await generate_text_async(
             model=model,
             messages=[
                 {
@@ -2280,10 +2288,13 @@ async def _llm_parse_pricing(
                     ),
                 },
             ],
-            max_completion_tokens=400,
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout_seconds=float(settings.openai_timeout_seconds),
+            max_output_tokens=400,
+            temperature=None if _is_reasoning else 0.0,
+            prefer_responses_api=True,
         )
-
-        content = response.choices[0].message.content or ""
         # Extract JSON array using robust parser
         items = _extract_json_from_llm_response(content, list)
         if items is not None:
@@ -2431,8 +2442,16 @@ async def _build_content_placeholders(
         if not _is_reasoning:
             create_kwargs["temperature"] = 0.3
 
-        response = await client.chat.completions.create(**create_kwargs)
-        content = response.choices[0].message.content or ""
+        content = await generate_text_async(
+            model=create_kwargs["model"],
+            messages=create_kwargs["messages"],
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout_seconds=float(settings.openai_timeout_seconds),
+            max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
+            temperature=create_kwargs.get("temperature"),
+            prefer_responses_api=True,
+        )
 
         # Extract JSON array
         result = _extract_json_from_llm_response(content, list)
@@ -3448,9 +3467,16 @@ async def _generate_smart_questions(
         if not _is_reasoning:
             create_kwargs["temperature"] = 0.1
 
-        response = await client.chat.completions.create(**create_kwargs)
-
-        content = response.choices[0].message.content or ""
+        content = await generate_text_async(
+            model=create_kwargs["model"],
+            messages=create_kwargs["messages"],
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout_seconds=float(settings.openai_timeout_seconds),
+            max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
+            temperature=create_kwargs.get("temperature"),
+            prefer_responses_api=True,
+        )
         # Extract JSON array
         questions = _extract_json_from_llm_response(content, list)
         if questions is not None:
@@ -3926,3 +3952,4 @@ async def execute_pandadoc_contract_sign(
         data=result_data,
         receipt_data=receipt,
     )
+

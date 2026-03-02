@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from aspire_orchestrator.models import Outcome
+from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 from aspire_orchestrator.services.tool_executor import execute_tool
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
@@ -960,7 +961,6 @@ async def _intelligent_compliance_assessment(
     # Layer 2: LLM enhancement (optional — enriches, never replaces)
     try:
         from aspire_orchestrator.config.settings import settings
-        from openai import AsyncOpenAI
 
         if not settings.openai_api_key:
             return base
@@ -1005,35 +1005,9 @@ async def _intelligent_compliance_assessment(
         except Exception:
             pass
 
-        client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-        )
-
-        prompt = (
-            f"Contract: {contract_data.get('name', 'Unknown')}\n"
-            f"Status: {base['compliance_status']}\n"
-            f"PandaDoc status: {base['status']}\n"
-            f"Expiration: {expiration_date or 'None set'}\n"
-        )
-        if days_until_expiry is not None:
-            prompt += f"Days until expiry: {days_until_expiry} ({urgency_level})\n"
-        if rag_context:
-            prompt += f"\nLegal knowledge:\n{rag_context[:1000]}\n"
-
-        prompt += (
-            "\nProvide a brief specialist assessment (2-3 sentences) and "
-            "1-3 recommended actions. Return ONLY JSON:\n"
-            '{"specialist_assessment": "...", "recommended_actions": ["..."], "risk_score": 0-100}'
-        )
-
-        model = settings.router_model_reasoner
-        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
-        system_role = "developer" if _is_reasoning else "system"
-
-        create_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": [
+        content = await generate_text_async(
+            model=model,
+            messages=[
                 {
                     "role": system_role,
                     "content": (
@@ -1044,26 +1018,23 @@ async def _intelligent_compliance_assessment(
                 },
                 {"role": "user", "content": prompt},
             ],
-            "max_completion_tokens": 400,
-        }
-        if not _is_reasoning:
-            create_kwargs["temperature"] = 0.1
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout_seconds=float(settings.openai_timeout_seconds),
+            max_output_tokens=400,
+            temperature=None if _is_reasoning else 0.1,
+            prefer_responses_api=True,
+        )
 
-        response = await client.chat.completions.create(**create_kwargs)
-        content = response.choices[0].message.content or ""
-
-        json_start = content.find("{")
-        json_end = content.rfind("}") + 1
-        if json_start >= 0 and json_end > json_start:
-            llm_data = json.loads(content[json_start:json_end])
-            if isinstance(llm_data, dict):
-                base["specialist_assessment"] = llm_data.get("specialist_assessment", "")
-                base["recommended_actions"] = llm_data.get("recommended_actions", [])
-                base["risk_score"] = llm_data.get("risk_score", 50)
-                logger.info(
-                    "Clara intelligent compliance: risk_score=%d for contract %s",
-                    base.get("risk_score", -1), contract_id[:8],
-                )
+        llm_data = parse_json_text(content)
+        if isinstance(llm_data, dict):
+            base["specialist_assessment"] = llm_data.get("specialist_assessment", "")
+            base["recommended_actions"] = llm_data.get("recommended_actions", [])
+            base["risk_score"] = llm_data.get("risk_score", 50)
+            logger.info(
+                "Clara intelligent compliance: risk_score=%d for contract %s",
+                base.get("risk_score", -1), contract_id[:8],
+            )
 
     except Exception as e:
         logger.warning("Clara intelligent compliance LLM failed (using Layer 1): %s", e)

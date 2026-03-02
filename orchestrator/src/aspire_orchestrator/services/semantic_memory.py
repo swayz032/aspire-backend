@@ -18,12 +18,15 @@ Law compliance:
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 from aspire_orchestrator.services.receipt_store import store_receipts
 
 logger = logging.getLogger(__name__)
@@ -83,11 +86,7 @@ class SemanticMemory:
             )
 
             # 2. Call GPT-5-mini for fact extraction
-            from aspire_orchestrator.config.settings import settings
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
-            response = await client.chat.completions.create(
+            raw = await generate_text_async(
                 model="gpt-5-mini",
                 messages=[
                     {
@@ -109,16 +108,18 @@ class SemanticMemory:
                     },
                     {"role": "user", "content": conversation},
                 ],
-                max_completion_tokens=400,
-                response_format={"type": "json_object"},
-            )
-
-            raw = response.choices[0].message.content or "[]"
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url,
+                timeout_seconds=float(settings.openai_timeout_seconds),
+                max_output_tokens=400,
+                prefer_responses_api=True,
+            ) or "[]"
 
             # 3. Parse extracted facts
-            import json
             try:
-                parsed = json.loads(raw)
+                parsed = parse_json_text(raw)
+                if not parsed and raw.strip().startswith("["):
+                    parsed = json.loads(raw)
                 # Handle both {"facts": [...]} and [...] formats
                 if isinstance(parsed, dict):
                     facts = parsed.get("facts", parsed.get("items", []))

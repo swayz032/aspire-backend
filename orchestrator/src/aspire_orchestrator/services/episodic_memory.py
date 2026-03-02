@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.services.receipt_store import store_receipts
 
 logger = logging.getLogger(__name__)
@@ -87,11 +89,7 @@ class EpisodicMemory:
             )
 
             # 2. Call GPT-5-mini for summarization
-            from aspire_orchestrator.config.settings import settings
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
-            summary_response = await client.chat.completions.create(
+            raw_output = await generate_text_async(
                 model="gpt-5-mini",
                 messages=[
                     {
@@ -110,10 +108,12 @@ class EpisodicMemory:
                     },
                     {"role": "user", "content": conversation},
                 ],
-                max_completion_tokens=300,
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url,
+                timeout_seconds=float(settings.openai_timeout_seconds),
+                max_output_tokens=300,
+                prefer_responses_api=True,
             )
-
-            raw_output = summary_response.choices[0].message.content or ""
 
             # 3. Parse structured output
             summary, topics, entities = self._parse_summary_output(raw_output)

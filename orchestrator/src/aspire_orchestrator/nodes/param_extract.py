@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aspire_orchestrator.models import Outcome, ReceiptType
+from aspire_orchestrator.services.openai_client import generate_json_async
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -225,37 +226,20 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
 
     if api_key:
         try:
-            import openai
-
             _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
             messages = [{"role": "developer" if _is_reasoning else "system", "content": "You are a precise parameter extractor. Return only valid JSON."}]
             messages.append({"role": "user", "content": prompt})
 
-            client = openai.AsyncOpenAI(
+            extracted_params = await generate_json_async(
+                model=model,
+                messages=messages,
                 api_key=api_key,
                 base_url=settings.openai_base_url,
-                timeout=25.0,
+                timeout_seconds=25.0,
+                max_output_tokens=1024,
+                temperature=None if _is_reasoning else 0.0,
+                prefer_responses_api=True,
             )
-
-            kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": messages,
-                "max_completion_tokens": 1024,
-            }
-            if not _is_reasoning:
-                kwargs["temperature"] = 0.0
-
-            response = await client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content or "" if response.choices else ""
-
-            # Parse JSON from LLM response
-            content = content.strip()
-            if content.startswith("```"):
-                content = content.split("\n", 1)[1] if "\n" in content else content
-                content = content.rsplit("```", 1)[0]
-                content = content.strip()
-
-            extracted_params = json.loads(content)
             logger.info("Param extraction success for %s: %d fields — %s", tool_used, len(extracted_params), json.dumps(extracted_params, default=str)[:500])
 
         except json.JSONDecodeError as e:

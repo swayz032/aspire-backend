@@ -26,6 +26,7 @@ from aspire_orchestrator.services.financial_query_analyzer import (
     FinancialQueryFilters,
     analyze_financial_query,
 )
+from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 from aspire_orchestrator.services.receipt_store import store_receipts
 
 logger = logging.getLogger(__name__)
@@ -336,16 +337,10 @@ class FinancialRetrievalService:
         top_n = chunks[:20]
 
         try:
-            from openai import AsyncOpenAI
             from aspire_orchestrator.config.settings import settings
 
             if not settings.openai_api_key:
                 return chunks[:10]
-
-            client = AsyncOpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_base_url,
-            )
 
             sanitized_query = query.replace("\n", " ").replace("\r", " ")[:200].strip()
             chunk_list = "\n".join(
@@ -353,7 +348,7 @@ class FinancialRetrievalService:
                 for i, c in enumerate(top_n)
             )
 
-            response = await client.chat.completions.create(
+            content = await generate_text_async(
                 model=settings.router_model_classifier,
                 messages=[
                     {
@@ -376,14 +371,20 @@ class FinancialRetrievalService:
                         ),
                     },
                 ],
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url,
+                timeout_seconds=float(settings.openai_timeout_seconds),
+                max_output_tokens=500,
                 temperature=0.0,
-                max_tokens=500,
+                prefer_responses_api=True,
             )
 
-            content = response.choices[0].message.content or ""
-            json_match = content[content.find("["):content.rfind("]") + 1]
-            if json_match:
-                scores = json.loads(json_match)
+            parsed = parse_json_text(content)
+            if not parsed and "[" in content and "]" in content:
+                json_match = content[content.find("["):content.rfind("]") + 1]
+                parsed = json.loads(json_match)
+            if isinstance(parsed, list):
+                scores = parsed
                 scored = sorted(scores, key=lambda x: x.get("score", 0), reverse=True)
                 reranked = []
                 for item in scored[:10]:
