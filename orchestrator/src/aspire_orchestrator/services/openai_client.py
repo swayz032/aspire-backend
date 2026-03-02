@@ -243,7 +243,7 @@ async def probe_models_startup() -> dict[str, Any]:
             resp = await client.responses.create(
                 model=model,
                 input=[{"role": "user", "content": "ping"}],
-                max_output_tokens=4,
+                max_output_tokens=32,
             )
             _MODEL_PROBE_CACHE[model] = bool(_extract_output_text(resp) or True)
         except Exception as e:
