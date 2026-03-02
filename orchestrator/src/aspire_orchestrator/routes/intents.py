@@ -317,6 +317,12 @@ async def classify_intent(request: Request) -> JSONResponse:
 
     # -- Route to skill pack (Brain Layer step 2) ----------------------------
     skill_router: SkillRouter = get_skill_router()
+    requested_agent = (
+        req.payload.get("requested_agent")
+        or req.payload.get("agent")
+        or "ava"
+    )
+    current_agent = str(requested_agent).strip().lower() or "ava"
 
     try:
         routing_plan: RoutingPlan = await skill_router.route(
@@ -324,7 +330,7 @@ async def classify_intent(request: Request) -> JSONResponse:
             context={
                 "suite_id": suite_id,
                 "office_id": office_id,
-                "current_agent": "ava",
+                "current_agent": current_agent,
             },
         )
     except Exception as exc:

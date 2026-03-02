@@ -281,19 +281,9 @@ async def stream_agent_activity(
     office_id: str,
     actor_id: str,
     correlation_id: str,
+    thread_id: str,
 ) -> Any:
-    """Generator for Server-Sent Events streaming during orchestrator execution.
-
-    Enterprise-grade SSE with:
-      - Connection tracking (max 100 per tenant, Law #3)
-      - Heartbeat every 15s (prevents proxy/load-balancer timeout)
-      - Per-stream rate limiting (max 10 events/second)
-      - PII redaction on all messages (Law #9)
-      - Receipt generation for stream lifecycle (Law #2)
-      - Correlation ID propagation
-
-    Used for Canvas Chat Mode live updates (Wave 4 + Wave 5 + SSE Enterprise).
-    """
+    """Generator for real-time Server-Sent Events during orchestrator execution."""
     import asyncio
     from aspire_orchestrator.skillpacks.adam_research import set_activity_event_callback
     from aspire_orchestrator.services.sse_manager import (
@@ -307,15 +297,15 @@ async def stream_agent_activity(
     stream_id = str(uuid.uuid4())
     tracker = get_connection_tracker()
     rate_limiter = StreamRateLimiter()
+    emitted_event_count = 0
+    graph_task: asyncio.Task[dict[str, Any]] | None = None
 
-    # -- Connection limit check (Law #3: fail closed) --------------------------
     if not tracker.try_connect(
         suite_id,
         stream_id,
         actor_id=actor_id,
         correlation_id=correlation_id,
     ):
-        # Law #2: Receipt for denied connection
         deny_receipt = build_stream_receipt(
             action_type="stream.denied",
             suite_id=suite_id,
@@ -330,7 +320,7 @@ async def stream_agent_activity(
         try:
             store_receipts([deny_receipt])
         except Exception:
-            pass  # Receipt failure must not mask the denial
+            pass
         yield format_sse_event({
             "type": "error",
             "message": "Connection limit exceeded for tenant",
@@ -339,7 +329,6 @@ async def stream_agent_activity(
         })
         return
 
-    # -- Receipt for stream initiation (Law #2) --------------------------------
     initiation_receipt = build_stream_receipt(
         action_type="stream.initiate",
         suite_id=suite_id,
@@ -353,18 +342,18 @@ async def stream_agent_activity(
     try:
         store_receipts([initiation_receipt])
     except Exception:
-        pass  # Receipt failure must not block streaming
+        pass
 
-    # -- Event queue for collecting Adam's activity events ---------------------
-    event_queue: list[dict[str, Any]] = []
+    event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=512)
 
     def collect_event(event: dict[str, Any]) -> None:
-        """Callback to collect activity events from Adam (Wave 5)."""
-        event_queue.append(event)
+        try:
+            event_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning("SSE event queue full for stream %s; dropping event", stream_id[:8])
 
     set_activity_event_callback(collect_event)
 
-    # Emit initial "connected" event with receipt_id
     yield format_sse_event({
         "type": "connected",
         "receipt_id": receipt_id,
@@ -374,30 +363,41 @@ async def stream_agent_activity(
     })
 
     last_heartbeat = time.monotonic()
-
     try:
-        # Execute graph (Adam events collected via callback)
-        result = await orchestrator_graph.ainvoke(initial_state)
+        graph_task = asyncio.create_task(
+            orchestrator_graph.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": thread_id}},
+            )
+        )
 
-        # Emit collected Adam events (rate-limited)
-        for event in event_queue:
+        while True:
+            now = time.monotonic()
+            timeout = max(0.0, HEARTBEAT_INTERVAL_SECONDS - (now - last_heartbeat))
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=timeout)
+                if rate_limiter.check():
+                    emitted_event_count += 1
+                    tracker.increment_event_count(stream_id)
+                    yield format_sse_event(event)
+                else:
+                    logger.debug("SSE rate limited: skipping event for stream %s", stream_id[:8])
+            except asyncio.TimeoutError:
+                yield format_sse_event({"type": "heartbeat", "timestamp": int(time.time() * 1000)})
+                last_heartbeat = time.monotonic()
+
+            if graph_task.done() and event_queue.empty():
+                break
+
+        result = await graph_task
+
+        while not event_queue.empty():
+            event = event_queue.get_nowait()
             if rate_limiter.check():
+                emitted_event_count += 1
                 tracker.increment_event_count(stream_id)
                 yield format_sse_event(event)
-            else:
-                # Rate limited — skip event but log
-                logger.debug(
-                    "SSE rate limited: skipping event for stream %s",
-                    stream_id[:8],
-                )
 
-            # Heartbeat check between events
-            now = time.monotonic()
-            if now - last_heartbeat > HEARTBEAT_INTERVAL_SECONDS:
-                yield format_sse_event({"type": "heartbeat", "timestamp": int(time.time() * 1000)})
-                last_heartbeat = now
-
-        # Emit final status event
         response = result.get("response", {})
         if response.get("error"):
             yield format_sse_event({
@@ -414,10 +414,8 @@ async def stream_agent_activity(
                 "timestamp": int(time.time() * 1000),
             })
 
-        # Emit final response payload
         yield format_sse_event({"type": "response", "data": response})
 
-        # Law #2: Receipt for stream completion
         completion_receipt = build_stream_receipt(
             action_type="stream.complete",
             suite_id=suite_id,
@@ -427,7 +425,7 @@ async def stream_agent_activity(
             outcome="success",
             stream_id=stream_id,
             details={
-                "event_count": len(event_queue),
+                "event_count": emitted_event_count,
                 "stream_id": stream_id,
             },
         )
@@ -437,7 +435,6 @@ async def stream_agent_activity(
             pass
 
     except asyncio.CancelledError:
-        # Client disconnected — graceful cleanup
         logger.info("SSE stream cancelled (client disconnect): %s", stream_id[:8])
         try:
             store_receipts([build_stream_receipt(
@@ -461,8 +458,6 @@ async def stream_agent_activity(
             "icon": "error",
             "timestamp": int(time.time() * 1000),
         })
-
-        # Law #2: Receipt for stream error
         try:
             store_receipts([build_stream_receipt(
                 action_type="stream.error",
@@ -479,9 +474,46 @@ async def stream_agent_activity(
             pass
 
     finally:
-        # Clean up: callback + connection tracking
+        if graph_task and not graph_task.done():
+            graph_task.cancel()
         set_activity_event_callback(None)
         tracker.disconnect(suite_id, stream_id)
+
+
+def _resolve_thread_id(
+    body: Any,
+    *,
+    suite_id: str | None,
+    actor_id: str,
+    correlation_id: str,
+) -> str:
+    """Build a stable LangGraph thread ID for checkpointed continuity."""
+    request = body if isinstance(body, dict) else {}
+    payload = request.get("payload") if isinstance(request.get("payload"), dict) else {}
+
+    raw_session_id = (
+        request.get("session_id")
+        or request.get("conversation_id")
+        or payload.get("session_id")
+        or payload.get("conversation_id")
+        or ""
+    )
+    session_id = str(raw_session_id).strip()
+
+    raw_agent = (
+        request.get("requested_agent")
+        or request.get("agent")
+        or payload.get("requested_agent")
+        or payload.get("agent")
+        or "ava"
+    )
+    agent_id = str(raw_agent).strip().lower() or "ava"
+    safe_suite_id = (suite_id or "unknown").strip() or "unknown"
+    safe_actor_id = actor_id.strip() or "unknown"
+
+    if session_id:
+        return f"{safe_suite_id}:{session_id}:{agent_id}"
+    return f"{safe_suite_id}:{safe_actor_id}:{agent_id}:{correlation_id}"
 
 
 @app.post("/v1/intents", response_model=None)
@@ -543,9 +575,17 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
             },
         )
 
+    thread_id = _resolve_thread_id(
+        body,
+        suite_id=suite_id,
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+    )
+
     initial_state: dict[str, Any] = {
         "request": body,
         "actor_id": actor_id,
+        "thread_id": thread_id,
     }
     if suite_id:
         initial_state["auth_suite_id"] = suite_id
@@ -568,6 +608,7 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
                 office_id=office_id,
                 actor_id=actor_id,
                 correlation_id=correlation_id,
+                thread_id=thread_id,
             ),
             media_type="text/event-stream",
             headers={
@@ -580,7 +621,10 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
 
     start_time = time.monotonic()
     try:
-        result = await orchestrator_graph.ainvoke(initial_state)
+        result = await orchestrator_graph.ainvoke(
+            initial_state,
+            config={"configurable": {"thread_id": thread_id}},
+        )
 
         response = result.get("response")
         if response is None:

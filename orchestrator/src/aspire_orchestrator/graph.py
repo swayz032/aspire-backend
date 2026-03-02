@@ -33,6 +33,7 @@ import logging
 from typing import Any
 
 from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
 
 from aspire_orchestrator.nodes.intake import intake_node
 from aspire_orchestrator.nodes.safety_gate import safety_gate_node
@@ -457,4 +458,6 @@ def build_orchestrator_graph() -> StateGraph:
         "execute": "execute",
     })
 
-    return graph.compile()
+    # Enable thread-scoped checkpointing so HITL/resume and multi-turn continuity
+    # can use LangGraph's configurable.thread_id contract.
+    return graph.compile(checkpointer=MemorySaver())
