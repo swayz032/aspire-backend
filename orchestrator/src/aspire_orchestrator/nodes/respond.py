@@ -823,6 +823,10 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 "CHECKPOINTER_UNAVAILABLE": "I'm having trouble accessing conversation memory right now. Please try again shortly.",
                 "UPSTREAM_TIMEOUT": "This task is taking longer than expected. I'm still working on it and can continue if you want.",
                 "ROUTER_FALLBACK_ACTIVE": "I'm routing this request through a fallback path to keep things moving.",
+                "PROVIDER_ALL_FAILED": "All providers failed this request. Try a narrower query or retry in a moment.",
+                "PROVIDER_AUTH_MISSING": "A required provider connection is missing or expired. Please check your connected services.",
+                "ROUTING_DENIED": "This request could not be routed to a valid skill path. Please rephrase the task.",
+                "EXECUTION_FAILED": "I ran into an execution error while handling that task. Please try again.",
             }
             text = _error_messages.get(
                 error_code,

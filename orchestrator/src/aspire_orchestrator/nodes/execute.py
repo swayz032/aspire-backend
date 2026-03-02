@@ -83,6 +83,42 @@ def _resolve_risk_tier(state: OrchestratorState) -> str:
     return risk_tier_val.value if hasattr(risk_tier_val, "value") else str(risk_tier_val or "green")
 
 
+def _classify_execution_failure(
+    *,
+    task_type: str,
+    tool_used: str,
+    execution_error: str,
+    execution_data: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Map tool/runtime failures to deterministic error_code + reason_code.
+
+    This prevents generic fallback text for advanced tasks and gives Desktop
+    explicit handling paths.
+    """
+    err = (execution_error or "").strip()
+    lower = err.lower()
+    data = execution_data or {}
+
+    if data.get("provider_used") is None and data.get("fallback_chain"):
+        return ("PROVIDER_ALL_FAILED", "PROVIDER_ALL_FAILED")
+    if "all providers failed" in lower or "router_all_failed" in lower:
+        return ("PROVIDER_ALL_FAILED", "PROVIDER_ALL_FAILED")
+    if "timeout" in lower or "timed out" in lower or "abort" in lower:
+        return ("UPSTREAM_TIMEOUT", "UPSTREAM_TIMEOUT")
+    if "model_unavailable" in lower or "model unavailable" in lower:
+        return ("MODEL_UNAVAILABLE", "MODEL_UNAVAILABLE")
+    if "checkpointer_unavailable" in lower or "checkpointer unavailable" in lower:
+        return ("CHECKPOINTER_UNAVAILABLE", "CHECKPOINTER_UNAVAILABLE")
+    if "auth" in lower or "invalid_key" in lower or "invalid key" in lower:
+        return ("PROVIDER_AUTH_MISSING", "PROVIDER_AUTH_MISSING")
+    if "routing denied" in lower:
+        return ("ROUTING_DENIED", "ROUTING_DENIED")
+    if not tool_used or tool_used == "unknown":
+        return ("EXECUTION_FAILED", "EXECUTION_FAILED")
+    _ = task_type  # reserved for future action-specific classification
+    return ("EXECUTION_FAILED", "EXECUTION_FAILED")
+
+
 async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     """Execute the approved action via A2A dispatch to owning agent.
 
@@ -401,6 +437,8 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     # GREEN/YELLOW ops → Real execution via execute_tool
     # -------------------------------------------------------------------
     execution_result: dict[str, Any]
+    execution_error_code: str | None = None
+    execution_reason_code = "EXECUTED"
 
     if live and state.get("execution_params"):
         try:
@@ -435,6 +473,13 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
             }
             if execution_error:
                 execution_result["error"] = execution_error
+            if not execution_success:
+                execution_error_code, execution_reason_code = _classify_execution_failure(
+                    task_type=task_type,
+                    tool_used=tool_used,
+                    execution_error=str(execution_error or ""),
+                    execution_data=execution_data if isinstance(execution_data, dict) else {},
+                )
         except Exception as e:
             logger.error("Live tool execution failed for %s: %s", tool_used, e)
             execution_result = {
@@ -448,6 +493,12 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
                 "stub": False,
                 "live": True,
             }
+            execution_error_code, execution_reason_code = _classify_execution_failure(
+                task_type=task_type,
+                tool_used=tool_used,
+                execution_error=str(e),
+                execution_data={},
+            )
     else:
         # Stub path (for tools not yet in live executors, or no execution_params)
         execution_result = {
@@ -463,6 +514,8 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
 
     receipt_id = str(uuid.uuid4())
     outcome_val = Outcome.SUCCESS if execution_result["status"] == "success" else Outcome.FAILED
+    if outcome_val == Outcome.FAILED and execution_reason_code == "EXECUTED":
+        execution_reason_code = "EXECUTION_FAILED"
 
     # Tool execution receipt — agent identity preserved
     receipt = {
@@ -480,7 +533,7 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "outcome": outcome_val.value,
-        "reason_code": "EXECUTED" if execution_result["status"] == "success" else "EXECUTION_FAILED",
+        "reason_code": execution_reason_code,
         "receipt_type": ReceiptType.TOOL_EXECUTION.value,
         "receipt_hash": "",
         "a2a_task_id": a2a_task_id,
@@ -624,10 +677,14 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
         if complete_result.success and complete_result.receipt_data:
             existing_receipts.append(complete_result.receipt_data)
 
-    return {
+    result: dict[str, Any] = {
         "outcome": outcome_val,
         "execution_result": execution_result,
         "tool_used": tool_used,
         "assigned_agent": assigned_agent,
         "pipeline_receipts": existing_receipts,
     }
+    if outcome_val == Outcome.FAILED:
+        result["error_code"] = execution_error_code or "EXECUTION_FAILED"
+        result["error_message"] = str(execution_result.get("error") or "Execution failed")
+    return result
