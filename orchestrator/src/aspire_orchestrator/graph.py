@@ -57,6 +57,7 @@ _CHECKPOINTER_RUNTIME: dict[str, str] = {
     "mode": "memory",
     "backend": "MemorySaver",
 }
+_CHECKPOINTER_CTX: Any | None = None
 
 
 # =============================================================================
@@ -479,8 +480,23 @@ def get_checkpointer_runtime() -> dict[str, str]:
     return dict(_CHECKPOINTER_RUNTIME)
 
 
+def close_checkpointer_runtime() -> None:
+    """Close persistent checkpointer resources on shutdown."""
+    global _CHECKPOINTER_CTX
+    if _CHECKPOINTER_CTX is None:
+        return
+    try:
+        _CHECKPOINTER_CTX.__exit__(None, None, None)
+    except Exception:
+        # Best-effort shutdown cleanup; service is terminating anyway.
+        pass
+    finally:
+        _CHECKPOINTER_CTX = None
+
+
 def _build_checkpointer() -> Any:
     """Build checkpointer from environment (memory|postgres)."""
+    global _CHECKPOINTER_CTX
     mode = (settings.langgraph_checkpointer or "memory").strip().lower()
     aspire_env = os.environ.get("ASPIRE_ENV", "").strip().lower()
     if aspire_env == "production" and mode != "postgres":
@@ -501,12 +517,20 @@ def _build_checkpointer() -> Any:
                 "Install langgraph-postgres checkpointer dependency.",
             ) from e
 
-        saver = PostgresSaver.from_conn_string(dsn)
+        # PostgresSaver is designed to be created via context manager.
+        # Keep the context open for the full process lifetime.
+        _CHECKPOINTER_CTX = PostgresSaver.from_conn_string(dsn)
+        saver = _CHECKPOINTER_CTX.__enter__()
         # Ensure checkpoint schema exists before graph execution.
         # setup() is idempotent for existing tables.
         try:
             saver.setup()
         except Exception as e:
+            try:
+                _CHECKPOINTER_CTX.__exit__(None, None, None)
+            except Exception:
+                pass
+            _CHECKPOINTER_CTX = None
             raise RuntimeError(
                 f"Failed to initialize LangGraph Postgres checkpointer schema: {e}",
             ) from e

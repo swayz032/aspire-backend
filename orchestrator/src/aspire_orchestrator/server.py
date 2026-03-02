@@ -67,7 +67,11 @@ from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
 from aspire_orchestrator.middleware.correlation import CorrelationIdMiddleware
 from aspire_orchestrator.middleware.rate_limiter import RateLimitMiddleware
-from aspire_orchestrator.graph import build_orchestrator_graph, get_checkpointer_runtime
+from aspire_orchestrator.graph import (
+    build_orchestrator_graph,
+    close_checkpointer_runtime,
+    get_checkpointer_runtime,
+)
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
 from aspire_orchestrator.services.receipt_chain import verify_chain
@@ -89,6 +93,12 @@ app = FastAPI(
     description="LangGraph Orchestrator — the Single Brain (Law #1)",
     version="0.1.0",
 )
+
+
+@app.on_event("shutdown")
+async def _shutdown_cleanup() -> None:
+    """Release persistent resources such as Postgres checkpointer connections."""
+    close_checkpointer_runtime()
 
 # CORS — restricted to Gateway only (security reviewer P1 fix)
 # In production, only the Gateway (localhost:3100) talks to the orchestrator.
