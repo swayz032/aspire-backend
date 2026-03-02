@@ -69,6 +69,20 @@ A2A_TASK_COUNTER = Counter(
     ["action", "status"],
 )
 
+# LLM request counter — endpoint/model/outcome visibility
+LLM_REQUEST_COUNTER = Counter(
+    "llm_request_total",
+    "Total LLM requests by endpoint, resolved model, and outcome",
+    ["endpoint", "resolved_model", "outcome"],
+)
+
+# LLM fallback counter — tracks model fallback transitions by profile
+LLM_MODEL_FALLBACK_COUNTER = Counter(
+    "llm_model_fallback_total",
+    "Total LLM model fallbacks by profile and model transition",
+    ["profile", "from_model", "to_model"],
+)
+
 # Service info — static labels for service identification
 SERVICE_INFO = Info(
     "aspire_orchestrator",
@@ -94,6 +108,8 @@ class MetricsCollector:
     receipt_write_counter = RECEIPT_WRITE_COUNTER
     token_mint_counter = TOKEN_MINT_COUNTER
     a2a_task_counter = A2A_TASK_COUNTER
+    llm_request_counter = LLM_REQUEST_COUNTER
+    llm_model_fallback_counter = LLM_MODEL_FALLBACK_COUNTER
 
     def record_request(
         self,
@@ -142,6 +158,34 @@ class MetricsCollector:
     def record_a2a_task(self, *, action: str, status: str) -> None:
         """Record an A2A task operation."""
         self.a2a_task_counter.labels(action=action, status=status).inc()
+
+    def record_llm_request(
+        self,
+        *,
+        endpoint: str,
+        resolved_model: str,
+        outcome: str,
+    ) -> None:
+        """Record LLM request outcome."""
+        self.llm_request_counter.labels(
+            endpoint=endpoint,
+            resolved_model=resolved_model,
+            outcome=outcome,
+        ).inc()
+
+    def record_llm_model_fallback(
+        self,
+        *,
+        profile: str,
+        from_model: str,
+        to_model: str,
+    ) -> None:
+        """Record model fallback transition."""
+        self.llm_model_fallback_counter.labels(
+            profile=profile,
+            from_model=from_model,
+            to_model=to_model,
+        ).inc()
 
 
 # Module-level singleton

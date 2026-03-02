@@ -47,6 +47,7 @@ import os
 import re
 import time
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,10 @@ from aspire_orchestrator.services.receipt_chain import verify_chain
 from aspire_orchestrator.services.registry import get_registry
 from aspire_orchestrator.services.a2a_service import get_a2a_service, A2ATaskStatus
 from aspire_orchestrator.services.metrics import METRICS
+from aspire_orchestrator.services.openai_client import (
+    get_model_probe_status,
+    probe_models_startup,
+)
 from aspire_orchestrator.routes.intents import router as intents_router
 from aspire_orchestrator.routes.admin import router as admin_router
 from aspire_orchestrator.routes.robots import router as robots_router
@@ -142,6 +147,28 @@ elif _settings_warnings:
 
 # Build the graph once at startup
 orchestrator_graph = build_orchestrator_graph()
+
+# Startup model probe + profile fallback resolution cache
+_MODEL_PROBE_BOOT: dict[str, Any] = {}
+try:
+    _MODEL_PROBE_BOOT = asyncio.run(probe_models_startup())
+except RuntimeError:
+    # If event loop is already active (rare in tests), defer probe to runtime/readiness.
+    _MODEL_PROBE_BOOT = {"status": "deferred", "profiles": {}, "models": {}}
+except Exception as _probe_err:
+    logger.warning("Startup model probe failed: %s", _probe_err)
+    _MODEL_PROBE_BOOT = {"status": "failed", "profiles": {}, "models": {}}
+
+if os.getenv("ASPIRE_ENV", "").strip().lower() == "production":
+    profiles = _MODEL_PROBE_BOOT.get("profiles", {}) if isinstance(_MODEL_PROBE_BOOT, dict) else {}
+    if profiles:
+        bad_profiles = [
+            p for p, details in profiles.items()
+            if not bool((details or {}).get("available"))
+        ]
+        if bad_profiles:
+            logger.error("Startup model probe unresolved profiles: %s", ", ".join(bad_profiles))
+            raise SystemExit(1)
 
 
 # =============================================================================
@@ -228,6 +255,15 @@ async def readyz() -> JSONResponse:
         checks["langgraph_checkpointer"] = False
         checks["langgraph_checkpoint_store"] = False
 
+    # Check model probe cache health
+    try:
+        probe = get_model_probe_status()
+        checks["model_probe_cache"] = bool(probe.get("models"))
+        checks["model_probe_healthy"] = bool(probe.get("healthy"))
+    except Exception:
+        checks["model_probe_cache"] = False
+        checks["model_probe_healthy"] = False
+
     all_ready = all(checks.values())
     # Determine if partially ready (some non-critical deps down)
     critical_checks = {
@@ -244,6 +280,7 @@ async def readyz() -> JSONResponse:
             "service": "aspire-orchestrator",
             "checks": checks,
             "checkpointer": get_checkpointer_runtime(),
+            "model_probe": get_model_probe_status(),
         },
     )
 

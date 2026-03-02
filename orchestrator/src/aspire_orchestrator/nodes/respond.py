@@ -121,6 +121,29 @@ def _resolve_agent_id(state: OrchestratorState) -> str:
     return _DOMAIN_TO_AGENT.get(domain_prefix, "ava")
 
 
+def _resolve_assigned_agent(state: OrchestratorState) -> str:
+    """Resolve user-facing assigned agent with explicit-request precedence."""
+    request = state.get("request")
+    explicit_agent = None
+    if isinstance(request, dict):
+        explicit_agent = request.get("requested_agent") or request.get("agent")
+    elif hasattr(request, "payload") and isinstance(request.payload, dict):
+        explicit_agent = request.payload.get("requested_agent") or request.payload.get("agent")
+    if isinstance(explicit_agent, str) and explicit_agent.strip():
+        return explicit_agent.strip().lower()
+
+    target = state.get("agent_target")
+    if isinstance(target, str) and target.strip():
+        if target == "finn_fm":
+            return "finn"
+        return target.strip().lower()
+
+    mapped = _resolve_agent_id(state)
+    if mapped == "finn_fm":
+        return "finn"
+    return mapped
+
+
 def _persist_unpersisted_receipts(state: OrchestratorState) -> list[str]:
     """Persist any pipeline receipts that were not processed by receipt_write.
 
@@ -745,6 +768,10 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 "CAPABILITY_TOKEN_REQUIRED": "I need authorization to perform this action.",
                 "CAPABILITY_TOKEN_EXPIRED": "The authorization for this action has expired. Please try again.",
                 "SCHEMA_VALIDATION_FAILED": "I didn't understand that request. Could you try rephrasing it?",
+                "MODEL_UNAVAILABLE": "I'm having trouble reaching the language model right now. Please try again in a moment.",
+                "CHECKPOINTER_UNAVAILABLE": "I'm having trouble accessing conversation memory right now. Please try again shortly.",
+                "UPSTREAM_TIMEOUT": "This task is taking longer than expected. I'm still working on it and can continue if you want.",
+                "ROUTER_FALLBACK_ACTIVE": "I'm routing this request through a fallback path to keep things moving.",
             }
             text = _error_messages.get(
                 error_code,
@@ -758,7 +785,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             "correlation_id": correlation_id,
             "request_id": request_id,
             "receipt_ids": receipt_ids,
-            "assigned_agent": state.get("assigned_agent", "ava"),
+            "assigned_agent": _resolve_assigned_agent(state),
         }
 
         # For approval-required, include the payload hash + draft details
@@ -789,7 +816,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             "correlation_id": correlation_id,
             "request_id": request_id,
             "receipt_ids": receipt_ids,
-            "assigned_agent": state.get("agent_target") or state.get("assigned_agent", "ava"),
+            "assigned_agent": _resolve_assigned_agent(state),
         }
         return {"response": response}
 
@@ -852,7 +879,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 "correlation_id": correlation_id,
                 "request_id": request_id,
                 "receipt_ids": receipt_ids,
-                "assigned_agent": state.get("assigned_agent", "ava"),
+                "assigned_agent": _resolve_assigned_agent(state),
             }
             return {"response": response}
 
@@ -868,7 +895,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 "correlation_id": correlation_id,
                 "request_id": request_id,
                 "receipt_ids": receipt_ids,
-                "assigned_agent": state.get("assigned_agent", "ava"),
+                "assigned_agent": _resolve_assigned_agent(state),
             }
             return {"response": response}
 
@@ -895,7 +922,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             "correlation_id": correlation_id,
             "request_id": request_id,
             "receipt_ids": receipt_ids,
-            "assigned_agent": state.get("assigned_agent", "ava"),
+            "assigned_agent": _resolve_assigned_agent(state),
         }
         return {"response": response}
 
@@ -945,7 +972,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     capability_token_required = state.get("capability_token_id") is not None
 
     # Agent identity for Desktop rendering (which persona to show)
-    assigned_agent = state.get("assigned_agent", "ava")
+    assigned_agent = _resolve_assigned_agent(state)
 
     try:
         result = AvaResult(

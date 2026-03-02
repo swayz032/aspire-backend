@@ -53,6 +53,10 @@ class TestHealthEndpoints:
         # B-H10 enhanced checks
         assert "receipt_store" in data["checks"]
         assert "policy_engine" in data["checks"]
+        # Compliance probe checks
+        assert "model_probe_cache" in data["checks"]
+        assert "model_probe_healthy" in data["checks"]
+        assert "model_probe" in data
         # Tri-state status: ready / degraded / not_ready
         # 200 if critical checks pass (signing_key, graph, receipt_store)
         # 503 only if critical checks fail

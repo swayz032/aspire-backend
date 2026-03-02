@@ -17,6 +17,7 @@ from unittest.mock import patch, MagicMock
 from aspire_orchestrator.nodes.respond import (
     _load_agent_persona,
     _resolve_agent_id,
+    _resolve_assigned_agent,
     _call_openai_sync,
     _llm_conversational_reply,
     respond_node,
@@ -221,6 +222,27 @@ class TestAssignedAgentPipeline:
         result = respond_node(state)
         assert result["response"]["assigned_agent"] == "ava"
         assert "How can I help" in result["response"]["text"]
+
+    def test_requested_agent_overrides_default_assigned_agent(self) -> None:
+        state = {
+            "correlation_id": "corr-1",
+            "request_id": "req-1",
+            "error_code": "SAFETY_BLOCKED",
+            "error_message": "blocked",
+            "assigned_agent": "ava",
+            "request": {"requested_agent": "finn"},
+            "pipeline_receipts": [],
+            "receipt_ids": [],
+        }
+        result = respond_node(state)
+        assert result["response"]["assigned_agent"] == "finn"
+
+    def test_agent_target_used_when_explicit_request_absent(self) -> None:
+        state = {
+            "assigned_agent": "ava",
+            "agent_target": "eli",
+        }
+        assert _resolve_assigned_agent(state) == "eli"
 
 
 # ── Persona Behavior Verification Concept ──────────────────────────
