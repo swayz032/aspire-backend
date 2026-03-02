@@ -105,7 +105,7 @@ async def _route_through_chain(
                 outcome=Outcome.FAILED,
                 tool_id=meta_tool_id,
                 error=f"[{provider_name}] {e.message}",
-                receipt_data=result.receipt_data if 'result' in dir() else {},
+                receipt_data={},
             )
             continue
         except Exception as e:
@@ -201,6 +201,68 @@ async def route_web_search(
         risk_tier=risk_tier,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+    )
+
+
+async def route_image_search(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Route an image search through web providers and normalize image payload.
+
+    Required payload:
+      - query: str — image query
+
+    Returns ToolExecutionResult with:
+      - images: normalized image items
+      - provider_used/fallback_chain metadata
+    """
+    base = await _route_through_chain(
+        _web_search_chain(),
+        meta_tool_id="search.image",
+        payload=payload,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        risk_tier=risk_tier,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+    if base.outcome != Outcome.SUCCESS:
+        return base
+
+    results = base.data.get("results", []) if isinstance(base.data, dict) else []
+    images: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        image_url = item.get("image_url")
+        if isinstance(image_url, str) and image_url.strip():
+            images.append(
+                {
+                    "type": "image",
+                    "url": image_url.strip(),
+                    "title": item.get("title", ""),
+                    "source": item.get("url", ""),
+                    "description": item.get("description") or item.get("content") or "",
+                }
+            )
+
+    enriched_data = dict(base.data) if isinstance(base.data, dict) else {}
+    enriched_data["images"] = images
+
+    return ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id=base.tool_id,
+        data=enriched_data,
+        receipt_data=base.receipt_data,
     )
 
 

@@ -239,7 +239,7 @@ async def readyz() -> JSONResponse:
     # Check policy engine loaded
     try:
         matrix = get_policy_matrix()
-        checks["policy_engine"] = matrix is not None and len(matrix) > 0
+        checks["policy_engine"] = matrix is not None and len(getattr(matrix, "actions", {})) > 0
     except Exception:
         checks["policy_engine"] = False
 
@@ -258,6 +258,10 @@ async def readyz() -> JSONResponse:
     # Check model probe cache health
     try:
         probe = get_model_probe_status()
+        if not probe.get("models"):
+            # Warm probe cache lazily for environments where startup probe was deferred.
+            await probe_models_startup()
+            probe = get_model_probe_status()
         checks["model_probe_cache"] = bool(probe.get("models"))
         checks["model_probe_healthy"] = bool(probe.get("healthy"))
     except Exception:
@@ -700,6 +704,15 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
                 "POLICY_DENIED": 403,
                 "SAFETY_BLOCKED": 403,
                 "RECEIPT_WRITE_FAILED": 503,
+                "MODEL_UNAVAILABLE": 503,
+                "CHECKPOINTER_UNAVAILABLE": 503,
+                "UPSTREAM_TIMEOUT": 504,
+                "ROUTER_FALLBACK_ACTIVE": 200,
+                "PROVIDER_AUTH_MISSING": 503,
+                "PROVIDER_ALL_FAILED": 503,
+                "ROUTING_DENIED": 400,
+                "PARAM_EXTRACTION_FAILED": 400,
+                "EXECUTION_FAILED": 500,
                 "INTERNAL_ERROR": 500,
             }
             status_code = status_map.get(error, 500)

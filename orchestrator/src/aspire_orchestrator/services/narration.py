@@ -407,6 +407,33 @@ def compose_narration(
 
     # FAILED outcome — never expose raw error details to user (enterprise security)
     if outcome == "failed":
+        er = execution_result or {}
+        err_text = str(er.get("error") or er.get("reason_code") or "").upper()
+        if "MODEL_UNAVAILABLE" in err_text:
+            return (
+                f"{header}I couldn't complete this because the model is temporarily unavailable. "
+                "Please try again in a moment."
+            )
+        if "CHECKPOINTER_UNAVAILABLE" in err_text:
+            return (
+                f"{header}I couldn't access conversation memory for this task. "
+                "Please try again in a moment."
+            )
+        if "TIMEOUT" in err_text:
+            return (
+                f"{header}This task timed out before completion. "
+                "Would you like me to try again with a narrower request?"
+            )
+        if "AUTH" in err_text or "INVALID_KEY" in err_text:
+            return (
+                f"{header}I couldn't complete this because a required provider connection is missing or expired. "
+                "Please check your provider connections and try again."
+            )
+        if "PROVIDER_ALL_FAILED" in err_text or "ALL PROVIDERS FAILED" in err_text:
+            return (
+                f"{header}I couldn't complete this because all research providers failed the request. "
+                "Try a narrower query or retry in a moment."
+            )
         return (
             f"{header}I wasn't able to complete this. "
             "Would you like me to try a different approach?"

@@ -99,6 +99,8 @@ def _resolve_agent_id(state: OrchestratorState) -> str:
         explicit_agent = None
 
     # Map explicit agent names to persona IDs
+    if isinstance(explicit_agent, str):
+        explicit_agent = explicit_agent.strip().lower()
     if explicit_agent and explicit_agent != "ava":
         _agent_name_map = {
             "finn": "finn_fm",
@@ -713,6 +715,55 @@ def _generate_presence_prompt(state: OrchestratorState, channel: str = "chat") -
         return fallback_text
 
 
+def _extract_media_items(state: OrchestratorState) -> list[dict[str, Any]]:
+    """Extract media payloads from execution_result for chat rendering."""
+    execution_result = state.get("execution_result") or {}
+    data = execution_result.get("data") if isinstance(execution_result, dict) else None
+    if not isinstance(data, dict):
+        return []
+
+    media_items: list[dict[str, Any]] = []
+
+    # Preferred: explicit image payload from search.image route
+    images = data.get("images")
+    if isinstance(images, list):
+        for item in images:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if isinstance(url, str) and url.strip():
+                media_items.append(
+                    {
+                        "type": "image",
+                        "url": url.strip(),
+                        "title": item.get("title", ""),
+                        "source": item.get("source", ""),
+                    }
+                )
+
+    # Fallback: collect image_url fields from generic search results
+    if not media_items:
+        results = data.get("results")
+        if isinstance(results, list):
+            for row in results:
+                if not isinstance(row, dict):
+                    continue
+                image_url = row.get("image_url")
+                if isinstance(image_url, str) and image_url.strip():
+                    media_items.append(
+                        {
+                            "type": "image",
+                            "url": image_url.strip(),
+                            "title": row.get("title", ""),
+                            "source": row.get("url", ""),
+                        }
+                    )
+                    if len(media_items) >= 4:
+                        break
+
+    return media_items
+
+
 def respond_node(state: OrchestratorState) -> dict[str, Any]:
     """Construct and validate the response.
 
@@ -1002,6 +1053,9 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         # Egress validation — validate AvaResult schema before returning
         response = result.model_dump()
         response["assigned_agent"] = assigned_agent
+        media = _extract_media_items(state)
+        if media:
+            response["media"] = media
         return {"response": response}
 
     except (ValidationError, Exception) as e:

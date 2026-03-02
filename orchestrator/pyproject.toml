@@ -9,6 +9,7 @@ description = "Aspire LangGraph Orchestrator — the Single Brain (Law #1)"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.3.0,<0.4",
+    "langgraph-checkpoint-postgres>=2.0.0,<3.0",
     "langchain-core>=0.3.0,<0.4",
     "langchain-openai>=0.3.0,<0.4",
     "openai>=1.60.0",

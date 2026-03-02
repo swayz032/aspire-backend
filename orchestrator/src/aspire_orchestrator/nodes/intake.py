@@ -95,8 +95,8 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
     # Detect this and convert to full format before validation.
     if isinstance(raw_request, dict) and "text" in raw_request and "schema_version" not in raw_request:
         utterance_text = raw_request.get("text", "")
-        agent = raw_request.get("agent", "ava")
-        requested_agent = raw_request.get("requested_agent", agent)
+        agent = str(raw_request.get("agent", "ava")).strip().lower() or "ava"
+        requested_agent = str(raw_request.get("requested_agent", agent)).strip().lower() or agent
         channel = raw_request.get("channel", "voice")
         # suite_id comes from X-Suite-Id header → server.py passes it via state
         suite_id_from_header = state.get("auth_suite_id") or raw_request.get("suite_id", "00000000-0000-0000-0000-000000000000")
@@ -215,6 +215,8 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
     requested_agent = None
     if isinstance(request.payload, dict):
         requested_agent = request.payload.get("requested_agent") or request.payload.get("agent") or None
+        if isinstance(requested_agent, str):
+            requested_agent = requested_agent.strip().lower() or None
 
     result: dict[str, Any] = {
         "request": request,

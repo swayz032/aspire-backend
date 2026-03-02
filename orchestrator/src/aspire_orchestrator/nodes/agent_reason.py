@@ -257,9 +257,15 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     """
     utterance = state.get("utterance", "")
     requested_agent = state.get("requested_agent")
-    agent_id = state.get("agent_target", "ava") or "ava"
-    if isinstance(requested_agent, str) and requested_agent and requested_agent != "ava":
-        agent_id = requested_agent
+    normalized_requested = (
+        requested_agent.strip().lower()
+        if isinstance(requested_agent, str) and requested_agent.strip()
+        else None
+    )
+    raw_target = state.get("agent_target", "ava") or "ava"
+    agent_id = raw_target.strip().lower() if isinstance(raw_target, str) else "ava"
+    if normalized_requested and normalized_requested != "ava":
+        agent_id = normalized_requested
     intent_type = state.get("intent_type", "conversation")
 
     logger.info(

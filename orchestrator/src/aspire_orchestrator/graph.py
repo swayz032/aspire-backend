@@ -89,6 +89,8 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         "action_type": intent_result.action_type,
     }
     requested_agent = state.get("requested_agent")
+    if isinstance(requested_agent, str):
+        requested_agent = requested_agent.strip().lower()
 
     # Update task_type so downstream policy_eval uses the classified action
     if intent_result.action_type and intent_result.action_type != "unknown":
@@ -157,6 +159,8 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
         )
     elif isinstance(request, dict):
         current_agent = request.get("requested_agent") or request.get("agent") or "ava"
+    if isinstance(current_agent, str):
+        current_agent = current_agent.strip().lower() or "ava"
 
     context = {
         "suite_id": state.get("suite_id"),
@@ -498,6 +502,14 @@ def _build_checkpointer() -> Any:
             ) from e
 
         saver = PostgresSaver.from_conn_string(dsn)
+        # Ensure checkpoint schema exists before graph execution.
+        # setup() is idempotent for existing tables.
+        try:
+            saver.setup()
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize LangGraph Postgres checkpointer schema: {e}",
+            ) from e
         _CHECKPOINTER_RUNTIME["mode"] = "postgres"
         _CHECKPOINTER_RUNTIME["backend"] = "PostgresSaver"
         return saver
