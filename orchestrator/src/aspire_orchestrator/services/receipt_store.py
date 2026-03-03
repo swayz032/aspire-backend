@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_UUID_NIL = "00000000-0000-0000-0000-000000000000"
+_SYSTEM_ACTOR_UUID = "00000000-0000-0000-0000-000000000001"
 
 
 class ReceiptPersistenceError(Exception):
@@ -91,6 +95,33 @@ def _map_actor_type(raw: str | None) -> str:
     return "SYSTEM"
 
 
+def _coerce_uuid(value: Any, *, fallback: str | None = None) -> str | None:
+    """Return UUID string when possible, otherwise fallback (or None)."""
+    if value is None:
+        return fallback
+    s = str(value).strip()
+    if not s:
+        return fallback
+    try:
+        return str(uuid.UUID(s))
+    except Exception:
+        return fallback
+
+
+def _coerce_actor_id(raw_actor_id: Any, actor_type: str) -> str:
+    """Map actor identifiers into a UUID-safe value for receipt persistence."""
+    direct = _coerce_uuid(raw_actor_id)
+    if direct:
+        return direct
+    raw = str(raw_actor_id or "").strip()
+    if raw:
+        # Deterministic UUID for non-UUID identifiers (emails, slugs, system labels).
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"aspire:actor:{raw.lower()}"))
+    if actor_type == "USER":
+        return _UUID_NIL
+    return _SYSTEM_ACTOR_UUID
+
+
 def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
     """Map orchestrator receipt fields to Supabase receipts table columns.
 
@@ -125,20 +156,25 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
         if receipt.get(field):
             result_data[field] = receipt[field]
 
-    suite_id = receipt.get("suite_id", "")
-    office_id = receipt.get("office_id")
+    suite_id = _coerce_uuid(receipt.get("suite_id"), fallback=_UUID_NIL)
+    office_id = _coerce_uuid(receipt.get("office_id"))
+    actor_type = _map_actor_type(receipt.get("actor_type", "SYSTEM"))
+    actor_id = _coerce_actor_id(receipt.get("actor_id", ""), actor_type)
+    receipt_id = _coerce_uuid(receipt.get("id"))
+    if not receipt_id:
+        receipt_id = str(uuid.uuid4())
 
     row: dict[str, Any] = {
-        "receipt_id": receipt.get("id", ""),
+        "receipt_id": receipt_id,
         "suite_id": suite_id,
-        "tenant_id": suite_id,  # Phase 1: suite_id == tenant_id
+        "tenant_id": str(receipt.get("tenant_id") or suite_id),
         "receipt_type": receipt.get("receipt_type", "orchestrator"),
         "status": status,
         "correlation_id": receipt.get("correlation_id", ""),
-        "actor_type": _map_actor_type(receipt.get("actor_type", "SYSTEM")),
-        "actor_id": receipt.get("actor_id", ""),
-        "action": action_data if action_data else None,
-        "result": result_data if result_data else None,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "action": action_data if action_data else {},
+        "result": result_data if result_data else {},
         "created_at": receipt.get("created_at"),
     }
 
