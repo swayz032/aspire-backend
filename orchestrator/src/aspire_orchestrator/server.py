@@ -408,13 +408,18 @@ async def stream_agent_activity(
     except Exception:
         pass
 
+    loop = asyncio.get_running_loop()
     event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=512)
 
-    def collect_event(event: dict[str, Any]) -> None:
+    def _enqueue_event(event: dict[str, Any]) -> None:
         try:
             event_queue.put_nowait(event)
         except asyncio.QueueFull:
             logger.warning("SSE event queue full for stream %s; dropping event", stream_id[:8])
+
+    def collect_event(event: dict[str, Any]) -> None:
+        # Thread-safe enqueue for sync invoke fallback worker threads.
+        loop.call_soon_threadsafe(_enqueue_event, event)
 
     set_activity_event_callback(collect_event)
 
@@ -429,10 +434,10 @@ async def stream_agent_activity(
     last_heartbeat = time.monotonic()
     try:
         graph_task = asyncio.create_task(
-            orchestrator_graph.ainvoke(
+            _invoke_orchestrator_graph(
                 initial_state,
-                config={"configurable": {"thread_id": thread_id}},
-            )
+                thread_id=thread_id,
+            ),
         )
 
         while True:
@@ -580,6 +585,28 @@ def _resolve_thread_id(
     return f"{safe_suite_id}:{safe_actor_id}:{agent_id}:{correlation_id}"
 
 
+class _GraphInvokeUnavailableError(RuntimeError):
+    """Raised when graph invoke cannot run with the active checkpointer."""
+
+
+async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id: str) -> dict[str, Any]:
+    """Invoke orchestrator graph with async-first strategy and sync fallback."""
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        return await orchestrator_graph.ainvoke(initial_state, config=config)
+    except NotImplementedError:
+        logger.warning(
+            "Async graph invoke unsupported by checkpointer; falling back to sync invoke [thread_id=%s]",
+            thread_id,
+        )
+        try:
+            return await asyncio.to_thread(orchestrator_graph.invoke, initial_state, config=config)
+        except Exception as sync_err:  # pragma: no cover
+            raise _GraphInvokeUnavailableError(
+                "CHECKPOINTER_UNAVAILABLE: async invoke unsupported and sync fallback failed",
+            ) from sync_err
+
+
 @app.post("/v1/intents", response_model=None)
 async def process_intent(request: Request, stream: bool = Query(default=False)) -> JSONResponse | StreamingResponse:
     """Process an AvaOrchestratorRequest through the orchestrator graph.
@@ -685,9 +712,9 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
 
     start_time = time.monotonic()
     try:
-        result = await orchestrator_graph.ainvoke(
+        result = await _invoke_orchestrator_graph(
             initial_state,
-            config={"configurable": {"thread_id": thread_id}},
+            thread_id=thread_id,
         )
 
         response = result.get("response")
@@ -741,6 +768,17 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
         )
         return JSONResponse(status_code=200, content=response)
 
+    except _GraphInvokeUnavailableError as e:
+        logger.exception("Orchestrator checkpointer unavailable: %s", e)
+        METRICS.record_request(status="failed", task_type=body.get("task_type", "unknown") if isinstance(body, dict) else "unknown")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "CHECKPOINTER_UNAVAILABLE",
+                "message": "Ava memory service is temporarily unavailable",
+                "correlation_id": body.get("correlation_id", "unknown") if isinstance(body, dict) else "unknown",
+            },
+        )
     except Exception as e:
         logger.exception("Orchestrator error: %s", e)
         METRICS.record_request(status="failed", task_type=body.get("task_type", "unknown") if isinstance(body, dict) else "unknown")

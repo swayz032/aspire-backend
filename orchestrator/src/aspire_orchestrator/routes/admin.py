@@ -30,7 +30,7 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
@@ -197,6 +197,102 @@ def _require_admin(request: Request) -> str | None:
 def _get_correlation_id(request: Request) -> str:
     """Extract or generate correlation ID from request headers."""
     return request.headers.get("x-correlation-id", str(uuid.uuid4()))
+
+
+def _get_supabase_jwt_secret() -> str:
+    """Resolve Supabase JWT secret from known env var names."""
+    return (
+        os.environ.get("SUPABASE_JWT_SECRET")
+        or os.environ.get("JWT_SECRET")
+        or ""
+    ).strip()
+
+
+@router.post("/admin/auth/exchange")
+async def exchange_admin_token(request: Request) -> JSONResponse:
+    """Exchange a verified Supabase access token for an admin facade JWT.
+
+    This bridges admin-portal auth (Supabase session token) to backend admin auth
+    (X-Admin-Token signed by ASPIRE_ADMIN_JWT_SECRET).
+    """
+    import jwt as pyjwt
+
+    correlation_id = _get_correlation_id(request)
+    auth_header = request.headers.get("authorization", "").strip()
+    if not auth_header.lower().startswith("bearer "):
+        return _ops_error(
+            code="AUTH_REQUIRED",
+            message="Missing Authorization bearer token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    access_token = auth_header.split(" ", 1)[1].strip()
+    if not access_token:
+        return _ops_error(
+            code="AUTH_REQUIRED",
+            message="Missing Authorization bearer token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    supabase_secret = _get_supabase_jwt_secret()
+    admin_secret = (os.environ.get("ASPIRE_ADMIN_JWT_SECRET") or "").strip()
+    if not supabase_secret or not admin_secret:
+        return _ops_error(
+            code="AUTH_CONFIG_MISSING",
+            message="Admin auth secrets are not configured",
+            correlation_id=correlation_id,
+            status_code=503,
+            retryable=False,
+        )
+
+    try:
+        payload = pyjwt.decode(
+            access_token,
+            supabase_secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+    except Exception:
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Invalid session token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    actor_id = str(payload.get("sub") or "").strip()
+    if not actor_id:
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Session token missing subject",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    email = str(payload.get("email") or "").strip().lower()
+    role = str(payload.get("role") or "authenticated")
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=1)
+    admin_payload = {
+        "sub": actor_id,
+        "email": email,
+        "role": role,
+        "scope": "admin_facade",
+        "iat": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    admin_token = pyjwt.encode(admin_payload, admin_secret, algorithm="HS256")
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "admin_token": admin_token,
+            "expires_at": expires_at.isoformat(),
+            "correlation_id": correlation_id,
+        },
+    )
 
 
 # =============================================================================
