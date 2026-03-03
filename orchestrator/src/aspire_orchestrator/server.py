@@ -85,6 +85,7 @@ from aspire_orchestrator.services.openai_client import (
 from aspire_orchestrator.routes.intents import router as intents_router
 from aspire_orchestrator.routes.admin import router as admin_router
 from aspire_orchestrator.routes.robots import router as robots_router
+from aspire_orchestrator.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ app = FastAPI(
 )
 
 orchestrator_graph: Any | None = None
+_checkpointer_failover_lock = asyncio.Lock()
+_checkpointer_force_memory = False
 
 
 @app.on_event("startup")
@@ -595,6 +598,38 @@ class _GraphInvokeUnavailableError(RuntimeError):
     """Raised when graph invoke cannot run with the active checkpointer."""
 
 
+def _is_prepared_statement_error(err: Exception) -> bool:
+    """Detect PgBouncer/psycopg prepared statement mismatch errors."""
+    text = str(err).lower()
+    return "prepared statement" in text and ("already exists" in text or "does not exist" in text)
+
+
+async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
+    """Switch graph runtime to MemorySaver when Postgres checkpointer is unstable."""
+    global orchestrator_graph, _checkpointer_force_memory
+    async with _checkpointer_failover_lock:
+        if _checkpointer_force_memory:
+            return True
+        prev_mode = settings.langgraph_checkpointer
+        try:
+            logger.error(
+                "Detected unstable Postgres checkpointer, forcing MemorySaver failover: %s",
+                reason,
+            )
+            settings.langgraph_checkpointer = "memory"
+            await close_checkpointer_runtime()
+            orchestrator_graph = await build_orchestrator_graph()
+            _checkpointer_force_memory = True
+            return True
+        except Exception as failover_err:
+            logger.exception("Failed to switch orchestrator graph to MemorySaver: %s", failover_err)
+            return False
+        finally:
+            # Keep memory mode for process lifetime after failover. Restore only on failure.
+            if not _checkpointer_force_memory:
+                settings.langgraph_checkpointer = prev_mode
+
+
 async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id: str) -> dict[str, Any]:
     """Invoke orchestrator graph with async-first strategy and sync fallback."""
     if orchestrator_graph is None:
@@ -613,6 +648,15 @@ async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id
             raise _GraphInvokeUnavailableError(
                 "CHECKPOINTER_UNAVAILABLE: async invoke unsupported and sync fallback failed",
             ) from sync_err
+    except Exception as invoke_err:
+        if _is_prepared_statement_error(invoke_err):
+            switched = await _force_memory_checkpointer_graph(invoke_err)
+            if switched and orchestrator_graph is not None:
+                return await orchestrator_graph.ainvoke(initial_state, config=config)
+            raise _GraphInvokeUnavailableError(
+                "CHECKPOINTER_UNAVAILABLE: Postgres checkpointer failover to memory failed",
+            ) from invoke_err
+        raise
 
 
 @app.post("/v1/intents", response_model=None)
