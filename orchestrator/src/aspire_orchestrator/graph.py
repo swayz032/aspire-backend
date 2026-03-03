@@ -515,16 +515,10 @@ async def _build_checkpointer() -> Any:
             )
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        except Exception as e:
-            raise RuntimeError(
-                "Postgres async checkpointer requested but langgraph.checkpoint.postgres.aio is unavailable. "
-                "Install langgraph-checkpoint-postgres dependency with async support.",
-            ) from e
 
-        # AsyncPostgresSaver is async-context-manager based.
-        # Initialize it once at startup and keep it open for process lifetime.
-        _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(dsn)
-        try:
+            # AsyncPostgresSaver is async-context-manager based.
+            # Initialize it once at startup and keep it open for process lifetime.
+            _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(dsn)
             saver = await _CHECKPOINTER_CTX.__aenter__()
             try:
                 await saver.setup()
@@ -533,18 +527,20 @@ async def _build_checkpointer() -> Any:
                 # even when migrations are already applied. Treat this as non-fatal.
                 if "DuplicatePreparedStatement" not in str(type(setup_err)) and "prepared statement" not in str(setup_err):
                     raise
+            _CHECKPOINTER_RUNTIME["mode"] = "postgres"
+            _CHECKPOINTER_RUNTIME["backend"] = "AsyncPostgresSaver"
+            return saver
         except Exception as e:
             try:
-                await _CHECKPOINTER_CTX.__aexit__(None, None, None)
+                if _CHECKPOINTER_CTX is not None and hasattr(_CHECKPOINTER_CTX, "__aexit__"):
+                    await _CHECKPOINTER_CTX.__aexit__(None, None, None)
             except Exception:
                 pass
             _CHECKPOINTER_CTX = None
-            raise RuntimeError(
-                f"Failed to initialize LangGraph Async Postgres checkpointer schema: {e}",
-            ) from e
-        _CHECKPOINTER_RUNTIME["mode"] = "postgres"
-        _CHECKPOINTER_RUNTIME["backend"] = "AsyncPostgresSaver"
-        return saver
+            logger.exception("Postgres checkpointer init failed, falling back to MemorySaver: %s", e)
+            _CHECKPOINTER_RUNTIME["mode"] = "memory-fallback"
+            _CHECKPOINTER_RUNTIME["backend"] = "MemorySaver"
+            return MemorySaver()
 
     _CHECKPOINTER_RUNTIME["mode"] = "memory"
     _CHECKPOINTER_RUNTIME["backend"] = "MemorySaver"
