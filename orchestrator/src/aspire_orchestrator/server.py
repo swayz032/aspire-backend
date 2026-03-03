@@ -809,11 +809,15 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
                 "PROVIDER_ALL_FAILED": 503,
                 "ROUTING_DENIED": 400,
                 "PARAM_EXTRACTION_FAILED": 400,
+                "CLASSIFICATION_UNCLEAR": 200,
                 "EXECUTION_FAILED": 500,
                 "INTERNAL_ERROR": 500,
             }
             status_code = status_map.get(error, 500)
-            outcome_status = "denied" if status_code in (403, 202) else "failed"
+            if status_code == 200:
+                outcome_status = "success"
+            else:
+                outcome_status = "denied" if status_code in (403, 202) else "failed"
             METRICS.record_request(
                 status=outcome_status,
                 risk_tier=response.get("risk_tier", "unknown"),
