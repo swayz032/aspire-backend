@@ -45,105 +45,22 @@ from aspire_orchestrator.models import (
 from aspire_orchestrator.services.narration import compose_narration
 from aspire_orchestrator.services.openai_client import generate_text_sync
 from aspire_orchestrator.services.output_guard import guard_output
+from aspire_orchestrator.services.agent_identity import (
+    resolve_assigned_agent as _resolve_assigned_agent_shared,
+    resolve_persona_agent as _resolve_persona_agent_shared,
+)
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
-# Maps task_type domain prefix → agent persona ID.
-# The classifier outputs task_types like "research.search", "invoice.create",
-# "payment.send" — but the personas are named by agent (adam, quinn, finn).
-# Users talk to Ava, Eli, Nora, Finn directly — Ava orchestrates everything.
-_DOMAIN_TO_AGENT: dict[str, str] = {
-    "research": "adam",
-    "invoice": "quinn",
-    "quote": "quinn",
-    "email": "eli",
-    "mail": "eli",
-    "calendar": "ava",
-    "scheduling": "ava",
-    "booking": "ava",
-    "conference": "nora",
-    "meeting": "nora",
-    "payment": "finn",
-    "transfer": "finn",
-    "finance": "finn_fm",
-    "payroll": "milo",
-    "contract": "clara",
-    "legal": "clara",
-    "document": "tec",
-    "filing": "teressa",
-    "bookkeeping": "teressa",
-    "accounting": "teressa",
-    "contact": "ava",
-    "domain": "mail_ops",
-    "mailbox": "mail_ops",
-    "frontdesk": "sarah",
-    "call": "sarah",
-    "sms": "sarah",
-    "telephony": "sarah",
-}
-
-
 def _resolve_agent_id(state: OrchestratorState) -> str:
-    """Resolve the agent persona ID from task_type and request context.
-
-    Priority: request.agent field (Desktop sends this) → domain prefix mapping → ava fallback.
-    """
-    # Desktop proxy sends agent field in the original request payload
-    request = state.get("request")
-    if isinstance(request, dict):
-        explicit_agent = request.get("requested_agent") or request.get("agent")
-    elif hasattr(request, "payload") and isinstance(request.payload, dict):
-        explicit_agent = request.payload.get("requested_agent") or request.payload.get("agent")
-    else:
-        explicit_agent = None
-
-    # Map explicit agent names to persona IDs
-    if isinstance(explicit_agent, str):
-        explicit_agent = explicit_agent.strip().lower()
-    if explicit_agent and explicit_agent != "ava":
-        _agent_name_map = {
-            "finn": "finn_fm",
-            "eli": "eli",
-            "nora": "nora",
-            "sarah": "sarah",
-            "adam": "adam",
-            "quinn": "quinn",
-            "tec": "tec",
-            "teressa": "teressa",
-            "milo": "milo",
-            "clara": "clara",
-        }
-        if explicit_agent in _agent_name_map:
-            return _agent_name_map[explicit_agent]
-
-    # Fall back to domain prefix mapping from task_type
-    task_type = state.get("task_type", "unknown")
-    domain_prefix = task_type.split(".")[0] if "." in task_type else task_type
-    return _DOMAIN_TO_AGENT.get(domain_prefix, "ava")
+    """Resolve persona id from canonical shared agent identity logic."""
+    return _resolve_persona_agent_shared(state)
 
 
 def _resolve_assigned_agent(state: OrchestratorState) -> str:
-    """Resolve user-facing assigned agent with explicit-request precedence."""
-    request = state.get("request")
-    explicit_agent = None
-    if isinstance(request, dict):
-        explicit_agent = request.get("requested_agent") or request.get("agent")
-    elif hasattr(request, "payload") and isinstance(request.payload, dict):
-        explicit_agent = request.payload.get("requested_agent") or request.payload.get("agent")
-    if isinstance(explicit_agent, str) and explicit_agent.strip():
-        return explicit_agent.strip().lower()
-
-    target = state.get("agent_target")
-    if isinstance(target, str) and target.strip():
-        if target == "finn_fm":
-            return "finn"
-        return target.strip().lower()
-
-    mapped = _resolve_agent_id(state)
-    if mapped == "finn_fm":
-        return "finn"
-    return mapped
+    """Resolve user-facing assigned agent with shared canonical precedence."""
+    return _resolve_assigned_agent_shared(state)
 
 
 def _persist_unpersisted_receipts(state: OrchestratorState) -> list[str]:

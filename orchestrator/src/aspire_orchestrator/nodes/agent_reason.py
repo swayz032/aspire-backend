@@ -27,6 +27,9 @@ from typing import Any
 
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.openai_client import generate_text_async
+from aspire_orchestrator.services.agent_identity import (
+    resolve_assigned_agent as _resolve_assigned_agent_shared,
+)
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -211,6 +214,24 @@ def _guard_output(text: str, agent_id: str) -> str:
                 f"approval process first. Would you like me to set that up?"
             )
             break
+    lower = text.lower()
+    if agent_id != "ava":
+        if "i'm ava" in lower or "i am ava" in lower or "i’m ava" in lower:
+            fallback_map = {
+                "finn": "Hey, I'm Finn - your finance manager here in Aspire. What numbers should we dig into?",
+                "eli": "Hey, I'm Eli - I run your inbox and messaging workflows. What do you want handled first?",
+                "nora": "Hey, I'm Nora - I handle meetings and conference coordination. What should I schedule?",
+                "clara": "Hey, I'm Clara - I handle legal and contract support. What do you need reviewed?",
+                "quinn": "Hey, I'm Quinn - I manage invoices and payments operations. What should I prepare?",
+                "sarah": "Hey, I'm Sarah - I handle front desk calls and routing. What do you want covered?",
+                "adam": "Hey, I'm Adam - I run research and vendor analysis. What should I investigate?",
+                "tec": "Hey, I'm Tec - I handle docs and filings workflows. What should I generate?",
+                "teressa": "Hey, I'm Teressa - I handle bookkeeping and close tasks. What should I reconcile?",
+                "milo": "Hey, I'm Milo - I handle payroll operations. What payroll task should I run?",
+                "mail_ops": "Hey, I'm Mail Ops - I handle domain and mailbox operations. What do you need configured?",
+            }
+            logger.warning("Identity drift corrected: agent=%s output referenced Ava identity", agent_id)
+            return fallback_map.get(agent_id, "I can help with that. Tell me what you need and I'll take it from here.")
     return text
 
 
@@ -256,16 +277,7 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     - No approval flow needed
     """
     utterance = state.get("utterance", "")
-    requested_agent = state.get("requested_agent")
-    normalized_requested = (
-        requested_agent.strip().lower()
-        if isinstance(requested_agent, str) and requested_agent.strip()
-        else None
-    )
-    raw_target = state.get("agent_target", "ava") or "ava"
-    agent_id = raw_target.strip().lower() if isinstance(raw_target, str) else "ava"
-    if normalized_requested and normalized_requested != "ava":
-        agent_id = normalized_requested
+    agent_id = _resolve_assigned_agent_shared(state)
     intent_type = state.get("intent_type", "conversation")
 
     logger.info(
@@ -346,7 +358,12 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
         logger.warning("Memory loading failed (non-fatal, continuing without): %s", e)
 
     # 5. Assemble system message
-    system_parts = [awareness, "", persona]
+    identity_guard = (
+        f"IDENTITY CONSTRAINT: You are {agent_id}. "
+        f"Never claim to be Ava unless your agent id is exactly 'ava'. "
+        "Do not self-identify as any other agent."
+    )
+    system_parts = [identity_guard, "", awareness, "", persona]
     if user_ctx:
         system_parts.extend(["", "## User Context", user_ctx])
     if memory_ctx:
@@ -381,10 +398,18 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
         logger.error("agent_reason LLM call failed: %s", e)
         # Persona-specific fallback (NOT generic "I wasn't sure")
         fallback_map = {
-            "finn": "Hey, I'm Finn — I hit a snag processing that. Can you try rephrasing?",
-            "eli": "Sorry about that — I couldn't process your message. Could you try again?",
-            "clara": "I ran into an issue with that request. Mind rephrasing?",
-            "ava": "I apologize — I had trouble with that. Could you rephrase your question?",
+            "ava": "I apologize - I had trouble with that. Could you rephrase your question?",
+            "finn": "Hey, I'm Finn - I hit a snag processing that. Can you try rephrasing?",
+            "eli": "Hey, I'm Eli - I hit a snag processing that. Can you try that again?",
+            "nora": "Hey, I'm Nora - I hit a snag with that request. Can you rephrase it?",
+            "clara": "Hey, I'm Clara - I ran into an issue processing that. Can you rephrase?",
+            "quinn": "Hey, I'm Quinn - I couldn't process that cleanly. Can you rephrase?",
+            "sarah": "Hey, I'm Sarah - I hit an issue processing that. Can you try again?",
+            "adam": "Hey, I'm Adam - I couldn't process that request. Can you rephrase?",
+            "tec": "Hey, I'm Tec - I ran into an issue with that request. Can you try again?",
+            "teressa": "Hey, I'm Teressa - I hit a snag processing that. Can you rephrase?",
+            "milo": "Hey, I'm Milo - I couldn't process that request. Can you rephrase?",
+            "mail_ops": "Hey, I'm Mail Ops - I ran into an issue processing that. Can you rephrase?",
         }
         response_text = fallback_map.get(agent_id, fallback_map["ava"])
 
