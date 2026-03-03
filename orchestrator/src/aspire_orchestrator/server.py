@@ -98,7 +98,7 @@ app = FastAPI(
 @app.on_event("shutdown")
 async def _shutdown_cleanup() -> None:
     """Release persistent resources such as Postgres checkpointer connections."""
-    close_checkpointer_runtime()
+    await close_checkpointer_runtime()
 
 # CORS — restricted to Gateway only (security reviewer P1 fix)
 # In production, only the Gateway (localhost:3100) talks to the orchestrator.

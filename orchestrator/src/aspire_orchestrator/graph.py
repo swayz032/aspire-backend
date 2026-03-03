@@ -29,6 +29,7 @@ This graph is the ONLY decision authority. No other component decides or execute
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -480,13 +481,16 @@ def get_checkpointer_runtime() -> dict[str, str]:
     return dict(_CHECKPOINTER_RUNTIME)
 
 
-def close_checkpointer_runtime() -> None:
+async def close_checkpointer_runtime() -> None:
     """Close persistent checkpointer resources on shutdown."""
     global _CHECKPOINTER_CTX
     if _CHECKPOINTER_CTX is None:
         return
     try:
-        _CHECKPOINTER_CTX.__exit__(None, None, None)
+        if hasattr(_CHECKPOINTER_CTX, "__aexit__"):
+            await _CHECKPOINTER_CTX.__aexit__(None, None, None)
+        else:
+            _CHECKPOINTER_CTX.__exit__(None, None, None)
     except Exception:
         # Best-effort shutdown cleanup; service is terminating anyway.
         pass
@@ -510,32 +514,30 @@ def _build_checkpointer() -> Any:
                 "ASPIRE_LANGGRAPH_POSTGRES_DSN is required when ASPIRE_LANGGRAPH_CHECKPOINTER=postgres",
             )
         try:
-            from langgraph.checkpoint.postgres import PostgresSaver
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         except Exception as e:
             raise RuntimeError(
-                "Postgres checkpointer requested but langgraph.checkpoint.postgres is unavailable. "
-                "Install langgraph-postgres checkpointer dependency.",
+                "Postgres async checkpointer requested but langgraph.checkpoint.postgres.aio is unavailable. "
+                "Install langgraph-checkpoint-postgres dependency with async support.",
             ) from e
 
-        # PostgresSaver is designed to be created via context manager.
-        # Keep the context open for the full process lifetime.
-        _CHECKPOINTER_CTX = PostgresSaver.from_conn_string(dsn)
-        saver = _CHECKPOINTER_CTX.__enter__()
-        # Ensure checkpoint schema exists before graph execution.
-        # setup() is idempotent for existing tables.
+        # AsyncPostgresSaver is async-context-manager based.
+        # Initialize it once at startup and keep it open for process lifetime.
+        _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(dsn)
         try:
-            saver.setup()
+            saver = asyncio.run(_CHECKPOINTER_CTX.__aenter__())
+            asyncio.run(saver.setup())
         except Exception as e:
             try:
-                _CHECKPOINTER_CTX.__exit__(None, None, None)
+                asyncio.run(_CHECKPOINTER_CTX.__aexit__(None, None, None))
             except Exception:
                 pass
             _CHECKPOINTER_CTX = None
             raise RuntimeError(
-                f"Failed to initialize LangGraph Postgres checkpointer schema: {e}",
+                f"Failed to initialize LangGraph Async Postgres checkpointer schema: {e}",
             ) from e
         _CHECKPOINTER_RUNTIME["mode"] = "postgres"
-        _CHECKPOINTER_RUNTIME["backend"] = "PostgresSaver"
+        _CHECKPOINTER_RUNTIME["backend"] = "AsyncPostgresSaver"
         return saver
 
     _CHECKPOINTER_RUNTIME["mode"] = "memory"
