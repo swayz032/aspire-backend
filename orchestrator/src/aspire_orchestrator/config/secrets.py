@@ -84,6 +84,8 @@ _SETTINGS_PREFIX_MAP: dict[str, str] = {
     "ASPIRE_PANDADOC_API_KEY": "PANDADOC_API_KEY",
     # Anam
     "ASPIRE_ANAM_API_KEY": "ANAM_API_KEY",
+    # Token signing
+    "ASPIRE_TOKEN_SIGNING_KEY": "TOKEN_SIGNING_SECRET",
 }
 
 
@@ -116,12 +118,21 @@ def verify_settings_coverage() -> list[str]:
         ("pandadoc_api_key", "ASPIRE_PANDADOC_API_KEY"),
         ("stripe_secret_key", "STRIPE_SECRET_KEY"),
         ("supabase_service_role_key", "ASPIRE_SUPABASE_SERVICE_ROLE_KEY"),
-        ("token_signing_key", "TOKEN_SIGNING_SECRET"),
     ]
     for field_name, env_var in critical_fields:
         if not os.environ.get(env_var):
             missing.append(field_name)
             logger.warning("Settings field '%s' (%s) is empty after secrets load", field_name, env_var)
+
+    # Accept either canonical SM var or ASPIRE-prefixed fallback.
+    token_signing = (os.environ.get("TOKEN_SIGNING_SECRET") or "").strip()
+    token_signing_aspire = (os.environ.get("ASPIRE_TOKEN_SIGNING_KEY") or "").strip()
+    if not token_signing and not token_signing_aspire:
+        missing.append("token_signing_key")
+        logger.warning(
+            "Settings field 'token_signing_key' is empty after secrets load "
+            "(checked TOKEN_SIGNING_SECRET and ASPIRE_TOKEN_SIGNING_KEY)"
+        )
     return missing
 
 
@@ -200,6 +211,10 @@ def load_secrets() -> None:
                 for k, v in secrets.items():
                     # Skip internal rotation metadata
                     if k.startswith("_"):
+                        continue
+
+                    # Keep existing env values when SM value is blank.
+                    if v is None or (isinstance(v, str) and not v.strip()):
                         continue
 
                     # Use group-specific mapping if available
