@@ -526,7 +526,13 @@ async def _build_checkpointer() -> Any:
         _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(dsn)
         try:
             saver = await _CHECKPOINTER_CTX.__aenter__()
-            await saver.setup()
+            try:
+                await saver.setup()
+            except Exception as setup_err:
+                # Supabase/PgBouncer can surface duplicate prepared-statement errors
+                # even when migrations are already applied. Treat this as non-fatal.
+                if "DuplicatePreparedStatement" not in str(type(setup_err)) and "prepared statement" not in str(setup_err):
+                    raise
         except Exception as e:
             try:
                 await _CHECKPOINTER_CTX.__aexit__(None, None, None)
