@@ -611,13 +611,17 @@ async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
         if _checkpointer_force_memory:
             return True
         prev_mode = settings.langgraph_checkpointer
+        prev_allow = os.environ.get("ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD")
         try:
             logger.error(
                 "Detected unstable Postgres checkpointer, forcing MemorySaver failover: %s",
                 reason,
             )
+            os.environ["ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD"] = "1"
             settings.langgraph_checkpointer = "memory"
-            await close_checkpointer_runtime()
+            # Do NOT close the active Postgres checkpointer before graph swap.
+            # In-flight requests may still reference it and would fail with
+            # "connection is closed". Build memory graph first, then swap.
             orchestrator_graph = await build_orchestrator_graph()
             _checkpointer_force_memory = True
             return True
@@ -628,6 +632,10 @@ async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
             # Keep memory mode for process lifetime after failover. Restore only on failure.
             if not _checkpointer_force_memory:
                 settings.langgraph_checkpointer = prev_mode
+                if prev_allow is None:
+                    os.environ.pop("ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD", None)
+                else:
+                    os.environ["ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD"] = prev_allow
 
 
 async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id: str) -> dict[str, Any]:

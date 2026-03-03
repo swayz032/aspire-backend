@@ -503,7 +503,8 @@ async def _build_checkpointer() -> Any:
     global _CHECKPOINTER_CTX
     mode = (settings.langgraph_checkpointer or "memory").strip().lower()
     aspire_env = os.environ.get("ASPIRE_ENV", "").strip().lower()
-    if aspire_env == "production" and mode != "postgres":
+    allow_memory_failover_in_prod = os.environ.get("ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD", "").strip() == "1"
+    if aspire_env == "production" and mode != "postgres" and not allow_memory_failover_in_prod:
         raise RuntimeError(
             "Production requires ASPIRE_LANGGRAPH_CHECKPOINTER=postgres (memory is dev-only).",
         )
