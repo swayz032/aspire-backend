@@ -283,7 +283,7 @@ class FinancialRetrievalService:
         """Execute hybrid search via Supabase RPC."""
         try:
             from aspire_orchestrator.config.settings import settings
-            from aspire_orchestrator.services.supabase_client import supabase_rpc
+            from aspire_orchestrator.services.supabase_client import SupabaseClientError, supabase_rpc, supabase_select
 
             params: dict[str, Any] = {
                 "query_embedding": f"[{','.join(str(x) for x in query_embedding)}]",
@@ -313,6 +313,38 @@ class FinancialRetrievalService:
                 return result
             return []
 
+        except SupabaseClientError as e:
+            message = str(e).lower()
+            if (
+                "rpc_disabled_vector_mismatch" in message
+                or "operator does not exist" in message
+                or "function does not exist" in message
+            ):
+                terms = [t.strip().lower() for t in query_text.split() if len(t.strip()) >= 3][:6]
+                filters = ["is_active=eq.true", "select=id,content,domain,chunk_type,provider_name,jurisdiction,tax_year,created_at", "limit=40"]
+                if filters and suite_id:
+                    filters.append(f"or=(suite_id.is.null,suite_id.eq.{suite_id})")
+                elif filters:
+                    filters.append("suite_id=is.null")
+                rows = await supabase_select("finance_knowledge_chunks", "&".join(filters))
+                ranked: list[tuple[float, dict[str, Any]]] = []
+                for row in rows:
+                    content = str(row.get("content", "")).lower()
+                    if not content:
+                        continue
+                    matches = sum(1 for t in terms if t in content)
+                    if matches <= 0:
+                        continue
+                    score = matches / max(len(terms), 1)
+                    out = dict(row)
+                    out["vector_similarity"] = 0.0
+                    out["text_rank"] = float(score)
+                    out["combined_score"] = float(score)
+                    ranked.append((score, out))
+                ranked.sort(key=lambda x: x[0], reverse=True)
+                return [item for _, item in ranked[: int(settings.rag_max_chunks_per_query)]]
+            logger.warning("Finance hybrid search failed (non-fatal): %s", e)
+            return []
         except Exception as e:
             logger.warning("Finance hybrid search failed (non-fatal): %s", e)
             return []

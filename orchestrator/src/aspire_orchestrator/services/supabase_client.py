@@ -18,6 +18,7 @@ from aspire_orchestrator.config.settings import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0  # seconds
+_DISABLED_VECTOR_RPCS: set[str] = set()
 
 
 class SupabaseClientError(Exception):
@@ -78,10 +79,32 @@ def _handle_response(resp: httpx.Response, operation: str) -> Any:
 
 async def supabase_rpc(fn_name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Call a Supabase RPC function."""
+    if fn_name in _DISABLED_VECTOR_RPCS:
+        raise SupabaseClientError(
+            f"rpc/{fn_name}",
+            status_code=503,
+            detail="RPC_DISABLED_VECTOR_MISMATCH",
+        )
     url = f"{_base_url()}/rpc/{fn_name}"
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(url, json=params, headers=_headers())
+            if resp.status_code >= 400:
+                # Fast-disable vector RPCs when remote function/operator signatures
+                # are incompatible with current database extension schema.
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = {}
+                if isinstance(body, dict):
+                    code = str(body.get("code", "")).strip()
+                    message = str(body.get("message", "")).lower()
+                    if code == "42883" and "operator does not exist" in message and "<=>" in message:
+                        _DISABLED_VECTOR_RPCS.add(fn_name)
+                        logger.warning(
+                            "Disabling RPC %s for current process due to vector operator mismatch (code=42883).",
+                            fn_name,
+                        )
             return _handle_response(resp, f"rpc/{fn_name}")
     except SupabaseClientError:
         raise
