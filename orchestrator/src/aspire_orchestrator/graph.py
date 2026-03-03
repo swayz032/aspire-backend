@@ -386,7 +386,7 @@ def _route_after_qa(state: OrchestratorState) -> str:
 # =============================================================================
 
 
-def build_orchestrator_graph() -> StateGraph:
+async def build_orchestrator_graph() -> StateGraph:
     """Build the Aspire orchestrator StateGraph with 13 nodes.
 
     Dual-path architecture:
@@ -472,7 +472,7 @@ def build_orchestrator_graph() -> StateGraph:
 
     # Enable thread-scoped checkpointing so HITL/resume and multi-turn continuity
     # can use LangGraph's configurable.thread_id contract.
-    checkpointer = _build_checkpointer()
+    checkpointer = await _build_checkpointer()
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -498,7 +498,7 @@ async def close_checkpointer_runtime() -> None:
         _CHECKPOINTER_CTX = None
 
 
-def _build_checkpointer() -> Any:
+async def _build_checkpointer() -> Any:
     """Build checkpointer from environment (memory|postgres)."""
     global _CHECKPOINTER_CTX
     mode = (settings.langgraph_checkpointer or "memory").strip().lower()
@@ -525,11 +525,11 @@ def _build_checkpointer() -> Any:
         # Initialize it once at startup and keep it open for process lifetime.
         _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(dsn)
         try:
-            saver = asyncio.run(_CHECKPOINTER_CTX.__aenter__())
-            asyncio.run(saver.setup())
+            saver = await _CHECKPOINTER_CTX.__aenter__()
+            await saver.setup()
         except Exception as e:
             try:
-                asyncio.run(_CHECKPOINTER_CTX.__aexit__(None, None, None))
+                await _CHECKPOINTER_CTX.__aexit__(None, None, None)
             except Exception:
                 pass
             _CHECKPOINTER_CTX = None

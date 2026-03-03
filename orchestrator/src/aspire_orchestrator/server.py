@@ -94,6 +94,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
+orchestrator_graph: Any | None = None
+
+
+@app.on_event("startup")
+async def _startup_init_graph() -> None:
+    """Build LangGraph after event loop is available."""
+    global orchestrator_graph
+    orchestrator_graph = await build_orchestrator_graph()
+
 
 @app.on_event("shutdown")
 async def _shutdown_cleanup() -> None:
@@ -154,9 +163,6 @@ if os.getenv("ASPIRE_ENV") == "production" and _settings_warnings:
 elif _settings_warnings:
     for _w in _settings_warnings:
         logger.warning("Settings gap (dev mode, non-blocking): %s", _w)
-
-# Build the graph once at startup
-orchestrator_graph = build_orchestrator_graph()
 
 # Startup model probe + profile fallback resolution cache
 _MODEL_PROBE_BOOT: dict[str, Any] = {}
@@ -591,6 +597,8 @@ class _GraphInvokeUnavailableError(RuntimeError):
 
 async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id: str) -> dict[str, Any]:
     """Invoke orchestrator graph with async-first strategy and sync fallback."""
+    if orchestrator_graph is None:
+        raise _GraphInvokeUnavailableError("CHECKPOINTER_UNAVAILABLE: graph not initialized")
     config = {"configurable": {"thread_id": thread_id}}
     try:
         return await orchestrator_graph.ainvoke(initial_state, config=config)
