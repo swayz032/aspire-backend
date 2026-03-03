@@ -16,6 +16,11 @@ actions:
     approval_required: false
     description: "Local business search via Google Places"
 
+  research.image:
+    risk_tier: green
+    approval_required: false
+    description: "Web image lookup for visual context in chat"
+
   research.compare:
     risk_tier: green
     approval_required: false

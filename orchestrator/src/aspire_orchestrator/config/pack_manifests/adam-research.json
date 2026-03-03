@@ -8,6 +8,7 @@
   "capabilities": [
     "can_search_web",
     "can_search_places",
+    "can_search_images",
     "can_compare_vendors",
     "can_generate_vendor_outreach_packets",
     "can_generate_rfq"
@@ -28,7 +29,7 @@
     "internal.document.generate"
   ],
   "providers": ["brave", "tavily", "google_maps", "tomtom", "here", "foursquare", "mapbox"],
-  "actions": ["research.search", "research.places", "research.compare", "research.rfq"],
+  "actions": ["research.search", "research.places", "research.image", "research.compare", "research.rfq"],
   "certification_status": "uncertified",
   "outputs": ["research_packet", "vendor_comparison", "rfq_document", "evidence_item"],
   "dependencies": []

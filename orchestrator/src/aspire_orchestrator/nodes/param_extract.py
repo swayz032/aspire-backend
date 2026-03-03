@@ -67,6 +67,10 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["query"],
         "optional": [],
     },
+    "search.image": {
+        "required": ["query"],
+        "optional": [],
+    },
     "pandadoc.templates.list": {
         "required": [],
         "optional": ["q", "count", "tag"],

@@ -118,7 +118,7 @@ actions:
   # Research
   research.search:
     risk_tier: green
-    tools: [brave.search, tavily.search]
+    tools: [search.web]
     capability_scope: research:search
     category: research
     approval:
@@ -127,8 +127,17 @@ actions:
 
   research.places:
     risk_tier: green
-    tools: [google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode]
+    tools: [search.places]
     capability_scope: research:places
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  research.image:
+    risk_tier: green
+    tools: [search.image]
+    capability_scope: research:image
     category: research
     approval:
       type: none

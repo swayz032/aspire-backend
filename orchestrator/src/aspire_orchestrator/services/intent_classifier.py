@@ -112,7 +112,7 @@ def _build_system_prompt(action_catalog: str) -> str:
     """Build the system prompt for the intent classifier LLM."""
     return f"""You are Aspire's intent classifier. Your job is to classify user utterances into exactly one action_type from the catalog below. You do NOT execute actions — you only classify.
 
-## Action Catalog (35 actions)
+## Action Catalog (36 actions)
 {action_catalog}
 
 ## Output Format (strict JSON)
@@ -129,7 +129,7 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 - calendar.read, calendar.list, calendar.create → nora_conference
 - contacts.search, contacts.read, contacts.create → (internal, no specific pack)
 - receipts.search, receipts.read → (internal, no specific pack)
-- research.search, research.places → adam_research
+- research.search, research.places, research.image → adam_research
 - email.send, email.draft → eli_inbox
 - invoice.create, invoice.send, invoice.void → quinn_invoicing
 - quote.create, quote.send → quinn_invoicing
@@ -154,6 +154,7 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 5. Never fabricate actions not in the catalog.
 6. For skill_pack, use the pack ID from the mapping above. If no specific pack, use "internal".
 7. Always include "intent_type" and "agent_target" in your response.
+8. If the user asks for a picture/photo/image of a place, thing, or concept, prefer action_type "research.image".
 
 ## Intent Type Classification
 In addition to action_type, classify the intent_type:
@@ -187,6 +188,7 @@ _ACTION_TO_PACK: dict[str, str] = {
     "calendar.list": "nora_conference",
     "research.search": "adam_research",
     "research.places": "adam_research",
+    "research.image": "adam_research",
     "contract.generate": "clara_legal",
     "contract.send": "clara_legal",
     "contract.review": "clara_legal",

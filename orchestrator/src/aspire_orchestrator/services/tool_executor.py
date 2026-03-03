@@ -62,6 +62,7 @@ from aspire_orchestrator.providers.mapbox_client import execute_mapbox_geocode
 # Wave 1: Search router (meta-executors with fallback chains)
 from aspire_orchestrator.services.search_router import (
     route_web_search,
+    route_image_search,
     route_places_search,
     route_geocode,
 )
@@ -690,6 +691,7 @@ _PLACES_EXECUTORS: dict[str, ToolExecutorFn] = {
 # Phase 2: Search router meta-executors (fallback chains)
 _SEARCH_ROUTER_EXECUTORS: dict[str, ToolExecutorFn] = {
     "search.web": route_web_search,
+    "search.image": route_image_search,
     "search.places": route_places_search,
     "search.geocode": route_geocode,
 }
