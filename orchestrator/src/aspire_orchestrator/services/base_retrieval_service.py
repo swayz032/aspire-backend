@@ -308,10 +308,13 @@ class BaseRetrievalService:
             # Supabase vector operator/function mismatch in some environments.
             # Degrade to plain text table search to keep responses online.
             if (
-                e.status_code in (400, 404)
-                and (
-                    "operator does not exist" in e.detail.lower()
-                    or "function does not exist" in e.detail.lower()
+                "rpc_disabled_vector_mismatch" in e.detail.lower()
+                or (
+                    e.status_code in (400, 404)
+                    and (
+                        "operator does not exist" in e.detail.lower()
+                        or "function does not exist" in e.detail.lower()
+                    )
                 )
             ):
                 return await self._text_fallback_search(query_text=query_text, suite_id=suite_id, domain=domain)

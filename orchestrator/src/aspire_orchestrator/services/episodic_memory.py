@@ -253,7 +253,11 @@ class EpisodicMemory:
             except Exception as rpc_err:
                 msg = str(rpc_err).lower()
                 # Degrade gracefully when vector RPC is unavailable/misaligned.
-                if "operator does not exist" in msg or "function does not exist" in msg:
+                if (
+                    "operator does not exist" in msg
+                    or "function does not exist" in msg
+                    or "rpc_disabled_vector_mismatch" in msg
+                ):
                     return await self._fallback_text_episode_search(
                         query=query,
                         suite_id=suite_id,
