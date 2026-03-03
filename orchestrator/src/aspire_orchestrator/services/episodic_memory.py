@@ -32,6 +32,16 @@ from aspire_orchestrator.services.receipt_store import store_receipts
 logger = logging.getLogger(__name__)
 
 
+def _is_uuid(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        uuid.UUID(str(value))
+        return True
+    except Exception:
+        return False
+
+
 @dataclass
 class Episode:
     """A past session episode recalled from memory."""
@@ -215,6 +225,8 @@ class EpisodicMemory:
         """
         if not query or not query.strip():
             return []
+        if not _is_uuid(suite_id) or (user_id is not None and not _is_uuid(user_id)):
+            return []
 
         try:
             # 1. Embed query
@@ -236,7 +248,20 @@ class EpisodicMemory:
             if user_id:
                 params["p_user_id"] = user_id
 
-            result = await supabase_rpc("search_agent_episodes", params)
+            try:
+                result = await supabase_rpc("search_agent_episodes", params)
+            except Exception as rpc_err:
+                msg = str(rpc_err).lower()
+                # Degrade gracefully when vector RPC is unavailable/misaligned.
+                if "operator does not exist" in msg or "function does not exist" in msg:
+                    return await self._fallback_text_episode_search(
+                        query=query,
+                        suite_id=suite_id,
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        max_episodes=max_episodes,
+                    )
+                raise
 
             # 3. Parse results
             rows = result if isinstance(result, list) else []
@@ -262,6 +287,54 @@ class EpisodicMemory:
 
         except Exception as e:
             logger.warning("Episode search failed (non-fatal): %s", e)
+            return []
+
+    async def _fallback_text_episode_search(
+        self,
+        *,
+        query: str,
+        suite_id: str,
+        agent_id: str,
+        user_id: str | None,
+        max_episodes: int,
+    ) -> list[Episode]:
+        """Fallback search without vector operators."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            filters = [f"suite_id=eq.{suite_id}", f"agent_id=eq.{agent_id}", "order=created_at.desc", "limit=40"]
+            if user_id:
+                filters.append(f"user_id=eq.{user_id}")
+            rows = await supabase_select("agent_episodes", "&".join(filters))
+
+            terms = [t.strip().lower() for t in query.split() if len(t.strip()) >= 3][:6]
+            scored: list[tuple[float, dict[str, Any]]] = []
+            for row in rows:
+                summary = str(row.get("summary", "")).lower()
+                if not summary:
+                    continue
+                matches = sum(1 for t in terms if t in summary)
+                if matches <= 0:
+                    continue
+                scored.append((matches / max(len(terms), 1), row))
+
+            scored.sort(key=lambda item: item[0], reverse=True)
+            episodes: list[Episode] = []
+            for score, row in scored[:max_episodes]:
+                episodes.append(Episode(
+                    episode_id=str(row.get("id", "")),
+                    agent_id=row.get("agent_id", ""),
+                    session_id=row.get("session_id", ""),
+                    summary=row.get("summary", ""),
+                    key_topics=row.get("key_topics", []),
+                    key_entities=row.get("key_entities", {}),
+                    turn_count=row.get("turn_count", 0),
+                    created_at=str(row.get("created_at", "")),
+                    similarity=float(score),
+                ))
+            return episodes
+        except Exception as e:
+            logger.warning("Episode fallback search failed (non-fatal): %s", e)
             return []
 
 

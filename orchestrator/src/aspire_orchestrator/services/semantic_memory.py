@@ -32,6 +32,16 @@ from aspire_orchestrator.services.receipt_store import store_receipts
 logger = logging.getLogger(__name__)
 
 
+def _is_uuid(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        uuid.UUID(str(value))
+        return True
+    except Exception:
+        return False
+
+
 @dataclass
 class Fact:
     """A learned fact about a user."""
@@ -74,6 +84,8 @@ class SemanticMemory:
             Number of facts extracted and stored.
         """
         if not turns or len(turns) < 2:
+            return 0
+        if not _is_uuid(suite_id) or not _is_uuid(user_id):
             return 0
 
         receipt_id = f"rcpt-sm-{uuid.uuid4().hex[:12]}"
@@ -268,6 +280,8 @@ class SemanticMemory:
 
         Returns empty list on any failure (Law #3).
         """
+        if not _is_uuid(suite_id) or not _is_uuid(user_id):
+            return []
         try:
             from aspire_orchestrator.services.supabase_client import supabase_select
 

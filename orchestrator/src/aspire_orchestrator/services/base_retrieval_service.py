@@ -56,6 +56,7 @@ class BaseRetrievalService:
     """
 
     search_function: str = ""
+    search_table: str = ""
     actor_name: str = "service:base-rag-retrieval"
     cache_prefix: str = "base_rag"
     domain_label: str = "KNOWLEDGE"
@@ -289,7 +290,7 @@ class BaseRetrievalService:
     ) -> list[dict[str, Any]]:
         """Execute hybrid search via Supabase RPC."""
         try:
-            from aspire_orchestrator.services.supabase_client import supabase_rpc
+            from aspire_orchestrator.services.supabase_client import SupabaseClientError, supabase_rpc
 
             params = self._build_search_params(
                 query_embedding=query_embedding,
@@ -303,8 +304,74 @@ class BaseRetrievalService:
                 return result
             return []
 
+        except SupabaseClientError as e:
+            # Supabase vector operator/function mismatch in some environments.
+            # Degrade to plain text table search to keep responses online.
+            if (
+                e.status_code in (400, 404)
+                and (
+                    "operator does not exist" in e.detail.lower()
+                    or "function does not exist" in e.detail.lower()
+                )
+            ):
+                return await self._text_fallback_search(query_text=query_text, suite_id=suite_id, domain=domain)
+            logger.warning("%s hybrid search failed (non-fatal): %s", self.cache_prefix, e)
+            return []
         except Exception as e:
             logger.warning("%s hybrid search failed (non-fatal): %s", self.cache_prefix, e)
+            return []
+
+    async def _text_fallback_search(
+        self,
+        *,
+        query_text: str,
+        suite_id: str | None,
+        domain: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fallback retrieval that avoids vector RPC dependency."""
+        if not self.search_table:
+            return []
+        try:
+            from aspire_orchestrator.config.settings import settings
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            terms = [t.strip() for t in query_text.lower().split() if len(t.strip()) >= 3][:4]
+            if not terms:
+                return []
+
+            filters = ["is_active=eq.true"]
+            if domain:
+                filters.append(f"domain=eq.{domain}")
+            if suite_id:
+                filters.append(f"or=(suite_id.is.null,suite_id.eq.{suite_id})")
+            else:
+                filters.append("suite_id=is.null")
+
+            select_cols = "id,content,domain,subdomain,chunk_type,confidence_score,expert_reviewed,created_at"
+            max_rows = max(20, int(settings.rag_max_chunks_per_query) * 4)
+            filters.append(f"select={select_cols}")
+            filters.append(f"limit={max_rows}")
+            rows = await supabase_select(self.search_table, "&".join(filters))
+
+            scored: list[tuple[float, dict[str, Any]]] = []
+            for row in rows:
+                content = str(row.get("content", "")).lower()
+                if not content:
+                    continue
+                matches = sum(1 for term in terms if term in content)
+                if matches <= 0:
+                    continue
+                score = matches / max(len(terms), 1)
+                out = dict(row)
+                out["vector_similarity"] = 0.0
+                out["text_rank"] = float(score)
+                out["combined_score"] = float(score)
+                scored.append((score, out))
+
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return [item for _, item in scored[: int(settings.rag_max_chunks_per_query)]]
+        except Exception as e:
+            logger.warning("%s text fallback search failed (non-fatal): %s", self.cache_prefix, e)
             return []
 
     # -----------------------------------------------------------------------

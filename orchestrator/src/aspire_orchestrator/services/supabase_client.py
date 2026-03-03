@@ -52,8 +52,19 @@ def _base_url() -> str:
 def _handle_response(resp: httpx.Response, operation: str) -> Any:
     """Validate response and return JSON. Raises SupabaseClientError on non-2xx."""
     if resp.status_code >= 400:
-        # Never expose raw Supabase error details externally
         detail = f"HTTP {resp.status_code}"
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                code = str(body.get("code", "")).strip()
+                message = str(body.get("message", "")).strip()
+                hint = str(body.get("hint", "")).strip()
+                details = str(body.get("details", "")).strip()
+                parts = [p for p in [code, message, hint, details] if p]
+                if parts:
+                    detail = " | ".join(parts)
+        except Exception:
+            pass
         logger.error(
             "Supabase %s failed: status=%d body=%s",
             operation, resp.status_code, resp.text[:200],

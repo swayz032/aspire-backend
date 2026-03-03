@@ -44,6 +44,7 @@ _receipts: list[dict[str, Any]] = []
 _supabase_client: Any = None
 _supabase_init_attempted = False
 _supabase_init_lock = threading.Lock()
+_invalid_suite_ids: set[str] = set()
 
 
 def _supabase_enabled() -> bool:
@@ -204,7 +205,13 @@ def _persist_to_supabase(receipts: list[dict[str, Any]]) -> None:
     rows = []
     for receipt in receipts:
         try:
-            rows.append(_map_receipt_to_row(receipt))
+            row = _map_receipt_to_row(receipt)
+            suite_id = str(row.get("suite_id") or "")
+            # Skip known-invalid suites after first validation failure to avoid
+            # repeated noisy errors while preserving in-memory receipts.
+            if suite_id in _invalid_suite_ids or suite_id == _UUID_NIL:
+                continue
+            rows.append(row)
         except Exception as e:
             logger.error("Failed to map receipt %s: %s", receipt.get("id", "?"), e)
 
@@ -223,10 +230,29 @@ def _persist_to_supabase(receipts: list[dict[str, Any]]) -> None:
             getattr(result, "status_code", "ok"),
         )
     except Exception as e:
-        logger.error(
-            "Supabase receipt persistence failed for %d receipts: %s",
-            len(rows), e,
-        )
+        msg = str(e)
+        if "unknown suite_id" not in msg.lower():
+            logger.error(
+                "Supabase receipt persistence failed for %d receipts: %s",
+                len(rows), e,
+            )
+            return
+        # Retry one-by-one to isolate bad suite IDs and suppress repeat failures.
+        for row in rows:
+            try:
+                client.table("receipts").insert(row).execute()
+            except Exception as row_err:
+                row_msg = str(row_err).lower()
+                if "unknown suite_id" in row_msg:
+                    sid = str(row.get("suite_id") or "")
+                    if sid:
+                        _invalid_suite_ids.add(sid)
+                    logger.warning(
+                        "Skipping Supabase receipt persistence for unknown suite_id=%s; in-memory receipt retained",
+                        sid or "unknown",
+                    )
+                else:
+                    logger.error("Supabase receipt persistence failed for receipt_id=%s: %s", row.get("receipt_id"), row_err)
 
 
 # =============================================================================

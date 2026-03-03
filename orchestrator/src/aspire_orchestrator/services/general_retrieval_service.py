@@ -29,6 +29,7 @@ class GeneralRetrievalService(BaseRetrievalService):
     """
 
     search_function = "search_general_knowledge"
+    search_table = "general_knowledge_chunks"
     actor_name = "service:ava-rag-retrieval"
     cache_prefix = "general_rag"
     domain_label = "GENERAL KNOWLEDGE (Ava RAG)"
