@@ -113,6 +113,8 @@ def _classify_execution_failure(
         return ("PROVIDER_AUTH_MISSING", "PROVIDER_AUTH_MISSING")
     if "routing denied" in lower:
         return ("ROUTING_DENIED", "ROUTING_DENIED")
+    if "missing required parameter" in lower or "missing required field" in lower:
+        return ("PARAM_EXTRACTION_FAILED", "PARAM_EXTRACTION_FAILED")
     if not tool_used or tool_used == "unknown":
         return ("EXECUTION_FAILED", "EXECUTION_FAILED")
     _ = task_type  # reserved for future action-specific classification
