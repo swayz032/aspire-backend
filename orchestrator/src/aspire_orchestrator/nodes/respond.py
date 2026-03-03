@@ -314,6 +314,39 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
 def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel: str = "chat") -> str:
     """Generate a natural conversational reply for non-action input."""
     agent_id = _resolve_agent_id(state)
+
+    normalized = utterance.lower().strip().rstrip("!?.,")
+    _IDENTITY_SUBSTRINGS = ("who are you", "your name", "what do you do", "how can you help", "what can you do")
+    _IDENTITY_EXACT = {
+        "who are you",
+        "what is your name",
+        "what's your name",
+        "whats your name",
+        "introduce yourself",
+        "tell me about yourself",
+        "what do you do",
+        "how can you help",
+        "what can you do",
+    }
+    is_identity_query = normalized in _IDENTITY_EXACT or any(sub in normalized for sub in _IDENTITY_SUBSTRINGS)
+    if is_identity_query:
+        intros = {
+            "ava": "I'm Ava, your chief of staff in Aspire. I coordinate your operations across calendar, inbox, finance, legal, and front desk workflows.",
+            "finn_fm": "I'm Finn, your finance manager in Aspire. I help with cash flow, tax strategy, and financial decisions so your numbers stay healthy.",
+            "finn": "I'm Finn, your finance manager in Aspire. I help with cash flow, tax strategy, and financial decisions so your numbers stay healthy.",
+            "clara": "I'm Clara, your legal desk specialist in Aspire. I handle contracts, compliance checks, and signature workflows with governance controls.",
+            "eli": "I'm Eli, your inbox and communications specialist in Aspire. I triage email, draft replies, and keep client communication moving.",
+            "nora": "I'm Nora, your meetings specialist in Aspire. I handle scheduling, conference coordination, and follow-up summaries.",
+            "quinn": "I'm Quinn, your invoicing specialist in Aspire. I manage invoices, collections flow, and payment operations.",
+            "sarah": "I'm Sarah, your front desk specialist in Aspire. I manage call routing, intake coverage, and reception workflows.",
+            "adam": "I'm Adam, your research specialist in Aspire. I investigate vendors, markets, and decisions with evidence-backed findings.",
+            "tec": "I'm Tec, your documents specialist in Aspire. I handle document generation, filing workflows, and structured paperwork ops.",
+            "teressa": "I'm Teressa, your bookkeeping specialist in Aspire. I handle reconciliations, books hygiene, and close-readiness.",
+            "milo": "I'm Milo, your payroll specialist in Aspire. I handle payroll operations, timing, and employee pay workflows.",
+            "mail_ops": "I'm Mail Ops, your domain and mailbox specialist in Aspire. I handle mailbox setup, routing, and domain mail operations.",
+        }
+        return intros.get(agent_id, "I'm your Aspire specialist assistant. Tell me what you need and I'll handle it.")
+
     persona = _load_agent_persona(agent_id)
     if persona:
         persona = _strip_format_instructions(persona)
