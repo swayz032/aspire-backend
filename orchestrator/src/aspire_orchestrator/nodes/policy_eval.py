@@ -44,6 +44,12 @@ from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
+_BACKCOMPAT_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "office.create": ["recipient_suite_id", "recipient_office_id", "title", "body"],
+    "office.draft": ["recipient_suite_id", "recipient_office_id", "title", "body"],
+    "office.send": ["draft_id"],
+}
+
 
 def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
     """Evaluate policy for the incoming request.
@@ -180,6 +186,33 @@ def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
             payload = request.payload if isinstance(request.payload, dict) else {}
         else:
             payload = {}
+
+        required_fields = _BACKCOMPAT_REQUIRED_FIELDS.get(task_type, [])
+        if required_fields:
+            missing = []
+            for field in required_fields:
+                value = payload.get(field)
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    missing.append(field)
+            if missing:
+                missing_str = ", ".join(missing)
+                logger.info(
+                    "Backwards-compat validation failed for %s: missing %s",
+                    task_type,
+                    missing_str,
+                )
+                return {
+                    "risk_tier": eval_result.risk_tier,
+                    "policy_allowed": False,
+                    "policy_deny_reason": "MISSING_REQUIRED_PARAMS",
+                    "allowed_tools": eval_result.tools,
+                    "required_approvals": [],
+                    "presence_required": False,
+                    "error_code": "PARAM_EXTRACTION_FAILED",
+                    "error_message": f"I need more details to proceed. Please provide: {missing_str}",
+                    "outcome": Outcome.DENIED,
+                    "pipeline_receipts": existing_receipts,
+                }
         if payload:
             result["execution_params"] = payload
             logger.info("Backwards-compat: set execution_params from request payload (%d keys)", len(payload))
