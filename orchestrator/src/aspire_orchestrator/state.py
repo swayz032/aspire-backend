@@ -109,6 +109,7 @@ class OrchestratorState(TypedDict, total=False):
     conversation_response: str | None # output from agent_reason_node
     user_profile: dict[str, Any] | None  # injected from Desktop request
     session_id: str | None           # for memory scoping
+    eli_deliverability_signals: dict[str, Any] | None  # optional postmaster/provider health inputs
 
     # --- Accumulated receipts for the full pipeline ---
     pipeline_receipts: list[dict[str, Any]]

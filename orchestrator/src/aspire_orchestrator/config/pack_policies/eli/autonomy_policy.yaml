@@ -1,0 +1,29 @@
+version: "1.0"
+pack_id: "eli-inbox"
+
+autonomy:
+  auto_triage: true
+  auto_draft: true
+  auto_send: false
+
+quality_gates:
+  draft:
+    min_score: 78
+    min_word_count: 30
+    require_call_to_action: true
+    max_subject_chars: 72
+    min_subject_chars: 6
+  send:
+    min_score: 82
+    min_word_count: 35
+    require_call_to_action: true
+    max_subject_chars: 72
+    min_subject_chars: 6
+
+deliverability:
+  enforce_list_unsubscribe_for_marketing: true
+  max_spam_rate_warning: 0.10
+  max_spam_rate_block: 0.30
+  enforce_dkim_alignment: true
+  enforce_spf_or_dkim: true
+  enforce_tls: true

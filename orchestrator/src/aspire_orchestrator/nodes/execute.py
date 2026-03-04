@@ -31,6 +31,8 @@ from aspire_orchestrator.models import (
     ReceiptType,
 )
 from aspire_orchestrator.services.a2a_service import get_a2a_service
+from aspire_orchestrator.services.eli_deliverability_monitor import evaluate_deliverability
+from aspire_orchestrator.services.eli_quality_guard import evaluate_email_quality
 from aspire_orchestrator.services.idempotency_service import get_idempotency_service
 from aspire_orchestrator.services.outbox_client import OutboxJob, get_outbox_client
 from aspire_orchestrator.services.token_service import validate_token
@@ -164,6 +166,53 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
 
     # Resolve which agent owns this execution
     assigned_agent = _resolve_agent_from_routing(state)
+
+    # -------------------------------------------------------------------
+    # Eli expert gates: quality + deliverability preflight for outbound mail.
+    # -------------------------------------------------------------------
+    if assigned_agent == "eli" and task_type in ("email.draft", "email.send"):
+        params = state.get("execution_params")
+        if not isinstance(params, dict):
+            return _deny_execution(
+                "PARAM_EXTRACTION_FAILED",
+                "Eli requires structured email payload before drafting or sending.",
+            )
+
+        mode = "send" if task_type == "email.send" else "draft"
+        quality = evaluate_email_quality(payload=params, mode=mode)
+        if not quality.passed:
+            details = "; ".join(quality.violations[:3]) or "quality gate failed"
+            logger.warning(
+                "Eli quality gate denied %s: score=%d suite=%s reasons=%s",
+                task_type,
+                quality.score,
+                suite_id[:8] if len(suite_id) > 8 else suite_id,
+                details,
+            )
+            return _deny_execution(
+                AspireErrorCode.POLICY_DENIED.value,
+                f"Eli quality gate blocked this {mode}. Score={quality.score}. {details}",
+            )
+
+        # Optional deliverability signals can be injected by upstream systems.
+        # If absent, this defaults to healthy and does not block.
+        deliverability = evaluate_deliverability(
+            state.get("eli_deliverability_signals")
+            if isinstance(state.get("eli_deliverability_signals"), dict)
+            else {}
+        )
+        if deliverability.level == "blocked":
+            details = "; ".join(deliverability.reasons[:3]) or "deliverability risk"
+            logger.warning(
+                "Eli deliverability gate denied %s: suite=%s reasons=%s",
+                task_type,
+                suite_id[:8] if len(suite_id) > 8 else suite_id,
+                details,
+            )
+            return _deny_execution(
+                AspireErrorCode.POLICY_DENIED.value,
+                f"Eli deliverability gate blocked send. {details}",
+            )
 
     # -------------------------------------------------------------------
     # Capability token validation — full 6-check (Law #3 + Law #5)
