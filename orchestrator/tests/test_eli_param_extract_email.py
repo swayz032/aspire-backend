@@ -20,7 +20,7 @@ class TestEliEmailParamHelpers:
     def test_extract_subject_hint(self) -> None:
         text = "subject should be Project Timeline Follow-Up and keep it concise"
         subject = extract_subject_hint(text)
-        assert subject == "Project Timeline Follow-Up and keep it concise"
+        assert subject == "Project Timeline Follow-Up"
 
     def test_synthesize_body_has_cta_and_min_length(self) -> None:
         body = synthesize_body_text(
@@ -33,7 +33,7 @@ class TestEliEmailParamHelpers:
         )
         word_count = len(re.findall(r"\b[\w'-]+\b", body))
         assert word_count >= 30
-        assert "approval by friday" in body.lower()
+        assert "confirm approval by friday" in body.lower()
         assert "reply" in body.lower()
 
     def test_body_text_to_html(self) -> None:

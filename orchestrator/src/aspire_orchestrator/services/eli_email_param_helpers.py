@@ -27,17 +27,41 @@ def extract_subject_hint(utterance: str) -> str | None:
         if m:
             value = m.group(1).strip(" .")
             if value:
+                lower = value.lower()
+                cut_markers = (
+                    " mention ",
+                    " ask ",
+                    " propose ",
+                    " and keep ",
+                    ". mention",
+                    ". ask",
+                    ". propose",
+                )
+                cut_idx = len(value)
+                for marker in cut_markers:
+                    idx = lower.find(marker)
+                    if idx >= 0:
+                        cut_idx = min(cut_idx, idx)
+                value = value[:cut_idx].strip(" .,:;")
                 return value
     return None
 
 
 def extract_instruction_clause(utterance: str, verb: str) -> str | None:
-    pattern = rf"\b{verb}\s+(.+?)(?:[.;]| and (?:ask|propose|mention|tell|keep)\b|$)"
+    pattern = rf"\b{verb}\s+(.+?)(?:[.;]|,\s*(?:ask|propose|mention|tell|keep)\b| and (?:ask|propose|mention|tell|keep)\b|$)"
     m = re.search(pattern, utterance, re.IGNORECASE)
     if not m:
         return None
     value = m.group(1).strip(" .")
     return value or None
+
+
+def _sentence(text: str) -> str:
+    cleaned = (text or "").strip(" .")
+    if not cleaned:
+        return ""
+    normalized = cleaned[:1].upper() + cleaned[1:]
+    return normalized if normalized.endswith((".", "!", "?")) else f"{normalized}."
 
 
 def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
@@ -50,26 +74,34 @@ def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
     ask = extract_instruction_clause(utterance, "ask") or "Please let me know your confirmation."
     propose = extract_instruction_clause(utterance, "propose")
 
+    ask_norm = ask.strip()
+    if ask_norm.lower().startswith("for "):
+        ask_norm = f"confirm {ask_norm[4:].strip()}"
+    if not ask_norm.lower().startswith(("please ", "can ", "could ", "kindly ")):
+        ask_norm = f"Please {ask_norm}"
+
+    body_lines = [
+        _sentence(f"I wanted to share a quick update: {mention}"),
+        _sentence(ask_norm),
+    ]
+    if propose:
+        body_lines.append(_sentence(f"I can also do {propose} if that works for you"))
+
     lines = [
         f"Hi {contact},",
         "",
-        mention[:220],
-        ask[:220],
-    ]
-    if propose:
-        lines.append(propose[:220])
-    lines.extend([
-        "",
-        "Please reply when you can so we can keep this moving.",
+        *[line for line in body_lines if line],
+        _sentence("Please reply when you can so we can keep this moving"),
         "",
         "Best,",
         "Aspire Team",
-    ])
+    ]
     body = "\n".join(lines).strip()
     if len(re.findall(r"\b[\w'-]+\b", body)) < 30:
         body = (
             f"Hi {contact},\n\n"
-            f"{mention[:220]} {ask[:220]} "
+            f"{_sentence(f'I wanted to share a quick update: {mention}')} "
+            f"{_sentence(ask_norm)} "
             f"If helpful, I can share additional context on {subject.lower()} and next steps.\n\n"
             "Please reply when you can so we can keep this moving.\n\n"
             "Best,\nAspire Team"
