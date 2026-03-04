@@ -17,6 +17,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aspire_orchestrator.models import Outcome, ReceiptType
+from aspire_orchestrator.services.eli_email_param_helpers import (
+    body_text_to_html,
+    extract_emails,
+    extract_subject_hint,
+    strip_html,
+    synthesize_body_text,
+)
 from aspire_orchestrator.services.openai_client import generate_json_async
 from aspire_orchestrator.state import OrchestratorState
 
@@ -371,8 +378,18 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             short_id = uuid.uuid4().hex[:8]
             extracted_params["name"] = f"conference-{short_id}"
 
-    # 2) email.draft: recover a recipient phrase when LLM misses `to`.
-    if tool_used == "polaris.email.draft" and isinstance(extracted_params, dict):
+    # 2) email.draft/send: robust recipient/sender/subject/body recovery for
+    # natural language prompts ("Eli, draft email to X from Y subject Z ...").
+    if tool_used in ("polaris.email.draft", "polaris.email.send") and isinstance(extracted_params, dict):
+        emails = extract_emails(utterance)
+        # Prefer explicit "from X" capture for sender.
+        from_match = re.search(
+            r"\bfrom\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b",
+            utterance,
+            re.IGNORECASE,
+        )
+        explicit_from = from_match.group(1).strip() if from_match else None
+
         to_val = extracted_params.get("to")
         if to_val is None or (isinstance(to_val, str) and not to_val.strip()):
             # Examples: "email to ACME ...", "draft a follow-up to John ..."
@@ -381,6 +398,44 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
                 candidate = m.group(1).strip()
                 if candidate:
                     extracted_params["to"] = candidate
+            elif emails:
+                # If the first/only email appears in utterance, use it as recipient.
+                # If we also have explicit sender, pick the non-sender email as recipient.
+                if explicit_from and len(emails) >= 2:
+                    recipients = [e for e in emails if e.lower() != explicit_from.lower()]
+                    if recipients:
+                        extracted_params["to"] = recipients[0]
+                else:
+                    extracted_params["to"] = emails[0]
+
+        if (extracted_params.get("from_address") in (None, "")) and explicit_from:
+            extracted_params["from_address"] = explicit_from
+        elif extracted_params.get("from_address") in (None, "") and len(emails) >= 2:
+            # Heuristic fallback: if we see two emails, second is often sender.
+            extracted_params["from_address"] = emails[1]
+
+        if extracted_params.get("subject") in (None, ""):
+            subject_hint = extract_subject_hint(utterance)
+            if subject_hint:
+                extracted_params["subject"] = subject_hint
+
+        body_text = extracted_params.get("body_text")
+        body_html = extracted_params.get("body_html")
+        if (body_text in (None, "")) and (body_html in (None, "")):
+            to_email = str(extracted_params.get("to", "")).strip()
+            subject = str(extracted_params.get("subject", "Quick Follow-Up")).strip()
+            if to_email:
+                composed = synthesize_body_text(
+                    to_email=to_email,
+                    subject=subject,
+                    utterance=utterance,
+                )
+                extracted_params["body_text"] = composed
+                extracted_params["body_html"] = body_text_to_html(composed)
+        elif body_text in (None, "") and isinstance(body_html, str) and body_html.strip():
+            extracted_params["body_text"] = strip_html(body_html)
+        elif body_html in (None, "") and isinstance(body_text, str) and body_text.strip():
+            extracted_params["body_html"] = body_text_to_html(body_text)
 
     # 3) email.read: merge classifier entities (e.g., unread + limit) into params.
     if tool_used == "polaris.email.read":
