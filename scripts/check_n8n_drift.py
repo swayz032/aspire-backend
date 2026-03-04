@@ -72,11 +72,20 @@ def _normalize_workflow(data: dict[str, Any]) -> dict[str, Any]:
     nodes = data.get("nodes", [])
     norm_nodes = [_normalize_node(n) for n in nodes]
     norm_nodes.sort(key=lambda n: (str(n.get("id")), str(n.get("name"))))
+    settings = data.get("settings", {}) or {}
+    # n8n may inject default settings keys server-side.
+    # Normalize to canonical comparison keys so drift checks only fail on
+    # meaningful config differences.
+    norm_settings = {
+        "executionOrder": settings.get("executionOrder", "v1"),
+        "callerPolicy": settings.get("callerPolicy", "workflowsFromSameOwner"),
+        "availableInMCP": bool(settings.get("availableInMCP", False)),
+    }
     return {
         "name": data.get("name", ""),
         "nodes": norm_nodes,
         "connections": data.get("connections", {}),
-        "settings": data.get("settings", {}),
+        "settings": norm_settings,
     }
 
 
@@ -142,4 +151,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

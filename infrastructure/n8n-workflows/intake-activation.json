@@ -255,7 +255,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-intake-activation-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-intake-activation', action: { action_type: 'onboarding.activation', risk_tier: 'yellow', tasks_created: $('Kill Switch + HMAC + Prep').item.json.tasksCount, briefs_triggered: 2, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource }, created_at: new Date().toISOString() }) }}",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-intake-activation-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, tenant_id: 'system', office_id: ($('Kill Switch + HMAC + Prep').item.json.officeId || $env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-intake-activation', action: { action_type: 'onboarding.activation', risk_tier: 'yellow', tasks_created: $('Kill Switch + HMAC + Prep').item.json.tasksCount, briefs_triggered: 2, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource }, created_at: new Date().toISOString() }) }}",
         "options": {
           "timeout": 5000
         }
@@ -452,7 +452,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
   },
   "tags": [
     {

@@ -40,7 +40,7 @@ services:
       # --- Aspire workflow environment ---
       SUPABASE_URL: "${SUPABASE_URL:?Set SUPABASE_URL in .env}"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY in .env}"
-      ASPIRE_GATEWAY_URL: "http://host.docker.internal:5000"
+      ASPIRE_GATEWAY_URL: "${ASPIRE_GATEWAY_URL:-http://host.docker.internal:5000}"
       DEFAULT_SUITE_ID: "${DEFAULT_SUITE_ID:-c4eebdbd-e019-42c0-9143-077762e92bbc}"
       DEFAULT_OFFICE_ID: "${DEFAULT_OFFICE_ID:-c4eebdbd-e019-42c0-9143-077762e92bbc}"
       N8N_WEBHOOK_SECRET: "${N8N_WEBHOOK_SECRET:-aspire-n8n-dev-secret}"
