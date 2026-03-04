@@ -27,6 +27,14 @@ class TestEliEmailParamHelpers:
         subject = extract_subject_hint(text)
         assert subject == "Project Timeline Follow-Up"
 
+    def test_extract_subject_hint_strips_instruction_tail(self) -> None:
+        text = (
+            "Subject: Commercial Roofing Proposal - Harbor Blvd Facility "
+            "Include scope, timeline, permit compliance, and warranty"
+        )
+        subject = extract_subject_hint(text)
+        assert subject == "Commercial Roofing Proposal - Harbor Blvd Facility"
+
     def test_extract_labeled_email(self) -> None:
         text = "Recipient: procurement@coastalwarehousing.com Sender: bids@skyline-roofing.com"
         assert extract_labeled_email(text, "recipient") == "procurement@coastalwarehousing.com"

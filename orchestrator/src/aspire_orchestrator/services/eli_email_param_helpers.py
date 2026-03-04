@@ -51,10 +51,12 @@ def extract_subject_hint(utterance: str) -> str | None:
                     " mention ",
                     " ask ",
                     " propose ",
+                    " include ",
                     " and keep ",
                     ". mention",
                     ". ask",
                     ". propose",
+                    ". include",
                 )
                 cut_idx = len(value)
                 for marker in cut_markers:
