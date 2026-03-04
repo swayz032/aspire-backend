@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -64,8 +65,8 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "optional": [],
     },
     "livekit.room.create": {
-        "required": ["room_name"],
-        "optional": [],
+        "required": ["name"],
+        "optional": ["empty_timeout", "max_participants"],
     },
     "livekit.meeting.schedule": {
         "required": ["participants", "time"],
@@ -298,15 +299,29 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         logger.info("Merged request payload into extracted params: %d total keys", len(extracted_params))
 
     # Tool-specific post-processing before required-field validation.
-    # 1) conference room creation: if room_name wasn't explicitly provided,
-    #    synthesize a deterministic name instead of failing closed.
+    # 1) conference room creation: normalize `room_name` -> `name` and
+    #    synthesize if missing to avoid needless hard-fail.
     if tool_used == "livekit.room.create" and isinstance(extracted_params, dict):
-        room_name = extracted_params.get("room_name")
+        if extracted_params.get("name") in (None, "") and extracted_params.get("room_name"):
+            extracted_params["name"] = extracted_params.get("room_name")
+        extracted_params.pop("room_name", None)
+        room_name = extracted_params.get("name")
         if room_name is None or (isinstance(room_name, str) and not room_name.strip()):
             short_id = uuid.uuid4().hex[:8]
-            extracted_params["room_name"] = f"conference-{short_id}"
+            extracted_params["name"] = f"conference-{short_id}"
 
-    # 2) email.read: merge classifier entities (e.g., unread + limit) into params.
+    # 2) email.draft: recover a recipient phrase when LLM misses `to`.
+    if tool_used == "polaris.email.draft" and isinstance(extracted_params, dict):
+        to_val = extracted_params.get("to")
+        if to_val is None or (isinstance(to_val, str) and not to_val.strip()):
+            # Examples: "email to ACME ...", "draft a follow-up to John ..."
+            m = re.search(r"\bto\s+([A-Za-z0-9&@._\\- ]{2,80}?)(?:,| about | regarding | on | with |$)", utterance, re.IGNORECASE)
+            if m:
+                candidate = m.group(1).strip()
+                if candidate:
+                    extracted_params["to"] = candidate
+
+    # 3) email.read: merge classifier entities (e.g., unread + limit) into params.
     if tool_used == "polaris.email.read":
         if not isinstance(extracted_params, dict):
             extracted_params = {}
