@@ -1,0 +1,38 @@
+name: n8n-drift-gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/n8n-workflows/**"
+      - "infrastructure/n8n/**"
+      - "scripts/check_n8n_drift.py"
+      - ".github/workflows/n8n-drift-gate.yml"
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate required secrets
+        env:
+          N8N_API_URL: ${{ secrets.N8N_API_URL }}
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        run: |
+          test -n "$N8N_API_URL" || (echo "Missing secret: N8N_API_URL" && exit 1)
+          test -n "$N8N_API_KEY" || (echo "Missing secret: N8N_API_KEY" && exit 1)
+
+      - name: Drift check
+        env:
+          N8N_API_URL: ${{ secrets.N8N_API_URL }}
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        run: python scripts/check_n8n_drift.py
+
