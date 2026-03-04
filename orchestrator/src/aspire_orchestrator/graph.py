@@ -85,7 +85,12 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         context = {}
     explicit_task_type = state.get("task_type", "")
     request_obj = state.get("request")
-    payload = request_obj.get("payload", {}) if isinstance(request_obj, dict) else {}
+    if isinstance(request_obj, dict):
+        payload = request_obj.get("payload", {})
+    elif hasattr(request_obj, "payload") and isinstance(request_obj.payload, dict):  # type: ignore[attr-defined]
+        payload = request_obj.payload  # type: ignore[attr-defined]
+    else:
+        payload = {}
     requested_agent = (
         state.get("requested_agent")
         or payload.get("requested_agent")
@@ -107,6 +112,8 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         "rewrite",
         "tweak",
         "make it",
+        "same draft",
+        "this draft",
         "change it",
         "update it",
         "shorter",
@@ -117,7 +124,11 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
     )
     if (
         requested_agent == "eli"
-        and (intent_result.action_type == "unknown" or intent_result.intent_type in ("conversation", "hybrid"))
+        and (
+            bool(getattr(intent_result, "requires_clarification", False))
+            or intent_result.action_type == "unknown"
+            or intent_result.intent_type in ("conversation", "hybrid", "knowledge", "advice", "unknown")
+        )
         and any(m in lower_utt for m in eli_tweak_markers)
     ):
         # Deterministic rescue path for Eli iterative drafting turns.
