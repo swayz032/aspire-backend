@@ -101,6 +101,32 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
 
     classifier = get_intent_classifier()
     intent_result = await classifier.classify(utterance, context)
+    lower_utt = str(utterance or "").lower()
+    eli_tweak_markers = (
+        "revise",
+        "rewrite",
+        "tweak",
+        "make it",
+        "change it",
+        "update it",
+        "shorter",
+        "longer",
+        "warmer",
+        "more formal",
+        "less formal",
+    )
+    if (
+        requested_agent == "eli"
+        and (intent_result.action_type == "unknown" or intent_result.intent_type in ("conversation", "hybrid"))
+        and any(m in lower_utt for m in eli_tweak_markers)
+    ):
+        # Deterministic rescue path for Eli iterative drafting turns.
+        intent_result.action_type = "email.draft"
+        intent_result.skill_pack = "eli_inbox"
+        intent_result.confidence = max(float(intent_result.confidence or 0.0), 0.9)
+        intent_result.requires_clarification = False
+        intent_result.intent_type = "action"
+        intent_result.agent_target = "eli"
 
     result: dict[str, Any] = {
         "intent_result": intent_result.model_dump(),
