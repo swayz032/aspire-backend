@@ -21,6 +21,7 @@ from aspire_orchestrator.services.eli_email_param_helpers import (
     apply_email_tweaks,
     body_text_to_html,
     extract_emails,
+    extract_labeled_email,
     extract_subject_hint,
     is_email_tweak_request,
     naturalize_email_body,
@@ -391,23 +392,33 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         tweak_request = is_email_tweak_request(utterance)
 
         emails = extract_emails(utterance)
+        labeled_to = extract_labeled_email(utterance, "recipient") or extract_labeled_email(utterance, "to")
+        labeled_from = extract_labeled_email(utterance, "sender") or extract_labeled_email(utterance, "from")
         # Prefer explicit "from X" capture for sender.
         from_match = re.search(
             r"\bfrom\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b",
             utterance,
             re.IGNORECASE,
         )
-        explicit_from = from_match.group(1).strip() if from_match else None
+        explicit_from = labeled_from or (from_match.group(1).strip() if from_match else None)
 
         to_val = extracted_params.get("to")
         if to_val is None or (isinstance(to_val, str) and not to_val.strip()):
+            if labeled_to:
+                extracted_params["to"] = labeled_to
             # Examples: "email to ACME ...", "draft a follow-up to John ..."
-            m = re.search(r"\bto\s+([-A-Za-z0-9&@._ ]{2,80}?)(?:,| about | regarding | on | with |$)", utterance, re.IGNORECASE)
-            if m:
+            m = re.search(r"\bto\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b", utterance, re.IGNORECASE)
+            if m and extracted_params.get("to") in (None, ""):
                 candidate = m.group(1).strip()
                 if candidate:
                     extracted_params["to"] = candidate
-            elif emails:
+            m_name = re.search(r"\bto\s+([-A-Za-z0-9& ]{2,80}?)(?:,| about | regarding | on | with |$)", utterance, re.IGNORECASE)
+            if m_name and extracted_params.get("to") in (None, ""):
+                candidate_name = m_name.group(1).strip()
+                bad_fragments = ("call to action", "action", "tone should", "include ", "subject")
+                if candidate_name and not any(f in candidate_name.lower() for f in bad_fragments):
+                    extracted_params["to"] = candidate_name
+            if extracted_params.get("to") in (None, "") and emails:
                 # If the first/only email appears in utterance, use it as recipient.
                 # If we also have explicit sender, pick the non-sender email as recipient.
                 if explicit_from and len(emails) >= 2:
@@ -417,7 +428,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
                 else:
                     extracted_params["to"] = emails[0]
 
-        if (extracted_params.get("from_address") in (None, "")) and explicit_from:
+        if (extracted_params.get("from_address") in (None, "")) and (labeled_from or explicit_from):
             extracted_params["from_address"] = explicit_from
         elif extracted_params.get("from_address") in (None, "") and len(emails) >= 2:
             # Heuristic fallback: if we see two emails, second is often sender.

@@ -92,3 +92,33 @@ async def test_agentic_rag_not_applicable_for_non_eli_task() -> None:
 
     assert params["subject"] == "x"
     assert meta["eli_rag_status"] == "not_applicable"
+
+
+@pytest.mark.asyncio
+async def test_agentic_rag_builds_advanced_proposal_body(monkeypatch) -> None:
+    from aspire_orchestrator.services import eli_agentic_rag as mod
+
+    monkeypatch.setattr(mod, "get_communication_retrieval_service", lambda: _FakeCommService())
+
+    params, meta = await run_eli_agentic_rag(
+        task_type="email.draft",
+        assigned_agent="eli",
+        utterance=(
+            "draft a binding roofing proposal and include scope, materials, timeline, "
+            "permit compliance, three pricing options, payment schedule, and warranty"
+        ),
+        suite_id="suite-123",
+        params={
+            "to": "procurement@coastalwarehousing.com",
+            "from_address": "bids@skyline-roofing.com",
+            "subject": "Commercial Roofing Proposal - Harbor Blvd Facility",
+            "body_text": "Please confirm",
+        },
+    )
+
+    body = params["body_text"].lower()
+    assert "binding proposal" in body
+    assert "pricing options:" in body
+    assert "payment schedule:" in body
+    assert "warranty terms:" in body
+    assert meta["eli_rag_status"] == "primary"

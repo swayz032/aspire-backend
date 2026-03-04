@@ -80,8 +80,24 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
     from aspire_orchestrator.services.intent_classifier import get_intent_classifier
 
     utterance = state.get("utterance", "")
-    context = state.get("context") if isinstance(state.get("context"), dict) else None
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    if not isinstance(context, dict):
+        context = {}
     explicit_task_type = state.get("task_type", "")
+    request_obj = state.get("request")
+    payload = request_obj.get("payload", {}) if isinstance(request_obj, dict) else {}
+    requested_agent = (
+        state.get("requested_agent")
+        or payload.get("requested_agent")
+        or payload.get("agent")
+        or "ava"
+    )
+    if isinstance(requested_agent, str):
+        requested_agent = requested_agent.strip().lower() or "ava"
+    context = {
+        **context,
+        "current_agent": requested_agent,
+    }
 
     classifier = get_intent_classifier()
     intent_result = await classifier.classify(utterance, context)
@@ -90,9 +106,7 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         "intent_result": intent_result.model_dump(),
         "action_type": intent_result.action_type,
     }
-    requested_agent = state.get("requested_agent")
-    if isinstance(requested_agent, str):
-        requested_agent = requested_agent.strip().lower()
+    requested_agent = requested_agent if isinstance(requested_agent, str) else "ava"
 
     # Update task_type so downstream policy_eval uses the classified action
     if intent_result.action_type and intent_result.action_type != "unknown":

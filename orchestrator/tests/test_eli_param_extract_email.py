@@ -6,6 +6,7 @@ from aspire_orchestrator.services.eli_email_param_helpers import (
     apply_email_tweaks,
     body_text_to_html,
     extract_emails,
+    extract_labeled_email,
     extract_subject_hint,
     is_email_tweak_request,
     naturalize_email_body,
@@ -25,6 +26,11 @@ class TestEliEmailParamHelpers:
         subject = extract_subject_hint(text)
         assert subject == "Project Timeline Follow-Up"
 
+    def test_extract_labeled_email(self) -> None:
+        text = "Recipient: procurement@coastalwarehousing.com Sender: bids@skyline-roofing.com"
+        assert extract_labeled_email(text, "recipient") == "procurement@coastalwarehousing.com"
+        assert extract_labeled_email(text, "sender") == "bids@skyline-roofing.com"
+
     def test_synthesize_body_has_cta_and_min_length(self) -> None:
         body = synthesize_body_text(
             to_email="sarah@northstarco.com",
@@ -39,6 +45,24 @@ class TestEliEmailParamHelpers:
         assert "confirm approval by friday" in body.lower()
         assert "let me know" in body.lower()
         assert "best,\neli\naspire inbox desk" in body.lower()
+
+    def test_synthesize_binding_proposal_email(self) -> None:
+        body = synthesize_body_text(
+            to_email="procurement@coastalwarehousing.com",
+            subject="Commercial Roofing Proposal - Harbor Blvd Facility",
+            utterance=(
+                "draft a binding roofing proposal and include scope, materials, timeline, "
+                "permit compliance, three pricing options, payment schedule, and warranty"
+            ),
+            from_address="bids@skyline-roofing.com",
+        )
+        lower = body.lower()
+        assert "binding proposal" in lower
+        assert "scope of work" in lower
+        assert "pricing options" in lower
+        assert "payment schedule" in lower
+        assert "acceptance:" in lower
+        assert "best,\nbids\naspire inbox desk" in lower
 
     def test_body_text_to_html(self) -> None:
         html = body_text_to_html("Hi Sarah,\n\nPlease confirm by Friday.\n\nBest,\nAspire Team")

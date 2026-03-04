@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import re
 
 DEFAULT_SIGNOFF = "Best,\nEli\nAspire Inbox Desk"
@@ -9,6 +10,15 @@ DEFAULT_SIGNOFF = "Best,\nEli\nAspire Inbox Desk"
 
 def extract_emails(text: str) -> list[str]:
     return re.findall(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text or "")
+
+
+def extract_labeled_email(text: str, label: str) -> str | None:
+    pattern = rf"\b{re.escape(label)}\s*[:=]\s*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{{2,}})\b"
+    m = re.search(pattern, text or "", re.IGNORECASE)
+    if not m:
+        return None
+    val = m.group(1).strip()
+    return val or None
 
 
 def display_name_from_email(address: str) -> str:
@@ -65,6 +75,93 @@ def extract_instruction_clause(utterance: str, verb: str) -> str | None:
     return value or None
 
 
+def _proposal_requested(utterance: str, subject: str) -> bool:
+    lower = f"{utterance} {subject}".lower()
+    signals = (
+        "proposal",
+        "binding",
+        "bid",
+        "scope",
+        "pricing option",
+        "warranty",
+        "permit",
+        "acceptance",
+    )
+    return any(s in lower for s in signals)
+
+
+def _contains(text: str, *needles: str) -> bool:
+    lower = (text or "").lower()
+    return any(n in lower for n in needles)
+
+
+def _proposal_body(contact: str, subject: str, utterance: str, signoff: str) -> str:
+    target = "this project"
+    m = re.search(r"\bfor\s+(.+?)(?:[.?!]|$)", utterance, re.IGNORECASE)
+    if m:
+        target = m.group(1).strip(" .")
+
+    deadline = (datetime.now(UTC) + timedelta(days=7)).strftime("%A, %B %d, %Y")
+    include_three_options = _contains(utterance, "three pricing options", "3 pricing options", "price options")
+    mention_permit = _contains(utterance, "permit", "compliance")
+    mention_warranty = _contains(utterance, "warranty")
+    mention_timeline = _contains(utterance, "timeline", "mobilization", "start date")
+
+    lines = [
+        f"Hi {contact},",
+        "",
+        f"Following up on your request, here is our binding proposal for {target}.",
+        "",
+        "Scope of work:",
+        "- Full tear-off and disposal of existing roofing system where required",
+        "- Deck inspection, moisture remediation, and substrate prep",
+        "- Installation of the specified commercial roofing assembly with QA checkpoints",
+    ]
+    if mention_timeline:
+        lines += [
+            "",
+            "Execution timeline:",
+            "- Mobilization within 7 business days of notice to proceed",
+            "- Estimated onsite duration: 10-15 business days (weather dependent)",
+            "- Daily progress reporting and final closeout package at completion",
+        ]
+    if mention_permit:
+        lines += [
+            "",
+            "Permits and compliance:",
+            "- We handle permit submission/coordination and required inspections",
+            "- Work will be executed to manufacturer specs and local code requirements",
+        ]
+    if include_three_options:
+        lines += [
+            "",
+            "Pricing options:",
+            "- Option A (Base): code-compliant system with standard manufacturer warranty",
+            "- Option B (Performance): upgraded insulation and extended coverage",
+            "- Option C (Premium): enhanced system with highest lifecycle durability profile",
+            "",
+            "Payment schedule:",
+            "- 30% mobilization deposit",
+            "- 40% at material delivery and dry-in milestone",
+            "- 30% at substantial completion and sign-off",
+        ]
+    if mention_warranty:
+        lines += [
+            "",
+            "Warranty:",
+            "- Manufacturer material warranty plus workmanship warranty from our team",
+            "- Final warranty terms are tied to selected option and manufacturer approval",
+        ]
+
+    lines += [
+        "",
+        f"Acceptance: if this aligns with your requirements, please reply with written approval by {deadline}, and I will issue the final execution package the same day.",
+        "",
+        signoff,
+    ]
+    return "\n".join(lines).strip()
+
+
 def _sentence(text: str) -> str:
     cleaned = (text or "").strip(" .")
     if not cleaned:
@@ -76,6 +173,9 @@ def _sentence(text: str) -> str:
 def synthesize_body_text(*, to_email: str, subject: str, utterance: str, from_address: str | None = None) -> str:
     signoff = signoff_from_sender(from_address)
     contact = display_name_from_email(to_email)
+    if _proposal_requested(utterance, subject):
+        return _proposal_body(contact, subject, utterance, signoff)
+
     mention = (
         extract_instruction_clause(utterance, "mention")
         or extract_instruction_clause(utterance, "tell")

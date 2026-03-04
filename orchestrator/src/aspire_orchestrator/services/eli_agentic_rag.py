@@ -8,6 +8,7 @@ Production goals:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import logging
 import re
 from typing import Any
@@ -92,6 +93,106 @@ def _quality_mode_for_task(task_type: str) -> str:
     return "send" if task_type == "email.send" else "draft"
 
 
+def _is_advanced_proposal_prompt(*, utterance: str, subject: str) -> bool:
+    text = f"{utterance} {subject}".lower()
+    signals = (
+        "binding proposal",
+        "roofing proposal",
+        "proposal",
+        "bid",
+        "scope",
+        "materials",
+        "timeline",
+        "permit",
+        "warranty",
+        "payment schedule",
+    )
+    return any(s in text for s in signals)
+
+
+def _build_advanced_proposal_body(params: dict[str, Any], utterance: str) -> str:
+    to_addr = str(params.get("to", "")).strip()
+    subject = str(params.get("subject", "")).strip() or "Project Proposal"
+    from_addr = str(params.get("from_address", "")).strip() or None
+    recipient_name = to_addr.split("@", 1)[0].replace(".", " ").title() if "@" in to_addr else "Team"
+    signoff = signoff_from_sender(from_addr)
+    deadline = (datetime.now(UTC) + timedelta(days=7)).strftime("%A, %B %d, %Y")
+    include_three_options = any(k in utterance.lower() for k in ("three pricing options", "3 pricing options", "price options"))
+    include_permit = any(k in utterance.lower() for k in ("permit", "compliance"))
+    include_warranty = "warranty" in utterance.lower()
+    include_timeline = any(k in utterance.lower() for k in ("timeline", "mobilization", "start date"))
+    include_materials = "materials" in utterance.lower()
+
+    lines = [
+        f"Hi {recipient_name},",
+        "",
+        f"Following up on your request, please find our binding proposal for {subject}.",
+        "",
+        "Proposed scope of work:",
+        "- Site prep, protection, and controlled tear-off of existing roof system as required",
+        "- Deck inspection and remediation where needed",
+        "- Full installation, QA checkpoints, and final punch-closeout",
+    ]
+
+    if include_materials:
+        lines += [
+            "",
+            "Materials and system:",
+            "- Commercial-grade membrane system with compatible insulation package",
+            "- Manufacturer-approved components across flashings, edges, and penetrations",
+        ]
+
+    if include_timeline:
+        lines += [
+            "",
+            "Timeline and mobilization:",
+            "- Mobilization within 7 business days of notice to proceed",
+            "- Estimated field duration: 10-15 business days, weather dependent",
+            "- Daily progress updates with milestone sign-offs",
+        ]
+
+    if include_permit:
+        lines += [
+            "",
+            "Permits and compliance:",
+            "- We coordinate permit submission and required inspections",
+            "- Work is executed to local code and manufacturer specifications",
+        ]
+
+    if include_three_options:
+        lines += [
+            "",
+            "Pricing options:",
+            "- Option A (Base): code-compliant install and standard warranty package",
+            "- Option B (Performance): upgraded thermal assembly and extended coverage",
+            "- Option C (Premium): enhanced lifecycle system with highest durability profile",
+        ]
+
+    lines += [
+        "",
+        "Payment schedule:",
+        "- 30% deposit at mobilization",
+        "- 40% at material delivery and dry-in milestone",
+        "- 30% at substantial completion and handoff",
+    ]
+
+    if include_warranty:
+        lines += [
+            "",
+            "Warranty terms:",
+            "- Manufacturer material warranty plus workmanship warranty from our team",
+            "- Final warranty length aligns with the selected option and system approval",
+        ]
+
+    lines += [
+        "",
+        f"Acceptance: please confirm approval by {deadline}. Once approved, I will issue the final execution package and mobilization schedule the same day.",
+        "",
+        signoff,
+    ]
+    return "\n".join(lines).strip()
+
+
 async def run_eli_agentic_rag(
     *,
     task_type: str,
@@ -158,6 +259,12 @@ async def run_eli_agentic_rag(
         fallback_mode = True
 
     # Always enforce a professional deterministic base shape.
+    if _is_advanced_proposal_prompt(
+        utterance=utterance,
+        subject=str(working.get("subject", "")),
+    ):
+        working["body_text"] = _build_advanced_proposal_body(working, utterance)
+        working["body_html"] = body_text_to_html(working["body_text"])
     working = _ensure_professional_shape(working)
 
     # Bounded critique loop for reliability + quality floor.
