@@ -214,10 +214,21 @@ if os.getenv("ASPIRE_ENV", "").strip().lower() == "production":
             raise SystemExit(1)
 
     # Enterprise hard gates: production cannot run mutable state backends in-memory.
+    # Emergency override exists only to restore service while provisioning Redis.
+    allow_inmem_rate_limit = (os.getenv("ASPIRE_ALLOW_INMEM_RATE_LIMIT_IN_PROD") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     redis_url = (os.getenv("ASPIRE_REDIS_URL") or os.getenv("REDIS_URL") or "").strip()
-    if not redis_url:
+    if not redis_url and not allow_inmem_rate_limit:
         logger.error("Production requires ASPIRE_REDIS_URL/REDIS_URL for shared rate limiting.")
         raise SystemExit(1)
+    if not redis_url and allow_inmem_rate_limit:
+        logger.warning(
+            "ASPIRE_ALLOW_INMEM_RATE_LIMIT_IN_PROD enabled: using in-memory rate limiting in production until Redis is configured."
+        )
 
     outbox_backend = get_outbox_client().backend
     if outbox_backend != "supabase":
