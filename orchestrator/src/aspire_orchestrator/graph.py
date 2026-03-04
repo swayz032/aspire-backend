@@ -601,6 +601,10 @@ async def _build_checkpointer() -> Any:
             _CHECKPOINTER_RUNTIME["backend"] = "AsyncPostgresSaver"
             return saver
         except Exception as e:
+            if aspire_env == "production" and not allow_memory_failover_in_prod:
+                raise RuntimeError(
+                    "Postgres checkpointer init failed in production and memory failover is disabled."
+                ) from e
             try:
                 if _CHECKPOINTER_CTX is not None and hasattr(_CHECKPOINTER_CTX, "__aexit__"):
                     await _CHECKPOINTER_CTX.__aexit__(None, None, None)

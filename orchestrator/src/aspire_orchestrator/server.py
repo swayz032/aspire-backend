@@ -124,7 +124,16 @@ app.add_middleware(
     allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Correlation-Id"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Correlation-Id",
+        "X-Admin-Token",
+        "X-Suite-Id",
+        "X-Office-Id",
+        "X-Actor-Id",
+        "X-Trace-Id",
+    ],
 )
 
 # Global Exception Handler — catches unhandled exceptions, creates incident + receipt (Wave 1B)
@@ -153,6 +162,20 @@ app.include_router(robots_router)
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
 load_secrets()
+
+def _verify_environment_parity() -> None:
+    """Fail closed on contradictory production environment markers."""
+    aspire_env = os.getenv("ASPIRE_ENV", "").strip().lower()
+    node_env = os.getenv("NODE_ENV", "").strip().lower()
+    aspire_prod = aspire_env == "production"
+    node_prod = node_env == "production"
+    if aspire_prod != node_prod and (aspire_env or node_env):
+        raise SystemExit(
+            f"Environment mismatch: ASPIRE_ENV={aspire_env or 'unset'} NODE_ENV={node_env or 'unset'}. "
+            "Production requires both to resolve consistently."
+        )
+
+_verify_environment_parity()
 
 # Verify critical settings are populated (Policy Gate P0: fail-closed startup)
 # Empty provider keys = Ava gives generic "Done" responses (F1 root cause)

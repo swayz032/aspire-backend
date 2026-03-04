@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
 
-CONN="postgresql://postgres.qtuehjqlcmfcascqjjhc:Mbaquan1974%21@aws-1-us-east-1.pooler.supabase.com:6543/postgres"
+CONN="${ASPIRE_SUPABASE_DB_URL:-${DATABASE_URL:-}}"
+if [ -z "$CONN" ]; then
+  echo "ERROR: Missing database URL. Set ASPIRE_SUPABASE_DB_URL (preferred) or DATABASE_URL."
+  exit 1
+fi
 
 echo "======================================================================"
 echo "APPLYING CONVERSATIONAL INTELLIGENCE MIGRATIONS (066, 067, 068)"

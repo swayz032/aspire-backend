@@ -31,29 +31,9 @@ def execute_sql_via_psycopg2(sql: str) -> tuple[bool, str]:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "psycopg2-binary"], stdout=subprocess.DEVNULL)
         import psycopg2
 
-    try:
-        import sqlparse
-    except ImportError:
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "sqlparse"], stdout=subprocess.DEVNULL)
-        import sqlparse
-
-    project_ref = "qtuehjqlcmfcascqjjhc"
-    service_role_key = os.environ.get("ASPIRE_SUPABASE_SERVICE_ROLE_KEY")
-
-    if not service_role_key:
-        return False, "Missing ASPIRE_SUPABASE_SERVICE_ROLE_KEY"
-
-    # Use DATABASE_URL from Railway environment (has actual DB password)
-    # Format: postgresql://postgres.{project_ref}:{password}@aws-1-us-east-1.pooler.supabase.com:6543/postgres
-    conn_string = os.environ.get("DATABASE_URL")
-
+    conn_string = os.environ.get("ASPIRE_SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
     if not conn_string:
-        # Fallback to constructed connection string
-        conn_string = (
-            f"postgresql://postgres.{project_ref}:Mbaquan1974!"
-            f"@aws-1-us-east-1.pooler.supabase.com:6543/postgres"
-        )
+        return False, "Missing database URL. Set ASPIRE_SUPABASE_DB_URL (preferred) or DATABASE_URL."
 
     try:
         conn = psycopg2.connect(conn_string)
@@ -63,20 +43,6 @@ def execute_sql_via_psycopg2(sql: str) -> tuple[bool, str]:
         print("   Connected to Supabase database")
         print("   Executing SQL file...")
 
-        # Use psycopg2's server-side script execution via DO block
-        # Wrap the entire SQL in a DO block that handles errors
-        wrapped_sql = f"""
-DO $$
-BEGIN
-    -- Execute the migration SQL
-    {sql.replace("'", "''")}
-EXCEPTION
-    WHEN duplicate_table THEN
-        RAISE NOTICE 'Tables already exist (idempotent)';
-    WHEN duplicate_object THEN
-        RAISE NOTICE 'Objects already exist (idempotent)';
-END $$;
-"""
         try:
             cursor.execute(sql)
             cursor.close()
@@ -145,9 +111,7 @@ def main():
     else:
         print(f"❌ MIGRATION FAILED: {message}")
         print()
-        print("Fallback: Apply manually via Supabase Dashboard SQL Editor")
-        print(f"  URL: https://supabase.com/dashboard/project/qtuehjqlcmfcascqjjhc/sql/new")
-        print(f"  File: {consolidated}")
+        print("Fallback: apply each migration manually via your SQL editor.")
         return 1
 
 

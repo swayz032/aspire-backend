@@ -52,6 +52,14 @@ _incidents: dict[str, dict[str, Any]] = {}
 _provider_calls: list[dict[str, Any]] = []
 _rollouts: list[dict[str, Any]] = []
 _proposals: dict[str, dict[str, Any]] = {}
+_builder_model_policy: dict[str, Any] = {
+    "builder_primary_model": os.environ.get("ASPIRE_BUILDER_PRIMARY_MODEL", "codex-5.2"),
+    "builder_fallback_model": os.environ.get("ASPIRE_BUILDER_FALLBACK_MODEL", "claude-opus-4.6"),
+    "reasoning_model": os.environ.get("ASPIRE_BUILDER_REASONING_MODEL", "gpt-5.2"),
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+    "updated_by": "system",
+}
+_supabase_client: Any | None = None
 
 
 def register_incident(incident: dict[str, Any]) -> None:
@@ -67,6 +75,8 @@ def register_incident(incident: dict[str, Any]) -> None:
     if not incident_id:
         incident_id = str(uuid.uuid4())
         incident["incident_id"] = incident_id
+    if not incident.get("trace_id"):
+        incident["trace_id"] = incident.get("correlation_id", "")
 
     with _store_lock:
         _incidents[incident_id] = incident
@@ -110,6 +120,26 @@ def clear_admin_stores() -> None:
         _provider_calls.clear()
         _rollouts.clear()
         _proposals.clear()
+
+
+def _get_supabase_client() -> Any | None:
+    """Lazy-init Supabase client for admin read APIs."""
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+
+    url = os.environ.get("ASPIRE_SUPABASE_URL", "").strip()
+    key = os.environ.get("ASPIRE_SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not url or not key:
+        return None
+
+    try:
+        from supabase import create_client
+        _supabase_client = create_client(url, key)
+        return _supabase_client
+    except Exception as exc:
+        logger.warning("Failed to initialize Supabase client for admin facade: %s", exc)
+        return None
 
 
 # Initialize AdminSupabaseStore singleton with shared in-memory dicts.
@@ -401,6 +431,7 @@ async def list_incidents(
     request: Request,
     state: str | None = Query(None, description="Filter by state"),
     severity: str | None = Query(None, description="Filter by severity"),
+    trace_id: str | None = Query(None, description="Filter by trace_id"),
     cursor: str | None = Query(None, description="Pagination cursor"),
     limit: int = Query(50, ge=1, le=200, description="Page size"),
 ) -> JSONResponse:
@@ -450,6 +481,8 @@ async def list_incidents(
                 status_code=400,
             )
         all_incidents = [i for i in all_incidents if i.get("severity") == severity]
+    if trace_id:
+        all_incidents = [i for i in all_incidents if i.get("trace_id") == trace_id]
 
     # Sort by last_seen descending (newest first)
     all_incidents.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
@@ -462,7 +495,7 @@ async def list_incidents(
         actor_id=actor_id,
         action_type="admin.ops.incidents.list",
         outcome="success",
-        details={"count": len(page_items), "filters": {"state": state, "severity": severity}},
+        details={"count": len(page_items), "filters": {"state": state, "severity": severity, "trace_id": trace_id}},
     )
     store_receipts([receipt])
 
@@ -542,6 +575,7 @@ async def get_incident(request: Request, incident_id: str) -> JSONResponse:
             "severity": incident.get("severity", "sev4"),
             "title": incident.get("title", ""),
             "correlation_id": incident.get("correlation_id", ""),
+            "trace_id": incident.get("trace_id", incident.get("correlation_id", "")),
             "suite_id": incident.get("suite_id"),
             "first_seen": incident.get("first_seen", ""),
             "last_seen": incident.get("last_seen", ""),
@@ -681,6 +715,9 @@ async def list_provider_calls(
     correlation_id_filter: str | None = Query(
         None, alias="correlation_id", description="Filter by correlation_id"
     ),
+    trace_id_filter: str | None = Query(
+        None, alias="trace_id", description="Filter by trace_id"
+    ),
     cursor: str | None = Query(None, description="Pagination cursor"),
     limit: int = Query(50, ge=1, le=200, description="Page size"),
 ) -> JSONResponse:
@@ -722,6 +759,8 @@ async def list_provider_calls(
         all_calls = [c for c in all_calls if c.get("status") == status]
     if correlation_id_filter:
         all_calls = [c for c in all_calls if c.get("correlation_id") == correlation_id_filter]
+    if trace_id_filter:
+        all_calls = [c for c in all_calls if c.get("trace_id") == trace_id_filter]
 
     # Sort by started_at descending
     all_calls.sort(key=lambda x: x.get("started_at", ""), reverse=True)
@@ -731,6 +770,7 @@ async def list_provider_calls(
         {
             "call_id": c.get("call_id", ""),
             "correlation_id": c.get("correlation_id", ""),
+            "trace_id": c.get("trace_id", ""),
             "provider": c.get("provider", ""),
             "action": c.get("action", ""),
             "status": c.get("status", ""),
@@ -904,6 +944,446 @@ async def list_rollouts(
         content={
             "items": page_items,
             "page": page_info,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# 7A. GET /admin/ops/providers — Provider Connectivity Snapshot
+# =============================================================================
+
+
+@router.get("/admin/ops/providers")
+async def list_providers(
+    request: Request,
+    provider: str | None = Query(None, description="Filter by provider name"),
+    status: str | None = Query(None, description="Filter by status: connected|degraded|disconnected"),
+) -> JSONResponse:
+    """Return provider connectivity + recent reliability signals for admin portal."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.providers.list",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    known_providers: list[dict[str, Any]] = [
+        {"provider": "openai", "lane": "ai"},
+        {"provider": "elevenlabs", "lane": "ai"},
+        {"provider": "stripe", "lane": "payments"},
+        {"provider": "plaid", "lane": "banking"},
+        {"provider": "twilio", "lane": "telephony"},
+        {"provider": "supabase", "lane": "storage"},
+        {"provider": "railway", "lane": "infrastructure"},
+        {"provider": "n8n", "lane": "automation"},
+    ]
+
+    now = datetime.now(timezone.utc)
+    since_iso = (now - timedelta(hours=24)).isoformat()
+
+    provider_rows: list[dict[str, Any]] = []
+    call_rows: list[dict[str, Any]] = []
+    webhook_rows: list[dict[str, Any]] = []
+    db_errors: list[str] = []
+
+    client = _get_supabase_client()
+    if client is not None:
+        try:
+            provider_rows = client.table("finance_connections").select("*").limit(500).execute().data or []
+        except Exception as exc:
+            db_errors.append(f"finance_connections query failed: {exc}")
+        try:
+            call_rows = (
+                client.table("provider_call_log")
+                .select("provider,status,duration_ms,started_at")
+                .gte("started_at", since_iso)
+                .limit(5000)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            db_errors.append(f"provider_call_log query failed: {exc}")
+        try:
+            webhook_rows = (
+                client.table("webhook_deliveries")
+                .select("provider,status,created_at")
+                .gte("created_at", since_iso)
+                .limit(5000)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            # webhook_deliveries may not exist yet; keep non-fatal
+            webhook_rows = []
+
+    stats_by_provider: dict[str, dict[str, float]] = {}
+    for call in call_rows:
+        key = str(call.get("provider") or "").strip().lower()
+        if not key:
+            continue
+        stats = stats_by_provider.setdefault(
+            key, {"total": 0.0, "failures": 0.0, "sum_ms": 0.0, "max_ms": 0.0}
+        )
+        stats["total"] += 1
+        call_status = str(call.get("status") or "").strip().lower()
+        if call_status not in {"success", "ok", "completed"}:
+            stats["failures"] += 1
+        duration_ms = float(call.get("duration_ms") or 0)
+        stats["sum_ms"] += duration_ms
+        stats["max_ms"] = max(stats["max_ms"], duration_ms)
+
+    webhook_by_provider: dict[str, dict[str, float]] = {}
+    for wb in webhook_rows:
+        key = str(wb.get("provider") or "").strip().lower()
+        if not key:
+            continue
+        stats = webhook_by_provider.setdefault(key, {"total": 0.0, "failed": 0.0})
+        stats["total"] += 1
+        wb_status = str(wb.get("status") or "").strip().lower()
+        if wb_status in {"failed", "error", "timeout"}:
+            stats["failed"] += 1
+
+    items_map: dict[str, dict[str, Any]] = {}
+    for row in provider_rows:
+        key = str(row.get("provider") or row.get("provider_name") or "").strip().lower()
+        if not key:
+            continue
+        conn_status = str(
+            row.get("connection_status") or row.get("status") or row.get("state") or "connected"
+        ).strip().lower()
+        connected = conn_status in {"connected", "active", "healthy", "ok"}
+        items_map[key] = {
+            "provider": key,
+            "lane": row.get("provider_type") or "unknown",
+            "status": "connected" if connected else "disconnected",
+            "connection_status": conn_status,
+            "scopes": row.get("scopes") or [],
+            "last_checked": row.get("last_webhook_at") or row.get("updated_at") or row.get("created_at"),
+            "latency_ms": 0,
+            "p95_latency_ms": 0,
+            "error_rate": 0.0,
+            "webhook_error_rate": 0.0,
+        }
+
+    for provider_meta in known_providers:
+        key = provider_meta["provider"]
+        items_map.setdefault(
+            key,
+            {
+                "provider": key,
+                "lane": provider_meta["lane"],
+                "status": "disconnected",
+                "connection_status": "unknown",
+                "scopes": [],
+                "last_checked": None,
+                "latency_ms": 0,
+                "p95_latency_ms": 0,
+                "error_rate": 0.0,
+                "webhook_error_rate": 0.0,
+            },
+        )
+
+    for key, item in items_map.items():
+        call_stats = stats_by_provider.get(key)
+        if call_stats and call_stats["total"] > 0:
+            error_rate = round((call_stats["failures"] / call_stats["total"]) * 100, 2)
+            latency = int(call_stats["sum_ms"] / call_stats["total"])
+            item["latency_ms"] = latency
+            item["p95_latency_ms"] = int(call_stats["max_ms"])
+            item["error_rate"] = error_rate
+            if item["status"] == "connected" and (error_rate >= 5.0 or latency >= 2000):
+                item["status"] = "degraded"
+        wb_stats = webhook_by_provider.get(key)
+        if wb_stats and wb_stats["total"] > 0:
+            item["webhook_error_rate"] = round((wb_stats["failed"] / wb_stats["total"]) * 100, 2)
+
+    items = list(items_map.values())
+    if provider:
+        wanted = provider.strip().lower()
+        items = [p for p in items if p.get("provider") == wanted]
+    if status:
+        wanted_status = status.strip().lower()
+        items = [p for p in items if str(p.get("status", "")).lower() == wanted_status]
+
+    items.sort(key=lambda x: str(x.get("provider", "")))
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.providers.list",
+        outcome="success",
+        details={"count": len(items)},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "items": items,
+            "count": len(items),
+            "source": "supabase" if client is not None else "in_memory",
+            "warnings": db_errors,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# 7B. GET /admin/ops/webhooks — Webhook Delivery Health
+# =============================================================================
+
+
+@router.get("/admin/ops/webhooks")
+async def list_webhooks(
+    request: Request,
+    provider: str | None = Query(None, description="Filter by provider"),
+    status: str | None = Query(None, description="Filter by status"),
+    limit: int = Query(100, ge=1, le=500),
+) -> JSONResponse:
+    """Return recent webhook deliveries and delivery failure signals."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.webhooks.list",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    items: list[dict[str, Any]] = []
+    source = "in_memory"
+    warnings: list[str] = []
+    client = _get_supabase_client()
+    if client is not None:
+        try:
+            query = client.table("webhook_deliveries").select("*").order("created_at", desc=True).limit(limit)
+            if provider:
+                query = query.eq("provider", provider)
+            if status:
+                query = query.eq("status", status)
+            rows = query.execute().data or []
+            source = "supabase:webhook_deliveries"
+            items = [
+                {
+                    "webhook_id": r.get("id") or r.get("delivery_id") or r.get("event_id"),
+                    "provider": r.get("provider", ""),
+                    "event_type": r.get("event_type") or r.get("topic") or "unknown",
+                    "status": r.get("status", "unknown"),
+                    "http_status": r.get("http_status"),
+                    "attempt": r.get("attempt") or r.get("attempt_count") or 1,
+                    "latency_ms": r.get("latency_ms") or r.get("duration_ms") or 0,
+                    "delivered_at": r.get("delivered_at") or r.get("created_at"),
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            warnings.append(f"webhook_deliveries query failed: {exc}")
+
+    if not items and client is not None:
+        try:
+            # Fallback: infer webhook status from provider call logs
+            query = (
+                client.table("provider_call_log")
+                .select("call_id,provider,action,status,http_status,retry_count,duration_ms,started_at")
+                .ilike("action", "%webhook%")
+                .order("started_at", desc=True)
+                .limit(limit)
+            )
+            if provider:
+                query = query.eq("provider", provider)
+            if status:
+                query = query.eq("status", status)
+            rows = query.execute().data or []
+            source = "supabase:provider_call_log"
+            items = [
+                {
+                    "webhook_id": r.get("call_id"),
+                    "provider": r.get("provider", ""),
+                    "event_type": r.get("action", "webhook"),
+                    "status": r.get("status", "unknown"),
+                    "http_status": r.get("http_status"),
+                    "attempt": (r.get("retry_count") or 0) + 1,
+                    "latency_ms": r.get("duration_ms") or 0,
+                    "delivered_at": r.get("started_at"),
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            warnings.append(f"provider_call_log webhook fallback failed: {exc}")
+
+    total = len(items)
+    failed = sum(
+        1
+        for i in items
+        if str(i.get("status", "")).strip().lower() in {"failed", "error", "timeout"}
+    )
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.webhooks.list",
+        outcome="success",
+        details={"count": total, "failed": failed},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "items": items,
+            "count": total,
+            "summary": {
+                "total": total,
+                "failed": failed,
+                "success_rate": 0.0 if total == 0 else round(((total - failed) / total) * 100, 2),
+            },
+            "source": source,
+            "warnings": warnings,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# 7C. GET/PUT /admin/ops/model-policy — Builder Model Routing Policy
+# =============================================================================
+
+
+@router.get("/admin/ops/model-policy")
+async def get_model_policy(request: Request) -> JSONResponse:
+    """Get current builder model policy used by admin/control-plane."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.model_policy.get",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.model_policy.get",
+        outcome="success",
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "policy": dict(_builder_model_policy),
+            "allowed_models": [
+                "codex-5.2",
+                "gpt-5.2",
+                "gpt-5",
+                "gpt-5-mini",
+                "claude-opus-4.6",
+            ],
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.put("/admin/ops/model-policy")
+async def update_model_policy(request: Request) -> JSONResponse:
+    """Update builder model policy (admin-governed, receipted)."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.model_policy.update",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="Invalid JSON body",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    primary = str(body.get("builder_primary_model") or "").strip()
+    fallback = str(body.get("builder_fallback_model") or "").strip()
+    reasoning = str(body.get("reasoning_model") or "").strip()
+    if not primary or not fallback or not reasoning:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="builder_primary_model, builder_fallback_model, and reasoning_model are required",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    with _store_lock:
+        _builder_model_policy["builder_primary_model"] = primary
+        _builder_model_policy["builder_fallback_model"] = fallback
+        _builder_model_policy["reasoning_model"] = reasoning
+        _builder_model_policy["updated_at"] = _now_iso()
+        _builder_model_policy["updated_by"] = actor_id
+
+    # Persist to process env for runtime consumers
+    os.environ["ASPIRE_BUILDER_PRIMARY_MODEL"] = primary
+    os.environ["ASPIRE_BUILDER_FALLBACK_MODEL"] = fallback
+    os.environ["ASPIRE_BUILDER_REASONING_MODEL"] = reasoning
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.model_policy.update",
+        outcome="success",
+        details={"primary": primary, "fallback": fallback, "reasoning": reasoning},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "policy": dict(_builder_model_policy),
             "server_time": _now_iso(),
         },
     )

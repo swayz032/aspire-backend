@@ -3,10 +3,11 @@
 
 import sys
 import psycopg2
+import os
 from pathlib import Path
 
-# Database URL from Railway
-DATABASE_URL = "postgresql://postgres.qtuehjqlcmfcascqjjhc:Mbaquan1974%21@aws-1-us-east-1.pooler.supabase.com:6543/postgres"
+# Database URL from secure env vars
+DATABASE_URL = os.environ.get("ASPIRE_SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
 
 MIGRATIONS_DIR = Path(__file__).parent.parent.parent / "infrastructure" / "supabase" / "migrations"
 MIGRATIONS = [
@@ -19,6 +20,9 @@ def main():
     print("=" * 70)
     print("APPLYING CONVERSATIONAL INTELLIGENCE MIGRATIONS")
     print("=" * 70)
+    if not DATABASE_URL:
+        print("ERROR: Missing database URL. Set ASPIRE_SUPABASE_DB_URL (preferred) or DATABASE_URL.")
+        return 1
 
     conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = False  # Use transactions
