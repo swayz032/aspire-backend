@@ -48,12 +48,12 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "optional": ["description", "event_type", "duration_minutes", "location", "participants"],
     },
     "polaris.email.send": {
-        "required": ["to", "subject", "body"],
-        "optional": ["cc", "bcc"],
+        "required": ["from_address", "to", "subject", "body_text"],
+        "optional": ["body_html", "cc", "bcc", "reply_to"],
     },
     "polaris.email.draft": {
-        "required": ["to", "subject", "body"],
-        "optional": ["cc", "bcc"],
+        "required": ["from_address", "to", "subject", "body_text"],
+        "optional": ["body_html", "cc", "bcc", "reply_to"],
     },
     "polaris.email.read": {
         "required": [],
