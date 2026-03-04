@@ -37,6 +37,8 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from aspire_orchestrator.services.receipt_store import query_receipts, store_receipts
+from aspire_orchestrator.services.outbox_client import get_outbox_client
+from aspire_orchestrator.services.a2a_service import get_a2a_service
 
 logger = logging.getLogger(__name__)
 
@@ -944,6 +946,106 @@ async def list_rollouts(
         content={
             "items": page_items,
             "page": page_info,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/readiness-contract")
+async def readiness_contract(request: Request) -> JSONResponse:
+    """Expose runtime backend contract for enterprise operations checks."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    aspire_env = (os.environ.get("ASPIRE_ENV") or "").strip().lower() or "development"
+    redis_url = (os.environ.get("ASPIRE_REDIS_URL") or os.environ.get("REDIS_URL") or "").strip()
+    rate_limiter_backend = "redis" if redis_url else "memory"
+    outbox_backend = get_outbox_client().backend
+    a2a_backend = get_a2a_service().backend
+    checkpointer_backend = (os.environ.get("ASPIRE_LANGGRAPH_CHECKPOINTER") or "memory").strip().lower()
+
+    replica_safe = (
+        rate_limiter_backend == "redis"
+        and outbox_backend == "supabase"
+        and a2a_backend == "supabase"
+        and checkpointer_backend == "postgres"
+    )
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.readiness_contract.get",
+        outcome="success",
+        details={
+            "replica_safe": replica_safe,
+            "rate_limiter_backend": rate_limiter_backend,
+            "outbox_backend": outbox_backend,
+            "a2a_backend": a2a_backend,
+            "checkpointer_backend": checkpointer_backend,
+        },
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "environment": aspire_env,
+            "replica_safe": replica_safe,
+            "rate_limiter_backend": rate_limiter_backend,
+            "outbox_backend": outbox_backend,
+            "a2a_backend": a2a_backend,
+            "checkpointer_backend": checkpointer_backend,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/voice/config")
+async def voice_config(request: Request) -> JSONResponse:
+    """Return effective voice configuration for Admin Ops Desk."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    has_key = bool((os.environ.get("ASPIRE_ELEVENLABS_API_KEY") or os.environ.get("ELEVENLABS_API_KEY") or "").strip())
+    voices = {
+        "ava": os.environ.get("ASPIRE_AVA_VOICE_ID") or os.environ.get("AVA_VOICE_ID") or "",
+        "finn": os.environ.get("ASPIRE_FINN_VOICE_ID") or os.environ.get("FINN_VOICE_ID") or "",
+        "nora": os.environ.get("ASPIRE_NORA_VOICE_ID") or os.environ.get("NORA_VOICE_ID") or "",
+        "eli": os.environ.get("ASPIRE_ELI_VOICE_ID") or os.environ.get("ELI_VOICE_ID") or "",
+    }
+    configured_agents = sorted([agent for agent, voice_id in voices.items() if isinstance(voice_id, str) and voice_id.strip()])
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.voice.config.get",
+        outcome="success",
+        details={"has_elevenlabs_key": has_key, "configured_agents": configured_agents},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "provider": "elevenlabs",
+            "configured": has_key and len(configured_agents) > 0,
+            "has_api_key": has_key,
+            "configured_agents": configured_agents,
+            "voices": voices,
             "server_time": _now_iso(),
         },
     )

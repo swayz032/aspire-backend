@@ -14,6 +14,7 @@ Law compliance:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict
 from typing import Any
@@ -36,6 +37,31 @@ _EXEMPT_PATHS = frozenset({
     "/metrics",
     "/admin/ops/health",
 })
+
+
+class _RedisWindow:
+    """Redis-backed rate limit counter for multi-replica deployments."""
+
+    def __init__(self, redis_url: str) -> None:
+        try:
+            import redis  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency in some envs
+            raise RuntimeError("redis dependency unavailable") from exc
+
+        self._client = redis.from_url(redis_url, decode_responses=True, socket_timeout=1.5)
+
+    def check_and_record(self, key: str, limit: int, window_s: float) -> tuple[bool, int]:
+        bucket = int(time.time() // window_s)
+        redis_key = f"aspire:ratelimit:{key}:{bucket}"
+        try:
+            count = int(self._client.incr(redis_key))
+            if count == 1:
+                self._client.expire(redis_key, int(window_s) + 2)
+            allowed = count <= limit
+            remaining = max(0, limit - count)
+            return allowed, remaining
+        except Exception as exc:
+            raise RuntimeError(f"redis rate limiter unavailable: {exc}") from exc
 
 
 class _SlidingWindow:
@@ -100,6 +126,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.limit = limit
         self.window_seconds = window_seconds
+        self.backend = "memory"
+        self._redis: _RedisWindow | None = None
+
+        redis_url = (os.environ.get("ASPIRE_REDIS_URL") or os.environ.get("REDIS_URL") or "").strip()
+        if redis_url:
+            try:
+                self._redis = _RedisWindow(redis_url)
+                self.backend = "redis"
+                logger.info("RateLimitMiddleware using redis backend")
+            except Exception as exc:
+                logger.warning("RateLimitMiddleware redis init failed, falling back to memory: %s", exc)
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
         global _last_cleanup
@@ -116,9 +153,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             client_ip = request.client.host if request.client else "unknown"
             key = f"ip:{client_ip}"
 
-        allowed, remaining = _window.check_and_record(
-            key, self.limit, self.window_seconds
-        )
+        if self._redis is not None:
+            try:
+                allowed, remaining = self._redis.check_and_record(
+                    key, self.limit, self.window_seconds
+                )
+            except Exception as exc:
+                logger.warning("RateLimit redis backend failed, falling back to memory: %s", exc)
+                self._redis = None
+                self.backend = "memory"
+                allowed, remaining = _window.check_and_record(
+                    key, self.limit, self.window_seconds
+                )
+        else:
+            allowed, remaining = _window.check_and_record(
+                key, self.limit, self.window_seconds
+            )
 
         # Periodic cleanup (every 60s)
         now = time.monotonic()

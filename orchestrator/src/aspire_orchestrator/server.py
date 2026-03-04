@@ -77,6 +77,7 @@ from aspire_orchestrator.services.receipt_store import query_receipts, get_chain
 from aspire_orchestrator.services.receipt_chain import verify_chain
 from aspire_orchestrator.services.registry import get_registry
 from aspire_orchestrator.services.a2a_service import get_a2a_service, A2ATaskStatus
+from aspire_orchestrator.services.outbox_client import get_outbox_client
 from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.openai_client import (
     get_model_probe_status,
@@ -211,6 +212,22 @@ if os.getenv("ASPIRE_ENV", "").strip().lower() == "production":
         if bad_profiles:
             logger.error("Startup model probe unresolved profiles: %s", ", ".join(bad_profiles))
             raise SystemExit(1)
+
+    # Enterprise hard gates: production cannot run mutable state backends in-memory.
+    redis_url = (os.getenv("ASPIRE_REDIS_URL") or os.getenv("REDIS_URL") or "").strip()
+    if not redis_url:
+        logger.error("Production requires ASPIRE_REDIS_URL/REDIS_URL for shared rate limiting.")
+        raise SystemExit(1)
+
+    outbox_backend = get_outbox_client().backend
+    if outbox_backend != "supabase":
+        logger.error("Production requires durable outbox backend=supabase, found=%s", outbox_backend)
+        raise SystemExit(1)
+
+    a2a_backend = get_a2a_service().backend
+    if a2a_backend != "supabase":
+        logger.error("Production requires durable a2a backend=supabase, found=%s", a2a_backend)
+        raise SystemExit(1)
 
 
 # =============================================================================

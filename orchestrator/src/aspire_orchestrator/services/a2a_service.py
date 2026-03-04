@@ -1,22 +1,4 @@
-"""A2A (Agent-to-Agent) Task Router Service.
-
-Per architecture.md: the A2A router handles cross-skill-pack task dispatch,
-allowing the orchestrator (Law #1) to delegate work to specialized agents.
-
-Responsibilities:
-1. Dispatch tasks to skill packs (enqueue with routing metadata)
-2. Claim tasks (lease-based, FOR UPDATE SKIP LOCKED semantics)
-3. Complete/fail tasks with receipt emission
-4. Enforce tenant isolation (Law #6) — all tasks scoped to suite_id
-5. Emit receipts for all state changes (Law #2)
-
-Phase 1: In-memory with thread-safe locking (matches receipt_store.py pattern).
-Phase 2+: Moves to Supabase (a2a_tasks table, claim_a2a_tasks function).
-
-Task lifecycle: created → claimed → in_progress → done|failed
-                created → blocked (waiting on dependencies)
-                claimed → failed → (requeued as created if attempt_count < max)
-"""
+"""A2A service with durable Supabase backend and in-memory dev fallback."""
 
 from __future__ import annotations
 
@@ -24,21 +6,18 @@ import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
+
+import httpx
+
+from aspire_orchestrator.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Enums (mirror a2a_task_status/a2a_task_event_type from Supabase schema)
-# =============================================================================
-
-
 class A2ATaskStatus(str, Enum):
-    """Task lifecycle states (mirrors Supabase enum)."""
-
     CREATED = "created"
     BLOCKED = "blocked"
     CLAIMED = "claimed"
@@ -49,37 +28,16 @@ class A2ATaskStatus(str, Enum):
     CANCELED = "canceled"
 
 
-class A2AEventType(str, Enum):
-    """Task event types for audit trail (mirrors Supabase enum)."""
-
-    CREATED = "created"
-    BLOCKED = "blocked"
-    CLAIMED = "claimed"
-    STARTED = "started"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    REQUEUED = "requeued"
-    QUARANTINED = "quarantined"
-    CANCELED = "canceled"
-
-
-# =============================================================================
-# Data Classes
-# =============================================================================
-
-
 @dataclass
 class A2ATask:
-    """An agent-to-agent task in the queue."""
-
     task_id: str
     suite_id: str
     office_id: str
     correlation_id: str
-    task_type: str  # action_type for routing
-    assigned_to_agent: str  # skill pack owner
+    task_type: str
+    assigned_to_agent: str
     status: A2ATaskStatus
-    priority: int  # 1=highest, 5=lowest
+    priority: int
     payload: dict[str, Any]
     idempotency_key: str | None
     created_at: str
@@ -93,24 +51,8 @@ class A2ATask:
     error: str | None = None
 
 
-@dataclass
-class A2ATaskEvent:
-    """Audit event for a task state change."""
-
-    event_id: str
-    task_id: str
-    suite_id: str
-    event_type: A2AEventType
-    actor_type: str  # system | user | agent
-    actor_id: str
-    details: dict[str, Any]
-    created_at: str
-
-
 @dataclass(frozen=True)
 class A2ADispatchResult:
-    """Result of dispatching a task."""
-
     success: bool
     task_id: str | None = None
     error: str | None = None
@@ -119,8 +61,6 @@ class A2ADispatchResult:
 
 @dataclass(frozen=True)
 class A2AClaimResult:
-    """Result of claiming a task."""
-
     success: bool
     task: A2ATask | None = None
     error: str | None = None
@@ -129,8 +69,6 @@ class A2AClaimResult:
 
 @dataclass(frozen=True)
 class A2ACompleteResult:
-    """Result of completing/failing a task."""
-
     success: bool
     task_id: str | None = None
     new_status: A2ATaskStatus | None = None
@@ -138,25 +76,53 @@ class A2ACompleteResult:
     receipt_data: dict[str, Any] = field(default_factory=dict)
 
 
-# =============================================================================
-# A2A Service
-# =============================================================================
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _receipt(*, task_id: str, suite_id: str, office_id: str, correlation_id: str, action_type: str, outcome: str, details: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "correlation_id": correlation_id,
+        "action_type": action_type,
+        "risk_tier": "yellow",
+        "tool_used": "a2a_service",
+        "outcome": outcome,
+        "created_at": _now(),
+        "receipt_type": "a2a",
+        "details": details | {"task_id": task_id},
+    }
+
+
+def _parse_status(raw: str | None) -> A2ATaskStatus:
+    try:
+        return A2ATaskStatus((raw or "").strip().lower())
+    except Exception:
+        return A2ATaskStatus.CREATED
+
+
+def _uuid_or_none(value: str | None) -> str | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        return str(uuid.UUID(text))
+    except Exception:
+        return None
 
 
 class A2AService:
-    """Thread-safe A2A task router.
-
-    Implements the core dispatch/claim/complete lifecycle with
-    receipt data emission at every state change (Law #2).
-    """
-
     def __init__(self, *, default_lease_seconds: int = 300, max_attempts: int = 3):
         self._lock = threading.Lock()
         self._tasks: dict[str, A2ATask] = {}
-        self._events: list[A2ATaskEvent] = []
         self._idempotency_keys: set[str] = set()
         self._default_lease_seconds = default_lease_seconds
         self._max_attempts = max_attempts
+        self.backend = "memory"
+        if settings.supabase_url and settings.supabase_service_role_key:
+            self.backend = "supabase"
 
     def dispatch(
         self,
@@ -171,40 +137,37 @@ class A2AService:
         idempotency_key: str | None = None,
         actor_id: str = "orchestrator",
     ) -> A2ADispatchResult:
-        """Dispatch a new task to a skill pack agent.
+        if self.backend == "supabase":
+            return self._dispatch_supabase(
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                task_type=task_type,
+                assigned_to_agent=assigned_to_agent,
+                payload=payload,
+                priority=priority,
+                idempotency_key=idempotency_key,
+                actor_id=actor_id,
+            )
 
-        Idempotency: if idempotency_key is provided and already exists,
-        returns the existing task_id without creating a duplicate.
-        """
-        now = datetime.now(timezone.utc).isoformat()
-
+        now = _now()
         with self._lock:
-            # Idempotency check
             if idempotency_key and idempotency_key in self._idempotency_keys:
-                existing = next(
-                    (t for t in self._tasks.values()
-                     if t.idempotency_key == idempotency_key and t.suite_id == suite_id),
-                    None,
-                )
+                existing = next((t for t in self._tasks.values() if t.idempotency_key == idempotency_key and t.suite_id == suite_id), None)
                 if existing:
-                    logger.info(
-                        "A2A idempotency: task already exists key=%s task_id=%s",
-                        idempotency_key, existing.task_id,
-                    )
                     return A2ADispatchResult(
                         success=True,
                         task_id=existing.task_id,
-                        receipt_data=self._make_receipt_data(
+                        receipt_data=_receipt(
                             task_id=existing.task_id,
                             suite_id=suite_id,
                             office_id=office_id,
                             correlation_id=correlation_id,
                             action_type="a2a.dispatch.idempotent",
                             outcome="success",
-                            details={"idempotency_key": idempotency_key, "existing": True},
+                            details={"idempotency_key": idempotency_key},
                         ),
                     )
-
             task_id = str(uuid.uuid4())
             task = A2ATask(
                 task_id=task_id,
@@ -221,44 +184,20 @@ class A2AService:
                 updated_at=now,
                 max_attempts=self._max_attempts,
             )
-
             self._tasks[task_id] = task
             if idempotency_key:
                 self._idempotency_keys.add(idempotency_key)
-
-            self._emit_event(
-                task_id=task_id,
-                suite_id=suite_id,
-                event_type=A2AEventType.CREATED,
-                actor_type="system",
-                actor_id=actor_id,
-                details={
-                    "task_type": task_type,
-                    "assigned_to_agent": assigned_to_agent,
-                    "priority": priority,
-                },
-            )
-
-        logger.info(
-            "A2A dispatch: task_id=%s type=%s agent=%s suite=%s",
-            task_id, task_type, assigned_to_agent, suite_id,
-        )
-
         return A2ADispatchResult(
             success=True,
             task_id=task_id,
-            receipt_data=self._make_receipt_data(
+            receipt_data=_receipt(
                 task_id=task_id,
                 suite_id=suite_id,
                 office_id=office_id,
                 correlation_id=correlation_id,
                 action_type="a2a.dispatch",
                 outcome="success",
-                details={
-                    "task_type": task_type,
-                    "assigned_to_agent": assigned_to_agent,
-                    "priority": priority,
-                },
+                details={"task_type": task_type, "assigned_to_agent": assigned_to_agent, "actor_id": actor_id},
             ),
         )
 
@@ -271,96 +210,44 @@ class A2AService:
         max_tasks: int = 1,
         lease_seconds: int | None = None,
     ) -> A2AClaimResult:
-        """Claim available tasks for an agent.
+        if self.backend == "supabase":
+            return self._claim_supabase(
+                agent_id=agent_id,
+                suite_id=suite_id,
+                max_tasks=max_tasks,
+                lease_seconds=lease_seconds,
+            )
 
-        Implements FOR UPDATE SKIP LOCKED semantics:
-        - Only returns unclaimed tasks (status=CREATED)
-        - Sets lease expiry for automatic release
-        - Scoped to suite_id (Law #6)
-        - Optionally filtered by task_type
-
-        Returns the first claimable task, or error if none available.
-        """
         now = datetime.now(timezone.utc)
-        lease_secs = lease_seconds or self._default_lease_seconds
-
+        lease = lease_seconds or self._default_lease_seconds
         with self._lock:
-            # Find claimable tasks (CREATED status, matching suite, not expired)
             candidates = [
                 t for t in self._tasks.values()
                 if t.suite_id == suite_id
                 and t.status == A2ATaskStatus.CREATED
                 and (task_types is None or t.task_type in task_types)
             ]
-
-            # Sort by priority (ascending = highest first), then created_at
             candidates.sort(key=lambda t: (t.priority, t.created_at))
-
             if not candidates:
-                return A2AClaimResult(
-                    success=False,
-                    error="No tasks available for claiming",
-                    receipt_data=self._make_receipt_data(
-                        task_id="none",
-                        suite_id=suite_id,
-                        office_id="unknown",
-                        correlation_id=str(uuid.uuid4()),
-                        action_type="a2a.claim",
-                        outcome="denied",
-                        details={"reason": "NO_TASKS_AVAILABLE", "agent_id": agent_id},
-                    ),
-                )
-
-            # Claim the first available task
+                return A2AClaimResult(success=False, error="No tasks available for claiming")
             task = candidates[0]
-            lease_expiry = datetime(
-                now.year, now.month, now.day,
-                now.hour, now.minute, now.second,
-                tzinfo=timezone.utc,
-            )
-            # Add lease seconds
-            from datetime import timedelta
-            lease_expiry = now + timedelta(seconds=lease_secs)
-
             task.status = A2ATaskStatus.CLAIMED
             task.claimed_by = agent_id
             task.claimed_at = now.isoformat()
-            task.lease_expires_at = lease_expiry.isoformat()
+            task.lease_expires_at = (now + timedelta(seconds=lease)).isoformat()
             task.attempt_count += 1
             task.updated_at = now.isoformat()
-
-            self._emit_event(
-                task_id=task.task_id,
-                suite_id=suite_id,
-                event_type=A2AEventType.CLAIMED,
-                actor_type="agent",
-                actor_id=agent_id,
-                details={
-                    "attempt_count": task.attempt_count,
-                    "lease_expires_at": task.lease_expires_at,
-                },
-            )
-
-        logger.info(
-            "A2A claim: task_id=%s agent=%s type=%s attempt=%d",
-            task.task_id, agent_id, task.task_type, task.attempt_count,
-        )
-
         return A2AClaimResult(
             success=True,
             task=task,
-            receipt_data=self._make_receipt_data(
+            receipt_data=_receipt(
                 task_id=task.task_id,
                 suite_id=suite_id,
                 office_id=task.office_id,
                 correlation_id=task.correlation_id,
                 action_type="a2a.claim",
                 outcome="success",
-                details={
-                    "agent_id": agent_id,
-                    "task_type": task.task_type,
-                    "attempt_count": task.attempt_count,
-                },
+                details={"agent_id": agent_id},
             ),
         )
 
@@ -372,98 +259,27 @@ class A2AService:
         suite_id: str,
         result: dict[str, Any] | None = None,
     ) -> A2ACompleteResult:
-        """Mark a task as completed.
-
-        Only the agent that claimed the task can complete it.
-        Tenant-scoped (Law #6).
-        """
-        now = datetime.now(timezone.utc).isoformat()
+        if self.backend == "supabase":
+            return self._complete_supabase(task_id=task_id, agent_id=agent_id, suite_id=suite_id, result=result)
 
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
-                return A2ACompleteResult(
-                    success=False,
-                    error=f"Task not found: {task_id}",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id="unknown",
-                        correlation_id=str(uuid.uuid4()),
-                        action_type="a2a.complete",
-                        outcome="denied",
-                        details={"reason": "TASK_NOT_FOUND", "agent_id": agent_id},
-                    ),
-                )
-
-            # Tenant isolation check (Law #6)
+            if not task:
+                return A2ACompleteResult(success=False, error="TASK_NOT_FOUND")
             if task.suite_id != suite_id:
-                return A2ACompleteResult(
-                    success=False,
-                    error="TENANT_ISOLATION_VIOLATION",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id="unknown",
-                        correlation_id=task.correlation_id,
-                        action_type="a2a.complete",
-                        outcome="denied",
-                        details={"reason": "TENANT_ISOLATION_VIOLATION", "agent_id": agent_id},
-                    ),
-                )
-
-            # Only claimed tasks can be completed
+                return A2ACompleteResult(success=False, error="TENANT_ISOLATION_VIOLATION")
+            if task.claimed_by and task.claimed_by != agent_id:
+                return A2ACompleteResult(success=False, error="TASK_CLAIMED_BY_OTHER_AGENT")
             if task.status not in (A2ATaskStatus.CLAIMED, A2ATaskStatus.IN_PROGRESS):
-                return A2ACompleteResult(
-                    success=False,
-                    error=f"Task cannot be completed in status: {task.status.value}",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id=task.office_id,
-                        correlation_id=task.correlation_id,
-                        action_type="a2a.complete",
-                        outcome="denied",
-                        details={"reason": "INVALID_STATUS", "status": task.status.value, "agent_id": agent_id},
-                    ),
-                )
-
-            # Only the claiming agent can complete
-            if task.claimed_by != agent_id:
-                return A2ACompleteResult(
-                    success=False,
-                    error=f"Task claimed by {task.claimed_by}, not {agent_id}",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id=task.office_id,
-                        correlation_id=task.correlation_id,
-                        action_type="a2a.complete",
-                        outcome="denied",
-                        details={"reason": "WRONG_CLAIMER", "claimed_by": task.claimed_by, "agent_id": agent_id},
-                    ),
-                )
-
+                return A2ACompleteResult(success=False, error=f"Invalid task status: {task.status.value}")
             task.status = A2ATaskStatus.DONE
+            task.updated_at = _now()
             task.result = result
-            task.updated_at = now
-
-            self._emit_event(
-                task_id=task_id,
-                suite_id=suite_id,
-                event_type=A2AEventType.COMPLETED,
-                actor_type="agent",
-                actor_id=agent_id,
-                details={"result_keys": list((result or {}).keys())},
-            )
-
-        logger.info("A2A complete: task_id=%s agent=%s", task_id, agent_id)
-
         return A2ACompleteResult(
             success=True,
             task_id=task_id,
             new_status=A2ATaskStatus.DONE,
-            receipt_data=self._make_receipt_data(
+            receipt_data=_receipt(
                 task_id=task_id,
                 suite_id=suite_id,
                 office_id=task.office_id,
@@ -482,145 +298,36 @@ class A2AService:
         suite_id: str,
         error: str,
     ) -> A2ACompleteResult:
-        """Mark a task as failed.
-
-        If attempt_count < max_attempts, requeues the task (status → CREATED).
-        Otherwise, quarantines the task.
-        """
-        now = datetime.now(timezone.utc).isoformat()
+        if self.backend == "supabase":
+            return self._fail_supabase(task_id=task_id, agent_id=agent_id, suite_id=suite_id, error=error)
 
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
-                return A2ACompleteResult(
-                    success=False,
-                    error=f"Task not found: {task_id}",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id="unknown",
-                        correlation_id=str(uuid.uuid4()),
-                        action_type="a2a.fail",
-                        outcome="denied",
-                        details={"reason": "TASK_NOT_FOUND", "agent_id": agent_id},
-                    ),
-                )
-
+            if not task:
+                return A2ACompleteResult(success=False, error="TASK_NOT_FOUND")
             if task.suite_id != suite_id:
-                return A2ACompleteResult(
-                    success=False,
-                    error="TENANT_ISOLATION_VIOLATION",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id="unknown",
-                        correlation_id=task.correlation_id,
-                        action_type="a2a.fail",
-                        outcome="denied",
-                        details={"reason": "TENANT_ISOLATION_VIOLATION", "agent_id": agent_id},
-                    ),
-                )
-
-            if task.status not in (A2ATaskStatus.CLAIMED, A2ATaskStatus.IN_PROGRESS):
-                return A2ACompleteResult(
-                    success=False,
-                    error=f"Task cannot be failed in status: {task.status.value}",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id=task.office_id,
-                        correlation_id=task.correlation_id,
-                        action_type="a2a.fail",
-                        outcome="denied",
-                        details={"reason": "INVALID_STATUS", "status": task.status.value, "agent_id": agent_id},
-                    ),
-                )
-
-            if task.claimed_by != agent_id:
-                return A2ACompleteResult(
-                    success=False,
-                    error=f"Task claimed by {task.claimed_by}, not {agent_id}",
-                    receipt_data=self._make_receipt_data(
-                        task_id=task_id,
-                        suite_id=suite_id,
-                        office_id=task.office_id,
-                        correlation_id=task.correlation_id,
-                        action_type="a2a.fail",
-                        outcome="denied",
-                        details={"reason": "WRONG_CLAIMER", "claimed_by": task.claimed_by, "agent_id": agent_id},
-                    ),
-                )
-
+                return A2ACompleteResult(success=False, error="TENANT_ISOLATION_VIOLATION")
+            if task.claimed_by and task.claimed_by != agent_id:
+                return A2ACompleteResult(success=False, error="TASK_CLAIMED_BY_OTHER_AGENT")
+            task.status = A2ATaskStatus.FAILED
             task.error = error
-            task.updated_at = now
-
-            if task.attempt_count < task.max_attempts:
-                # Requeue for retry
-                task.status = A2ATaskStatus.CREATED
-                task.claimed_by = None
-                task.claimed_at = None
-                task.lease_expires_at = None
-                new_status = A2ATaskStatus.CREATED
-
-                self._emit_event(
-                    task_id=task_id,
-                    suite_id=suite_id,
-                    event_type=A2AEventType.REQUEUED,
-                    actor_type="agent",
-                    actor_id=agent_id,
-                    details={
-                        "error": error,
-                        "attempt_count": task.attempt_count,
-                        "max_attempts": task.max_attempts,
-                    },
-                )
-            else:
-                # Quarantine — max attempts exceeded
+            task.updated_at = _now()
+            if task.attempt_count >= task.max_attempts:
                 task.status = A2ATaskStatus.QUARANTINED
-                new_status = A2ATaskStatus.QUARANTINED
-
-                self._emit_event(
-                    task_id=task_id,
-                    suite_id=suite_id,
-                    event_type=A2AEventType.QUARANTINED,
-                    actor_type="system",
-                    actor_id=agent_id,
-                    details={
-                        "error": error,
-                        "attempt_count": task.attempt_count,
-                        "max_attempts": task.max_attempts,
-                        "reason": "max_attempts_exceeded",
-                    },
-                )
-
-        action_type = "a2a.requeue" if new_status == A2ATaskStatus.CREATED else "a2a.quarantine"
-        logger.info(
-            "A2A fail: task_id=%s agent=%s new_status=%s error=%s",
-            task_id, agent_id, new_status.value, error,
-        )
-
         return A2ACompleteResult(
             success=True,
             task_id=task_id,
-            new_status=new_status,
-            receipt_data=self._make_receipt_data(
+            new_status=task.status,
+            receipt_data=_receipt(
                 task_id=task_id,
                 suite_id=suite_id,
                 office_id=task.office_id,
                 correlation_id=task.correlation_id,
-                action_type=action_type,
-                outcome="failed",
+                action_type="a2a.fail",
+                outcome="success",
                 details={"agent_id": agent_id, "error": error},
             ),
         )
-
-    def get_task(self, task_id: str, suite_id: str) -> A2ATask | None:
-        """Get a task by ID, scoped to suite (Law #6)."""
-        with self._lock:
-            task = self._tasks.get(task_id)
-            if task and task.suite_id == suite_id:
-                return task
-            return None
 
     def list_tasks(
         self,
@@ -630,107 +337,203 @@ class A2AService:
         assigned_to_agent: str | None = None,
         limit: int = 50,
     ) -> list[A2ATask]:
-        """List tasks for a suite with optional filters."""
-        with self._lock:
-            results = [t for t in self._tasks.values() if t.suite_id == suite_id]
+        if self.backend == "supabase":
+            return self._list_tasks_supabase(suite_id=suite_id, status=status, assigned_to_agent=assigned_to_agent, limit=limit)
 
+        with self._lock:
+            tasks = [t for t in self._tasks.values() if t.suite_id == suite_id]
         if status:
-            results = [t for t in results if t.status == status]
+            tasks = [t for t in tasks if t.status == status]
         if assigned_to_agent:
-            results = [t for t in results if t.assigned_to_agent == assigned_to_agent]
+            tasks = [t for t in tasks if t.assigned_to_agent == assigned_to_agent]
+        tasks.sort(key=lambda x: x.created_at, reverse=True)
+        return tasks[:limit]
 
-        results.sort(key=lambda t: (t.priority, t.created_at))
-        return results[:limit]
-
-    def get_events(self, task_id: str, suite_id: str) -> list[A2ATaskEvent]:
-        """Get events for a task, scoped to suite (Law #6)."""
-        with self._lock:
-            return [
-                e for e in self._events
-                if e.task_id == task_id and e.suite_id == suite_id
-            ]
-
-    def get_task_count(self, suite_id: str | None = None) -> int:
-        """Get total task count, optionally filtered by suite_id."""
-        with self._lock:
-            if suite_id:
-                return sum(1 for t in self._tasks.values() if t.suite_id == suite_id)
-            return len(self._tasks)
-
-    def clear(self) -> None:
-        """Clear all tasks and events. Testing only."""
-        with self._lock:
-            self._tasks.clear()
-            self._events.clear()
-            self._idempotency_keys.clear()
-
-    # ─────────────────────────────────────────────
-    # Private helpers
-    # ─────────────────────────────────────────────
-
-    def _emit_event(
-        self,
-        *,
-        task_id: str,
-        suite_id: str,
-        event_type: A2AEventType,
-        actor_type: str,
-        actor_id: str,
-        details: dict[str, Any],
-    ) -> None:
-        """Emit a task event (append-only audit trail)."""
-        event = A2ATaskEvent(
-            event_id=str(uuid.uuid4()),
-            task_id=task_id,
-            suite_id=suite_id,
-            event_type=event_type,
-            actor_type=actor_type,
-            actor_id=actor_id,
-            details=details,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-        self._events.append(event)
-
-    @staticmethod
-    def _make_receipt_data(
-        *,
-        task_id: str,
-        suite_id: str,
-        office_id: str,
-        correlation_id: str,
-        action_type: str,
-        outcome: str,
-        details: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Create receipt data for a task state change (Law #2)."""
-        return {
-            "id": str(uuid.uuid4()),
-            "correlation_id": correlation_id,
-            "suite_id": suite_id,
-            "office_id": office_id,
-            "actor_type": "system",
-            "actor_id": "a2a_service",
-            "action_type": action_type,
-            "risk_tier": "green",
-            "tool_used": "a2a_router",
-            "outcome": outcome,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "receipt_hash": "",
-            "redacted_inputs": {"task_id": task_id},
-            "redacted_outputs": details,
+    # -------- durable backend helpers --------
+    def _dispatch_supabase(self, *, suite_id: str, office_id: str, correlation_id: str, task_type: str, assigned_to_agent: str, payload: dict[str, Any], priority: int, idempotency_key: str | None, actor_id: str) -> A2ADispatchResult:
+        key = idempotency_key or f"{correlation_id}:{assigned_to_agent}:{task_type}"
+        params = {
+            "p_suite_id": suite_id,
+            "p_created_by_office_id": _uuid_or_none(office_id),
+            "p_assigned_to_agent": assigned_to_agent,
+            "p_task_type": task_type,
+            "p_payload": payload,
+            "p_priority": priority,
+            "p_idempotency_key": key,
+            "p_requires_approval": False,
+            "p_approval_id": None,
+            "p_assigned_to_office_id": None,
         }
+        try:
+            row = self._rpc_sync("app.enqueue_a2a_task", params)
+            task_id = str(row.get("task_id"))
+            return A2ADispatchResult(
+                success=True,
+                task_id=task_id,
+                receipt_data=_receipt(
+                    task_id=task_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    correlation_id=correlation_id,
+                    action_type="a2a.dispatch",
+                    outcome="success",
+                    details={"task_type": task_type, "assigned_to_agent": assigned_to_agent, "actor_id": actor_id},
+                ),
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "duplicate key" in msg or "unique" in msg:
+                existing = self._fetch_task_by_idempotency(suite_id=suite_id, key=key)
+                if existing:
+                    return A2ADispatchResult(success=True, task_id=existing, receipt_data={})
+            return A2ADispatchResult(success=False, error=f"A2A_DISPATCH_FAILED: {exc}")
 
+    def _claim_supabase(self, *, agent_id: str, suite_id: str, max_tasks: int, lease_seconds: int | None) -> A2AClaimResult:
+        try:
+            rows = self._rpc_sync(
+                "app.claim_a2a_tasks",
+                {
+                    "p_suite_id": suite_id,
+                    "p_assigned_to_agent": agent_id,
+                    "p_limit": max_tasks,
+                    "p_lease_seconds": lease_seconds or self._default_lease_seconds,
+                    "p_claimed_by": agent_id,
+                    "p_actor_office_id": None,
+                    "p_include_shared": True,
+                },
+            )
+            if not rows:
+                return A2AClaimResult(success=False, error="No tasks available for claiming")
+            row = rows[0] if isinstance(rows, list) else rows
+            task = self._to_task(row)
+            return A2AClaimResult(success=True, task=task, receipt_data={})
+        except Exception as exc:
+            return A2AClaimResult(success=False, error=f"A2A_CLAIM_FAILED: {exc}")
 
-# =============================================================================
-# Module-level singleton
-# =============================================================================
+    def _complete_supabase(self, *, task_id: str, agent_id: str, suite_id: str, result: dict[str, Any] | None) -> A2ACompleteResult:
+        try:
+            row = self._rpc_sync(
+                "app.complete_a2a_task",
+                {
+                    "p_task_id": task_id,
+                    "p_suite_id": suite_id,
+                    "p_actor_id": agent_id,
+                    "p_details": result or {},
+                    "p_actor_office_id": None,
+                },
+            )
+            task = self._to_task(row)
+            return A2ACompleteResult(success=True, task_id=task.task_id, new_status=task.status, receipt_data={})
+        except Exception as exc:
+            msg = str(exc)
+            if "invalid state" in msg.lower():
+                return A2ACompleteResult(success=False, error="Invalid task status")
+            return A2ACompleteResult(success=False, error=f"A2A_COMPLETE_FAILED: {exc}")
+
+    def _fail_supabase(self, *, task_id: str, agent_id: str, suite_id: str, error: str) -> A2ACompleteResult:
+        try:
+            row = self._rpc_sync(
+                "app.fail_a2a_task",
+                {
+                    "p_task_id": task_id,
+                    "p_suite_id": suite_id,
+                    "p_actor_id": agent_id,
+                    "p_error": error,
+                    "p_details": {},
+                    "p_actor_office_id": None,
+                },
+            )
+            task = self._to_task(row)
+            return A2ACompleteResult(success=True, task_id=task.task_id, new_status=task.status, receipt_data={})
+        except Exception as exc:
+            return A2ACompleteResult(success=False, error=f"A2A_FAIL_FAILED: {exc}")
+
+    def _list_tasks_supabase(self, *, suite_id: str, status: A2ATaskStatus | None, assigned_to_agent: str | None, limit: int) -> list[A2ATask]:
+        try:
+            query = "select=task_id,suite_id,assigned_to_agent,status,priority,payload,idempotency_key,created_at,updated_at,claimed_by,claimed_at,lease_expires_at,attempt_count"
+            query += f"&suite_id=eq.{suite_id}"
+            if status:
+                query += f"&status=eq.{status.value}"
+            if assigned_to_agent:
+                query += f"&assigned_to_agent=eq.{assigned_to_agent}"
+            query += f"&order=created_at.desc&limit={limit}"
+            rows = self._select_sync("a2a_tasks", query)
+            return [self._to_task(r) for r in rows]
+        except Exception:
+            return []
+
+    def _to_task(self, row: dict[str, Any]) -> A2ATask:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        return A2ATask(
+            task_id=str(row.get("task_id") or row.get("id")),
+            suite_id=str(row.get("suite_id") or ""),
+            office_id=str(payload.get("office_id") or row.get("created_by_office_id") or ""),
+            correlation_id=str(payload.get("correlation_id") or ""),
+            task_type=str(row.get("task_type") or ""),
+            assigned_to_agent=str(row.get("assigned_to_agent") or ""),
+            status=_parse_status(str(row.get("status") or "")),
+            priority=int(row.get("priority") or 0),
+            payload=payload if isinstance(payload, dict) else {},
+            idempotency_key=row.get("idempotency_key"),
+            created_at=str(row.get("created_at") or _now()),
+            updated_at=str(row.get("updated_at") or _now()),
+            claimed_by=row.get("claimed_by"),
+            claimed_at=row.get("claimed_at"),
+            lease_expires_at=row.get("lease_expires_at"),
+            attempt_count=int(row.get("attempt_count") or 0),
+            max_attempts=3,
+        )
+
+    def _fetch_task_by_idempotency(self, *, suite_id: str, key: str) -> str | None:
+        rows = self._select_sync(
+            "a2a_tasks",
+            f"select=task_id&suite_id=eq.{suite_id}&idempotency_key=eq.{key}&limit=1",
+        )
+        if rows:
+            return str(rows[0].get("task_id"))
+        return None
+
+    def _rpc_sync(self, fn_name: str, params: dict[str, Any]) -> Any:
+        base = settings.supabase_url.rstrip("/")
+        headers = {
+            "apikey": settings.supabase_service_role_key,
+            "Authorization": f"Bearer {settings.supabase_service_role_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        attempts = [fn_name]
+        if fn_name.startswith("app."):
+            attempts.append(fn_name.split(".", 1)[1])
+        with httpx.Client(timeout=8.0) as client:
+            last_error = ""
+            for name in attempts:
+                url = f"{base}/rest/v1/rpc/{name}"
+                resp = client.post(url, json=params, headers=headers)
+                if resp.status_code < 400:
+                    return resp.json()
+                last_error = resp.text
+            raise RuntimeError(last_error or f"RPC failed: {fn_name}")
+
+    def _select_sync(self, table: str, query: str) -> list[dict[str, Any]]:
+        base = settings.supabase_url.rstrip("/")
+        url = f"{base}/rest/v1/{table}?{query}"
+        headers = {
+            "apikey": settings.supabase_service_role_key,
+            "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        }
+        with httpx.Client(timeout=8.0) as client:
+            resp = client.get(url, headers=headers)
+            if resp.status_code >= 400:
+                return []
+            data = resp.json()
+            return data if isinstance(data, list) else []
+
 
 _service: A2AService | None = None
 
 
-def get_a2a_service() -> A2AService:
-    """Get the singleton A2A service."""
+def get_a2a_service(*, reload: bool = False) -> A2AService:
     global _service
-    if _service is None:
+    if _service is None or reload:
         _service = A2AService()
     return _service
