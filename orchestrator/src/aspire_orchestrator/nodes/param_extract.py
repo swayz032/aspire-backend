@@ -320,6 +320,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
 
     extracted_params = None
     extraction_error = None
+    email_tweak_request = False
 
     if api_key:
         try:
@@ -391,6 +392,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     if tool_used in ("polaris.email.draft", "polaris.email.send") and isinstance(extracted_params, dict):
         prior_params = state.get("execution_params") if isinstance(state.get("execution_params"), dict) else {}
         tweak_request = is_email_tweak_request(utterance)
+        email_tweak_request = tweak_request
 
         emails = extract_emails(utterance)
         labeled_to = extract_labeled_email(utterance, "recipient") or extract_labeled_email(utterance, "to")
@@ -584,11 +586,22 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     # Fail-closed on missing required fields
     if missing_fields:
         field_list = ", ".join(missing_fields)
+        error_message = f"I need more details to proceed. Please provide: {field_list}"
+        if (
+            tool_used in ("polaris.email.draft", "polaris.email.send")
+            and email_tweak_request
+            and any(f in missing_fields for f in ("to", "from_address"))
+        ):
+            error_message = (
+                "To revise this email, I need the recipient and sender context. "
+                "Please include `Recipient:` and `Sender:` (or paste the current draft headers), "
+                "then I can rewrite it immediately."
+            )
         logger.info("Param extraction missing required fields for %s: %s", tool_used, field_list)
         return {
             "execution_params": None,
             "error_code": "PARAM_EXTRACTION_FAILED",
-            "error_message": f"I need more details to proceed. Please provide: {field_list}",
+            "error_message": error_message,
             "advisor_context": advisor_context,
             "pipeline_receipts": existing_receipts,
             "eli_rag_status": eli_agentic_meta.get("eli_rag_status"),
