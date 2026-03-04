@@ -53,7 +53,7 @@ def _mk_receipt(
 def _build_office_item(
     *,
     recipient_suite_id: str,
-    recipient_office_id: str,
+    recipient_office_id: str | None,
     sender_suite_id: str,
     sender_office_id: str,
     title: str,
@@ -92,6 +92,16 @@ def _build_office_item(
 def _normalize_priority(value: Any) -> str:
     raw = str(value or "NORMAL").strip().upper()
     return raw if raw in {"LOW", "NORMAL", "HIGH", "URGENT"} else "NORMAL"
+
+
+def _normalize_office_id(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    # Common placeholder sent by shorthand clients; do not enforce FK on sentinel.
+    if raw in {"00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000001"}:
+        return None
+    return raw
 
 
 async def execute_office_read(
@@ -183,12 +193,13 @@ async def execute_office_create(
 ) -> ToolExecutionResult:
     tool_id = "internal.office.create"
     recipient_suite_id = str(payload.get("recipient_suite_id", "")).strip()
-    recipient_office_id = str(payload.get("recipient_office_id", "")).strip()
+    recipient_office_id_raw = str(payload.get("recipient_office_id", "")).strip()
+    recipient_office_id = _normalize_office_id(recipient_office_id_raw)
     title = str(payload.get("title", "")).strip()
     body = str(payload.get("body", "")).strip()
     priority = _normalize_priority(payload.get("priority"))
 
-    if not all([recipient_suite_id, recipient_office_id, title, body]):
+    if not all([recipient_suite_id, title, body]):
         receipt = _mk_receipt(
             tool_id=tool_id,
             suite_id=suite_id,
@@ -200,7 +211,7 @@ async def execute_office_create(
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id=tool_id,
-            error="Missing required parameters: recipient_suite_id, recipient_office_id, title, body",
+            error="Missing required parameters: recipient_suite_id, title, body",
             receipt_data=receipt,
         )
 
@@ -258,12 +269,13 @@ async def execute_office_draft(
 ) -> ToolExecutionResult:
     tool_id = "internal.office.draft"
     recipient_suite_id = str(payload.get("recipient_suite_id", "")).strip()
-    recipient_office_id = str(payload.get("recipient_office_id", "")).strip()
+    recipient_office_id_raw = str(payload.get("recipient_office_id", "")).strip()
+    recipient_office_id = _normalize_office_id(recipient_office_id_raw)
     title = str(payload.get("title", "")).strip()
     body = str(payload.get("body", "")).strip()
     priority = _normalize_priority(payload.get("priority"))
 
-    if not all([recipient_suite_id, recipient_office_id, title, body]):
+    if not all([recipient_suite_id, title, body]):
         receipt = _mk_receipt(
             tool_id=tool_id,
             suite_id=suite_id,
@@ -275,7 +287,7 @@ async def execute_office_draft(
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id=tool_id,
-            error="Missing required parameters: recipient_suite_id, recipient_office_id, title, body",
+            error="Missing required parameters: recipient_suite_id, title, body",
             receipt_data=receipt,
         )
 
