@@ -109,5 +109,6 @@ class TestEliEmailParamHelpers:
             utterance="make it warmer and shorter and add we can move quickly once approved",
         )
         assert subject == "Project Timeline Follow-Up"
-        assert "Hey Sarah" in body
+        assert "Hi Sarah" in body
+        assert "Would you mind confirming" in body
         assert "move quickly once approved" in body.lower()

@@ -290,6 +290,57 @@ def naturalize_email_body(body_text: str) -> str:
     return text.strip()
 
 
+def _shorten_email_body(body_text: str) -> str:
+    blocks = [b.strip() for b in re.split(r"\n{2,}", body_text or "") if b.strip()]
+    if len(blocks) <= 4:
+        return body_text
+
+    greeting = blocks[0]
+    signoff_block = blocks[-1] if any(s in blocks[-1].lower() for s in ("best,", "thanks,", "regards,", "sincerely,")) else ""
+    content_blocks = blocks[1:-1] if signoff_block else blocks[1:]
+
+    if not content_blocks:
+        return body_text
+
+    kept = content_blocks[:2]
+    rebuilt = [greeting, *kept]
+    if signoff_block:
+        rebuilt.append(signoff_block)
+    return "\n\n".join(rebuilt).strip()
+
+
+def _humanize_email_body(body_text: str) -> str:
+    text = body_text or ""
+    replacements = (
+        ("I wanted to share a quick update:", "Quick update:"),
+        ("Please let me know your confirmation.", "Let me know what works for you."),
+        ("Please let me know what works best on your side.", "Let me know what works best for you."),
+        ("Following up on your request, please find", "Thanks for the request. Here is"),
+        ("Could you confirm", "Would you mind confirming"),
+        ("Please confirm", "Could you confirm"),
+        ("Once approved, I will issue", "Once you approve, I will send"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+
+    # Keep professional tone but avoid stiff robotic wording while preserving
+    # original paragraph/signature structure.
+    blocks = [b for b in re.split(r"\n{2,}", text) if b.strip()]
+    normalized_blocks: list[str] = []
+    for block in blocks:
+        lines = [ln.rstrip() for ln in block.splitlines() if ln.strip()]
+        if lines and re.match(r"^(best,|thanks,|regards,|sincerely,)$", lines[0].strip(), re.IGNORECASE):
+            normalized_blocks.append("\n".join(lines))
+            continue
+        joined = " ".join(lines)
+        joined = re.sub(r"\btherefore\b", "so", joined, flags=re.IGNORECASE)
+        joined = re.sub(r"\bin order to\b", "to", joined, flags=re.IGNORECASE)
+        joined = re.sub(r"[ \t]{2,}", " ", joined)
+        normalized_blocks.append(joined.strip())
+
+    return "\n\n".join(normalized_blocks).strip()
+
+
 def is_email_tweak_request(utterance: str) -> bool:
     lower = (utterance or "").lower()
     tweak_markers = (
@@ -317,23 +368,23 @@ def apply_email_tweaks(*, subject: str, body_text: str, utterance: str) -> tuple
     updated_body = body_text or ""
 
     if "shorter" in lower:
-        lines = [l.strip() for l in updated_body.splitlines() if l.strip()]
-        if len(lines) > 5:
-            updated_body = "\n\n".join(lines[:4] + [lines[-2], lines[-1]])
+        updated_body = _shorten_email_body(updated_body)
 
     if "more friendly" in lower or "warmer" in lower:
-        updated_body = updated_body.replace("Hi ", "Hey ")
-        updated_body = updated_body.replace("Could you confirm", "Would you mind confirming")
-        updated_body = updated_body.replace("Thanks,", "Appreciate it,")
+        updated_body = updated_body.replace("Hey ", "Hi ")
+        updated_body = _humanize_email_body(updated_body)
+        updated_body = updated_body.replace("Thanks,", "Best,")
 
     if "more formal" in lower:
         updated_body = updated_body.replace("Hey ", "Hello ")
+        updated_body = updated_body.replace("Hi ", "Hello ")
         updated_body = updated_body.replace("Would you mind confirming", "Please confirm")
-        updated_body = updated_body.replace("Appreciate it,", "Regards,")
+        updated_body = updated_body.replace("Best,", "Regards,")
 
     if "less formal" in lower:
         updated_body = updated_body.replace("Hello ", "Hi ")
-        updated_body = updated_body.replace("Please confirm", "Can you confirm")
+        updated_body = updated_body.replace("Please confirm", "Could you confirm")
+        updated_body = _humanize_email_body(updated_body)
 
     # Subject tweak patterns: "subject to X", "change subject to X"
     m = re.search(r"\b(?:change\s+)?subject\s+(?:to|as)\s+(.+)$", utterance, re.IGNORECASE)
