@@ -124,13 +124,31 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
     )
     if (
         requested_agent == "eli"
-        and (
-            bool(getattr(intent_result, "requires_clarification", False))
-            or intent_result.action_type == "unknown"
-            or intent_result.intent_type in ("conversation", "hybrid", "knowledge", "advice", "unknown")
-        )
         and any(m in lower_utt for m in eli_tweak_markers)
     ):
+        explicit_office_message = any(
+            marker in lower_utt
+            for marker in (
+                "suite id",
+                "office id",
+                "office message",
+                "internal office",
+                "office inbox",
+            )
+        )
+        should_force_email_draft = (
+            not explicit_office_message
+            and (
+                bool(getattr(intent_result, "requires_clarification", False))
+                or intent_result.action_type == "unknown"
+                or intent_result.intent_type in ("conversation", "hybrid", "knowledge", "advice", "unknown")
+                or str(intent_result.action_type).startswith("internal.office.")
+            )
+        )
+    else:
+        should_force_email_draft = False
+
+    if should_force_email_draft:
         # Deterministic rescue path for Eli iterative drafting turns.
         intent_result.action_type = "email.draft"
         intent_result.skill_pack = "eli_inbox"

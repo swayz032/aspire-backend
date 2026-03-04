@@ -53,6 +53,19 @@ class _FakeClarifyClassifier:
         return _FakeClarifyIntentResult()
 
 
+class _FakeOfficeIntentResult(_FakeIntentResult):
+    def __init__(self) -> None:
+        super().__init__()
+        self.action_type = "internal.office.draft"
+        self.intent_type = "action"
+        self.confidence = 0.92
+
+
+class _FakeOfficeClassifier:
+    async def classify(self, utterance: str, context: dict | None = None):  # noqa: ARG002
+        return _FakeOfficeIntentResult()
+
+
 @pytest.mark.asyncio
 async def test_graph_classify_rescues_eli_tweak_to_email_draft(monkeypatch) -> None:
     from aspire_orchestrator import graph as graph_mod
@@ -101,3 +114,28 @@ async def test_graph_classify_rescues_eli_tweak_when_clarification_requested(mon
     assert out["task_type"] == "email.draft"
     assert out["intent_result"]["skill_pack"] == "eli_inbox"
     assert out["intent_result"]["requires_clarification"] is False
+
+
+@pytest.mark.asyncio
+async def test_graph_classify_rescues_eli_tweak_when_office_draft_misfire(monkeypatch) -> None:
+    from aspire_orchestrator import graph as graph_mod
+
+    fake_module = types.SimpleNamespace(
+        get_intent_classifier=lambda: _FakeOfficeClassifier(),
+    )
+    monkeypatch.setitem(sys.modules, "aspire_orchestrator.services.intent_classifier", fake_module)
+
+    state = {
+        "utterance": "make this draft warmer and shorter",
+        "task_type": "assistant.chat",
+        "request": {
+            "payload": {
+                "requested_agent": "eli",
+                "agent": "eli",
+            },
+        },
+    }
+    out = await graph_mod.classify_node(state)  # type: ignore[arg-type]
+    assert out["action_type"] == "email.draft"
+    assert out["task_type"] == "email.draft"
+    assert out["intent_result"]["agent_target"] == "eli"
