@@ -113,7 +113,7 @@ def _build_system_prompt(action_catalog: str) -> str:
     """Build the system prompt for the intent classifier LLM."""
     return f"""You are Aspire's intent classifier. Your job is to classify user utterances into exactly one action_type from the catalog below. You do NOT execute actions — you only classify.
 
-## Action Catalog (36 actions)
+## Action Catalog
 {action_catalog}
 
 ## Output Format (strict JSON)
@@ -133,6 +133,7 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 - research.search, research.places, research.image → adam_research
 - email.send, email.draft → eli_inbox
   - email.read, email.triage, email.send, email.draft → eli_inbox
+  - office.read, office.create, office.draft, office.send → eli_inbox
 - invoice.create, invoice.send, invoice.void → quinn_invoicing
 - quote.create, quote.send → quinn_invoicing
 - meeting.schedule, meeting.create_room, meeting.summarize → nora_conference
@@ -181,6 +182,10 @@ _ACTION_TO_PACK: dict[str, str] = {
     "email.triage": "eli_inbox",
     "email.send": "eli_inbox",
     "email.draft": "eli_inbox",
+    "office.read": "eli_inbox",
+    "office.create": "eli_inbox",
+    "office.draft": "eli_inbox",
+    "office.send": "eli_inbox",
     "invoice.create": "quinn_invoicing",
     "invoice.send": "quinn_invoicing",
     "invoice.void": "quinn_invoicing",
@@ -573,6 +578,57 @@ class IntentClassifier:
                 requires_clarification=False,
                 clarification_prompt=None,
                 raw_llm_response={"rule_based": "email.read"},
+                intent_type="action",
+                agent_target="eli",
+            )
+
+        # Eli: office message read flow.
+        office_read_signals = ("office message", "office inbox", "office messages")
+        if any(s in text for s in office_read_signals) and any(
+            s in text for s in ("read", "show", "list", "unread", "inbox", "messages")
+        ):
+            limit = 10
+            m = re.search(r"\b(\d{1,2})\b", text)
+            if m:
+                try:
+                    limit = max(1, min(50, int(m.group(1))))
+                except ValueError:
+                    limit = 10
+            entities = {
+                "folder": "inbox",
+                "unread_only": True if "unread" in text else None,
+                "limit": limit,
+            }
+            return IntentResult(
+                action_type="office.read",
+                skill_pack="eli_inbox",
+                confidence=0.91,
+                entities=entities,
+                risk_tier=self._risk_tiers.get("office.read", RiskTier.GREEN),
+                requires_clarification=False,
+                clarification_prompt=None,
+                raw_llm_response={"rule_based": "office.read"},
+                intent_type="action",
+                agent_target="eli",
+            )
+
+        # Eli: office message draft/create/send flow.
+        if "office message" in text or "office email" in text:
+            if any(s in text for s in ("draft", "prepare", "compose")):
+                action = "office.draft"
+            elif any(s in text for s in ("send", "deliver", "dispatch")):
+                action = "office.send"
+            else:
+                action = "office.create"
+            return IntentResult(
+                action_type=action,
+                skill_pack="eli_inbox",
+                confidence=0.88,
+                entities={},
+                risk_tier=self._risk_tiers.get(action, RiskTier.YELLOW),
+                requires_clarification=False,
+                clarification_prompt=None,
+                raw_llm_response={"rule_based": action},
                 intent_type="action",
                 agent_target="eli",
             )

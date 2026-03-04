@@ -32,6 +32,26 @@ actions:
     approval_required: true
     description: "Send email via PolarisM"
 
+  office.read:
+    risk_tier: green
+    approval_required: false
+    description: "Read office-to-office inbox messages"
+
+  office.create:
+    risk_tier: yellow
+    approval_required: true
+    description: "Create office-to-office message for review"
+
+  office.draft:
+    risk_tier: yellow
+    approval_required: true
+    description: "Draft office-to-office message"
+
+  office.send:
+    risk_tier: yellow
+    approval_required: true
+    description: "Send approved office-to-office message"
+
 dlp_redaction:
   enabled: true
   redact_in_receipts: true

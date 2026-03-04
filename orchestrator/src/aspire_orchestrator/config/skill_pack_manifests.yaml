@@ -53,11 +53,11 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: active
-    description: "Email handling, triage, draft responses, send emails"
-    actions: [email.read, email.triage, email.draft, email.send]
+    description: "Email and office-message handling, triage, draft responses, and sending"
+    actions: [email.read, email.triage, email.draft, email.send, office.read, office.create, office.draft, office.send]
     providers: [polarism]
-    capability_scopes: [email:read, email:triage, comms:draft_email, comms:send_email]
-    tools: [polaris.email.read, internal.email.triage, polaris.email.draft, polaris.email.send]
+    capability_scopes: [email:read, email:triage, comms:draft_email, comms:send_email, office:read, office:create, office:draft, office:send]
+    tools: [polaris.email.read, internal.email.triage, polaris.email.draft, polaris.email.send, internal.office.read, internal.office.create, internal.office.draft, internal.office.send]
     per_suite_enabled: true
     knowledge_domains:
       - domain: communication
@@ -263,6 +263,22 @@ tools:
     provider: internal
     category: email
     risk_tier: green
+  internal.office.read:
+    provider: internal
+    category: office
+    risk_tier: green
+  internal.office.create:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  internal.office.draft:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  internal.office.send:
+    provider: internal
+    category: office
+    risk_tier: yellow
   polaris.email.send:
     provider: polarism
     category: communications

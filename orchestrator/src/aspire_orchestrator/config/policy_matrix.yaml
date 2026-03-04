@@ -303,6 +303,46 @@ actions:
       type: none
     redact_fields: []
 
+  # Office-to-office messaging (Eli Inbox pack)
+  office.read:
+    risk_tier: green
+    tools: [internal.office.read]
+    capability_scope: office:read
+    category: office
+    approval:
+      type: none
+    redact_fields: [title, preview, body]
+
+  office.create:
+    risk_tier: yellow
+    tools: [internal.office.create]
+    capability_scope: office:create
+    category: office
+    approval:
+      type: explicit
+      binding_fields: [recipient_suite_id, recipient_office_id, title]
+    redact_fields: [title, body, recipient_suite_id, recipient_office_id]
+
+  office.draft:
+    risk_tier: yellow
+    tools: [internal.office.draft]
+    capability_scope: office:draft
+    category: office
+    approval:
+      type: explicit
+      binding_fields: [recipient_suite_id, recipient_office_id, title]
+    redact_fields: [title, body, recipient_suite_id, recipient_office_id]
+
+  office.send:
+    risk_tier: yellow
+    tools: [internal.office.send]
+    capability_scope: office:send
+    category: office
+    approval:
+      type: explicit
+      binding_fields: [draft_id]
+    redact_fields: [draft_id, recipient_suite_id, recipient_office_id]
+
   # Telephony (Sarah Front Desk — call routing + visitor logging)
   call.route:
     risk_tier: green

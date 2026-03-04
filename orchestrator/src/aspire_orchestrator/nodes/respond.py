@@ -168,6 +168,7 @@ def _generate_response_text(state: OrchestratorState) -> str:
             "contract": "Your contract has been prepared.",
             "calendar": "Done — your calendar has been updated.",
             "email": "Your email has been handled.",
+            "office": "Your office message is ready.",
             "meeting": "Your meeting room is ready. You can join now.",
             "conference": "Your conference room is set up and ready to go.",
             "finance": "Here's what I found in your financial data.",
@@ -194,6 +195,8 @@ def _generate_response_text(state: OrchestratorState) -> str:
             base = "Your contract has been drafted. Review it before sending."
         elif domain_prefix == "email" and action_suffix in ("send", "draft"):
             base = "Your email draft is ready for review."
+        elif domain_prefix == "office" and action_suffix in ("send", "draft", "create"):
+            base = "Your office message draft is ready for review."
 
         return base
 
@@ -545,6 +548,9 @@ def _generate_approval_prompt(state: OrchestratorState, channel: str = "chat") -
         "invoice.send": "I've got the invoice ready to send.",
         "email.send": "I've drafted the email for you.",
         "email.draft": "I've drafted the email for you.",
+        "office.create": "I've prepared the office message draft.",
+        "office.draft": "I've prepared the office message draft.",
+        "office.send": "I've prepared your office message to send.",
         "calendar.create": "I've prepared a calendar event.",
         "contract.generate": "I've drafted the contract.",
         "booking.create": "I've prepared the booking details.",

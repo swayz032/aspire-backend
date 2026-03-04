@@ -19,10 +19,14 @@
     "polaris.email.read",
     "polaris.email.draft",
     "polaris.email.send",
-    "internal.email.triage"
+    "internal.email.triage",
+    "internal.office.read",
+    "internal.office.create",
+    "internal.office.draft",
+    "internal.office.send"
   ],
   "providers": ["polaris_email"],
-  "actions": ["email.read", "email.triage", "email.draft", "email.send"],
+  "actions": ["email.read", "email.triage", "email.draft", "email.send", "office.read", "office.create", "office.draft", "office.send"],
   "certification_status": "uncertified",
   "outputs": ["email_draft", "triage_classification", "inbox_digest"],
   "dependencies": []

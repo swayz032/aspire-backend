@@ -52,6 +52,22 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": [],
         "optional": ["folder", "unread_only", "limit", "since"],
     },
+    "internal.office.read": {
+        "required": [],
+        "optional": ["folder", "unread_only", "limit"],
+    },
+    "internal.office.create": {
+        "required": ["recipient_suite_id", "recipient_office_id", "title", "body"],
+        "optional": ["priority"],
+    },
+    "internal.office.draft": {
+        "required": ["recipient_suite_id", "recipient_office_id", "title", "body"],
+        "optional": ["priority"],
+    },
+    "internal.office.send": {
+        "required": ["draft_id"],
+        "optional": ["recipient_suite_id", "recipient_office_id", "title", "body", "priority"],
+    },
     "internal.email.triage": {
         "required": ["email_id"],
         "optional": ["subject", "body"],
@@ -336,6 +352,37 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             extracted_params["folder"] = "inbox"
         if "limit" not in extracted_params:
             extracted_params["limit"] = 5
+
+    # 4) office.read: merge classifier entities + defaults.
+    if tool_used == "internal.office.read":
+        if not isinstance(extracted_params, dict):
+            extracted_params = {}
+        intent_result = state.get("intent_result") or {}
+        entities = intent_result.get("entities", {}) if isinstance(intent_result, dict) else {}
+        if isinstance(entities, dict):
+            for key in ("folder", "unread_only", "limit"):
+                val = entities.get(key)
+                if val is not None and key not in extracted_params:
+                    extracted_params[key] = val
+        if "folder" not in extracted_params:
+            extracted_params["folder"] = "inbox"
+        if "limit" not in extracted_params:
+            extracted_params["limit"] = 10
+
+    # 5) office create/draft: recover recipient identifiers from utterance hints.
+    if tool_used in ("internal.office.create", "internal.office.draft") and isinstance(extracted_params, dict):
+        recipient_suite_id = extracted_params.get("recipient_suite_id")
+        recipient_office_id = extracted_params.get("recipient_office_id")
+        if recipient_suite_id in (None, ""):
+            m = re.search(r"\bsuite\s*(id)?\s*[:#]?\s*([0-9a-fA-F-]{8,36})", utterance, re.IGNORECASE)
+            if m:
+                extracted_params["recipient_suite_id"] = m.group(2)
+        if recipient_office_id in (None, ""):
+            m = re.search(r"\boffice\s*(id)?\s*[:#]?\s*([0-9a-fA-F-]{8,36})", utterance, re.IGNORECASE)
+            if m:
+                extracted_params["recipient_office_id"] = m.group(2)
+        if "priority" not in extracted_params:
+            extracted_params["priority"] = "NORMAL"
 
     # Validate required fields
     missing_fields = []

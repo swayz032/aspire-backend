@@ -112,6 +112,7 @@ _OUTPUT_DEPENDENCIES: dict[str, set[str]] = {
     "quote.create": {"quote.send"},
     "contract.generate": {"contract.sign", "contract.send"},
     "email.draft": {"email.send"},
+    "office.draft": {"office.send"},
     "finance.snapshot.read": {"finance.proposal.create", "finance.packet.draft"},
     "finance.exceptions.read": {"finance.proposal.create"},
     "research.search": {"email.draft", "email.send", "contacts.create"},
@@ -233,6 +234,7 @@ class SkillRouter:
             "contract.send": "contract.generate",
             "invoice.send": "invoice.create",
             "email.send": "email.draft",
+            "office.send": "office.draft",
         }
         for i, action in enumerate(action_types):
             if action in _SEND_NEEDS_DRAFT:

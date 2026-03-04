@@ -51,6 +51,12 @@ from aspire_orchestrator.providers.polaris_email_client import (
     execute_polaris_email_send,
     execute_polaris_email_draft,
 )
+from aspire_orchestrator.providers.office_message_client import (
+    execute_office_read,
+    execute_office_create,
+    execute_office_draft,
+    execute_office_send,
+)
 
 # Wave 1: Adam Research geo/places providers
 from aspire_orchestrator.providers.google_places_client import execute_google_places_search
@@ -726,6 +732,10 @@ _EMAIL_EXECUTORS: dict[str, ToolExecutorFn] = {
     "polaris.email.read": execute_polaris_email_read,
     "polaris.email.send": execute_polaris_email_send,
     "polaris.email.draft": execute_polaris_email_draft,
+    "internal.office.read": execute_office_read,
+    "internal.office.create": execute_office_create,
+    "internal.office.draft": execute_office_draft,
+    "internal.office.send": execute_office_send,
 }
 
 # Phase 2 Wave 3: Telephony tools (YELLOW — Sarah Front Desk pack)
