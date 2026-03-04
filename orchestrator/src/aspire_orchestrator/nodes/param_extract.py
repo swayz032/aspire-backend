@@ -315,7 +315,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         to_val = extracted_params.get("to")
         if to_val is None or (isinstance(to_val, str) and not to_val.strip()):
             # Examples: "email to ACME ...", "draft a follow-up to John ..."
-            m = re.search(r"\bto\s+([A-Za-z0-9&@._\\- ]{2,80}?)(?:,| about | regarding | on | with |$)", utterance, re.IGNORECASE)
+            m = re.search(r"\bto\s+([-A-Za-z0-9&@._ ]{2,80}?)(?:,| about | regarding | on | with |$)", utterance, re.IGNORECASE)
             if m:
                 candidate = m.group(1).strip()
                 if candidate:
