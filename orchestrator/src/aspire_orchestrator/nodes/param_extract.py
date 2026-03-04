@@ -18,9 +18,11 @@ from typing import Any
 
 from aspire_orchestrator.models import Outcome, ReceiptType
 from aspire_orchestrator.services.eli_email_param_helpers import (
+    apply_email_tweaks,
     body_text_to_html,
     extract_emails,
     extract_subject_hint,
+    is_email_tweak_request,
     naturalize_email_body,
     strip_html,
     synthesize_body_text,
@@ -383,6 +385,9 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     # 2) email.draft/send: robust recipient/sender/subject/body recovery for
     # natural language prompts ("Eli, draft email to X from Y subject Z ...").
     if tool_used in ("polaris.email.draft", "polaris.email.send") and isinstance(extracted_params, dict):
+        prior_params = state.get("execution_params") if isinstance(state.get("execution_params"), dict) else {}
+        tweak_request = is_email_tweak_request(utterance)
+
         emails = extract_emails(utterance)
         # Prefer explicit "from X" capture for sender.
         from_match = re.search(
@@ -446,6 +451,25 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             extracted_params["body_text"] = normalized
             if extracted_params.get("body_html") in (None, ""):
                 extracted_params["body_html"] = body_text_to_html(normalized)
+
+        # Conversational tweak loop: if user says "make it warmer/shorter/etc"
+        # and we have a prior draft in thread state, carry forward required fields.
+        if tweak_request and isinstance(prior_params, dict):
+            for field in ("from_address", "to", "subject", "body_text", "body_html"):
+                if extracted_params.get(field) in (None, "") and prior_params.get(field) not in (None, ""):
+                    extracted_params[field] = prior_params.get(field)
+
+            existing_subject = str(extracted_params.get("subject", "")).strip()
+            existing_body = str(extracted_params.get("body_text", "")).strip()
+            if existing_subject and existing_body:
+                tweaked_subject, tweaked_body = apply_email_tweaks(
+                    subject=existing_subject,
+                    body_text=existing_body,
+                    utterance=utterance,
+                )
+                extracted_params["subject"] = tweaked_subject
+                extracted_params["body_text"] = tweaked_body
+                extracted_params["body_html"] = body_text_to_html(tweaked_body)
 
     # 3) email.read: merge classifier entities (e.g., unread + limit) into params.
     if tool_used == "polaris.email.read":

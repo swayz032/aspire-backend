@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 
 from aspire_orchestrator.services.eli_email_param_helpers import (
+    apply_email_tweaks,
     body_text_to_html,
     extract_emails,
     extract_subject_hint,
+    is_email_tweak_request,
     naturalize_email_body,
     synthesize_body_text,
 )
@@ -51,3 +53,17 @@ class TestEliEmailParamHelpers:
         cleaned = naturalize_email_body(raw)
         assert "Could you confirm by Friday end of day" in cleaned
         assert "2026-03-10T10:00:00-04:00" not in cleaned
+
+    def test_tweak_detection_and_apply(self) -> None:
+        assert is_email_tweak_request("make it warmer and shorter") is True
+        subject, body = apply_email_tweaks(
+            subject="Project Timeline Follow-Up",
+            body_text=(
+                "Hi Sarah,\n\nCould you confirm by Friday end of day?\n\n"
+                "I can also do a 20-minute call on Tuesday at 10:00 AM ET.\n\nThanks,\nAspire Team"
+            ),
+            utterance="make it warmer and shorter and add we can move quickly once approved",
+        )
+        assert subject == "Project Timeline Follow-Up"
+        assert "Hey Sarah" in body
+        assert "move quickly once approved" in body.lower()

@@ -150,3 +150,66 @@ def naturalize_email_body(body_text: str) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def is_email_tweak_request(utterance: str) -> bool:
+    lower = (utterance or "").lower()
+    tweak_markers = (
+        "tweak",
+        "revise",
+        "rewrite",
+        "make it",
+        "change it",
+        "update it",
+        "adjust",
+        "shorter",
+        "longer",
+        "more friendly",
+        "warmer",
+        "more formal",
+        "less formal",
+    )
+    return any(marker in lower for marker in tweak_markers)
+
+
+def apply_email_tweaks(*, subject: str, body_text: str, utterance: str) -> tuple[str, str]:
+    """Apply simple conversational tweak directives to an existing draft."""
+    lower = (utterance or "").lower()
+    updated_subject = subject or ""
+    updated_body = body_text or ""
+
+    if "shorter" in lower:
+        lines = [l.strip() for l in updated_body.splitlines() if l.strip()]
+        if len(lines) > 5:
+            updated_body = "\n\n".join(lines[:4] + [lines[-2], lines[-1]])
+
+    if "more friendly" in lower or "warmer" in lower:
+        updated_body = updated_body.replace("Hi ", "Hey ")
+        updated_body = updated_body.replace("Could you confirm", "Would you mind confirming")
+        updated_body = updated_body.replace("Thanks,", "Appreciate it,")
+
+    if "more formal" in lower:
+        updated_body = updated_body.replace("Hey ", "Hello ")
+        updated_body = updated_body.replace("Would you mind confirming", "Please confirm")
+        updated_body = updated_body.replace("Appreciate it,", "Regards,")
+
+    if "less formal" in lower:
+        updated_body = updated_body.replace("Hello ", "Hi ")
+        updated_body = updated_body.replace("Please confirm", "Can you confirm")
+
+    # Subject tweak patterns: "subject to X", "change subject to X"
+    m = re.search(r"\b(?:change\s+)?subject\s+(?:to|as)\s+(.+)$", utterance, re.IGNORECASE)
+    if m:
+        candidate = m.group(1).strip(" .")
+        if candidate:
+            updated_subject = candidate
+
+    # Add sentence pattern: "add ...".
+    m_add = re.search(r"\badd\s+(.+)$", utterance, re.IGNORECASE)
+    if m_add:
+        addition = m_add.group(1).strip(" .")
+        if addition and addition.lower() not in updated_body.lower():
+            updated_body = f"{updated_body.rstrip()}\n\n{addition[:240].rstrip('.') }."
+
+    updated_body = naturalize_email_body(updated_body)
+    return updated_subject, updated_body
