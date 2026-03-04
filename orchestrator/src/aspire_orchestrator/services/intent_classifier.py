@@ -318,7 +318,7 @@ class IntentClassifier:
         """
         # Deterministic fast-path for known specialist intents that frequently
         # under-classify in LLM mode (reduces CLASSIFICATION_UNCLEAR dead-ends).
-        override = self._rule_based_specialist_intent(utterance)
+        override = self._rule_based_specialist_intent(utterance, context=context)
         if override:
             return override
 
@@ -526,7 +526,11 @@ class IntentClassifier:
             agent_target=None,
         )
 
-    def _rule_based_specialist_intent(self, utterance: str) -> IntentResult | None:
+    def _rule_based_specialist_intent(
+        self,
+        utterance: str,
+        context: dict[str, Any] | None = None,
+    ) -> IntentResult | None:
         """Handle high-signal Nora/Eli intents before LLM classification.
 
         These patterns are deterministic and map to existing policy actions.
@@ -535,6 +539,7 @@ class IntentClassifier:
         text = (utterance or "").strip().lower()
         if not text:
             return None
+        current_agent = str((context or {}).get("current_agent", "")).strip().lower()
 
         # Nora: explicit room creation request.
         if ("conference room" in text or "create room" in text or "meeting room" in text) and any(
@@ -629,6 +634,26 @@ class IntentClassifier:
                 requires_clarification=False,
                 clarification_prompt=None,
                 raw_llm_response={"rule_based": action},
+                intent_type="action",
+                agent_target="eli",
+            )
+
+        # Eli conversational tweak loop: keep refinement turns in email.draft flow
+        # so users can say "make it warmer/shorter" without repeating all fields.
+        tweak_markers = (
+            "tweak", "revise", "rewrite", "make it", "change it", "update it",
+            "shorter", "longer", "warmer", "more friendly", "more formal", "less formal",
+        )
+        if current_agent == "eli" and any(marker in text for marker in tweak_markers):
+            return IntentResult(
+                action_type="email.draft",
+                skill_pack="eli_inbox",
+                confidence=0.9,
+                entities={"tweak_request": True},
+                risk_tier=self._risk_tiers.get("email.draft", RiskTier.YELLOW),
+                requires_clarification=False,
+                clarification_prompt=None,
+                raw_llm_response={"rule_based": "email.draft.tweak"},
                 intent_type="action",
                 agent_target="eli",
             )

@@ -563,6 +563,15 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
             "live": live,
         }
 
+    if assigned_agent == "eli" and task_type in ("email.draft", "email.send"):
+        execution_result["eli_agentic"] = {
+            "rag_status": state.get("eli_rag_status"),
+            "fallback_mode": bool(state.get("eli_fallback_mode", False)),
+            "rag_sources": state.get("eli_rag_sources") or [],
+            "iteration_count": int(state.get("eli_iteration_count") or 0),
+            "quality_report": state.get("eli_quality_report") or {},
+        }
+
     receipt_id = str(uuid.uuid4())
     outcome_val = Outcome.SUCCESS if execution_result["status"] == "success" else Outcome.FAILED
     if outcome_val == Outcome.FAILED and execution_reason_code == "EXECUTED":

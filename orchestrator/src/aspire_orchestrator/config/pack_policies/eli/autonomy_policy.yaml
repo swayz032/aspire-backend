@@ -5,6 +5,16 @@ autonomy:
   auto_triage: true
   auto_draft: true
   auto_send: false
+  max_agentic_iterations: 2
+  max_retrieval_domains: 2
+  timeout_ms: 4500
+
+rag:
+  mode: always_on
+  allow_fallback_on_failure: true
+  required_for_send: false
+  degraded_alert_threshold: 0.10
+  offline_alert_threshold: 0.03
 
 quality_gates:
   draft:
@@ -13,12 +23,22 @@ quality_gates:
     require_call_to_action: true
     max_subject_chars: 72
     min_subject_chars: 6
+    require_greeting: true
+    require_signoff: true
+    require_purpose_first: true
+    block_emojis: true
+    block_slang: true
   send:
     min_score: 82
     min_word_count: 35
     require_call_to_action: true
     max_subject_chars: 72
     min_subject_chars: 6
+    require_greeting: true
+    require_signoff: true
+    require_purpose_first: true
+    block_emojis: true
+    block_slang: true
 
 deliverability:
   enforce_list_unsubscribe_for_marketing: true

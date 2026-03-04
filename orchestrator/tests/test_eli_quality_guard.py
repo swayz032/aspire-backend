@@ -22,15 +22,32 @@ class TestEliQualityGuard:
             payload={
                 "subject": "Invoice 1047 payment follow-up",
                 "body_text": (
-                    "Hi Sarah, I wanted to follow up on invoice 1047 that was due last week. "
+                    "Hi Sarah,\n\n"
+                    "I wanted to follow up on invoice 1047 that was due last week. "
                     "Please confirm if payment is scheduled for this week, and if there is any issue "
-                    "I can help resolve. If useful, I can resend the invoice PDF and payment link today."
+                    "I can help resolve. If useful, I can resend the invoice PDF and payment link today.\n\n"
+                    "Best,\nEli\nAspire Inbox Desk"
                 ),
             },
             mode="draft",
         )
         assert report.passed is True
         assert report.score >= 78
+
+    def test_rejects_emoji_and_slang(self) -> None:
+        report = evaluate_email_quality(
+            payload={
+                "subject": "Quick update on proposal",
+                "body_text": (
+                    "Hi Sarah,\n\n"
+                    "Just circling back lol 😀 can you approve this today.\n\n"
+                    "Best,\nEli\nAspire Inbox Desk"
+                ),
+            },
+            mode="draft",
+        )
+        assert report.passed is False
+        assert any("contains emoji" in v for v in report.violations)
 
 
 class TestEliDeliverabilityMonitor:

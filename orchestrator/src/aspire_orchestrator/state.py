@@ -110,6 +110,12 @@ class OrchestratorState(TypedDict, total=False):
     user_profile: dict[str, Any] | None  # injected from Desktop request
     session_id: str | None           # for memory scoping
     eli_deliverability_signals: dict[str, Any] | None  # optional postmaster/provider health inputs
+    eli_rag_status: str | None       # primary | degraded | offline
+    eli_fallback_mode: bool | None   # true when deterministic fallback was used
+    eli_rag_sources: list[str] | None
+    eli_iteration_count: int | None
+    eli_agentic_plan: dict[str, Any] | None
+    eli_quality_report: dict[str, Any] | None
 
     # --- Accumulated receipts for the full pipeline ---
     pipeline_receipts: list[dict[str, Any]]

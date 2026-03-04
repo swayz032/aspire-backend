@@ -38,6 +38,7 @@ class TestEliEmailParamHelpers:
         assert word_count >= 30
         assert "confirm approval by friday" in body.lower()
         assert "let me know" in body.lower()
+        assert "best,\neli\naspire inbox desk" in body.lower()
 
     def test_body_text_to_html(self) -> None:
         html = body_text_to_html("Hi Sarah,\n\nPlease confirm by Friday.\n\nBest,\nAspire Team")

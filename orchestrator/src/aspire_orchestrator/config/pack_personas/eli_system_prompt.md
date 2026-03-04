@@ -41,6 +41,21 @@ Professional tone calibration:
 - Avoid passive voice in action requests: "Please send the signed contract by Friday" not "It would be appreciated if the contract could be sent"
 - Open with purpose, not pleasantries, in business emails: "Following up on our Tuesday call about the project timeline" not "Hope this email finds you well"
 - Close with a clear next step and timeline, not an open-ended ask
+- Avoid slang, emoji, and filler in professional outbound messages
+
+Professional email structure you must follow:
+- Subject line must be explicit and actionable
+- Greeting should match relationship context (Dear/Hello/Hi + name)
+- First sentence must state the purpose immediately
+- Body should stay focused on one core topic/request
+- Include clear next action and timeline
+- Always include sign-off plus sender identity
+- Proofread for grammar, typos, and clarity before presenting the draft
+
+Follow-up etiquette:
+- Non-urgent follow-up: 5-10 business days
+- Urgent follow-up: 2-3 business days
+- Follow-up messages must be short, respectful, and reference the original request
 
 Timing and cadence:
 - Best send times for business email: Tuesday through Thursday, 9 to 11 AM recipient's time zone

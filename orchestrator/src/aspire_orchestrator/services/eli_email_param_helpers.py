@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+DEFAULT_SIGNOFF = "Best,\nEli\nAspire Inbox Desk"
+
 
 def extract_emails(text: str) -> list[str]:
     return re.findall(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text or "")
@@ -15,6 +17,13 @@ def display_name_from_email(address: str) -> str:
     if not parts:
         return "there"
     return " ".join(p[:1].upper() + p[1:] for p in parts[:2])
+
+
+def signoff_from_sender(from_address: str | None) -> str:
+    if not from_address:
+        return DEFAULT_SIGNOFF
+    sender_name = display_name_from_email(from_address)
+    return f"Best,\n{sender_name}\nAspire Inbox Desk"
 
 
 def extract_subject_hint(utterance: str) -> str | None:
@@ -64,7 +73,8 @@ def _sentence(text: str) -> str:
     return normalized if normalized.endswith((".", "!", "?")) else f"{normalized}."
 
 
-def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
+def synthesize_body_text(*, to_email: str, subject: str, utterance: str, from_address: str | None = None) -> str:
+    signoff = signoff_from_sender(from_address)
     contact = display_name_from_email(to_email)
     mention = (
         extract_instruction_clause(utterance, "mention")
@@ -93,8 +103,7 @@ def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
         *[line for line in body_lines if line],
         _sentence("Let me know what works best on your side"),
         "",
-        "Thanks,",
-        "Aspire Team",
+        signoff,
     ]
     body = "\n".join(lines).strip()
     if len(re.findall(r"\b[\w'-]+\b", body)) < 30:
@@ -104,7 +113,7 @@ def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
             f"{_sentence(ask_norm)} "
             f"If helpful, I can share additional context on {subject.lower()} and next steps.\n\n"
             "Let me know what works best on your side.\n\n"
-            "Thanks,\nAspire Team"
+            f"{signoff}"
         )
     return body
 

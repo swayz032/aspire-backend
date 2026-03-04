@@ -27,6 +27,7 @@ from aspire_orchestrator.services.eli_email_param_helpers import (
     strip_html,
     synthesize_body_text,
 )
+from aspire_orchestrator.services.eli_agentic_rag import run_eli_agentic_rag
 from aspire_orchestrator.services.openai_client import generate_json_async
 from aspire_orchestrator.state import OrchestratorState
 
@@ -160,6 +161,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     routing_plan = state.get("routing_plan", {})
 
     existing_receipts = list(state.get("pipeline_receipts", []))
+    eli_agentic_meta: dict[str, Any] = {}
 
     # Build advisor context (v1.5 integration)
     advisor_context = None
@@ -436,6 +438,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
                     to_email=to_email,
                     subject=subject,
                     utterance=utterance,
+                    from_address=str(extracted_params.get("from_address", "")).strip() or None,
                 )
                 extracted_params["body_text"] = composed
                 extracted_params["body_html"] = body_text_to_html(composed)
@@ -470,6 +473,25 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
                 extracted_params["subject"] = tweaked_subject
                 extracted_params["body_text"] = tweaked_body
                 extracted_params["body_html"] = body_text_to_html(tweaked_body)
+
+        # Agentic Eli RAG pass (always-on with production fallback).
+        assigned_agent = ""
+        try:
+            steps = routing_plan.get("steps", []) if isinstance(routing_plan, dict) else []
+            if steps and isinstance(steps[0], dict) and str(steps[0].get("skill_pack", "")).strip() == "eli_inbox":
+                assigned_agent = "eli"
+            else:
+                assigned_agent = str(state.get("agent_target", "")).strip().lower()
+        except Exception:
+            assigned_agent = str(state.get("agent_target", "")).strip().lower()
+
+        extracted_params, eli_agentic_meta = await run_eli_agentic_rag(
+            task_type=task_type,
+            assigned_agent=assigned_agent,
+            utterance=utterance,
+            suite_id=suite_id,
+            params=extracted_params,
+        )
 
     # 3) email.read: merge classifier entities (e.g., unread + limit) into params.
     if tool_used == "polaris.email.read":
@@ -555,6 +577,12 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             "error_message": f"I need more details to proceed. Please provide: {field_list}",
             "advisor_context": advisor_context,
             "pipeline_receipts": existing_receipts,
+            "eli_rag_status": eli_agentic_meta.get("eli_rag_status"),
+            "eli_fallback_mode": eli_agentic_meta.get("eli_fallback_mode"),
+            "eli_rag_sources": eli_agentic_meta.get("eli_rag_sources"),
+            "eli_iteration_count": eli_agentic_meta.get("eli_iteration_count"),
+            "eli_agentic_plan": eli_agentic_meta.get("eli_agentic_plan"),
+            "eli_quality_report": eli_agentic_meta.get("eli_quality_report"),
         }
 
     if extraction_error and not extracted_params:
@@ -569,10 +597,22 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             "execution_params": request_payload or None,
             "advisor_context": advisor_context,
             "pipeline_receipts": existing_receipts,
+            "eli_rag_status": eli_agentic_meta.get("eli_rag_status"),
+            "eli_fallback_mode": eli_agentic_meta.get("eli_fallback_mode"),
+            "eli_rag_sources": eli_agentic_meta.get("eli_rag_sources"),
+            "eli_iteration_count": eli_agentic_meta.get("eli_iteration_count"),
+            "eli_agentic_plan": eli_agentic_meta.get("eli_agentic_plan"),
+            "eli_quality_report": eli_agentic_meta.get("eli_quality_report"),
         }
 
     return {
         "execution_params": extracted_params,
         "advisor_context": advisor_context,
         "pipeline_receipts": existing_receipts,
+        "eli_rag_status": eli_agentic_meta.get("eli_rag_status"),
+        "eli_fallback_mode": eli_agentic_meta.get("eli_fallback_mode"),
+        "eli_rag_sources": eli_agentic_meta.get("eli_rag_sources"),
+        "eli_iteration_count": eli_agentic_meta.get("eli_iteration_count"),
+        "eli_agentic_plan": eli_agentic_meta.get("eli_agentic_plan"),
+        "eli_quality_report": eli_agentic_meta.get("eli_quality_report"),
     }
