@@ -174,8 +174,53 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     elif hasattr(request, "payload"):
         request_payload = request.payload if isinstance(request.payload, dict) else {}
 
-    # If no utterance or tool, fall back to request payload
-    if not utterance or not tool_used:
+    # If no tool mapping, we cannot validate against a schema.
+    if not tool_used:
+        return {
+            "execution_params": request_payload or None,
+            "advisor_context": advisor_context,
+            "pipeline_receipts": existing_receipts,
+        }
+
+    # For direct API calls (task_type + payload, no utterance), still validate required
+    # fields so YELLOW flows cannot create approvals with incomplete params.
+    if not utterance:
+        schema = _TOOL_SCHEMAS.get(tool_used, {})
+        required_fields = schema.get("required", [])
+        missing_fields: list[str] = []
+        if required_fields:
+            for field in required_fields:
+                val = request_payload.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    missing_fields.append(field)
+
+        if missing_fields:
+            field_list = ", ".join(missing_fields)
+            receipt = {
+                "id": str(uuid.uuid4()),
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "office_id": office_id,
+                "actor_type": "system",
+                "actor_id": "orchestrator.param_extract",
+                "action_type": f"param_extract.{task_type}",
+                "risk_tier": "green",
+                "tool_used": tool_used,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "outcome": "failed",
+                "reason_code": "PARAM_EXTRACTION_FAILED",
+                "receipt_type": ReceiptType.PARAM_EXTRACTION.value,
+                "receipt_hash": "",
+            }
+            existing_receipts.append(receipt)
+            return {
+                "execution_params": None,
+                "error_code": "PARAM_EXTRACTION_FAILED",
+                "error_message": f"I need more details to proceed. Please provide: {field_list}",
+                "advisor_context": advisor_context,
+                "pipeline_receipts": existing_receipts,
+            }
+
         return {
             "execution_params": request_payload or None,
             "advisor_context": advisor_context,
