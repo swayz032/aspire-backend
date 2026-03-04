@@ -91,9 +91,9 @@ def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
         f"Hi {contact},",
         "",
         *[line for line in body_lines if line],
-        _sentence("Please reply when you can so we can keep this moving"),
+        _sentence("Let me know what works best on your side"),
         "",
-        "Best,",
+        "Thanks,",
         "Aspire Team",
     ]
     body = "\n".join(lines).strip()
@@ -103,8 +103,8 @@ def synthesize_body_text(*, to_email: str, subject: str, utterance: str) -> str:
             f"{_sentence(f'I wanted to share a quick update: {mention}')} "
             f"{_sentence(ask_norm)} "
             f"If helpful, I can share additional context on {subject.lower()} and next steps.\n\n"
-            "Please reply when you can so we can keep this moving.\n\n"
-            "Best,\nAspire Team"
+            "Let me know what works best on your side.\n\n"
+            "Thanks,\nAspire Team"
         )
     return body
 
@@ -119,4 +119,34 @@ def body_text_to_html(body_text: str) -> str:
 def strip_html(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", value or "")
     text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def naturalize_email_body(body_text: str) -> str:
+    """Convert machine-like date/time or phrasing into natural email language."""
+    text = body_text or ""
+
+    # Remove explicit ISO timestamps often appended by extraction models.
+    text = re.sub(r"\s*\(\d{4}-\d{2}-\d{2}T[^)]+\)", "", text)
+
+    # Humanize explicit machine date renderings where weekday is already present.
+    text = re.sub(
+        r"\bby ([A-Za-z]+), \d{4}-\d{2}-\d{2} \(end of day\)",
+        r"by \1 end of day",
+        text,
+    )
+    text = re.sub(
+        r"\bon ([A-Za-z]+), \d{4}-\d{2}-\d{2} at ([0-9: ]+[AP]M ET)\b",
+        r"on \1 at \2",
+        text,
+    )
+
+    # De-robotify overly formal constructions.
+    text = text.replace("Please provide your approval", "Could you confirm")
+    text = text.replace("Please confirm your approval or your availability for the call.", "Could you confirm if that timing works for you?")
+    text = text.replace("Best regards,", "Thanks,")
+
+    # Normalize spacing and preserve paragraph breaks.
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

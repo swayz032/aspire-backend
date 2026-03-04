@@ -21,6 +21,7 @@ from aspire_orchestrator.services.eli_email_param_helpers import (
     body_text_to_html,
     extract_emails,
     extract_subject_hint,
+    naturalize_email_body,
     strip_html,
     synthesize_body_text,
 )
@@ -301,7 +302,8 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         "Return ONLY a JSON object with the extracted fields. "
         "Use null for any field you cannot extract from the request. "
         "For amount_cents, convert dollar amounts to cents (e.g., $49 = 4900). "
-        "For dates/times, use ISO 8601 format.\n"
+        "Use ISO 8601 ONLY for structured schedule fields (e.g., start_time, end_time, due_date, expires_at). "
+        "Keep human-facing message fields (subject, body, body_text, body_html, title) in natural conversational language.\n"
         f"Response format: {{\"field1\": \"value1\", \"field2\": \"value2\"}}"
         f"{tool_hint}"
     )
@@ -436,6 +438,14 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             extracted_params["body_text"] = strip_html(body_html)
         elif body_html in (None, "") and isinstance(body_text, str) and body_text.strip():
             extracted_params["body_html"] = body_text_to_html(body_text)
+
+        # Always normalize machine-like phrasing in user-facing email body.
+        bt = extracted_params.get("body_text")
+        if isinstance(bt, str) and bt.strip():
+            normalized = naturalize_email_body(bt)
+            extracted_params["body_text"] = normalized
+            if extracted_params.get("body_html") in (None, ""):
+                extracted_params["body_html"] = body_text_to_html(normalized)
 
     # 3) email.read: merge classifier entities (e.g., unread + limit) into params.
     if tool_used == "polaris.email.read":
