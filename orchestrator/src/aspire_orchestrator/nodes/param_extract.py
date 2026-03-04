@@ -47,6 +47,14 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["to", "subject", "body"],
         "optional": ["cc", "bcc"],
     },
+    "polaris.email.read": {
+        "required": [],
+        "optional": ["folder", "unread_only", "limit", "since"],
+    },
+    "internal.email.triage": {
+        "required": ["email_id"],
+        "optional": ["subject", "body"],
+    },
     "brave.search": {
         "required": ["query"],
         "optional": [],
@@ -57,6 +65,14 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "livekit.room.create": {
         "required": ["room_name"],
+        "optional": [],
+    },
+    "livekit.meeting.schedule": {
+        "required": ["participants", "time"],
+        "optional": ["agenda", "room_name"],
+    },
+    "deepgram.transcribe": {
+        "required": ["audio_url"],
         "optional": [],
     },
     "search.web": {
@@ -280,6 +296,31 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             elif existing is None or (isinstance(existing, str) and not existing.strip()):
                 extracted_params[key] = val
         logger.info("Merged request payload into extracted params: %d total keys", len(extracted_params))
+
+    # Tool-specific post-processing before required-field validation.
+    # 1) conference room creation: if room_name wasn't explicitly provided,
+    #    synthesize a deterministic name instead of failing closed.
+    if tool_used == "livekit.room.create" and isinstance(extracted_params, dict):
+        room_name = extracted_params.get("room_name")
+        if room_name is None or (isinstance(room_name, str) and not room_name.strip()):
+            short_id = uuid.uuid4().hex[:8]
+            extracted_params["room_name"] = f"conference-{short_id}"
+
+    # 2) email.read: merge classifier entities (e.g., unread + limit) into params.
+    if tool_used == "polaris.email.read":
+        if not isinstance(extracted_params, dict):
+            extracted_params = {}
+        intent_result = state.get("intent_result") or {}
+        entities = intent_result.get("entities", {}) if isinstance(intent_result, dict) else {}
+        if isinstance(entities, dict):
+            for key in ("folder", "unread_only", "limit", "since"):
+                val = entities.get(key)
+                if val is not None and key not in extracted_params:
+                    extracted_params[key] = val
+        if "folder" not in extracted_params:
+            extracted_params["folder"] = "inbox"
+        if "limit" not in extracted_params:
+            extracted_params["limit"] = 5
 
     # Validate required fields
     missing_fields = []

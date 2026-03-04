@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import openai
@@ -131,9 +132,10 @@ Respond with ONLY a JSON object, no markdown, no explanation:
 - receipts.search, receipts.read → (internal, no specific pack)
 - research.search, research.places, research.image → adam_research
 - email.send, email.draft → eli_inbox
+  - email.read, email.triage, email.send, email.draft → eli_inbox
 - invoice.create, invoice.send, invoice.void → quinn_invoicing
 - quote.create, quote.send → quinn_invoicing
-- meeting.schedule → nora_conference
+- meeting.schedule, meeting.create_room, meeting.summarize → nora_conference
 - payment.send, payment.transfer → (discontinued — no provider)
 - contract.generate, contract.send, contract.review, contract.sign → clara_legal
 - tax.file → (internal, filing)
@@ -175,6 +177,8 @@ In addition to action_type, classify the intent_type:
 
 # Built from skill_pack_manifests.yaml — action → skill pack ID
 _ACTION_TO_PACK: dict[str, str] = {
+    "email.read": "eli_inbox",
+    "email.triage": "eli_inbox",
     "email.send": "eli_inbox",
     "email.draft": "eli_inbox",
     "invoice.create": "quinn_invoicing",
@@ -183,6 +187,8 @@ _ACTION_TO_PACK: dict[str, str] = {
     "quote.create": "quinn_invoicing",
     "quote.send": "quinn_invoicing",
     "meeting.schedule": "nora_conference",
+    "meeting.create_room": "nora_conference",
+    "meeting.summarize": "nora_conference",
     "calendar.create": "nora_conference",
     "calendar.read": "nora_conference",
     "calendar.list": "nora_conference",
@@ -305,6 +311,12 @@ class IntentClassifier:
         Raises:
             Nothing — fails closed by returning an escalation IntentResult.
         """
+        # Deterministic fast-path for known specialist intents that frequently
+        # under-classify in LLM mode (reduces CLASSIFICATION_UNCLEAR dead-ends).
+        override = self._rule_based_specialist_intent(utterance)
+        if override:
+            return override
+
         # Law #3: fail-closed if API key missing
         if not self._api_key:
             logger.error("OPENAI_API_KEY not set — fail-closed (Law #3)")
@@ -508,6 +520,64 @@ class IntentClassifier:
             intent_type="action",
             agent_target=None,
         )
+
+    def _rule_based_specialist_intent(self, utterance: str) -> IntentResult | None:
+        """Handle high-signal Nora/Eli intents before LLM classification.
+
+        These patterns are deterministic and map to existing policy actions.
+        They avoid low-confidence clarify loops on clearly actionable requests.
+        """
+        text = (utterance or "").strip().lower()
+        if not text:
+            return None
+
+        # Nora: explicit room creation request.
+        if ("conference room" in text or "create room" in text or "meeting room" in text) and any(
+            kw in text for kw in ("create", "open", "spin up", "start")
+        ):
+            return IntentResult(
+                action_type="meeting.create_room",
+                skill_pack="nora_conference",
+                confidence=0.92,
+                entities={},
+                risk_tier=self._risk_tiers.get("meeting.create_room", RiskTier.GREEN),
+                requires_clarification=False,
+                clarification_prompt=None,
+                raw_llm_response={"rule_based": "meeting.create_room"},
+                intent_type="action",
+                agent_target="nora",
+            )
+
+        # Eli: unread/summary/reply workflow should at least route to inbox read.
+        email_signals = ("email", "inbox", "unread", "messages")
+        read_signals = ("read", "find", "show", "summarize", "summary", "last")
+        if any(s in text for s in email_signals) and any(s in text for s in read_signals):
+            limit = 5
+            m = re.search(r"\b(\d{1,2})\b", text)
+            if m:
+                try:
+                    limit = max(1, min(20, int(m.group(1))))
+                except ValueError:
+                    limit = 5
+            entities = {
+                "folder": "inbox",
+                "unread_only": True if "unread" in text else None,
+                "limit": limit,
+            }
+            return IntentResult(
+                action_type="email.read",
+                skill_pack="eli_inbox",
+                confidence=0.9,
+                entities=entities,
+                risk_tier=self._risk_tiers.get("email.read", RiskTier.GREEN),
+                requires_clarification=False,
+                clarification_prompt=None,
+                raw_llm_response={"rule_based": "email.read"},
+                intent_type="action",
+                agent_target="eli",
+            )
+
+        return None
 
 
 # =============================================================================
