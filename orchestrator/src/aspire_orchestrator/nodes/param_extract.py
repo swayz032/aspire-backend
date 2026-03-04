@@ -23,6 +23,7 @@ from aspire_orchestrator.services.eli_email_param_helpers import (
     extract_emails,
     extract_labeled_email,
     extract_subject_hint,
+    infer_subject_from_utterance,
     is_email_tweak_request,
     naturalize_email_body,
     strip_html,
@@ -438,6 +439,8 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             subject_hint = extract_subject_hint(utterance)
             if subject_hint:
                 extracted_params["subject"] = subject_hint
+            elif not tweak_request:
+                extracted_params["subject"] = infer_subject_from_utterance(utterance)
 
         body_text = extracted_params.get("body_text")
         body_html = extracted_params.get("body_html")

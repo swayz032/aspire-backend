@@ -66,6 +66,33 @@ def extract_subject_hint(utterance: str) -> str | None:
     return None
 
 
+def infer_subject_from_utterance(utterance: str) -> str:
+    text = (utterance or "").strip()
+    lower = text.lower()
+
+    if any(k in lower for k in ("roofing", "roof", "binding proposal", "proposal", "bid")):
+        project_match = re.search(r"\bfor\s+(.+?)(?:[.?!]|$)", text, re.IGNORECASE)
+        if project_match:
+            project = project_match.group(1).strip(" .,:;")
+            if project:
+                return f"Binding Proposal - {project[:64]}"
+        return "Binding Proposal - Commercial Roofing Project"
+
+    if any(k in lower for k in ("follow up", "follow-up", "following up")):
+        return "Follow-Up and Next Steps"
+
+    if any(k in lower for k in ("meeting", "call", "schedule")):
+        return "Scheduling and Next Steps"
+
+    if any(k in lower for k in ("invoice", "payment", "billing")):
+        return "Invoice and Payment Update"
+
+    if any(k in lower for k in ("contract", "agreement", "nda")):
+        return "Contract Review and Next Steps"
+
+    return "Quick Follow-Up"
+
+
 def extract_instruction_clause(utterance: str, verb: str) -> str | None:
     pattern = rf"\b{verb}\s+(.+?)(?:[.;]|,\s*(?:ask|propose|mention|tell|keep)\b| and (?:ask|propose|mention|tell|keep)\b|$)"
     m = re.search(pattern, utterance, re.IGNORECASE)

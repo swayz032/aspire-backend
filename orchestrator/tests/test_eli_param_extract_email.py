@@ -8,6 +8,7 @@ from aspire_orchestrator.services.eli_email_param_helpers import (
     extract_emails,
     extract_labeled_email,
     extract_subject_hint,
+    infer_subject_from_utterance,
     is_email_tweak_request,
     naturalize_email_body,
     synthesize_body_text,
@@ -30,6 +31,16 @@ class TestEliEmailParamHelpers:
         text = "Recipient: procurement@coastalwarehousing.com Sender: bids@skyline-roofing.com"
         assert extract_labeled_email(text, "recipient") == "procurement@coastalwarehousing.com"
         assert extract_labeled_email(text, "sender") == "bids@skyline-roofing.com"
+
+    def test_infer_subject_from_utterance_roofing(self) -> None:
+        subject = infer_subject_from_utterance(
+            "write a binding roofing proposal for Harbor Blvd Facility with warranty details"
+        )
+        assert "binding proposal" in subject.lower()
+        assert "harbor blvd facility" in subject.lower()
+
+    def test_infer_subject_from_utterance_fallback(self) -> None:
+        assert infer_subject_from_utterance("please send a quick update") == "Quick Follow-Up"
 
     def test_synthesize_body_has_cta_and_min_length(self) -> None:
         body = synthesize_body_text(
