@@ -260,6 +260,10 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
     execution_result = state.get("execution_result") or {}
     tool_used = state.get("tool_used", "unknown")
 
+    # Keep deterministic phrasing for stub/provider-unavailable executions.
+    if execution_result.get("stub"):
+        return fallback_text
+
     # Guard against empty/stub execution producing garbage responses
     is_empty_execution = (
         task_type in ("unknown", "")
@@ -756,6 +760,15 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 channel=_channel_ap,
             )
             text = narration if narration else _generate_approval_prompt(state, channel=_channel_ap)
+            # Guard against misleading clarification text when recipient is present.
+            _params_ap = state.get("execution_params") or {}
+            if (
+                state.get("task_type") == "email.draft"
+                and isinstance(_params_ap, dict)
+                and _params_ap.get("to")
+            ):
+                to_val = str(_params_ap.get("to")).strip()
+                text = f"I drafted an email to {to_val}. Review it in your Authority Queue, then approve or deny."
         elif error_code == "PRESENCE_REQUIRED":
             # RED tier → HOT state → Ava escalates to video
             _req_pr = state.get("request")

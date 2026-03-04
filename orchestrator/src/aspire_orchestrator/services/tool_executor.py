@@ -47,6 +47,7 @@ from aspire_orchestrator.providers.twilio_client import (
     execute_twilio_call_status,
 )
 from aspire_orchestrator.providers.polaris_email_client import (
+    execute_polaris_email_read,
     execute_polaris_email_send,
     execute_polaris_email_draft,
 )
@@ -722,6 +723,7 @@ _DOCUMENT_EXECUTORS: dict[str, ToolExecutorFn] = {
 
 # Phase 2 Wave 3: Email tools (YELLOW — Eli Inbox pack)
 _EMAIL_EXECUTORS: dict[str, ToolExecutorFn] = {
+    "polaris.email.read": execute_polaris_email_read,
     "polaris.email.send": execute_polaris_email_send,
     "polaris.email.draft": execute_polaris_email_draft,
 }
