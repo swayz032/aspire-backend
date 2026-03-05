@@ -89,9 +89,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ intent: 'onboarding.create_setup_tasks', agent: 'ava', text: 'Create and save onboarding setup tasks for this office.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-tasks', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { tasks: $('Kill Switch + HMAC + Prep').item.json.tasks, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource, gender: $('Kill Switch + HMAC + Prep').item.json.gender, date_of_birth: $('Kill Switch + HMAC + Prep').item.json.dateOfBirth } }) }}",
+        "jsonBody": "={{ JSON.stringify({ intent: 'onboarding.create_setup_tasks', agent: 'ava', text: 'Create and save onboarding setup tasks for this office.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-tasks', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { recipient_suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, recipient_office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, title: 'Onboarding Setup Checklist', body: 'Initialize all onboarding setup tasks for this office and save them for follow-up.', tasks: $('Kill Switch + HMAC + Prep').item.json.tasks, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource, gender: $('Kill Switch + HMAC + Prep').item.json.gender, date_of_birth: $('Kill Switch + HMAC + Prep').item.json.dateOfBirth } }) }}",
         "options": {
-          "timeout": 15000,
+          "timeout": 45000,
           "retry": {
             "maxRetries": 3,
             "retryInterval": 1000,
@@ -148,7 +148,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ intent: 'adam.daily_brief', agent: 'adam', text: 'Generate the first daily brief for this new onboarding tenant.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-brief', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { date: new Date().toISOString().slice(0, 10), include_image_urls: true, sources: ['brave', 'tavily', 'exa'], trigger: 'onboarding_activation' }, context: { industry: $('Kill Switch + HMAC + Prep').item.json.industry, industrySpecialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, incomeRange: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referralSource: $('Kill Switch + HMAC + Prep').item.json.referralSource, businessGoals: $('Kill Switch + HMAC + Prep').item.json.businessGoals, painPoint: $('Kill Switch + HMAC + Prep').item.json.painPoint, customerType: $('Kill Switch + HMAC + Prep').item.json.customerType, salesChannel: $('Kill Switch + HMAC + Prep').item.json.salesChannel, teamSize: $('Kill Switch + HMAC + Prep').item.json.teamSize, gender: $('Kill Switch + HMAC + Prep').item.json.gender } }) }}",
         "options": {
-          "timeout": 30000,
+          "timeout": 45000,
           "retry": {
             "maxRetries": 3,
             "retryInterval": 1000,
@@ -205,7 +205,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ intent: 'adam.pulse_scan', agent: 'adam', text: 'Run an initial pulse scan for onboarding intelligence context.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-pulse', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { include_image_urls: true, scan_categories: ['industry_news', 'competitor_moves', 'market_trends', 'regulatory_updates'], trigger: 'onboarding_activation' }, context: { industry: $('Kill Switch + HMAC + Prep').item.json.industry, industrySpecialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, incomeRange: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referralSource: $('Kill Switch + HMAC + Prep').item.json.referralSource, businessGoals: $('Kill Switch + HMAC + Prep').item.json.businessGoals, painPoint: $('Kill Switch + HMAC + Prep').item.json.painPoint, customerType: $('Kill Switch + HMAC + Prep').item.json.customerType, salesChannel: $('Kill Switch + HMAC + Prep').item.json.salesChannel, teamSize: $('Kill Switch + HMAC + Prep').item.json.teamSize, gender: $('Kill Switch + HMAC + Prep').item.json.gender } }) }}",
         "options": {
-          "timeout": 30000,
+          "timeout": 45000,
           "retry": {
             "maxRetries": 3,
             "retryInterval": 1000,
