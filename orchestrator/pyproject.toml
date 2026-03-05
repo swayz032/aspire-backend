@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "aspire-orchestrator"
 version = "0.1.0"
-description = "Aspire LangGraph Orchestrator — the Single Brain (Law #1)"
+description = "Aspire LangGraph Orchestrator - the Single Brain (Law #1)"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.3.0,<0.4",
@@ -24,6 +24,7 @@ dependencies = [
     "uvicorn[standard]>=0.34.0,<0.35",
     "pyyaml>=6.0,<7.0",
     "prometheus-client>=0.21.0,<1.0",
+    "redis[hiredis]>=5.0.0,<6.0",
     "supabase>=2.0.0,<3.0",
     "jsonschema>=4.23.0,<5.0",
     "PyJWT>=2.9.0,<3.0",
@@ -33,9 +34,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-redis = [
-    "redis[hiredis]>=5.0.0,<6.0",  # Working memory (Wave 4), optional — in-memory fallback
-]
 dev = [
     "pytest>=8.3.0,<9.0",
     "pytest-asyncio>=0.25.0,<0.26",
@@ -59,3 +57,4 @@ packages = ["src/aspire_orchestrator"]
 "src/aspire_orchestrator/config/skill_pack_manifests.yaml" = "aspire_orchestrator/config/skill_pack_manifests.yaml"
 "src/aspire_orchestrator/config/tax_rules" = "aspire_orchestrator/config/tax_rules"
 "src/aspire_orchestrator/schemas" = "aspire_orchestrator/schemas"
+
