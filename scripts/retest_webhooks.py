@@ -28,7 +28,8 @@ def sort_keys(obj):
 
 def send_webhook(name, url, payload, secret, valid_hmac=True):
     """Send a webhook request with valid or invalid HMAC."""
-    body = json.dumps(sort_keys(payload)).encode()
+    # Match workflow-side canonicalization exactly: sorted keys + compact JSON (no spaces).
+    body = json.dumps(sort_keys(payload), sort_keys=True, separators=(',', ':')).encode()
 
     if valid_hmac:
         sig = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()

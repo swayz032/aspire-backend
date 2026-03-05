@@ -57,7 +57,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "url": "={{ $env.ORCHESTRATOR_URL ? ($env.ORCHESTRATOR_URL + '/v1/intents') : ($env.ASPIRE_GATEWAY_URL + '/api/orchestrator/intent') }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -85,12 +85,16 @@
             {
               "name": "Authorization",
               "value": "=Bearer {{ $env.N8N_GATEWAY_S2S_TOKEN }}"
+            },
+            {
+              "name": "x-actor-id",
+              "value": "n8n-service"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ intent: 'onboarding.create_setup_tasks', agent: 'ava', text: 'Create and save onboarding setup tasks for this office.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-tasks', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { recipient_suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, recipient_office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, title: 'Onboarding Setup Checklist', body: 'Initialize all onboarding setup tasks for this office and save them for follow-up.', tasks: $('Kill Switch + HMAC + Prep').item.json.tasks, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource, gender: $('Kill Switch + HMAC + Prep').item.json.gender, date_of_birth: $('Kill Switch + HMAC + Prep').item.json.dateOfBirth } }) }}",
+        "jsonBody": "={{ JSON.stringify({ intent: 'onboarding.create_setup_tasks', agent: 'ava', text: 'Create and save onboarding setup tasks for recipient_suite_id ' + $('Kill Switch + HMAC + Prep').item.json.suiteId + ' and recipient_office_id ' + $('Kill Switch + HMAC + Prep').item.json.officeId + '.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, recipient_suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, recipient_office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-tasks', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { recipient_suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, recipient_office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, title: 'Onboarding Setup Checklist', body: 'Initialize all onboarding setup tasks for this office and save them for follow-up.', tasks: $('Kill Switch + HMAC + Prep').item.json.tasks, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource, gender: $('Kill Switch + HMAC + Prep').item.json.gender, date_of_birth: $('Kill Switch + HMAC + Prep').item.json.dateOfBirth } }) }}",
         "options": {
           "timeout": 45000,
           "retry": {
@@ -114,7 +118,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "url": "={{ $env.ORCHESTRATOR_URL ? ($env.ORCHESTRATOR_URL + '/v1/intents') : ($env.ASPIRE_GATEWAY_URL + '/api/orchestrator/intent') }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -142,6 +146,10 @@
             {
               "name": "Authorization",
               "value": "=Bearer {{ $env.N8N_GATEWAY_S2S_TOKEN }}"
+            },
+            {
+              "name": "x-actor-id",
+              "value": "n8n-service"
             }
           ]
         },
@@ -171,7 +179,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "url": "={{ $env.ORCHESTRATOR_URL ? ($env.ORCHESTRATOR_URL + '/v1/intents') : ($env.ASPIRE_GATEWAY_URL + '/api/orchestrator/intent') }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -199,6 +207,10 @@
             {
               "name": "Authorization",
               "value": "=Bearer {{ $env.N8N_GATEWAY_S2S_TOKEN }}"
+            },
+            {
+              "name": "x-actor-id",
+              "value": "n8n-service"
             }
           ]
         },

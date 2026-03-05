@@ -124,6 +124,14 @@ class A2AService:
         if settings.supabase_url and settings.supabase_service_role_key:
             self.backend = "supabase"
 
+    def _should_fallback_to_memory(self, exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "pgrst202" in msg
+            or "could not find the function" in msg
+            or "schema cache" in msg
+        )
+
     def dispatch(
         self,
         *,
@@ -388,6 +396,20 @@ class A2AService:
                 existing = self._fetch_task_by_idempotency(suite_id=suite_id, key=key)
                 if existing:
                     return A2ADispatchResult(success=True, task_id=existing, receipt_data={})
+            if self._should_fallback_to_memory(exc):
+                logger.warning("A2A supabase RPC unavailable; switching to in-memory fallback for process lifetime: %s", exc)
+                self.backend = "memory"
+                return self.dispatch(
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    correlation_id=correlation_id,
+                    task_type=task_type,
+                    assigned_to_agent=assigned_to_agent,
+                    payload=payload,
+                    priority=priority,
+                    idempotency_key=idempotency_key,
+                    actor_id=actor_id,
+                )
             return A2ADispatchResult(success=False, error=f"A2A_DISPATCH_FAILED: {exc}")
 
     def _claim_supabase(self, *, agent_id: str, suite_id: str, max_tasks: int, lease_seconds: int | None) -> A2AClaimResult:
@@ -410,6 +432,16 @@ class A2AService:
             task = self._to_task(row)
             return A2AClaimResult(success=True, task=task, receipt_data={})
         except Exception as exc:
+            if self._should_fallback_to_memory(exc):
+                logger.warning("A2A claim RPC unavailable; switching to in-memory fallback for process lifetime: %s", exc)
+                self.backend = "memory"
+                return self.claim(
+                    agent_id=agent_id,
+                    suite_id=suite_id,
+                    task_types=None,
+                    max_tasks=max_tasks,
+                    lease_seconds=lease_seconds,
+                )
             return A2AClaimResult(success=False, error=f"A2A_CLAIM_FAILED: {exc}")
 
     def _complete_supabase(self, *, task_id: str, agent_id: str, suite_id: str, result: dict[str, Any] | None) -> A2ACompleteResult:
@@ -427,6 +459,10 @@ class A2AService:
             task = self._to_task(row)
             return A2ACompleteResult(success=True, task_id=task.task_id, new_status=task.status, receipt_data={})
         except Exception as exc:
+            if self._should_fallback_to_memory(exc):
+                logger.warning("A2A complete RPC unavailable; switching to in-memory fallback for process lifetime: %s", exc)
+                self.backend = "memory"
+                return self.complete(task_id=task_id, agent_id=agent_id, suite_id=suite_id, result=result)
             msg = str(exc)
             if "invalid state" in msg.lower():
                 return A2ACompleteResult(success=False, error="Invalid task status")
@@ -448,6 +484,10 @@ class A2AService:
             task = self._to_task(row)
             return A2ACompleteResult(success=True, task_id=task.task_id, new_status=task.status, receipt_data={})
         except Exception as exc:
+            if self._should_fallback_to_memory(exc):
+                logger.warning("A2A fail RPC unavailable; switching to in-memory fallback for process lifetime: %s", exc)
+                self.backend = "memory"
+                return self.fail(task_id=task_id, agent_id=agent_id, suite_id=suite_id, error=error)
             return A2ACompleteResult(success=False, error=f"A2A_FAIL_FAILED: {exc}")
 
     def _list_tasks_supabase(self, *, suite_id: str, status: A2ATaskStatus | None, assigned_to_agent: str | None, limit: int) -> list[A2ATask]:
