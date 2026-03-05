@@ -1,1 +1,456 @@
-﻿
+{
+  "name": "Intake Activation — Onboarding Complete",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "intake-activation",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook — Onboarding Complete",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "webhookId": "intake-activation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Kill switch check\nconst enabled = $env.N8N_WORKFLOW_INTAKE_ACTIVATION_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: 'true', reason: 'kill_switch_disabled' } }];\n}\n\n// --- HMAC signature validation (canonical JSON) ---\n// Both sender and receiver must use sorted-key, compact JSON.\n// Sender: json.dumps(payload, sort_keys=True, separators=(',', ':'))\n// Receiver: JSON.stringify with sorted keys (below)\nconst crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET;\nconst signature = $input.first().json.headers['x-webhook-signature'] || '';\n\n// Recursively sort object keys for canonical JSON\nfunction sortKeys(obj) {\n  if (Array.isArray(obj)) return obj.map(sortKeys);\n  if (obj !== null && typeof obj === 'object') {\n    return Object.keys(obj).sort().reduce((acc, key) => {\n      acc[key] = sortKeys(obj[key]);\n      return acc;\n    }, {});\n  }\n  return obj;\n}\n\nconst body = $input.first().json.body;\nconst canonicalBody = JSON.stringify(sortKeys(body));\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(canonicalBody).digest('hex');\n\n// Pre-check buffer length to prevent timingSafeEqual RangeError\nconst sigBuf = Buffer.from(signature);\nconst expBuf = Buffer.from(expected);\nif (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {\n  return [{ json: { killed: 'true', reason: 'hmac_validation_failed' } }];\n}\n\n// Extract and validate payload\nif (!body.suiteId || !body.officeId) {\n  return [{ json: { killed: 'true', reason: 'missing_tenant_context' } }];\n}\n\nconst requestId = 'intake-activation-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = body.correlationId || ($input.first().json.headers['x-correlation-id']) || ('n8n-intake-activation-' + body.suiteId.slice(0, 8) + '-' + new Date().toISOString().slice(0, 10));\nconst payloadHash = crypto.createHash('sha256').update(JSON.stringify(sortKeys({ suiteId: body.suiteId, industry: body.industry }))).digest('hex');\nconst idempotencyKey = crypto.createHash('sha256').update(requestId + 'intake.activation' + payloadHash).digest('hex');\n\n// Build setup tasks — all services auto-included (v3 onboarding)\nconst allServiceTasks = [\n  { title: 'Connect your Stripe account', agent: 'quinn', service: 'Invoicing & Payments' },\n  { title: 'Connect QuickBooks Online', agent: 'teressa', service: 'Bookkeeping' },\n  { title: 'Set up your business email domain', agent: 'eli', service: 'Email Management' },\n  { title: 'Connect Google Calendar', agent: 'nora', service: 'Scheduling & Calendar' },\n  { title: 'Upload contract templates', agent: 'clara', service: 'Contract Management' },\n  { title: 'Connect Gusto payroll', agent: 'milo', service: 'Payroll' },\n  { title: 'Upload your logo and letterhead', agent: 'tec', service: 'Document Generation' },\n  { title: 'Review your first industry brief', agent: 'adam', service: 'Research & Intelligence' },\n  { title: 'Set up your business phone line', agent: 'sarah', service: 'Front Desk & Calls' },\n  { title: 'Connect your bank accounts', agent: 'finn', service: 'Expense Tracking' },\n  { title: 'Set up tax year preferences', agent: 'teressa', service: 'Tax Preparation' }\n];\n\nconst tasks = allServiceTasks.map(t => ({\n  suite_id: body.suiteId,\n  office_id: body.officeId,\n  title: t.title,\n  assigned_agent: t.agent,\n  status: 'pending',\n  category: 'onboarding_setup',\n  source_service: t.service,\n  created_by: 'n8n-intake-activation',\n  created_at: new Date().toISOString()\n}));\n\nreturn [{ json: {\n  killed: 'false',\n  requestId,\n  correlationId,\n  idempotencyKey,\n  suiteId: body.suiteId,\n  officeId: body.officeId,\n  dateOfBirth: body.dateOfBirth || null,\n  gender: body.gender || null,\n  industry: body.industry || null,\n  industrySpecialty: body.industrySpecialty || null,\n  incomeRange: body.incomeRange || null,\n  referralSource: body.referralSource || null,\n  businessGoals: body.businessGoals || null,\n  painPoint: body.painPoint || null,\n  customerType: body.customerType || null,\n  salesChannel: body.salesChannel || null,\n  teamSize: body.teamSize || null,\n  tasks,\n  tasksCount: tasks.length,\n  timestamp: new Date().toISOString()\n} }];"
+      },
+      "id": "kill-switch-and-prep",
+      "name": "Kill Switch + HMAC + Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.killed }}",
+              "operation": "equals",
+              "value2": "true"
+            }
+          ]
+        }
+      },
+      "id": "check-killed",
+      "name": "Kill Switch Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.suiteId }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.officeId }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "intake-activation"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.idempotencyKey + '-tasks' }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_GATEWAY_S2S_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'onboarding.create_setup_tasks', agent: 'ava', text: 'Create and save onboarding setup tasks for this office.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-tasks', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { tasks: $('Kill Switch + HMAC + Prep').item.json.tasks, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource, gender: $('Kill Switch + HMAC + Prep').item.json.gender, date_of_birth: $('Kill Switch + HMAC + Prep').item.json.dateOfBirth } }) }}",
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "insert-setup-tasks",
+      "name": "Create Setup Tasks → Gateway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.suiteId }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.officeId }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "intake-activation"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.idempotencyKey + '-brief' }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_GATEWAY_S2S_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'adam.daily_brief', agent: 'adam', text: 'Generate the first daily brief for this new onboarding tenant.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-brief', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { date: new Date().toISOString().slice(0, 10), include_image_urls: true, sources: ['brave', 'tavily', 'exa'], trigger: 'onboarding_activation' }, context: { industry: $('Kill Switch + HMAC + Prep').item.json.industry, industrySpecialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, incomeRange: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referralSource: $('Kill Switch + HMAC + Prep').item.json.referralSource, businessGoals: $('Kill Switch + HMAC + Prep').item.json.businessGoals, painPoint: $('Kill Switch + HMAC + Prep').item.json.painPoint, customerType: $('Kill Switch + HMAC + Prep').item.json.customerType, salesChannel: $('Kill Switch + HMAC + Prep').item.json.salesChannel, teamSize: $('Kill Switch + HMAC + Prep').item.json.teamSize, gender: $('Kill Switch + HMAC + Prep').item.json.gender } }) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "trigger-first-brief",
+      "name": "Trigger First Daily Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/api/orchestrator/intent",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-suite-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.suiteId }}"
+            },
+            {
+              "name": "x-office-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.officeId }}"
+            },
+            {
+              "name": "x-correlation-id",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.correlationId }}"
+            },
+            {
+              "name": "x-n8n-workflow-id",
+              "value": "intake-activation"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $('Kill Switch + HMAC + Prep').item.json.idempotencyKey + '-pulse' }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.N8N_GATEWAY_S2S_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ intent: 'adam.pulse_scan', agent: 'adam', text: 'Run an initial pulse scan for onboarding intelligence context.', suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, office_id: $('Kill Switch + HMAC + Prep').item.json.officeId, request_id: $('Kill Switch + HMAC + Prep').item.json.requestId + '-pulse', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, payload: { include_image_urls: true, scan_categories: ['industry_news', 'competitor_moves', 'market_trends', 'regulatory_updates'], trigger: 'onboarding_activation' }, context: { industry: $('Kill Switch + HMAC + Prep').item.json.industry, industrySpecialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, incomeRange: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referralSource: $('Kill Switch + HMAC + Prep').item.json.referralSource, businessGoals: $('Kill Switch + HMAC + Prep').item.json.businessGoals, painPoint: $('Kill Switch + HMAC + Prep').item.json.painPoint, customerType: $('Kill Switch + HMAC + Prep').item.json.customerType, salesChannel: $('Kill Switch + HMAC + Prep').item.json.salesChannel, teamSize: $('Kill Switch + HMAC + Prep').item.json.teamSize, gender: $('Kill Switch + HMAC + Prep').item.json.gender } }) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "trigger-first-pulse",
+      "name": "Trigger First Pulse Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        400
+      ],
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-intake-activation-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: $('Kill Switch + HMAC + Prep').item.json.suiteId, tenant_id: 'system', office_id: ($('Kill Switch + HMAC + Prep').item.json.officeId || $env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SUCCEEDED', correlation_id: $('Kill Switch + HMAC + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-intake-activation', action: { action_type: 'onboarding.activation', risk_tier: 'yellow', tasks_created: $('Kill Switch + HMAC + Prep').item.json.tasksCount, briefs_triggered: 2, industry_specialty: $('Kill Switch + HMAC + Prep').item.json.industrySpecialty, income_range: $('Kill Switch + HMAC + Prep').item.json.incomeRange, referral_source: $('Kill Switch + HMAC + Prep').item.json.referralSource }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-success",
+      "name": "Emit Success Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-intake-activation-killed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'SKIPPED', correlation_id: 'n8n-intake-activation-killed-' + new Date().toISOString().slice(0, 10), actor_type: 'SYSTEM', actor_id: 'n8n-intake-activation', action: { action_type: 'onboarding.activation', reason: $json.reason || 'kill_switch_disabled' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-killed",
+      "name": "Emit Kill/Reject Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        440,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-intake-activation-fail-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_agent', status: 'FAILED', correlation_id: 'n8n-intake-activation', actor_type: 'SYSTEM', actor_id: 'n8n-intake-activation', action: { action_type: 'onboarding.activation' }, result: { error_message: $json.message || 'Intake activation failed' }, created_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "emit-receipt-failure",
+      "name": "Emit Failure Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Onboarding Complete": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + HMAC + Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + HMAC + Prep": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch Active?": {
+      "main": [
+        [
+          {
+            "node": "Create Setup Tasks → Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Kill/Reject Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Setup Tasks → Gateway": {
+      "main": [
+        [
+          {
+            "node": "Trigger First Daily Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger First Daily Brief": {
+      "main": [
+        [
+          {
+            "node": "Trigger First Pulse Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger First Pulse Scan": {
+      "main": [
+        [
+          {
+            "node": "Emit Success Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
