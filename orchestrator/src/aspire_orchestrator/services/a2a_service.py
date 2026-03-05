@@ -365,7 +365,9 @@ class A2AService:
             "p_assigned_to_office_id": None,
         }
         try:
-            row = self._rpc_sync("app.enqueue_a2a_task", params)
+            # Canonical RPC name from trust-spine migrations is app.create_a2a_task.
+            # _rpc_sync already tries schema-qualified + unqualified variants.
+            row = self._rpc_sync("app.create_a2a_task", params)
             task_id = str(row.get("task_id"))
             return A2ADispatchResult(
                 success=True,
