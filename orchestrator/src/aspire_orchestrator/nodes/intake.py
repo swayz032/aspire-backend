@@ -113,6 +113,9 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
                 "agent": agent,
                 "requested_agent": requested_agent,
                 "channel": channel,
+                "user_profile": raw_request.get("user_profile"),
+                "session_id": raw_request.get("session_id"),
+                "message_history": raw_request.get("message_history"),
             },
         }
 
