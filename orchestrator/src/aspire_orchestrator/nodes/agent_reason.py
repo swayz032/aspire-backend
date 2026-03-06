@@ -164,12 +164,19 @@ def _build_user_context(state: OrchestratorState) -> str:
     if not profile:
         return ""
     parts = []
-    if profile.get("display_name"):
-        parts.append(f"User: {profile['display_name']}")
+    # Owner name (gateway sends owner_name, fallback to display_name)
+    name = profile.get("owner_name") or profile.get("display_name") or ""
+    if name:
+        # Extract last name for formal greeting (e.g., "Test Founder" → "Mr. Founder")
+        name_parts = name.strip().split()
+        last_name = name_parts[-1] if name_parts else name
+        parts.append(f"User: {name} (address as Mr./Ms. {last_name} in greetings)")
     if profile.get("business_name"):
         parts.append(f"Business: {profile['business_name']}")
     if profile.get("industry"):
         parts.append(f"Industry: {profile['industry']}")
+    if profile.get("team_size"):
+        parts.append(f"Team size: {profile['team_size']}")
     return "\n".join(parts) if parts else ""
 
 
