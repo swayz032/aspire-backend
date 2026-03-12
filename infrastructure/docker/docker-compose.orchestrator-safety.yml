@@ -25,6 +25,8 @@ services:
       ASPIRE_SAFETY_GATEWAY_URL: http://aspire-safety-gateway:8787/v1/safety/check
       ASPIRE_SAFETY_GATEWAY_SHARED_SECRET: ${ASPIRE_SAFETY_GATEWAY_API_KEY:-aspire-dev-safety-key}
       ASPIRE_LANGGRAPH_CHECKPOINTER: memory
+      ASPIRE_ADMIN_JWT_SECRET: ${ASPIRE_ADMIN_JWT_SECRET:-aspire-dev-admin-jwt-secret}
+      ASPIRE_ROBOT_S2S_SECRET: ${ASPIRE_ROBOT_S2S_SECRET:-aspire-dev-robot-s2s-secret}
       ASPIRE_TOKEN_SIGNING_KEY: ${ASPIRE_TOKEN_SIGNING_KEY:-development-token-signing-key-32-bytes-min}
       ASPIRE_OPENAI_API_KEY: ${ASPIRE_OPENAI_API_KEY:-}
       ASPIRE_SUPABASE_URL: ${ASPIRE_SUPABASE_URL:-}

@@ -1,17 +1,25 @@
 {
-  "name": "SLO Monitor \u2014 Every 5min",
+  "name": "SLO Monitor — Every 5min",
   "nodes": [
     {
       "parameters": {
         "rule": {
-          "interval": [{ "field": "minutes", "minutesInterval": 5 }]
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
         }
       },
       "id": "interval-trigger",
       "name": "Every 5 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -21,7 +29,10 @@
       "name": "Kill Switch + Prep",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
@@ -39,20 +50,35 @@
       "name": "Kill Switch Active?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SUPABASE_URL }}/rest/v1/provider_call_log?select=duration_ms,status&created_at=gte.{{ new Date(Date.now() - 5 * 60 * 1000).toISOString() }}&order=created_at.desc&limit=100",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/provider_call_log?select=started_at,completed_at,status,error_code&started_at=gte.{{ new Date(Date.now() - 5 * 60 * 1000).toISOString() }}&order=started_at.desc&limit=200",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "options": {
@@ -68,17 +94,24 @@
       "name": "Fetch Recent Metrics",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 400]
+      "position": [
+        880,
+        400
+      ],
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const calls = $input.all().map(i => i.json);\nconst flat = Array.isArray(calls[0]) ? calls[0] : calls;\nif (flat.length === 0) return [{ json: { breach: false, message: 'No data', p95: 0, errorRate: 0, totalCalls: 0 } }];\n\nconst durations = flat.map(c => c.duration_ms || 0).sort((a, b) => a - b);\nconst p95Index = Math.ceil(durations.length * 0.95) - 1;\nconst p95 = durations[p95Index] || 0;\n\nconst failed = flat.filter(c => c.status === 'failed' || c.status === 'timeout').length;\nconst errorRate = (failed / flat.length) * 100;\n\nconst SLO_P95_MS = 5000;\nconst SLO_ERROR_RATE = 5;\n\nconst breach = p95 > SLO_P95_MS || errorRate > SLO_ERROR_RATE;\n\nreturn [{ json: { breach, p95, errorRate: Math.round(errorRate * 100) / 100, totalCalls: flat.length, sloP95: SLO_P95_MS, sloErrorRate: SLO_ERROR_RATE } }];"
+        "jsCode": "const calls = $input.all().map(i => i.json);\nconst flat = Array.isArray(calls[0]) ? calls[0] : calls;\nconst validCalls = flat.filter((call) => call && (call.started_at || call.completed_at || call.status || call.error_code));\nif (validCalls.length === 0) {\n  return [{ json: { breach: false, noData: true, robotStatus: 'partial', p95: 0, errorRate: 0, totalCalls: 0, sloP95: 5000, sloErrorRate: 5, summary: 'No provider calls in the last 5 minutes' } }];\n}\nconst durations = validCalls.map((call) => {\n  const started = Date.parse(call.started_at || '');\n  const completed = Date.parse(call.completed_at || '');\n  if (Number.isFinite(started) && Number.isFinite(completed) && completed >= started) {\n    return completed - started;\n  }\n  return 0;\n}).sort((a, b) => a - b);\nconst p95Index = Math.max(0, Math.ceil(durations.length * 0.95) - 1);\nconst p95 = durations[p95Index] || 0;\nconst failed = validCalls.filter((call) => ['failed', 'partial', 'canceled', 'timeout'].includes(String(call.status || '').toLowerCase())).length;\nconst errorRate = validCalls.length ? (failed / validCalls.length) * 100 : 0;\nconst SLO_P95_MS = 5000;\nconst SLO_ERROR_RATE = 5;\nconst breach = p95 > SLO_P95_MS || errorRate > SLO_ERROR_RATE;\nconst robotStatus = breach ? 'failed' : 'passed';\nconst roundedErrorRate = Math.round(errorRate * 100) / 100;\nconst summary = breach\n  ? `SLO breach detected: p95=${p95}ms error_rate=${roundedErrorRate}% calls=${validCalls.length}`\n  : `SLO healthy: p95=${p95}ms error_rate=${roundedErrorRate}% calls=${validCalls.length}`;\nreturn [{ json: { breach, noData: false, robotStatus, p95, errorRate: roundedErrorRate, totalCalls: validCalls.length, sloP95: SLO_P95_MS, sloErrorRate: SLO_ERROR_RATE, summary } }];"
       },
       "id": "calculate-slo",
       "name": "Calculate SLO Metrics",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 400]
+      "position": [
+        1100,
+        400
+      ]
     },
     {
       "parameters": {
@@ -96,7 +129,10 @@
       "name": "SLO Breached?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1320, 400]
+      "position": [
+        1320,
+        400
+      ]
     },
     {
       "parameters": {
@@ -106,10 +142,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -123,7 +171,10 @@
       "name": "Emit Healthy Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1540, 500]
+      "position": [
+        1540,
+        500
+      ]
     },
     {
       "parameters": {
@@ -133,10 +184,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -150,7 +213,10 @@
       "name": "Emit Breach Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1540, 300]
+      "position": [
+        1540,
+        300
+      ]
     },
     {
       "parameters": {
@@ -160,10 +226,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -177,7 +255,10 @@
       "name": "Emit Kill Switch Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 200]
+      "position": [
+        880,
+        200
+      ]
     },
     {
       "parameters": {},
@@ -185,7 +266,10 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [440, 600]
+      "position": [
+        440,
+        600
+      ]
     },
     {
       "parameters": {
@@ -195,10 +279,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -212,28 +308,336 @@
       "name": "Emit Failure Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 600]
+      "position": [
+        660,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst prep = $('Kill Switch + Prep').item.json;\nconst payload = {\n  id: prep.requestId,\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: $json.robotStatus || 'passed',\n  startedAt: prep.timestamp || new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':slo-monitor',\n  summary: $json.summary || 'SLO monitor completed',\n  scenarios: [{\n    name: 'slo_window',\n    status: $json.robotStatus || 'passed',\n    summary: $json.summary || 'SLO monitor completed',\n    evidence: [\n      `correlation:${prep.correlationId}`,\n      `total_calls:${$json.totalCalls || 0}`,\n      `p95_ms:${$json.p95 || 0}`,\n      `error_rate:${$json.errorRate || 0}`\n    ]\n  }],\n  meta: { workflow: 'slo-monitor', correlationId: prep.correlationId, requestId: prep.requestId, totalCalls: $json.totalCalls || 0, p95Ms: $json.p95 || 0, errorRate: $json.errorRate || 0, noData: Boolean($json.noData) }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+      },
+      "id": "slo-build-healthy-robot",
+      "name": "Build Healthy Robot Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROBOT_INGEST_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-robot-signature",
+              "value": "={{ $json.robotSignature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.robotBody }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "slo-post-healthy-robot",
+      "name": "POST Healthy Robot Run ? Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst prep = $('Kill Switch + Prep').item.json;\nconst payload = {\n  id: prep.requestId,\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: 'failed',\n  startedAt: prep.timestamp || new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':slo-monitor',\n  summary: $json.summary || 'SLO breach detected',\n  scenarios: [{\n    name: 'slo_window',\n    status: 'failed',\n    summary: $json.summary || 'SLO breach detected',\n    evidence: [\n      `correlation:${prep.correlationId}`,\n      `total_calls:${$json.totalCalls || 0}`,\n      `p95_ms:${$json.p95 || 0}`,\n      `error_rate:${$json.errorRate || 0}`\n    ]\n  }],\n  meta: { workflow: 'slo-monitor', correlationId: prep.correlationId, requestId: prep.requestId, totalCalls: $json.totalCalls || 0, p95Ms: $json.p95 || 0, errorRate: $json.errorRate || 0 }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+      },
+      "id": "slo-build-breach-robot",
+      "name": "Build Breach Robot Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROBOT_INGEST_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-robot-signature",
+              "value": "={{ $json.robotSignature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.robotBody }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "slo-post-breach-robot",
+      "name": "POST Breach Robot Run ? Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst payload = {\n  id: 'n8n-slo-error-' + Date.now(),\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: 'failed',\n  startedAt: new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':slo-monitor',\n  summary: $json.message || 'SLO monitor execution failed',\n  scenarios: [{\n    name: 'slo_window',\n    status: 'failed',\n    summary: $json.message || 'SLO monitor execution failed',\n    evidence: [($json.message || 'workflow_error')]\n  }],\n  meta: { workflow: 'slo-monitor', error: $json.message || 'SLO monitor execution failed' }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+      },
+      "id": "slo-build-error-robot",
+      "name": "Build Error Robot Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROBOT_INGEST_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-robot-signature",
+              "value": "={{ $json.robotSignature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.robotBody }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "slo-post-error-robot",
+      "name": "POST Error Robot Run ? Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        680
+      ]
     }
   ],
   "connections": {
-    "Every 5 Minutes": { "main": [[{ "node": "Kill Switch + Prep", "type": "main", "index": 0 }]] },
-    "Kill Switch + Prep": { "main": [[{ "node": "Kill Switch Active?", "type": "main", "index": 0 }]] },
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + Prep": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Kill Switch Active?": {
       "main": [
-        [{ "node": "Fetch Recent Metrics", "type": "main", "index": 0 }],
-        [{ "node": "Emit Kill Switch Receipt", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Fetch Recent Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Emit Kill Switch Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Fetch Recent Metrics": { "main": [[{ "node": "Calculate SLO Metrics", "type": "main", "index": 0 }]] },
-    "Calculate SLO Metrics": { "main": [[{ "node": "SLO Breached?", "type": "main", "index": 0 }]] },
+    "Fetch Recent Metrics": {
+      "main": [
+        [
+          {
+            "node": "Calculate SLO Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate SLO Metrics": {
+      "main": [
+        [
+          {
+            "node": "SLO Breached?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "SLO Breached?": {
       "main": [
-        [{ "node": "Emit Healthy Receipt", "type": "main", "index": 0 }],
-        [{ "node": "Emit Breach Receipt", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Build Healthy Robot Run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Breach Robot Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Error Trigger": { "main": [[{ "node": "Emit Failure Receipt", "type": "main", "index": 0 }]] }
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Error Robot Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Healthy Robot Run": {
+      "main": [
+        [
+          {
+            "node": "POST Healthy Robot Run ? Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Healthy Robot Run ? Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Healthy Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Breach Robot Run": {
+      "main": [
+        [
+          {
+            "node": "POST Breach Robot Run ? Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Breach Robot Run ? Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Breach Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Robot Run": {
+      "main": [
+        [
+          {
+            "node": "POST Error Robot Run ? Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Error Robot Run ? Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" },
-  "tags": [{ "name": "ops" }, { "name": "slo" }]
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "ops"
+    },
+    {
+      "name": "slo"
+    }
+  ]
 }

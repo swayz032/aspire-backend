@@ -1,5 +1,5 @@
 {
-  "name": "Rotation Health Monitor \u2014 Daily 8am",
+  "name": "Rotation Health Monitor — Daily 8am",
   "nodes": [
     {
       "parameters": {
@@ -15,7 +15,10 @@
       "name": "Daily 8am UTC",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -25,17 +28,28 @@
       "name": "Kill Switch + Prep",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
           "combinator": "and",
           "conditions": [
             {
               "id": "kill-check-01",
-              "operator": { "type": "string", "operation": "equals" },
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
               "leftValue": "={{ $json.killed }}",
               "rightValue": "true"
             }
@@ -46,7 +60,10 @@
       "name": "Kill Switch Active?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -80,13 +97,17 @@
       "name": "GET Gateway Health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 400],
+      "position": [
+        880,
+        400
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "J84m12hyzSwSHo6S",
           "name": "Gateway Internal Key"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -132,37 +153,52 @@
         }
       },
       "id": "query-rotation-status",
-      "name": "Query Rotation Status \u2192 Gateway",
+      "name": "Query Rotation Status → Gateway",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 400],
+      "position": [
+        1100,
+        400
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "J84m12hyzSwSHo6S",
           "name": "Gateway Internal Key"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Evaluate health check results. Pure data \u2014 no decisions.\n// Collect gateway health status and rotation status query result.\n\nconst gatewayResult = $('GET Gateway Health').item.json;\nconst rotationResult = $json;\n\nconst gatewayHealthy = gatewayResult && (gatewayResult.status === 'ok' || gatewayResult.healthy === true);\n\n// The Gateway returns rotation failures in the response payload.\n// If the Gateway could not be reached or returned non-ok, that is also a failure.\nconst hasRotationFailures = rotationResult && rotationResult.payload && rotationResult.payload.failed_rotations && rotationResult.payload.failed_rotations.length > 0;\nconst rotationFailures = hasRotationFailures ? rotationResult.payload.failed_rotations : [];\n\nconst allHealthy = gatewayHealthy && !hasRotationFailures;\n\nreturn [{ json: {\n  all_healthy: allHealthy,\n  gateway_healthy: gatewayHealthy,\n  has_rotation_failures: hasRotationFailures,\n  rotation_failures: rotationFailures,\n  rotation_failure_count: rotationFailures.length,\n  checked_at: new Date().toISOString()\n} }];"
+        "jsCode": "const gatewayResult = $('GET Gateway Health').item.json || {};\nconst rotationResult = $json || {};\nconst gatewayError = gatewayResult.error || gatewayResult.message || gatewayResult.reason || gatewayResult.code;\nconst gatewayHealthy = !gatewayError && (gatewayResult.status === 'ok' || gatewayResult.healthy === true);\nconst rotationFailures = Array.isArray(rotationResult?.payload?.failed_rotations) ? rotationResult.payload.failed_rotations : [];\nconst queryError = rotationResult.error || rotationResult.message || rotationResult.description || rotationResult.reason || rotationResult.code || rotationResult.reason_code || null;\nconst queryFailed = Boolean(queryError) || Boolean(rotationResult.statusCode && Number(rotationResult.statusCode) >= 400);\nconst hasRotationFailures = rotationFailures.length > 0;\nconst allHealthy = gatewayHealthy && !queryFailed && !hasRotationFailures;\nreturn [{ json: {\n  all_healthy: allHealthy,\n  gateway_healthy: gatewayHealthy,\n  has_rotation_failures: hasRotationFailures,\n  rotation_failures: rotationFailures,\n  rotation_failure_count: rotationFailures.length,\n  query_failed: queryFailed,\n  query_error: queryError,\n  checked_at: new Date().toISOString()\n} }];"
       },
       "id": "evaluate-health",
       "name": "Evaluate Health Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 400]
+      "position": [
+        1320,
+        400
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
           "combinator": "and",
           "conditions": [
             {
               "id": "health-check-01",
-              "operator": { "type": "string", "operation": "equals" },
-              "leftValue": "={{ $json.all_healthy }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.all_healthy ? 'true' : 'false' }}",
               "rightValue": "true"
             }
           ]
@@ -172,7 +208,10 @@
       "name": "All Healthy?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1540, 400]
+      "position": [
+        1540,
+        400
+      ]
     },
     {
       "parameters": {
@@ -182,10 +221,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -199,7 +250,10 @@
       "name": "Emit Healthy Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        300
+      ]
     },
     {
       "parameters": {
@@ -241,10 +295,13 @@
         }
       },
       "id": "alert-unhealthy",
-      "name": "Alert Unhealthy \u2192 Gateway",
+      "name": "Alert Unhealthy → Gateway",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1760, 500],
+      "position": [
+        1760,
+        500
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "J84m12hyzSwSHo6S",
@@ -260,10 +317,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -277,7 +346,10 @@
       "name": "Emit Unhealthy Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1980, 500]
+      "position": [
+        1980,
+        500
+      ]
     },
     {
       "parameters": {
@@ -287,10 +359,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -304,7 +388,10 @@
       "name": "Emit Kill Switch Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 200]
+      "position": [
+        880,
+        200
+      ]
     },
     {
       "parameters": {},
@@ -312,7 +399,10 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [440, 600]
+      "position": [
+        440,
+        600
+      ]
     },
     {
       "parameters": {
@@ -322,10 +412,22 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "Prefer", "value": "return=minimal" }
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
           ]
         },
         "sendBody": true,
@@ -339,76 +441,345 @@
       "name": "Emit Error Receipt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 600]
+      "position": [
+        660,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst prep = $('Kill Switch + Prep').item.json;\nconst payload = {\n  id: prep.requestId,\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: 'passed',\n  startedAt: prep.timestamp || new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':rotation-monitor',\n  summary: 'Rotation health monitor is healthy',\n  scenarios: [{\n    name: 'rotation_health',\n    status: 'passed',\n    summary: 'Rotation health monitor is healthy',\n    evidence: [\n      `correlation:${prep.correlationId}`,\n      `gateway_healthy:${$json.gateway_healthy}`,\n      `rotation_failures:${$json.rotation_failure_count || 0}`\n    ]\n  }],\n  meta: { workflow: 'rotation-monitor', correlationId: prep.correlationId, requestId: prep.requestId, gatewayHealthy: $json.gateway_healthy, rotationFailureCount: $json.rotation_failure_count || 0 }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+      },
+      "id": "rotation-build-healthy-robot",
+      "name": "Build Healthy Robot Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROBOT_INGEST_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-robot-signature",
+              "value": "={{ $json.robotSignature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.robotBody }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "rotation-post-healthy-robot",
+      "name": "POST Healthy Robot Run ? Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst prep = $('Kill Switch + Prep').item.json;\nconst queryFailed = String($json.query_failed || 'false') === 'true';\nconst payload = {\n  id: prep.requestId,\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: 'failed',\n  startedAt: prep.timestamp || new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':rotation-monitor',\n  summary: queryFailed ? ('Rotation monitor query failed: ' + ($json.query_error || 'unknown error')) : 'Rotation health monitor detected unhealthy state',\n  scenarios: [{\n    name: 'rotation_health',\n    status: 'failed',\n    summary: queryFailed ? ('Rotation monitor query failed: ' + ($json.query_error || 'unknown error')) : 'Rotation health monitor detected unhealthy state',\n    evidence: [\n      `correlation:${prep.correlationId}`,\n      `gateway_healthy:${$json.gateway_healthy}`,\n      `rotation_failures:${$json.rotation_failure_count || 0}`,\n      `query_failed:${queryFailed}`\n    ]\n  }],\n  meta: { workflow: 'rotation-monitor', correlationId: prep.correlationId, requestId: prep.requestId, gatewayHealthy: $json.gateway_healthy, rotationFailureCount: $json.rotation_failure_count || 0, queryFailed, queryError: $json.query_error || null }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+      },
+      "id": "rotation-build-unhealthy-robot",
+      "name": "Build Unhealthy Robot Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROBOT_INGEST_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-robot-signature",
+              "value": "={{ $json.robotSignature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.robotBody }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "rotation-post-unhealthy-robot",
+      "name": "POST Unhealthy Robot Run ? Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst payload = {\n  id: 'n8n-rotation-monitor-error-' + Date.now(),\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: 'failed',\n  startedAt: new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':rotation-monitor',\n  summary: $json.message || 'Rotation monitor workflow failed',\n  scenarios: [{ name: 'rotation_health', status: 'failed', summary: $json.message || 'Rotation monitor workflow failed', evidence: [($json.message || 'workflow_error')] }],\n  meta: { workflow: 'rotation-monitor', error: $json.message || 'Rotation monitor workflow failed' }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+      },
+      "id": "rotation-build-error-robot",
+      "name": "Build Error Robot Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_ROBOT_INGEST_URL }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-robot-signature",
+              "value": "={{ $json.robotSignature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.robotBody }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000,
+            "retryIntervalBackoff": true
+          }
+        }
+      },
+      "id": "rotation-post-error-robot",
+      "name": "POST Error Robot Run ? Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        680
+      ]
     }
   ],
   "connections": {
     "Daily 8am UTC": {
       "main": [
         [
-          { "node": "Kill Switch + Prep", "type": "main", "index": 0 }
+          {
+            "node": "Kill Switch + Prep",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Kill Switch + Prep": {
       "main": [
         [
-          { "node": "Kill Switch Active?", "type": "main", "index": 0 }
+          {
+            "node": "Kill Switch Active?",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Kill Switch Active?": {
       "main": [
         [
-          { "node": "Emit Kill Switch Receipt", "type": "main", "index": 0 }
+          {
+            "node": "Emit Kill Switch Receipt",
+            "type": "main",
+            "index": 0
+          }
         ],
         [
-          { "node": "GET Gateway Health", "type": "main", "index": 0 }
+          {
+            "node": "GET Gateway Health",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "GET Gateway Health": {
       "main": [
         [
-          { "node": "Query Rotation Status \u2192 Gateway", "type": "main", "index": 0 }
+          {
+            "node": "Query Rotation Status → Gateway",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
-    "Query Rotation Status \u2192 Gateway": {
+    "Query Rotation Status → Gateway": {
       "main": [
         [
-          { "node": "Evaluate Health Results", "type": "main", "index": 0 }
+          {
+            "node": "Evaluate Health Results",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Evaluate Health Results": {
       "main": [
         [
-          { "node": "All Healthy?", "type": "main", "index": 0 }
+          {
+            "node": "All Healthy?",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "All Healthy?": {
       "main": [
         [
-          { "node": "Emit Healthy Receipt", "type": "main", "index": 0 }
+          {
+            "node": "Build Healthy Robot Run",
+            "type": "main",
+            "index": 0
+          }
         ],
         [
-          { "node": "Alert Unhealthy \u2192 Gateway", "type": "main", "index": 0 }
+          {
+            "node": "Build Unhealthy Robot Run",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
-    "Alert Unhealthy \u2192 Gateway": {
+    "Alert Unhealthy → Gateway": {
       "main": [
         [
-          { "node": "Emit Unhealthy Receipt", "type": "main", "index": 0 }
+          {
+            "node": "Emit Unhealthy Receipt",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Error Trigger": {
       "main": [
         [
-          { "node": "Emit Error Receipt", "type": "main", "index": 0 }
+          {
+            "node": "Build Error Robot Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Healthy Robot Run": {
+      "main": [
+        [
+          {
+            "node": "POST Healthy Robot Run ? Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Healthy Robot Run ? Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Healthy Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Unhealthy Robot Run": {
+      "main": [
+        [
+          {
+            "node": "POST Unhealthy Robot Run ? Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Unhealthy Robot Run ? Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Alert Unhealthy → Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Robot Run": {
+      "main": [
+        [
+          {
+            "node": "POST Error Robot Run ? Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Error Robot Run ? Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Emit Error Receipt",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }
@@ -422,9 +793,17 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "tags": [
-    { "name": "ops" },
-    { "name": "security" },
-    { "name": "rotation" },
-    { "name": "monitoring" }
+    {
+      "name": "ops"
+    },
+    {
+      "name": "security"
+    },
+    {
+      "name": "rotation"
+    },
+    {
+      "name": "monitoring"
+    }
   ]
 }

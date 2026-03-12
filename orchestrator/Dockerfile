@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy dependency spec and source code
 COPY pyproject.toml ./
 COPY src/ ./src/
+COPY scripts/schemas/ ./scripts/schemas/
 
 # Install Python deps + package
 RUN pip install --no-cache-dir .

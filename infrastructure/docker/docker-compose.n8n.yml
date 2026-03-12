@@ -1,6 +1,7 @@
 services:
   n8n-db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: n8n_secure_password
       POSTGRES_USER: n8n
@@ -17,6 +18,7 @@ services:
 
   n8n:
     image: n8nio/n8n
+    restart: unless-stopped
     ports:
       - "5678:5678"
     environment:
@@ -41,6 +43,11 @@ services:
       SUPABASE_URL: "${SUPABASE_URL:?Set SUPABASE_URL in .env}"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY in .env}"
       ASPIRE_GATEWAY_URL: "${ASPIRE_GATEWAY_URL:-http://host.docker.internal:5000}"
+      ASPIRE_ROBOT_INGEST_URL: "${ASPIRE_ROBOT_INGEST_URL:?Set ASPIRE_ROBOT_INGEST_URL in .env}"
+      ASPIRE_ROBOT_S2S_SECRET: "${ASPIRE_ROBOT_S2S_SECRET:?Set ASPIRE_ROBOT_S2S_SECRET in .env}"
+      ASPIRE_ROBOT_ENV: "${ASPIRE_ROBOT_ENV:-production}"
+      ASPIRE_ROBOT_SUITE: "${ASPIRE_ROBOT_SUITE:-aspire_robots}"
+      ASPIRE_ROBOT_VERSION_REF: "${ASPIRE_ROBOT_VERSION_REF:-n8n-live}"
       N8N_GATEWAY_S2S_TOKEN: "${N8N_GATEWAY_S2S_TOKEN:?Set N8N_GATEWAY_S2S_TOKEN in .env}"
       DEFAULT_SUITE_ID: "${DEFAULT_SUITE_ID:-c4eebdbd-e019-42c0-9143-077762e92bbc}"
       DEFAULT_OFFICE_ID: "${DEFAULT_OFFICE_ID:-c4eebdbd-e019-42c0-9143-077762e92bbc}"

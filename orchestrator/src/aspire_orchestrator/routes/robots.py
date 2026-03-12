@@ -33,21 +33,41 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/robots", tags=["robots"])
 
-# Load schema once at module level
-_SCHEMA_PATH = (
-    Path(__file__).parent.parent.parent.parent
-    / "scripts"
-    / "schemas"
-    / "robot_run.schema.json"
-)
 _schema: dict[str, Any] | None = None
+
+
+def _resolve_schema_path() -> Path:
+    """Resolve robot_run.schema.json across source and container layouts."""
+    env_path = os.environ.get("ASPIRE_ROBOT_SCHEMA_PATH", "").strip()
+    candidates: list[Path] = []
+    if env_path:
+        candidates.append(Path(env_path))
+
+    here = Path(__file__).resolve()
+    candidates.extend(
+        [
+            Path.cwd() / "scripts" / "schemas" / "robot_run.schema.json",
+            Path("/app/scripts/schemas/robot_run.schema.json"),
+            here.parents[3] / "scripts" / "schemas" / "robot_run.schema.json",
+            here.parents[2] / "scripts" / "schemas" / "robot_run.schema.json",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(
+        "robot_run.schema.json not found in expected locations"
+    )
 
 
 def _get_schema() -> dict[str, Any]:
     """Lazy-load the RobotRun JSON Schema."""
     global _schema
     if _schema is None:
-        _schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        schema_path = _resolve_schema_path()
+        _schema = json.loads(schema_path.read_text(encoding="utf-8"))
     return _schema
 
 
@@ -102,6 +122,57 @@ def _build_receipt(
     }
 
 
+def _register_robot_incident(
+    *,
+    run_id: str,
+    env: str,
+    version_ref: str,
+    summary: str,
+    scenario_count: int,
+    reason_code: str,
+    severity: str,
+    title: str,
+) -> None:
+    """Publish failed robot runs into the admin incident store."""
+    now = datetime.now(timezone.utc).isoformat()
+    incident = {
+        "incident_id": f"robot-{run_id}",
+        "state": "open",
+        "severity": severity,
+        "title": title,
+        "correlation_id": run_id,
+        "trace_id": run_id,
+        "suite_id": "system",
+        "first_seen": now,
+        "last_seen": now,
+        "timeline": [
+            {
+                "ts": now,
+                "event": "robot_ingest",
+                "reason_code": reason_code,
+            }
+        ],
+        "fingerprint": f"robot:{reason_code}:{run_id}",
+        "agent": "robot_runner",
+        "evidence_pack": {
+            "source": "robot_runner",
+            "component": "robots.ingest",
+            "env": env,
+            "version_ref": version_ref,
+            "scenario_count": scenario_count,
+            "summary": summary,
+            "reason_code": reason_code,
+        },
+    }
+
+    try:
+        from aspire_orchestrator.routes.admin import register_incident
+
+        register_incident(incident)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to register robot incident: %s", exc)
+
+
 @router.post("/ingest")
 async def robot_ingest(request: Request) -> JSONResponse:
     """Accept a RobotRun result from CI/CD or the robot runner script.
@@ -150,18 +221,34 @@ async def robot_ingest(request: Request) -> JSONResponse:
         schema = _get_schema()
         js_validate(instance=payload, schema=schema)
     except ValidationError as e:
+        run_id = payload.get("id", str(uuid.uuid4()))
+        env = payload.get("env", "unknown")
+        version_ref = payload.get("versionRef", "unknown")
+        scenario_count = len(payload.get("scenarios", []))
+        summary = f"Schema validation failed: {e.message[:200]}"
+
         # Emit incident receipt for schema failure
         receipt = _build_receipt(
             receipt_type="incident.opened",
-            run_id=payload.get("id", str(uuid.uuid4())),
-            env=payload.get("env", "unknown"),
+            run_id=run_id,
+            env=env,
             status="failed",
-            summary=f"Schema validation failed: {e.message[:200]}",
-            version_ref=payload.get("versionRef", "unknown"),
-            scenario_count=len(payload.get("scenarios", [])),
+            summary=summary,
+            version_ref=version_ref,
+            scenario_count=scenario_count,
             reason_code="schema_validation_failed",
         )
         store_receipts([receipt])
+        _register_robot_incident(
+            run_id=run_id,
+            env=env,
+            version_ref=version_ref,
+            summary=summary,
+            scenario_count=scenario_count,
+            reason_code="schema_validation_failed",
+            severity="sev3",
+            title="Robot run schema validation failed",
+        )
 
         return JSONResponse(
             status_code=400,
@@ -193,6 +280,16 @@ async def robot_ingest(request: Request) -> JSONResponse:
             reason_code="robot_run_failed",
         )
         store_receipts([receipt])
+        _register_robot_incident(
+            run_id=run_id,
+            env=env,
+            version_ref=version_ref,
+            summary=summary or "Robot run failed",
+            scenario_count=len(scenarios),
+            reason_code="robot_run_failed",
+            severity="sev2",
+            title="Robot run failed",
+        )
 
         logger.warning(
             "Robot run FAILED: id=%s env=%s version=%s",

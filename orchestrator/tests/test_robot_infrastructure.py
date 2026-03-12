@@ -23,6 +23,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from aspire_orchestrator.server import app
+from aspire_orchestrator.routes import admin as admin_routes
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -258,22 +259,31 @@ class TestRobotIngestPayload:
     @patch.dict(os.environ, {"ASPIRE_ROBOT_S2S_SECRET": ROBOT_S2S_SECRET})
     def test_failed_run_emits_incident_receipt(self) -> None:
         """Failed robot run emits incident.opened receipt."""
+        admin_routes.clear_admin_stores()
         payload = _make_valid_robot_run(status="failed")
         resp = _post_ingest(payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["receipt_type"] == "incident.opened"
         assert data["status"] == "failed"
+        incident = admin_routes._incidents.get(f"robot-{payload['id']}")
+        assert incident is not None
+        assert incident["correlation_id"] == payload["id"]
+        assert incident["severity"] == "sev2"
 
     @patch.dict(os.environ, {"ASPIRE_ROBOT_S2S_SECRET": ROBOT_S2S_SECRET})
     def test_invalid_payload_rejected_with_receipt(self) -> None:
         """Invalid RobotRun schema emits incident receipt and returns 400."""
+        admin_routes.clear_admin_stores()
         payload = {"id": "short", "status": "passed"}  # Missing required fields
         resp = _post_ingest(payload)
         assert resp.status_code == 400
         data = resp.json()
         assert data["error"] == "SCHEMA_VALIDATION_FAILED"
         assert data["receipt_id"] is not None
+        incident = admin_routes._incidents.get("robot-short")
+        assert incident is not None
+        assert incident["severity"] == "sev3"
 
     @patch.dict(os.environ, {"ASPIRE_ROBOT_S2S_SECRET": ROBOT_S2S_SECRET})
     def test_invalid_json_returns_400(self) -> None:
