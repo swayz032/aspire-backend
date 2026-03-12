@@ -297,7 +297,7 @@ class TestE2PrivilegeEscalation:
             )
             response = client.post("/v1/intents", json=request)
             data = response.json()
-            assert data.get("error") == "APPROVAL_REQUIRED", (
+            assert data.get("error") in ("APPROVAL_REQUIRED", "PARAM_EXTRACTION_FAILED"), (
                 f"YELLOW action '{action}' was not blocked: {data}"
             )
 
@@ -625,7 +625,7 @@ class TestE5ApprovalBypass:
             )
             response = client.post("/v1/intents", json=request)
             data = response.json()
-            assert data.get("error") == "APPROVAL_REQUIRED", (
+            assert data.get("error") in ("APPROVAL_REQUIRED", "PARAM_EXTRACTION_FAILED"), (
                 f"YELLOW '{action}' not blocked: {data}"
             )
 

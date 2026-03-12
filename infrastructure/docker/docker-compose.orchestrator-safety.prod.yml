@@ -1,0 +1,58 @@
+services:
+  aspire-safety-gateway:
+    build:
+      context: ../../safety-gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPIRE_SAFETY_GATEWAY_MODE: ${ASPIRE_SAFETY_GATEWAY_MODE:?required}
+      ASPIRE_SAFETY_GATEWAY_API_KEY: ${ASPIRE_SAFETY_GATEWAY_API_KEY:?required}
+      ASPIRE_SAFETY_GATEWAY_NEMO_CONFIG_PATH: /app/config/nemo/default
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?required}
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  aspire-orchestrator:
+    build:
+      context: ../../orchestrator
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPIRE_ENV: ${ASPIRE_ENV:?required}
+      ASPIRE_SAFETY_GATEWAY_MODE: remote
+      ASPIRE_SAFETY_GATEWAY_URL: http://aspire-safety-gateway:8787/v1/safety/check
+      ASPIRE_SAFETY_GATEWAY_SHARED_SECRET: ${ASPIRE_SAFETY_GATEWAY_SHARED_SECRET:?required}
+      ASPIRE_SAFETY_GATEWAY_TIMEOUT_SECONDS: ${ASPIRE_SAFETY_GATEWAY_TIMEOUT_SECONDS:-5}
+      ASPIRE_LANGGRAPH_CHECKPOINTER: ${ASPIRE_LANGGRAPH_CHECKPOINTER:?required}
+      ASPIRE_LANGGRAPH_POSTGRES_DSN: ${ASPIRE_LANGGRAPH_POSTGRES_DSN:-}
+      ASPIRE_TOKEN_SIGNING_KEY: ${ASPIRE_TOKEN_SIGNING_KEY:?required}
+      ASPIRE_OPENAI_API_KEY: ${ASPIRE_OPENAI_API_KEY:?required}
+      ASPIRE_OPENAI_BASE_URL: ${ASPIRE_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ASPIRE_SUPABASE_URL: ${ASPIRE_SUPABASE_URL:?required}
+      ASPIRE_SUPABASE_SERVICE_ROLE_KEY: ${ASPIRE_SUPABASE_SERVICE_ROLE_KEY:?required}
+      ASPIRE_GATEWAY_URL: ${ASPIRE_GATEWAY_URL:-}
+      ASPIRE_POLICY_EVAL_URL: ${ASPIRE_POLICY_EVAL_URL:-}
+      ASPIRE_CREDENTIAL_STRICT_MODE: ${ASPIRE_CREDENTIAL_STRICT_MODE:-true}
+    depends_on:
+      aspire-safety-gateway:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "5"

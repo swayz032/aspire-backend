@@ -30,13 +30,25 @@ This graph is the ONLY decision authority. No other component decides or execute
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
+import uuid
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.models import (
+    ActorType,
+    ApprovalStatus,
+    AspireErrorCode,
+    AvaOrchestratorRequest,
+    Outcome,
+    ReceiptType,
+    RiskTier,
+)
 
 from aspire_orchestrator.nodes.intake import intake_node
 from aspire_orchestrator.nodes.safety_gate import safety_gate_node
@@ -59,6 +71,100 @@ _CHECKPOINTER_RUNTIME: dict[str, str] = {
     "backend": "MemorySaver",
 }
 _CHECKPOINTER_CTX: Any | None = None
+
+
+def _build_checkpointer_serde() -> JsonPlusSerializer:
+    allowlist = [
+        AvaOrchestratorRequest,
+        ActorType,
+        ApprovalStatus,
+        AspireErrorCode,
+        Outcome,
+        ReceiptType,
+        RiskTier,
+    ]
+    serializer = JsonPlusSerializer()
+
+    if hasattr(serializer, "with_msgpack_allowlist"):
+        return serializer.with_msgpack_allowlist(allowlist)
+
+    try:
+        params = inspect.signature(JsonPlusSerializer).parameters
+    except (TypeError, ValueError):
+        params = {}
+
+    if "allowed_msgpack_modules" in params:
+        return JsonPlusSerializer(allowed_msgpack_modules=allowlist)
+
+    return serializer
+
+
+_CHECKPOINTER_SERDE = _build_checkpointer_serde()
+
+
+class _CompiledGraphCompat:
+    """Compatibility wrapper for LangGraph 1.x checkpoint config requirements."""
+
+    def __init__(self, compiled_graph: Any) -> None:
+        self._compiled_graph = compiled_graph
+
+    def _ensure_config(self, state: Any, config: Any | None) -> Any:
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            return config
+
+        configurable = config.get("configurable")
+        if not isinstance(configurable, dict):
+            configurable = {}
+
+        if configurable.get("thread_id"):
+            return config
+
+        thread_id = None
+        if isinstance(state, dict):
+            request = state.get("request")
+            if isinstance(request, dict):
+                thread_id = request.get("request_id") or request.get("correlation_id")
+            thread_id = thread_id or state.get("request_id") or state.get("correlation_id")
+
+        config["configurable"] = {
+            **configurable,
+            "thread_id": str(thread_id or uuid.uuid4()),
+        }
+        return config
+
+    def invoke(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
+        return self._compiled_graph.invoke(
+            state,
+            config=self._ensure_config(state, config),
+            **kwargs,
+        )
+
+    async def ainvoke(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
+        return await self._compiled_graph.ainvoke(
+            state,
+            config=self._ensure_config(state, config),
+            **kwargs,
+        )
+
+    def stream(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
+        return self._compiled_graph.stream(
+            state,
+            config=self._ensure_config(state, config),
+            **kwargs,
+        )
+
+    async def astream(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
+        async for chunk in self._compiled_graph.astream(
+            state,
+            config=self._ensure_config(state, config),
+            **kwargs,
+        ):
+            yield chunk
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._compiled_graph, name)
 
 
 # =============================================================================
@@ -455,7 +561,7 @@ def _route_after_qa(state: OrchestratorState) -> str:
 # =============================================================================
 
 
-async def build_orchestrator_graph() -> StateGraph:
+async def build_orchestrator_graph_async() -> StateGraph:
     """Build the Aspire orchestrator StateGraph with 13 nodes.
 
     Dual-path architecture:
@@ -542,7 +648,23 @@ async def build_orchestrator_graph() -> StateGraph:
     # Enable thread-scoped checkpointing so HITL/resume and multi-turn continuity
     # can use LangGraph's configurable.thread_id contract.
     checkpointer = await _build_checkpointer()
-    return graph.compile(checkpointer=checkpointer)
+    return _CompiledGraphCompat(graph.compile(checkpointer=checkpointer))
+
+
+def build_orchestrator_graph() -> StateGraph:
+    """Backward-compatible synchronous graph builder.
+
+    Tests and some call sites still expect graph construction to be synchronous.
+    Use `build_orchestrator_graph_async()` from async startup paths.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(build_orchestrator_graph_async())
+    raise RuntimeError(
+        "build_orchestrator_graph() cannot run inside an active event loop; "
+        "use await build_orchestrator_graph_async() instead.",
+    )
 
 
 def get_checkpointer_runtime() -> dict[str, str]:
@@ -588,7 +710,10 @@ async def _build_checkpointer() -> Any:
 
             # AsyncPostgresSaver is async-context-manager based.
             # Initialize it once at startup and keep it open for process lifetime.
-            _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(dsn)
+            _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(
+                dsn,
+                serde=_CHECKPOINTER_SERDE,
+            )
             saver = await _CHECKPOINTER_CTX.__aenter__()
             try:
                 await saver.setup()
@@ -614,8 +739,8 @@ async def _build_checkpointer() -> Any:
             logger.exception("Postgres checkpointer init failed, falling back to MemorySaver: %s", e)
             _CHECKPOINTER_RUNTIME["mode"] = "memory-fallback"
             _CHECKPOINTER_RUNTIME["backend"] = "MemorySaver"
-            return MemorySaver()
+            return MemorySaver(serde=_CHECKPOINTER_SERDE)
 
     _CHECKPOINTER_RUNTIME["mode"] = "memory"
     _CHECKPOINTER_RUNTIME["backend"] = "MemorySaver"
-    return MemorySaver()
+    return MemorySaver(serde=_CHECKPOINTER_SERDE)

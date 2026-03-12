@@ -38,6 +38,8 @@ secrets.vault.json
 
 # Infrastructure secrets (never commit)
 infrastructure/docker/.env
+infrastructure/docker/*.env
+infrastructure/docker/*.secrets
 *.tfstate
 *.tfstate.backup
 .terraform/

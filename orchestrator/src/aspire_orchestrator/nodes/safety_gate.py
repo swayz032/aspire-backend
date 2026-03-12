@@ -1,16 +1,9 @@
-"""Safety Gate Node — NeMo Guardrails jailbreak/topic detection.
+"""Safety Gate Node.
 
-Responsibilities:
-1. Run NeMo Guardrails check on the request (jailbreak detection)
-2. Enforce topic steering (business operations only)
-3. If blocked: set safety_passed=False, emit safety denial receipt
-4. If passed: set safety_passed=True, continue to policy_eval
-
-Uses local Ollama llama3:8b for NeMo classification to avoid external API costs.
-
-NOTE: NeMo Guardrails integration will be fully wired in Wave 2 W2-03.
-For now, this is a pass-through that sets safety_passed=True.
-The structure is in place for NeMo integration.
+This node delegates request safety evaluation to the Safety Gateway service.
+The gateway can be backed by local deterministic rules or an external NeMo
+Guardrails-compatible sidecar. The orchestrator remains the caller and records
+the safety decision as part of the immutable receipt chain.
 """
 
 from __future__ import annotations
@@ -20,116 +13,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from aspire_orchestrator.models import (
-    AspireErrorCode,
-    Outcome,
-    ReceiptType,
-)
+from aspire_orchestrator.models import AspireErrorCode, Outcome, ReceiptType
+from aspire_orchestrator.services.safety_gateway import SafetyGatewayError, evaluate_safety
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
 
-def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
-    """Run safety checks on the incoming request.
-
-    Returns partial state update with safety_passed flag.
-    """
-    # If previous node already failed, skip safety check
-    if state.get("error_code"):
-        return {"safety_passed": False}
-
-    correlation_id = state.get("correlation_id", str(uuid.uuid4()))
-    suite_id = state.get("suite_id", "unknown")
-    office_id = state.get("office_id", "unknown")
-    task_type = state.get("task_type", "unknown")
-
-    # TODO (W2-03): Integrate NeMo Guardrails
-    # For now, implement basic pattern matching for obvious jailbreak attempts
-    blocked = False
-    block_reason = None
-
-    # Basic jailbreak detection patterns (NeMo will replace this)
-    request = state.get("request")
-    if request is not None:
-        payload = request.payload if hasattr(request, "payload") else (request.get("payload") if isinstance(request, dict) else {})
-        payload_str = str(payload).lower() if payload else ""
-
-        jailbreak_patterns = [
-            "ignore previous instructions",
-            "ignore all instructions",
-            "you are now",
-            "pretend you are",
-            "act as if",
-            "disregard your rules",
-            "bypass safety",
-            "ignore your guidelines",
-            "forget your instructions",
-            "override your programming",
-            "new system prompt",
-            "system: you are",
-            "ignore safety",
-            "jailbreak",
-            "dan mode",
-            "developer mode",
-            "do anything now",
-            "sudo mode",
-            "ignore all previous",
-            "disregard all previous",
-            "forget all previous",
-            "you must obey",
-            "roleplay as",
-            "simulate being",
-        ]
-
-        for pattern in jailbreak_patterns:
-            if pattern in payload_str:
-                blocked = True
-                block_reason = f"Safety gate blocked: jailbreak pattern detected ({pattern})"
-                break
-
-    if blocked:
-        logger.warning(
-            "Safety gate BLOCKED: reason='%s', suite=%s, task=%s, correlation=%s",
-            block_reason, suite_id[:8] if len(suite_id) > 8 else suite_id,
-            task_type, correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-        )
-        receipt = {
-            "id": str(uuid.uuid4()),
-            "correlation_id": correlation_id,
-            "suite_id": suite_id,
-            "office_id": office_id,
-            "actor_type": "system",
-            "actor_id": "safety_gate",
-            "action_type": "safety.check",
-            "risk_tier": "green",
-            "tool_used": "orchestrator.safety_gate",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "outcome": Outcome.DENIED.value,
-            "reason_code": AspireErrorCode.SAFETY_BLOCKED.value,
-            "receipt_type": ReceiptType.POLICY_DECISION.value,
-            "receipt_hash": "",
-            "result": {"blocked": True, "reason": block_reason},
-        }
-        existing_receipts = list(state.get("pipeline_receipts", []))
-        existing_receipts.append(receipt)
-
-        return {
-            "safety_passed": False,
-            "safety_block_reason": block_reason,
-            "error_code": AspireErrorCode.SAFETY_BLOCKED.value,
-            "error_message": block_reason,
-            "outcome": Outcome.DENIED,
-            "pipeline_receipts": existing_receipts,
-        }
-
-    # Safety passed — emit pass receipt (Law #2: receipt for ALL actions) and continue
-    logger.info(
-        "Safety gate PASSED: suite=%s, task=%s, correlation=%s",
-        suite_id[:8] if len(suite_id) > 8 else suite_id,
-        task_type, correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-    )
-    pass_receipt = {
+def _base_receipt(*, correlation_id: str, suite_id: str, office_id: str) -> dict[str, Any]:
+    return {
         "id": str(uuid.uuid4()),
         "correlation_id": correlation_id,
         "suite_id": suite_id,
@@ -140,15 +32,101 @@ def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
         "risk_tier": "green",
         "tool_used": "orchestrator.safety_gate",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "outcome": Outcome.SUCCESS.value,
-        "reason_code": None,
         "receipt_type": ReceiptType.POLICY_DECISION.value,
         "receipt_hash": "",
-        "result": {"passed": True},
     }
-    existing_receipts = list(state.get("pipeline_receipts", []))
-    existing_receipts.append(pass_receipt)
 
+
+def safety_gate_node(state: OrchestratorState) -> dict[str, Any]:
+    """Run request safety checks and emit a receipt for the decision."""
+    if state.get("error_code"):
+        return {"safety_passed": False}
+
+    correlation_id = state.get("correlation_id", str(uuid.uuid4()))
+    suite_id = state.get("suite_id", "unknown")
+    office_id = state.get("office_id", "unknown")
+    task_type = state.get("task_type", "unknown")
+
+    request = state.get("request")
+    payload = request.payload if hasattr(request, "payload") else (request.get("payload") if isinstance(request, dict) else {})
+
+    try:
+        decision = evaluate_safety(payload, task_type=task_type, suite_id=suite_id, office_id=office_id)
+    except SafetyGatewayError as exc:
+        logger.error(
+            "Safety gateway ERROR: suite=%s task=%s correlation=%s error=%s",
+            suite_id[:8] if len(suite_id) > 8 else suite_id,
+            task_type,
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            exc,
+        )
+        receipt = {
+            **_base_receipt(correlation_id=correlation_id, suite_id=suite_id, office_id=office_id),
+            "outcome": Outcome.DENIED.value,
+            "reason_code": AspireErrorCode.SAFETY_BLOCKED.value,
+            "result": {"blocked": True, "reason": str(exc), "source": "remote_error"},
+        }
+        existing_receipts = list(state.get("pipeline_receipts", []))
+        existing_receipts.append(receipt)
+        return {
+            "safety_passed": False,
+            "safety_block_reason": str(exc),
+            "error_code": AspireErrorCode.SAFETY_BLOCKED.value,
+            "error_message": str(exc),
+            "outcome": Outcome.DENIED,
+            "pipeline_receipts": existing_receipts,
+        }
+
+    existing_receipts = list(state.get("pipeline_receipts", []))
+
+    if not decision.allowed:
+        logger.warning(
+            "Safety gate BLOCKED: suite=%s task=%s correlation=%s reason=%s source=%s",
+            suite_id[:8] if len(suite_id) > 8 else suite_id,
+            task_type,
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            decision.reason,
+            decision.source,
+        )
+        existing_receipts.append({
+            **_base_receipt(correlation_id=correlation_id, suite_id=suite_id, office_id=office_id),
+            "outcome": Outcome.DENIED.value,
+            "reason_code": AspireErrorCode.SAFETY_BLOCKED.value,
+            "result": {
+                "blocked": True,
+                "reason": decision.reason,
+                "source": decision.source,
+                "matched_rule": decision.matched_rule,
+                "metadata": decision.metadata or {},
+            },
+        })
+        return {
+            "safety_passed": False,
+            "safety_block_reason": decision.reason,
+            "error_code": AspireErrorCode.SAFETY_BLOCKED.value,
+            "error_message": decision.reason,
+            "outcome": Outcome.DENIED,
+            "pipeline_receipts": existing_receipts,
+        }
+
+    logger.info(
+        "Safety gate PASSED: suite=%s task=%s correlation=%s source=%s",
+        suite_id[:8] if len(suite_id) > 8 else suite_id,
+        task_type,
+        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+        decision.source,
+    )
+    existing_receipts.append({
+        **_base_receipt(correlation_id=correlation_id, suite_id=suite_id, office_id=office_id),
+        "outcome": Outcome.SUCCESS.value,
+        "reason_code": None,
+        "result": {
+            "passed": True,
+            "source": decision.source,
+            "matched_rule": decision.matched_rule,
+            "metadata": decision.metadata or {},
+        },
+    })
     return {
         "safety_passed": True,
         "safety_block_reason": None,

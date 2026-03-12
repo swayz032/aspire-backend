@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # NeMo Guardrails safety gate (Ollama llama3:8b for local dev)
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3:8b"
+    safety_gateway_mode: str = "local"  # local | remote | off
+    safety_gateway_url: str = ""
+    safety_gateway_timeout_seconds: float = 5.0
+    safety_gateway_fail_closed: bool = True
+    safety_gateway_shared_secret: str = ""
 
     # Ava Brain intent classification + parameter extraction
     # Dev: GPT-5-mini (via OpenAI API or Ollama proxy)

@@ -1,0 +1,17 @@
+services:
+  aspire-safety-gateway:
+    build:
+      context: ../../safety-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      ASPIRE_SAFETY_GATEWAY_MODE: ${ASPIRE_SAFETY_GATEWAY_MODE:-local}
+      ASPIRE_SAFETY_GATEWAY_API_KEY: ${ASPIRE_SAFETY_GATEWAY_API_KEY:-}
+      ASPIRE_SAFETY_GATEWAY_NEMO_CONFIG_PATH: /app/config/nemo/default
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

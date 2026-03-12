@@ -1,0 +1,41 @@
+services:
+  aspire-safety-gateway:
+    build:
+      context: ../../safety-gateway
+      dockerfile: Dockerfile
+    environment:
+      ASPIRE_SAFETY_GATEWAY_MODE: ${ASPIRE_SAFETY_GATEWAY_MODE:-local}
+      ASPIRE_SAFETY_GATEWAY_API_KEY: ${ASPIRE_SAFETY_GATEWAY_API_KEY:-aspire-dev-safety-key}
+      ASPIRE_SAFETY_GATEWAY_NEMO_CONFIG_PATH: /app/config/nemo/default
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  aspire-orchestrator:
+    build:
+      context: ../../orchestrator
+      dockerfile: Dockerfile
+    environment:
+      ASPIRE_SAFETY_GATEWAY_MODE: remote
+      ASPIRE_SAFETY_GATEWAY_URL: http://aspire-safety-gateway:8787/v1/safety/check
+      ASPIRE_SAFETY_GATEWAY_SHARED_SECRET: ${ASPIRE_SAFETY_GATEWAY_API_KEY:-aspire-dev-safety-key}
+      ASPIRE_LANGGRAPH_CHECKPOINTER: memory
+      ASPIRE_TOKEN_SIGNING_KEY: ${ASPIRE_TOKEN_SIGNING_KEY:-development-token-signing-key-32-bytes-min}
+      ASPIRE_OPENAI_API_KEY: ${ASPIRE_OPENAI_API_KEY:-}
+      ASPIRE_SUPABASE_URL: ${ASPIRE_SUPABASE_URL:-}
+      ASPIRE_SUPABASE_SERVICE_ROLE_KEY: ${ASPIRE_SUPABASE_SERVICE_ROLE_KEY:-}
+    depends_on:
+      aspire-safety-gateway:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 20s
+      timeout: 5s
+      retries: 5

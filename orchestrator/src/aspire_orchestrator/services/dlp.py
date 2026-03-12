@@ -27,6 +27,7 @@ means execution is denied if DLP fails on YELLOW/RED tier operations.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,12 @@ _REDACTION_MAP = {
 
 # Minimum confidence score to redact (0.0-1.0)
 _MIN_SCORE = 0.4
+_REGEX_PATTERNS = (
+    ("CREDIT_CARD", re.compile(r"\b(?:\d[ -]*?){13,19}\b")),
+    ("US_SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("EMAIL_ADDRESS", re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")),
+    ("PHONE_NUMBER", re.compile(r"\+?\d[\d\s\-().]{7,}\d")),
+)
 
 # Receipt fields that should be scanned for PII
 _RECEIPT_TEXT_FIELDS = frozenset({
@@ -111,11 +118,12 @@ class DLPService:
         self._anonymizer = None
         self._initialized = False
         self._init_error: str | None = None
+        self._regex_fallback = False
 
     def _ensure_initialized(self) -> bool:
         """Lazy-init Presidio engines. Returns True if ready."""
         if self._initialized:
-            return self._init_error is None
+            return self._init_error is None or self._regex_fallback
 
         try:
             from presidio_analyzer import AnalyzerEngine
@@ -124,14 +132,26 @@ class DLPService:
             self._analyzer = AnalyzerEngine()
             self._anonymizer = AnonymizerEngine()
             self._initialized = True
+            self._regex_fallback = False
             logger.info("DLP service initialized (Presidio analyzer + anonymizer)")
             return True
 
         except Exception as e:
             self._initialized = True
             self._init_error = str(e)
-            logger.error("DLP service initialization failed: %s", e)
-            return False
+            self._regex_fallback = True
+            logger.warning(
+                "DLP service initialization failed, falling back to regex redaction: %s",
+                e,
+            )
+            return True
+
+    def _regex_redact_text(self, text: str) -> str:
+        redacted = text
+        for entity_type, pattern in _REGEX_PATTERNS:
+            label = _REDACTION_MAP[entity_type]
+            redacted = pattern.sub(label, redacted)
+        return redacted
 
     def redact_text(self, text: str) -> str:
         """Redact PII from a text string using Presidio.
@@ -145,6 +165,9 @@ class DLPService:
         if not self._ensure_initialized():
             logger.warning("DLP unavailable, returning unredacted text")
             return text
+
+        if self._regex_fallback:
+            return self._regex_redact_text(text)
 
         try:
             from presidio_anonymizer.entities import OperatorConfig
@@ -281,7 +304,10 @@ class DLPService:
         Law #3: fail-closed — missing DLP = deny execution.
         Law #2: emit denial receipt before raising (MEDIUM-01 fix).
         """
-        if not self._ensure_initialized():
+        available = self._ensure_initialized()
+        if available or self._regex_fallback:
+            return
+        if not available:
             # Emit denial receipt before raising (Law #2)
             try:
                 import uuid as _uuid

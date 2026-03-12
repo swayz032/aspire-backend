@@ -70,6 +70,7 @@ from aspire_orchestrator.middleware.correlation import CorrelationIdMiddleware
 from aspire_orchestrator.middleware.rate_limiter import RateLimitMiddleware
 from aspire_orchestrator.graph import (
     build_orchestrator_graph,
+    build_orchestrator_graph_async,
     close_checkpointer_runtime,
     get_checkpointer_runtime,
 )
@@ -94,6 +95,7 @@ logger = logging.getLogger(__name__)
 
 orchestrator_graph: Any | None = None
 _checkpointer_failover_lock = asyncio.Lock()
+_graph_init_lock = asyncio.Lock()
 _checkpointer_force_memory = False
 
 from aspire_orchestrator.services.supabase_client import close_pools as close_supabase_pools
@@ -104,7 +106,7 @@ async def _app_lifespan(_: FastAPI):
     """Own startup and shutdown resources without deprecated FastAPI hooks."""
     global orchestrator_graph
 
-    orchestrator_graph = await build_orchestrator_graph()
+    orchestrator_graph = await build_orchestrator_graph_async()
     start_receipt_writer()
     from aspire_orchestrator.services.task_queue import start_task_queue, stop_task_queue
     start_task_queue()
@@ -206,13 +208,17 @@ elif _settings_warnings:
 # Startup model probe + profile fallback resolution cache
 _MODEL_PROBE_BOOT: dict[str, Any] = {}
 try:
-    _MODEL_PROBE_BOOT = asyncio.run(probe_models_startup())
+    asyncio.get_running_loop()
 except RuntimeError:
-    # If event loop is already active (rare in tests), defer probe to runtime/readiness.
+    try:
+        _MODEL_PROBE_BOOT = asyncio.run(probe_models_startup())
+    except Exception as _probe_err:
+        logger.warning("Startup model probe failed: %s", _probe_err)
+        _MODEL_PROBE_BOOT = {"status": "failed", "profiles": {}, "models": {}}
+else:
+    # If an event loop is already active (common in tests and some embedded runtimes),
+    # defer probe warming to readiness/runtime to avoid creating an un-awaited coroutine.
     _MODEL_PROBE_BOOT = {"status": "deferred", "profiles": {}, "models": {}}
-except Exception as _probe_err:
-    logger.warning("Startup model probe failed: %s", _probe_err)
-    _MODEL_PROBE_BOOT = {"status": "failed", "profiles": {}, "models": {}}
 
 if os.getenv("ASPIRE_ENV", "").strip().lower() == "production":
     profiles = _MODEL_PROBE_BOOT.get("profiles", {}) if isinstance(_MODEL_PROBE_BOOT, dict) else {}
@@ -685,7 +691,7 @@ async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
             # Do NOT close the active Postgres checkpointer before graph swap.
             # In-flight requests may still reference it and would fail with
             # "connection is closed". Build memory graph first, then swap.
-            orchestrator_graph = await build_orchestrator_graph()
+            orchestrator_graph = await build_orchestrator_graph_async()
             _checkpointer_force_memory = True
             return True
         except Exception as failover_err:
@@ -703,8 +709,11 @@ async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
 
 async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id: str) -> dict[str, Any]:
     """Invoke orchestrator graph with async-first strategy and sync fallback."""
+    global orchestrator_graph
     if orchestrator_graph is None:
-        raise _GraphInvokeUnavailableError("CHECKPOINTER_UNAVAILABLE: graph not initialized")
+        async with _graph_init_lock:
+            if orchestrator_graph is None:
+                orchestrator_graph = await build_orchestrator_graph_async()
     config = {"configurable": {"thread_id": thread_id}}
     try:
         return await orchestrator_graph.ainvoke(initial_state, config=config)

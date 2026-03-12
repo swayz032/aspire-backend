@@ -8,19 +8,18 @@ version = "0.1.0"
 description = "Aspire LangGraph Orchestrator - the Single Brain (Law #1)"
 requires-python = ">=3.11"
 dependencies = [
-    "langgraph>=0.3.0,<0.4",
-    "langgraph-checkpoint-postgres>=2.0.0,<3.0",
+    "langgraph>=1.0.10,<1.1",
+    "langgraph-checkpoint-postgres>=3.0.0,<4.0",
     "psycopg[binary]>=3.2.0,<4.0",
-    "langchain-core>=0.3.0,<0.4",
-    "langchain-openai>=0.3.0,<0.4",
+    "langchain-core>=1.0.0,<1.1",
+    "langchain-openai>=1.0.0,<1.1",
     "openai>=1.60.0",
-    "nemoguardrails>=0.11.0,<0.12",
     "presidio-analyzer>=2.2.0,<3.0",
     "presidio-anonymizer>=2.2.0,<3.0",
     "httpx>=0.28.0,<0.29",
     "pydantic>=2.10.0,<3.0",
     "pydantic-settings>=2.7.0,<3.0",
-    "fastapi>=0.115.0,<0.116",
+    "fastapi>=0.121.0,<0.122",
     "uvicorn[standard]>=0.34.0,<0.35",
     "pyyaml>=6.0,<7.0",
     "prometheus-client>=0.21.0,<1.0",
@@ -50,7 +49,6 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 filterwarnings = [
     "ignore:Core Pydantic V1 functionality isn't compatible with Python 3.14 or greater\\.:UserWarning:langchain_core\\._api\\.deprecation",
-    "ignore:ForwardRef\\._evaluate is a private API and is retained for compatibility, but will be removed in Python 3.16\\.:DeprecationWarning:pydantic\\.v1\\.typing",
 ]
 
 [tool.hatch.build.targets.wheel]
