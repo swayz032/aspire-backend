@@ -3,9 +3,10 @@
 Read-only, LLM-safe telemetry facade for the Aspire Admin portal (Ava Admin).
 Implements the OpenAPI spec at plan/contracts/ava-admin/ops_telemetry_facade.openapi.yaml.
 
-Endpoints (9 total, ALL read-only except proposal approval):
+Endpoints (10 total, admin facade read-only except proposal approval, plus one internal ingest path):
   GET  /admin/ops/health          — Health check (no auth)
   GET  /admin/ops/incidents       — List incidents (filtered, paginated)
+  POST /admin/ops/incidents/report — Internal incident ingest for desktop/gateway surfaces
   GET  /admin/ops/incidents/{id}  — Get incident detail + timeline + evidence_pack
   GET  /admin/ops/receipts        — List receipts (filtered, paginated, PII-redacted)
   GET  /admin/ops/provider-calls  — List provider calls (filtered, redacted)
@@ -18,13 +19,14 @@ Auth: X-Admin-Token header (JWT validated with ASPIRE_ADMIN_JWT_SECRET).
 Law compliance:
   - Law #2: ALL endpoints generate access receipts (even reads).
   - Law #3: Missing/invalid admin token -> 401 (fail closed).
-  - Law #7: Read-only facade — no autonomous decisions.
+  - Law #7: Read-only facade for admin consumers — the ingest path is service-only and stores telemetry, not decisions.
   - Law #9: PII redacted in receipt/provider-call previews.
 """
 
 from __future__ import annotations
 
 import logging
+import hmac
 import os
 import re
 import threading
@@ -231,6 +233,169 @@ def _require_admin(request: Request) -> str | None:
 def _get_correlation_id(request: Request) -> str:
     """Extract or generate correlation ID from request headers."""
     return request.headers.get("x-correlation-id", str(uuid.uuid4()))
+
+
+def _compare_tokens(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+
+
+def _get_incident_reporter_secrets() -> list[str]:
+    secrets = [
+        os.environ.get("ASPIRE_ADMIN_INCIDENT_S2S_SECRET", "").strip(),
+        os.environ.get("S2S_HMAC_SECRET_ACTIVE", "").strip(),
+        os.environ.get("DOMAIN_RAIL_HMAC_SECRET", "").strip(),
+        os.environ.get("S2S_HMAC_SECRET", "").strip(),
+    ]
+    return [secret for secret in secrets if secret]
+
+
+def _require_incident_reporter(request: Request) -> tuple[str | None, str]:
+    actor_id = _require_admin(request)
+    if actor_id is not None:
+        return actor_id, "admin"
+
+    auth_header = request.headers.get("authorization", "").strip()
+    if auth_header.lower().startswith("bearer "):
+        provided = auth_header.split(" ", 1)[1].strip()
+        for secret in _get_incident_reporter_secrets():
+            if _compare_tokens(provided, secret):
+                internal_actor = (
+                    request.headers.get("x-actor-id")
+                    or request.headers.get("x-reporter-id")
+                    or "internal_reporter"
+                )
+                return internal_actor, "service"
+
+    return None, "anonymous"
+
+
+def _incident_rank(severity: str) -> int:
+    return {"sev1": 1, "sev2": 2, "sev3": 3, "sev4": 4}.get(severity, 4)
+
+
+def _sanitize_incident_severity(value: Any) -> str:
+    severity = str(value or "").strip().lower()
+    if severity in {"sev1", "sev2", "sev3", "sev4"}:
+        return severity
+    return "sev2"
+
+
+def _sanitize_incident_state(value: Any) -> str:
+    state = str(value or "").strip().lower()
+    if state in {"open", "investigating", "mitigated", "closed"}:
+        return state
+    return "open"
+
+
+def _upsert_reported_incident(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    trace_id: str,
+    reporter_id: str,
+    receipt_id: str,
+) -> tuple[dict[str, Any], bool]:
+    now_iso = _now_iso()
+    title = str(payload.get("title") or "").strip() or "Reported incident"
+    severity = _sanitize_incident_severity(payload.get("severity"))
+    state = _sanitize_incident_state(payload.get("state"))
+    source = str(payload.get("source") or "external").strip() or "external"
+    component = str(payload.get("component") or "unknown").strip() or "unknown"
+    suite_id = str(payload.get("suite_id") or "").strip() or None
+    fingerprint = str(payload.get("fingerprint") or "").strip()
+    error_code = str(payload.get("error_code") or "").strip() or None
+    message = str(payload.get("message") or "").strip() or None
+    agent = str(payload.get("agent") or "").strip() or None
+    evidence_pack = payload.get("evidence_pack") if isinstance(payload.get("evidence_pack"), dict) else {}
+    timeline_event = {
+        "ts": now_iso,
+        "event": "reported",
+        "receipt_id": receipt_id,
+    }
+
+    incident: dict[str, Any]
+    deduped = False
+
+    with _store_lock:
+        existing: dict[str, Any] | None = None
+        requested_incident_id = str(payload.get("incident_id") or "").strip()
+        if requested_incident_id:
+            existing = _incidents.get(requested_incident_id)
+        if existing is None and fingerprint:
+            for candidate in _incidents.values():
+                if (
+                    candidate.get("fingerprint") == fingerprint
+                    and candidate.get("state") in {"open", "investigating", "mitigated"}
+                ):
+                    existing = candidate
+                    break
+
+        if existing is not None:
+            deduped = True
+            merged_timeline = list(existing.get("timeline") or [])
+            merged_timeline.append(timeline_event)
+            merged_evidence = dict(existing.get("evidence_pack") or {})
+            merged_evidence.update(evidence_pack)
+            merged_evidence["source"] = source
+            merged_evidence["component"] = component
+            merged_evidence["last_reporter"] = reporter_id
+            merged_evidence["report_count"] = int(merged_evidence.get("report_count", 1)) + 1
+            if error_code:
+                merged_evidence["error_code"] = error_code
+            if message:
+                merged_evidence["message"] = message
+
+            incident = dict(existing)
+            incident["title"] = title or incident.get("title", "Reported incident")
+            incident["severity"] = severity if _incident_rank(severity) < _incident_rank(str(existing.get("severity", "sev4"))) else existing.get("severity", severity)
+            incident["state"] = state if state != "closed" else existing.get("state", "open")
+            incident["last_seen"] = now_iso
+            incident["correlation_id"] = correlation_id
+            incident["trace_id"] = trace_id or correlation_id
+            incident["suite_id"] = suite_id or incident.get("suite_id")
+            incident["timeline"] = merged_timeline
+            incident["fingerprint"] = fingerprint or incident.get("fingerprint")
+            incident["evidence_pack"] = merged_evidence
+            if agent:
+                incident["agent"] = agent
+            _incidents[str(incident["incident_id"])] = incident
+        else:
+            incident_id = requested_incident_id or str(uuid.uuid4())
+            incident = {
+                "incident_id": incident_id,
+                "state": state,
+                "severity": severity,
+                "title": title,
+                "correlation_id": correlation_id,
+                "trace_id": trace_id or correlation_id,
+                "suite_id": suite_id,
+                "first_seen": now_iso,
+                "last_seen": now_iso,
+                "timeline": [timeline_event],
+                "fingerprint": fingerprint or f"{source}:{component}:{error_code or title.lower()}",
+                "agent": agent,
+                "evidence_pack": {
+                    **evidence_pack,
+                    "source": source,
+                    "component": component,
+                    "last_reporter": reporter_id,
+                    "report_count": 1,
+                    **({"error_code": error_code} if error_code else {}),
+                    **({"message": message} if message else {}),
+                },
+            }
+            _incidents[incident_id] = incident
+
+    try:
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        store = get_admin_store()
+        store._incidents[str(incident["incident_id"])] = incident
+    except Exception:
+        pass
+
+    return incident, deduped
 
 
 def _get_supabase_jwt_secret() -> str:
@@ -514,7 +679,111 @@ async def list_incidents(
 
 
 # =============================================================================
-# 3. GET /admin/ops/incidents/{incident_id} — Incident Detail
+# 3. POST /admin/ops/incidents/report — Internal Incident Ingest
+# =============================================================================
+
+
+@router.post("/admin/ops/incidents/report")
+async def report_incident(request: Request) -> JSONResponse:
+    """Internal/admin incident ingest for fast cross-surface visibility."""
+    correlation_id = _get_correlation_id(request)
+    trace_id = request.headers.get("x-trace-id", correlation_id).strip() or correlation_id
+    actor_id, actor_type = _require_incident_reporter(request)
+    if actor_id is None:
+        denied_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.incidents.report",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([denied_receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid incident reporter credentials",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="Invalid JSON body",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    if not isinstance(payload, dict):
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="Incident report body must be an object",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="title is required",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    receipt_id = str(uuid.uuid4())
+    incident, deduped = _upsert_reported_incident(
+        payload=payload,
+        correlation_id=str(payload.get("correlation_id") or correlation_id).strip() or correlation_id,
+        trace_id=str(payload.get("trace_id") or trace_id).strip() or trace_id,
+        reporter_id=actor_id,
+        receipt_id=receipt_id,
+    )
+
+    receipt = {
+        "id": receipt_id,
+        "correlation_id": incident.get("correlation_id", correlation_id),
+        "suite_id": incident.get("suite_id") or "system",
+        "office_id": "system",
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "action_type": "admin.ops.incidents.report",
+        "risk_tier": "yellow",
+        "tool_used": "incident_reporter",
+        "outcome": "success",
+        "created_at": _now_iso(),
+        "reason_code": "DEDUPED" if deduped else "CREATED",
+        "redacted_inputs": {
+            "source": incident.get("evidence_pack", {}).get("source"),
+            "component": incident.get("evidence_pack", {}).get("component"),
+            "severity": incident.get("severity"),
+        },
+        "redacted_outputs": {
+            "incident_id": incident.get("incident_id"),
+            "deduped": deduped,
+        },
+    }
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "accepted": True,
+            "incident_id": incident.get("incident_id"),
+            "deduped": deduped,
+            "state": incident.get("state"),
+            "severity": incident.get("severity"),
+            "correlation_id": incident.get("correlation_id", correlation_id),
+            "trace_id": incident.get("trace_id", trace_id),
+            "receipt_id": receipt_id,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# 4. GET /admin/ops/incidents/{incident_id} — Incident Detail
 # =============================================================================
 
 

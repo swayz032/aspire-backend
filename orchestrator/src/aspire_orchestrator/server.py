@@ -17,6 +17,7 @@ Endpoints:
 Admin Ops Telemetry Facade (Wave 8):
   GET  /admin/ops/health — Admin health check (no auth)
   GET  /admin/ops/incidents — List incidents (filtered, paginated)
+  POST /admin/ops/incidents/report — Internal incident ingest for connected surfaces
   GET  /admin/ops/incidents/:id — Get incident detail + timeline + evidence_pack
   GET  /admin/ops/receipts — List receipts (admin cross-suite, PII-redacted)
   GET  /admin/ops/provider-calls — List provider calls (redacted)

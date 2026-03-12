@@ -28,7 +28,7 @@ from aspire_orchestrator.routes.admin import (
 )
 from aspire_orchestrator.services.receipt_store import clear_store, store_receipts
 
-_TEST_JWT_SECRET = "test-ops-telemetry-secret-w5"
+_TEST_JWT_SECRET = "test-ops-telemetry-secret-w5-32x-extra-padding-12345"
 
 
 def _make_admin_token(sub: str = "ops-admin") -> str:
@@ -290,3 +290,86 @@ class TestValidationEdgeCases:
         r = client.get("/admin/ops/receipts", headers=headers)
         assert r.status_code == 400
         assert r.json()["code"] == "MISSING_SUITE_ID"
+
+
+class TestIncidentIngest:
+    def test_service_report_creates_incident(self, client, monkeypatch, headers) -> None:
+        monkeypatch.setenv("ASPIRE_ADMIN_INCIDENT_S2S_SECRET", "desktop-secret")
+        correlation_id = str(uuid.uuid4())
+
+        response = client.post(
+            "/admin/ops/incidents/report",
+            headers={
+                "authorization": "Bearer desktop-secret",
+                "x-correlation-id": correlation_id,
+                "x-trace-id": "trace-test-001",
+                "x-actor-id": "aspire-desktop-server",
+            },
+            json={
+                "title": "Desktop orchestrator timeout",
+                "severity": "sev2",
+                "source": "aspire_desktop",
+                "component": "/api/orchestrator/intent",
+                "suite_id": "suite-123",
+                "fingerprint": "desktop:intent:suite-123:timeout",
+                "error_code": "ORCHESTRATOR_TIMEOUT",
+                "message": "Timed out after 45s",
+            },
+        )
+
+        assert response.status_code == 202
+        body = response.json()
+        assert body["accepted"] is True
+        assert body["deduped"] is False
+        assert body["correlation_id"] == correlation_id
+        assert body["trace_id"] == "trace-test-001"
+
+        listed = client.get("/admin/ops/incidents", headers=headers).json()["items"]
+        assert len(listed) == 1
+        assert listed[0]["title"] == "Desktop orchestrator timeout"
+        assert listed[0]["correlation_id"] == correlation_id
+
+    def test_service_report_dedupes_same_fingerprint(self, client, monkeypatch, headers) -> None:
+        monkeypatch.setenv("ASPIRE_ADMIN_INCIDENT_S2S_SECRET", "desktop-secret")
+        report_headers = {
+            "authorization": "Bearer desktop-secret",
+            "x-actor-id": "aspire-desktop-server",
+        }
+
+        first = client.post(
+            "/admin/ops/incidents/report",
+            headers={**report_headers, "x-correlation-id": "corr-1", "x-trace-id": "trace-1"},
+            json={
+                "title": "Desktop orchestrator unavailable",
+                "severity": "sev1",
+                "source": "aspire_desktop",
+                "component": "/api/orchestrator/intent",
+                "suite_id": "suite-123",
+                "fingerprint": "desktop:intent:suite-123:unavailable",
+                "error_code": "ORCHESTRATOR_UNAVAILABLE",
+            },
+        )
+        second = client.post(
+            "/admin/ops/incidents/report",
+            headers={**report_headers, "x-correlation-id": "corr-2", "x-trace-id": "trace-2"},
+            json={
+                "title": "Desktop orchestrator unavailable",
+                "severity": "sev1",
+                "source": "aspire_desktop",
+                "component": "/api/orchestrator/intent",
+                "suite_id": "suite-123",
+                "fingerprint": "desktop:intent:suite-123:unavailable",
+                "error_code": "ORCHESTRATOR_UNAVAILABLE",
+            },
+        )
+
+        assert first.status_code == 202
+        assert second.status_code == 202
+        assert second.json()["deduped"] is True
+        assert first.json()["incident_id"] == second.json()["incident_id"]
+
+        listed = client.get("/admin/ops/incidents", headers=headers).json()["items"]
+        assert len(listed) == 1
+        detail = client.get(f"/admin/ops/incidents/{first.json()['incident_id']}", headers=headers).json()
+        assert len(detail["timeline"]) == 2
+        assert detail["trace_id"] == "trace-2"
