@@ -1,0 +1,117 @@
+version: 1
+default_branch: main
+
+policy:
+  update_pace: minor_lag
+  automation: auto_pr_and_gate
+  production_rule: reviewed_lockfiles_only
+
+domains:
+  backend:
+    paths:
+      - backend/orchestrator/
+      - backend/gateway/
+    manifests:
+      - backend/orchestrator/pyproject.toml
+      - backend/orchestrator/uv.lock
+      - backend/gateway/package.json
+      - backend/gateway/package-lock.json
+    required_jobs:
+      - backend-certification
+      - gateway-contracts
+
+  admin_portal:
+    paths:
+      - Aspire/Aspire/
+    manifests:
+      - Aspire/Aspire/package.json
+      - Aspire/Aspire/package-lock.json
+    required_jobs:
+      - admin-portal-gate
+
+  desktop:
+    paths:
+      - Aspire-desktop/
+    manifests:
+      - Aspire-desktop/package.json
+      - Aspire-desktop/package-lock.json
+    required_jobs:
+      - desktop-gate
+
+  shared_contracts:
+    paths:
+      - backend/orchestrator/src/aspire_orchestrator/config/schemas/
+      - backend/orchestrator/src/aspire_orchestrator/models.py
+      - backend/plan/contracts/
+      - backend/plan/specs/ava-user/
+      - schemas/
+    required_jobs:
+      - backend-certification
+      - admin-portal-gate
+      - desktop-gate
+
+  root_tooling:
+    paths:
+      - .github/
+      - package.json
+      - package-lock.json
+    required_jobs:
+      - policy-audit
+
+package_groups:
+  backend_framework:
+    ecosystem: pip
+    dependencies:
+      - langgraph
+      - langgraph-checkpoint
+      - langgraph-checkpoint-postgres
+      - langgraph-prebuilt
+      - langgraph-sdk
+      - langchain-core
+      - langchain-openai
+      - fastapi
+      - pydantic
+      - pydantic-settings
+      - openai
+      - psycopg
+    labels:
+      - framework-migration
+    policy:
+      auto_merge: false
+      require_dedicated_review: true
+
+  backend_runtime:
+    ecosystem: pip
+    dependencies:
+      - httpx
+      - prometheus-client
+      - redis
+      - supabase
+      - PyJWT
+      - playwright
+
+  admin_portal_runtime:
+    ecosystem: npm
+    dependencies:
+      - expo
+      - expo-router
+      - react
+      - react-native
+      - react-dom
+
+  desktop_runtime:
+    ecosystem: npm
+    dependencies:
+      - expo
+      - expo-router
+      - react
+      - react-native
+      - react-dom
+      - "@playwright/test"
+
+protected_interfaces:
+  - backend/orchestrator/src/aspire_orchestrator/routes/
+  - backend/orchestrator/src/aspire_orchestrator/models.py
+  - backend/orchestrator/src/aspire_orchestrator/config/schemas/
+  - backend/plan/contracts/
+  - backend/plan/specs/ava-user/

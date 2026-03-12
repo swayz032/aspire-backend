@@ -1,0 +1,113 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend/orchestrator
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+    target-branch: main
+    open-pull-requests-limit: 8
+    labels:
+      - dependencies
+      - backend
+    groups:
+      backend-framework:
+        patterns:
+          - langgraph*
+          - langchain-*
+          - fastapi
+          - pydantic*
+          - openai
+          - psycopg*
+      backend-runtime:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - langgraph*
+          - langchain-*
+          - fastapi
+          - pydantic*
+          - openai
+          - psycopg*
+
+  - package-ecosystem: npm
+    directory: /backend/gateway
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:15"
+    target-branch: main
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+      - gateway
+
+  - package-ecosystem: npm
+    directory: /Aspire/Aspire
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "07:00"
+    target-branch: main
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - admin-portal
+    groups:
+      admin-portal-runtime:
+        patterns:
+          - expo
+          - expo-*
+          - react
+          - react-dom
+          - react-native
+          - "@react-navigation/*"
+          - "@testing-library/*"
+      admin-portal-tooling:
+        patterns:
+          - eslint*
+          - jest*
+          - typescript
+          - "@types/*"
+
+  - package-ecosystem: npm
+    directory: /Aspire-desktop
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "07:15"
+    target-branch: main
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - desktop
+    groups:
+      desktop-runtime:
+        patterns:
+          - expo
+          - expo-*
+          - react
+          - react-dom
+          - react-native
+          - "@playwright/test"
+          - "@supabase/*"
+      desktop-tooling:
+        patterns:
+          - eslint*
+          - jest*
+          - typescript
+          - "@types/*"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "07:00"
+    target-branch: main
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - tooling
