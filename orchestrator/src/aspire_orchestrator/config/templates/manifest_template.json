@@ -1,0 +1,36 @@
+{
+  "skillpack_id": "{agent-id}",
+  "name": "{Agent Display Name}",
+  "agent_name": "{AgentFirstName}",
+  "channel": "internal_frontend",
+  "version": "1.0.0",
+  "description": "{Brief capability summary. Include risk tier info.}",
+  "capabilities": [
+    "can_{action_1}",
+    "can_{action_2}"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "{provider}.{domain}.{action}",
+    "internal.{domain}.{action}"
+  ],
+  "providers": ["{provider_name}"],
+  "actions": [
+    "{domain}.{action_1}",
+    "{domain}.{action_2}"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "{output_type_1}",
+    "{output_type_2}"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": ["preference", "business_fact"],
+    "default_keys": []
+  }
+}

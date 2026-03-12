@@ -1,0 +1,13 @@
+default_mode: memory-assisted
+actions:
+  "call.route":
+    autonomy: guided
+    binding_fields: [caller_info]
+
+  "call.transfer":
+    autonomy: approval-gated
+    binding_fields: [call_id, destination]
+
+  "visitor.log":
+    autonomy: guided
+    binding_fields: [visitor_info]

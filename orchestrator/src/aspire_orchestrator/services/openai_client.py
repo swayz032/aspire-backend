@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import threading
 from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
@@ -32,6 +33,54 @@ _DEFAULT_PROFILE_FALLBACKS: dict[str, list[str]] = {
     "fast_general": ["gpt-5", "gpt-5-mini"],
     "cheap_classifier": ["gpt-5-mini", "gpt-5"],
 }
+
+# --- Client Singleton Cache ---
+_async_client_cache: dict[tuple[str, str], AsyncOpenAI] = {}
+_sync_client_cache: dict[tuple[str, str], OpenAI] = {}
+_client_cache_lock = threading.Lock()
+
+
+def _get_or_create_async_client(
+    api_key: str,
+    base_url: str,
+    timeout: float = 30.0,
+) -> AsyncOpenAI:
+    """Return cached AsyncOpenAI client or create one."""
+    cache_key = (api_key, base_url)
+    if cache_key not in _async_client_cache:
+        with _client_cache_lock:
+            if cache_key not in _async_client_cache:
+                _async_client_cache[cache_key] = AsyncOpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                    timeout=timeout,
+                )
+    return _async_client_cache[cache_key]
+
+
+def _get_or_create_sync_client(
+    api_key: str,
+    base_url: str,
+    timeout: float = 30.0,
+) -> OpenAI:
+    """Return cached sync OpenAI client or create one."""
+    cache_key = (api_key, base_url)
+    if cache_key not in _sync_client_cache:
+        with _client_cache_lock:
+            if cache_key not in _sync_client_cache:
+                _sync_client_cache[cache_key] = OpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                    timeout=timeout,
+                )
+    return _sync_client_cache[cache_key]
+
+
+def clear_client_cache() -> None:
+    """Clear all cached clients. For testing and shutdown."""
+    with _client_cache_lock:
+        _async_client_cache.clear()
+        _sync_client_cache.clear()
 
 
 class OpenAIAdapterError(RuntimeError):
@@ -228,7 +277,7 @@ async def probe_models_startup() -> dict[str, Any]:
             if alt:
                 models_to_probe.add(alt)
 
-    client = AsyncOpenAI(
+    client = _get_or_create_async_client(
         api_key=api_key,
         base_url=settings.openai_base_url,
         timeout=min(float(settings.openai_timeout_seconds), 10.0),
@@ -316,8 +365,24 @@ async def generate_text_async(
     normalized = _normalize_messages(messages, reasoning_model=reasoning_model)
     effective_temp = None if reasoning_model else temperature
 
-    async def _via_responses(call_model: str) -> str:
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    # --- LLM cache check (Phase 5A) ---
+    from aspire_orchestrator.services.llm_cache import get_llm_cache, LLMCache
+    cache = get_llm_cache()
+    system_prompt = messages[0].get("content", "") if messages else ""
+    user_prompt = messages[-1].get("content", "") if messages else ""
+    cache_key = LLMCache.cache_key(resolved_model, system_prompt, user_prompt)
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        logger.debug("LLM cache HIT for model=%s profile=%s", resolved_model, profile)
+        METRICS.record_llm_request(
+            endpoint="cache_hit",
+            resolved_model=resolved_model,
+            outcome="ok",
+        )
+        return cached
+
+    async def _via_responses(call_model: str) -> tuple[str, Any]:
+        client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
         kwargs: dict[str, Any] = {
             "model": call_model,
             "input": normalized,
@@ -326,10 +391,10 @@ async def generate_text_async(
         if effective_temp is not None:
             kwargs["temperature"] = effective_temp
         response = await client.responses.create(**kwargs)
-        return _extract_output_text(response)
+        return _extract_output_text(response), response
 
-    async def _via_chat(call_model: str) -> str:
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    async def _via_chat(call_model: str) -> tuple[str, Any]:
+        client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
         kwargs: dict[str, Any] = {
             "model": call_model,
             "messages": normalized,
@@ -338,18 +403,45 @@ async def generate_text_async(
         if effective_temp is not None:
             kwargs["temperature"] = effective_temp
         response = await client.chat.completions.create(**kwargs)
-        return (response.choices[0].message.content or "").strip() if response.choices else ""
+        text = (response.choices[0].message.content or "").strip() if response.choices else ""
+        return text, response
+
+    async def _track_token_usage(response: Any, call_model: str) -> None:
+        """Token usage tracking (Phase 5E) — best-effort, non-blocking."""
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is None:
+                return
+            from aspire_orchestrator.services.supabase_client import supabase_insert
+            token_data = {
+                "suite_id": None,
+                "agent_id": "orchestrator",
+                "model": call_model,
+                "profile": profile or "unknown",
+                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0),
+                "completion_tokens": getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0),
+                "total_tokens": getattr(usage, "total_tokens", 0),
+                "cache_hit": False,
+            }
+            await supabase_insert("token_usage_log", token_data)
+        except Exception:
+            pass  # Token tracking is best-effort
 
     last_error: Exception | None = None
     for call_model in _candidate_models(resolved_model):
         if prefer_responses_api:
             try:
-                result = await _via_responses(call_model)
+                result, response = await _via_responses(call_model)
                 METRICS.record_llm_request(
                     endpoint="responses",
                     resolved_model=call_model,
                     outcome="ok",
                 )
+                # Cache the response (Phase 5A)
+                await cache.set(cache_key, result, profile=profile)
+                # Token tracking (Phase 5E) — fire and forget
+                import asyncio
+                asyncio.create_task(_track_token_usage(response, call_model))
                 return result
             except Exception as e:
                 last_error = e
@@ -365,12 +457,17 @@ async def generate_text_async(
                     call_model, type(e).__name__,
                 )
                 try:
-                    result = await _via_chat(call_model)
+                    result, response = await _via_chat(call_model)
                     METRICS.record_llm_request(
                         endpoint="chat_fallback",
                         resolved_model=call_model,
                         outcome="ok",
                     )
+                    # Cache the response (Phase 5A)
+                    await cache.set(cache_key, result, profile=profile)
+                    # Token tracking (Phase 5E) — fire and forget
+                    import asyncio
+                    asyncio.create_task(_track_token_usage(response, call_model))
                     return result
                 except Exception as chat_e:
                     last_error = chat_e
@@ -386,12 +483,17 @@ async def generate_text_async(
                     continue
         else:
             try:
-                result = await _via_chat(call_model)
+                result, response = await _via_chat(call_model)
                 METRICS.record_llm_request(
                     endpoint="chat",
                     resolved_model=call_model,
                     outcome="ok",
                 )
+                # Cache the response (Phase 5A)
+                await cache.set(cache_key, result, profile=profile)
+                # Token tracking (Phase 5E) — fire and forget
+                import asyncio
+                asyncio.create_task(_track_token_usage(response, call_model))
                 return result
             except Exception as e:
                 last_error = e
@@ -458,7 +560,7 @@ def generate_text_sync(
     effective_temp = None if reasoning_model else temperature
 
     def _via_responses(call_model: str) -> str:
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+        client = _get_or_create_sync_client(api_key, base_url, timeout_seconds)
         kwargs: dict[str, Any] = {
             "model": call_model,
             "input": normalized,
@@ -470,7 +572,7 @@ def generate_text_sync(
         return _extract_output_text(response)
 
     def _via_chat(call_model: str) -> str:
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+        client = _get_or_create_sync_client(api_key, base_url, timeout_seconds)
         kwargs: dict[str, Any] = {
             "model": call_model,
             "messages": normalized,
@@ -561,7 +663,7 @@ async def generate_embeddings_async(
     timeout_seconds: float = 30.0,
 ) -> list[list[float]]:
     """Generate embeddings for input texts."""
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
     resp = await client.embeddings.create(model=model, input=input_texts)
     METRICS.record_llm_request(
         endpoint="embeddings",
@@ -580,7 +682,7 @@ def generate_embeddings_sync(
     timeout_seconds: float = 30.0,
 ) -> list[list[float]]:
     """Sync embeddings generation helper."""
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    client = _get_or_create_sync_client(api_key, base_url, timeout_seconds)
     resp = client.embeddings.create(model=model, input=input_texts)
     METRICS.record_llm_request(
         endpoint="embeddings",

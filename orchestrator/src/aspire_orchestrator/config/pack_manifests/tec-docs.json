@@ -2,13 +2,16 @@
   "skillpack_id": "tec-docs",
   "name": "Tec Documents",
   "agent_name": "Tec",
+  "registry_id": "tec_documents",
+  "owner_key": "tec",
+  "persona_filename": "tec_documents_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Document generation, preview rendering, PDF finalization. GREEN tier with approval-gated finalization.",
+  "version": "1.0.0",
+  "description": "Document generation, preview, and governed sharing workflows. Default risk tier yellow.",
   "capabilities": [
     "can_generate_document_packet",
     "can_render_preview",
-    "can_finalize_pdf_after_approval"
+    "can_share_document_after_confirmation"
   ],
   "risk_profile": {
     "default_risk_tier": "green",
@@ -19,9 +22,68 @@
     "s3.document.upload",
     "s3.url.sign"
   ],
-  "providers": ["puppeteer", "aws_s3"],
-  "actions": ["document.generate", "document.preview", "document.share"],
+  "providers": [
+    "puppeteer",
+    "aws_s3"
+  ],
+  "actions": [
+    "document.generate",
+    "document.preview",
+    "document.share"
+  ],
   "certification_status": "uncertified",
-  "outputs": ["document_packet", "pdf_preview", "signed_url"],
-  "dependencies": []
+  "outputs": [
+    "document_packet",
+    "pdf_preview",
+    "signed_url"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "tec_documents_system_prompt.md",
+    "tone": "precise",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "tec_documents",
+      "documents",
+      "pdf"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "document.generate",
+      "document.preview",
+      "document.share"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "tec_documents"
+  }
 }

@@ -1,0 +1,23 @@
+tool_policy:
+  "payroll.run":
+    tool_id: gusto.payroll.run
+    allowed: true
+    risk_tier: red
+
+  "payroll.snapshot":
+    tool_id: gusto.read_payrolls
+    allowed: true
+    risk_tier: green
+
+  "payroll.schedule":
+    tool_id: gusto.read_payrolls
+    allowed: true
+    risk_tier: yellow
+
+  "payroll.deadline":
+    tool_id: gusto.read_payrolls
+    allowed: true
+    risk_tier: green
+
+# tool: gusto.payroll.run
+# tool: gusto.read_payrolls

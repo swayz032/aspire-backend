@@ -1,0 +1,19 @@
+tool_policy:
+  "meeting.create_room":
+    tool_id: livekit.room.create
+    allowed: true
+    risk_tier: green
+
+  "meeting.schedule":
+    tool_id: livekit.meeting.schedule
+    allowed: true
+    risk_tier: yellow
+
+  "meeting.summarize":
+    tool_id: deepgram.transcribe
+    allowed: true
+    risk_tier: green
+
+# tool: livekit.room.create
+# tool: livekit.meeting.schedule
+# tool: deepgram.transcribe

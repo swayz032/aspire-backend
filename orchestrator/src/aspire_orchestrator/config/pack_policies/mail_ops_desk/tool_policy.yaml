@@ -1,0 +1,43 @@
+tool_policy:
+  "domain.check":
+    tool_id: domain.check
+    allowed: true
+    risk_tier: green
+
+  "domain.verify":
+    tool_id: domain.verify
+    allowed: true
+    risk_tier: green
+
+  "domain.dns.create":
+    tool_id: domain.dns.create
+    allowed: true
+    risk_tier: yellow
+
+  "domain.purchase":
+    tool_id: domain.purchase
+    allowed: true
+    risk_tier: yellow
+
+  "domain.delete":
+    tool_id: domain.delete
+    allowed: true
+    risk_tier: yellow
+
+  "mail.account.create":
+    tool_id: polaris.account.create
+    allowed: true
+    risk_tier: yellow
+
+  "mail.account.read":
+    tool_id: polaris.account.read
+    allowed: true
+    risk_tier: green
+
+# tool: domain.check
+# tool: domain.verify
+# tool: domain.dns.create
+# tool: domain.purchase
+# tool: domain.delete
+# tool: polaris.account.create
+# tool: polaris.account.read

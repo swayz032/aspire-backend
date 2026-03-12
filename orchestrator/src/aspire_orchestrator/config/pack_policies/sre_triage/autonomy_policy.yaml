@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "sre.alert.detect":
+    autonomy: guided
+    binding_fields: [request]
+
+  "sre.incident.triage":
+    autonomy: guided
+    binding_fields: [request]
+
+  "sre.incident.route":
+    autonomy: approval-gated
+    binding_fields: [request]
+
+  "sre.report.generate":
+    autonomy: guided
+    binding_fields: [request]

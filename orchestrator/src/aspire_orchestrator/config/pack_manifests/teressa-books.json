@@ -2,18 +2,20 @@
   "skillpack_id": "teressa-books",
   "name": "Teressa Books",
   "agent_name": "Teressa",
+  "registry_id": "teressa_books",
+  "owner_key": "teressa",
+  "persona_filename": "teressa_books_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Transaction categorization, QBO sync, reconciliation, bookkeeping reports.",
+  "version": "1.0.0",
+  "description": "Books sync, categorization, reporting, and journal entry workflows. Default risk tier yellow.",
   "capabilities": [
+    "can_sync_books",
     "can_categorize_transactions",
-    "can_sync_qbo",
-    "can_reconcile_accounts",
     "can_generate_reports",
     "can_create_journal_entries"
   ],
   "risk_profile": {
-    "default_risk_tier": "yellow",
+    "default_risk_tier": "green",
     "max_risk_tier": "yellow"
   },
   "tools": [
@@ -22,11 +24,70 @@
     "qbo.read_accounts",
     "qbo.journal_entry.create"
   ],
-  "providers": ["quickbooks"],
+  "providers": [
+    "quickbooks"
+  ],
   "actions": [
-    "books.sync", "books.categorize", "books.report", "books.journal_entry"
+    "books.sync",
+    "books.categorize",
+    "books.report",
+    "books.journal_entry"
   ],
   "certification_status": "uncertified",
-  "outputs": ["categorization_result", "reconciliation_report", "sync_status"],
-  "dependencies": []
+  "outputs": [
+    "categorization_result",
+    "reconciliation_report",
+    "sync_status",
+    "journal_entry_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "teressa_books_system_prompt.md",
+    "tone": "precise",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "teressa_books",
+      "books",
+      "quickbooks"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "books.sync",
+      "books.categorize",
+      "books.report",
+      "books.journal_entry"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "teressa_books"
+  }
 }

@@ -48,6 +48,7 @@ import re
 import time
 import uuid
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,7 @@ from aspire_orchestrator.graph import (
 )
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
+from aspire_orchestrator.services.receipt_store import start_receipt_writer, stop_receipt_writer
 from aspire_orchestrator.services.receipt_chain import verify_chain
 from aspire_orchestrator.services.registry import get_registry
 from aspire_orchestrator.services.a2a_service import get_a2a_service, A2ATaskStatus
@@ -90,28 +92,38 @@ from aspire_orchestrator.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="Aspire Orchestrator",
-    description="LangGraph Orchestrator — the Single Brain (Law #1)",
-    version="0.1.0",
-)
-
 orchestrator_graph: Any | None = None
 _checkpointer_failover_lock = asyncio.Lock()
 _checkpointer_force_memory = False
 
+from aspire_orchestrator.services.supabase_client import close_pools as close_supabase_pools
 
-@app.on_event("startup")
-async def _startup_init_graph() -> None:
-    """Build LangGraph after event loop is available."""
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    """Own startup and shutdown resources without deprecated FastAPI hooks."""
     global orchestrator_graph
+
     orchestrator_graph = await build_orchestrator_graph()
+    start_receipt_writer()
+    from aspire_orchestrator.services.task_queue import start_task_queue, stop_task_queue
+    start_task_queue()
+
+    try:
+        yield
+    finally:
+        await stop_task_queue()
+        await stop_receipt_writer()
+        await close_checkpointer_runtime()
+        await close_supabase_pools()
 
 
-@app.on_event("shutdown")
-async def _shutdown_cleanup() -> None:
-    """Release persistent resources such as Postgres checkpointer connections."""
-    await close_checkpointer_runtime()
+app = FastAPI(
+    title="Aspire Orchestrator",
+    description="LangGraph Orchestrator ??? the Single Brain (Law #1)",
+    version="0.1.0",
+    lifespan=_app_lifespan,
+)
 
 # CORS — restricted to Gateway only (security reviewer P1 fix)
 # In production, only the Gateway (localhost:3100) talks to the orchestrator.
@@ -976,6 +988,32 @@ async def get_receipts(
                 "limit": limit,
                 "offset": offset,
             },
+        },
+    )
+
+
+# --- Phase 4B: Background Task Status ---
+
+
+@app.get("/v1/tasks/{task_id}/status")
+async def get_task_status(task_id: str) -> JSONResponse:
+    """Query the status of a background task by ID (Phase 4B)."""
+    from aspire_orchestrator.services.task_queue import get_task_queue
+
+    result = get_task_queue().get_status(task_id)
+    if not result:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Task not found", "task_id": task_id},
+        )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "task_id": result.task_id,
+            "status": result.status.value,
+            "created_at": result.created_at.isoformat(),
+            "completed_at": result.completed_at.isoformat() if result.completed_at else None,
+            "error": result.error,
         },
     )
 

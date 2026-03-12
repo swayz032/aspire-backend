@@ -269,10 +269,13 @@ class BaseRetrievalService:
     # -----------------------------------------------------------------------
 
     async def _embed_query(self, query: str) -> list[float] | None:
-        """Embed query text via OpenAI. Returns None on failure."""
+        """Embed query text via OpenAI with cross-domain Redis cache."""
         try:
+            from aspire_orchestrator.services.embedding_cache import get_embedding_cache
             from aspire_orchestrator.services.legal_embedding_service import embed_text
-            return await embed_text(query)
+
+            cache = get_embedding_cache()
+            return await cache.get_or_embed(query, embed_text, model="text-embedding-3-large")
         except Exception as e:
             logger.warning("%s query embedding failed (non-fatal): %s", self.cache_prefix, e)
             return None

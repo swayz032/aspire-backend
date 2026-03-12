@@ -25,9 +25,20 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-# Default: 100 requests per 60 seconds per tenant
-_DEFAULT_LIMIT = 100
-_DEFAULT_WINDOW_SECONDS = 60
+# Default: 500 requests per 60 seconds per tenant (configurable via env)
+_DEFAULT_LIMIT = int(os.environ.get("ASPIRE_RATE_LIMIT", "500"))
+_DEFAULT_WINDOW_SECONDS = int(os.environ.get("ASPIRE_RATE_WINDOW", "60"))
+
+# Per-endpoint rate limits (override _DEFAULT_LIMIT for specific paths)
+# Heavy endpoints that trigger LLM calls or complex processing
+_ENDPOINT_LIMITS: dict[str, int] = {  # longest prefix first
+    "/v1/intents/stream": 50,    # Heavy: SSE streaming, long-lived
+    "/v1/intents": 100,          # Heavy: full orchestrator pipeline
+    "/v1/voice/session": 30,     # Heavy: LiveKit session creation
+}
+
+# Light endpoints use the default limit (500/min)
+# Admin endpoints are exempt (handled by EXEMPT_PATHS)
 
 # Paths exempt from rate limiting (health probes, metrics)
 _EXEMPT_PATHS = frozenset({
@@ -145,6 +156,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path in _EXEMPT_PATHS:
             return await call_next(request)
 
+        # Determine limit for this path (per-endpoint override or default)
+        limit = self.limit
+        for path_prefix, path_limit in _ENDPOINT_LIMITS.items():
+            if request.url.path.startswith(path_prefix):
+                limit = path_limit
+                break
+
         # Rate limit key: prefer suite_id (per-tenant), fallback to IP
         suite_id = request.headers.get("x-suite-id", "")
         if suite_id:
@@ -156,18 +174,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if self._redis is not None:
             try:
                 allowed, remaining = self._redis.check_and_record(
-                    key, self.limit, self.window_seconds
+                    key, limit, self.window_seconds
                 )
             except Exception as exc:
                 logger.warning("RateLimit redis backend failed, falling back to memory: %s", exc)
                 self._redis = None
                 self.backend = "memory"
                 allowed, remaining = _window.check_and_record(
-                    key, self.limit, self.window_seconds
+                    key, limit, self.window_seconds
                 )
         else:
             allowed, remaining = _window.check_and_record(
-                key, self.limit, self.window_seconds
+                key, limit, self.window_seconds
             )
 
         # Periodic cleanup (every 60s)
@@ -179,18 +197,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not allowed:
             logger.warning(
                 "Rate limit exceeded: key=%s, limit=%d/%ds",
-                key[:32], self.limit, self.window_seconds,
+                key[:32], limit, self.window_seconds,
             )
             return JSONResponse(
                 status_code=429,
                 content={
                     "error": "RATE_LIMIT_EXCEEDED",
-                    "message": f"Too many requests. Limit: {self.limit} per {self.window_seconds}s.",
+                    "message": f"Too many requests. Limit: {limit} per {self.window_seconds}s.",
                     "retry_after": self.window_seconds,
                 },
                 headers={
                     "Retry-After": str(self.window_seconds),
-                    "X-RateLimit-Limit": str(self.limit),
+                    "X-RateLimit-Limit": str(limit),
                     "X-RateLimit-Remaining": "0",
                 },
             )
@@ -198,7 +216,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # Add rate limit headers to all responses
-        response.headers["X-RateLimit-Limit"] = str(self.limit)
+        response.headers["X-RateLimit-Limit"] = str(limit)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
 
         return response

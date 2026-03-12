@@ -151,6 +151,130 @@ def _redact_email_fields(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class EliInboxSkillPack:
+    async def email_read(
+        self,
+        filters: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.read_emails(filters=filters, context=context)
+
+    async def email_triage(
+        self,
+        email_id: str,
+        subject: str,
+        body: str,
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.triage_email(email_id=email_id, subject=subject, body=body, context=context)
+
+    async def email_draft(
+        self,
+        email_id: str,
+        draft_content: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.draft_response(email_id=email_id, draft_content=draft_content, context=context)
+
+    async def email_send(
+        self,
+        draft_id: str,
+        send_payload: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.send_email(draft_id=draft_id, send_payload=send_payload, context=context)
+
+    async def office_read(
+        self,
+        filters: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        return await self._execute_office_action(
+            action="office.read", tool_id="internal.office.read", payload=filters, context=context, risk_tier="green"
+        )
+
+    async def office_create(
+        self,
+        office_payload: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        return await self._execute_office_action(
+            action="office.create", tool_id="internal.office.create", payload=office_payload, context=context, risk_tier="yellow", approval_required=True
+        )
+
+    async def office_draft(
+        self,
+        office_payload: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        return await self._execute_office_action(
+            action="office.draft", tool_id="internal.office.draft", payload=office_payload, context=context, risk_tier="yellow", approval_required=True
+        )
+
+    async def office_send(
+        self,
+        office_payload: dict[str, Any],
+        context: EliInboxContext,
+    ) -> SkillPackResult:
+        return await self._execute_office_action(
+            action="office.send", tool_id="internal.office.send", payload=office_payload, context=context, risk_tier="yellow", approval_required=True
+        )
+
+    async def _execute_office_action(
+        self,
+        *,
+        action: str,
+        tool_id: str,
+        payload: dict[str, Any],
+        context: EliInboxContext,
+        risk_tier: str,
+        approval_required: bool = False,
+    ) -> SkillPackResult:
+        if not payload:
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type=action,
+                status="denied",
+                risk_tier=risk_tier,
+                inputs={"action": action, "payload": {}},
+                approval_required=approval_required,
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_PAYLOAD"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: payload", approval_required=approval_required)
+
+        result: ToolExecutionResult = await execute_tool(
+            tool_id=tool_id,
+            payload=payload,
+            correlation_id=context.correlation_id,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+            risk_tier=risk_tier,
+            capability_token_id=context.capability_token_id,
+            capability_token_hash=context.capability_token_hash,
+        )
+
+        status = "ok" if result.outcome == Outcome.SUCCESS else "failed"
+        receipt = _emit_receipt(
+            ctx=context,
+            event_type=action,
+            status=status,
+            risk_tier=risk_tier,
+            inputs={"action": action, "payload": payload},
+            metadata={"tool_id": result.tool_id},
+            approval_required=approval_required,
+        )
+        return SkillPackResult(
+            success=result.outcome == Outcome.SUCCESS,
+            data=result.data,
+            receipt=receipt,
+            error=result.error,
+            approval_required=approval_required,
+        )
+
     """Eli Inbox skill pack — email read, triage, draft, send."""
 
     async def read_emails(

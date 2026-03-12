@@ -1,0 +1,95 @@
+{
+  "skillpack_id": "security-review",
+  "name": "Security Review",
+  "agent_name": "Security Review",
+  "registry_id": "security_review",
+  "owner_key": "security",
+  "persona_filename": "security_review_system_prompt.md",
+  "channel": "internal_backend",
+  "version": "1.0.0",
+  "description": "Security review automation. Default risk tier red.",
+  "capabilities": [
+    "can_scan_execute",
+    "can_report_generate",
+    "can_violation_flag",
+    "can_review_request"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "red",
+    "max_risk_tier": "red"
+  },
+  "tools": [
+    "internal.security.scan_execute",
+    "internal.security.report_generate",
+    "internal.security.violation_flag",
+    "internal.security.review_request"
+  ],
+  "providers": [
+    "internal"
+  ],
+  "actions": [
+    "security.scan.execute",
+    "security.report.generate",
+    "security.violation.flag",
+    "security.review.request"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "security_scan_execute_result",
+    "security_report_generate_result",
+    "security_violation_flag_result",
+    "security_review_request_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "security_review_system_prompt.md",
+    "tone": "precise",
+    "style": "compliance-first",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "security_review",
+      "security",
+      "review"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "high_risk_action_attempts",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "security.scan.execute",
+      "security.report.generate",
+      "security.violation.flag",
+      "security.review.request"
+    ]
+  },
+  "internal_only": true,
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "security_review"
+  }
+}

@@ -696,8 +696,11 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
             }
 
             import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None and loop.is_running():
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     aq_result = pool.submit(

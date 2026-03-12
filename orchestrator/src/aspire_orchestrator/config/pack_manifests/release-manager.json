@@ -1,0 +1,94 @@
+{
+  "skillpack_id": "release-manager",
+  "name": "Release Manager",
+  "agent_name": "Release Manager",
+  "registry_id": "release_manager",
+  "owner_key": "release",
+  "persona_filename": "release_manager_system_prompt.md",
+  "channel": "internal_backend",
+  "version": "1.0.0",
+  "description": "Release management automation. Default risk tier yellow.",
+  "capabilities": [
+    "can_checklist_enforce",
+    "can_pipeline_track",
+    "can_notes_generate",
+    "can_deploy_prepare"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "yellow",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "internal.release.checklist_enforce",
+    "internal.release.pipeline_track",
+    "internal.release.notes_generate",
+    "internal.release.deploy_prepare"
+  ],
+  "providers": [
+    "internal"
+  ],
+  "actions": [
+    "release.checklist.enforce",
+    "release.pipeline.track",
+    "release.notes.generate",
+    "release.deploy.prepare"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "release_checklist_enforce_result",
+    "release_pipeline_track_result",
+    "release_notes_generate_result",
+    "release_deploy_prepare_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "release_manager_system_prompt.md",
+    "tone": "direct",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "release_manager",
+      "release",
+      "deploy"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "release.checklist.enforce",
+      "release.pipeline.track",
+      "release.notes.generate",
+      "release.deploy.prepare"
+    ]
+  },
+  "internal_only": true,
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "release_manager"
+  }
+}

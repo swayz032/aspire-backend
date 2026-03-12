@@ -125,6 +125,35 @@ def _make_receipt(
 
 
 class TeressaBooksSkillPack:
+    async def books_sync(
+        self,
+        account_id: str,
+        context: TeressaBooksContext,
+    ) -> SkillPackResult:
+        return await self.sync_books(account_id=account_id, context=context)
+
+    async def books_categorize(
+        self,
+        transaction: dict[str, Any],
+        context: TeressaBooksContext,
+    ) -> SkillPackResult:
+        return await self.categorize_transaction(transaction=transaction, context=context)
+
+    async def books_report(
+        self,
+        report_type: str,
+        date_range: dict[str, str],
+        context: TeressaBooksContext,
+    ) -> SkillPackResult:
+        return await self.generate_report(report_type=report_type, date_range=date_range, context=context)
+
+    async def books_journal_entry(
+        self,
+        entry_data: dict[str, Any],
+        context: TeressaBooksContext,
+    ) -> SkillPackResult:
+        return await self.create_journal_entry(entry_data=entry_data, context=context)
+
     """Teressa Books Skill Pack — governed bookkeeping operations.
 
     All methods require a TeressaContext for tenant scoping (Law #6)

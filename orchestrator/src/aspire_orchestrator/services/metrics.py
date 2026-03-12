@@ -83,6 +83,32 @@ LLM_MODEL_FALLBACK_COUNTER = Counter(
     ["profile", "from_model", "to_model"],
 )
 
+RESPONSE_QUALITY_COUNTER = Counter(
+    "aspire_response_quality_total",
+    "Total response quality evaluations by agent, channel, and pass status",
+    ["agent_id", "channel", "passed"],
+)
+
+RESPONSE_QUALITY_SCORE = Histogram(
+    "aspire_response_quality_score",
+    "Distribution of response quality scores",
+    ["agent_id", "channel"],
+    buckets=(0, 25, 50, 60, 70, 80, 90, 95, 100),
+)
+
+RETRIEVAL_ROUTER_COUNTER = Counter(
+    "aspire_retrieval_router_total",
+    "Total retrieval router executions by agent and status",
+    ["agent_id", "status", "cache_hit"],
+)
+
+RETRIEVAL_GROUNDING_SCORE = Histogram(
+    "aspire_retrieval_grounding_score",
+    "Distribution of retrieval grounding scores by agent",
+    ["agent_id", "status"],
+    buckets=(0.0, 0.2, 0.4, 0.55, 0.7, 0.85, 1.0),
+)
+
 # Service info — static labels for service identification
 SERVICE_INFO = Info(
     "aspire_orchestrator",
@@ -110,6 +136,10 @@ class MetricsCollector:
     a2a_task_counter = A2A_TASK_COUNTER
     llm_request_counter = LLM_REQUEST_COUNTER
     llm_model_fallback_counter = LLM_MODEL_FALLBACK_COUNTER
+    response_quality_counter = RESPONSE_QUALITY_COUNTER
+    response_quality_score = RESPONSE_QUALITY_SCORE
+    retrieval_router_counter = RETRIEVAL_ROUTER_COUNTER
+    retrieval_grounding_score = RETRIEVAL_GROUNDING_SCORE
 
     def record_request(
         self,
@@ -186,6 +216,42 @@ class MetricsCollector:
             from_model=from_model,
             to_model=to_model,
         ).inc()
+
+    def record_response_quality(
+        self,
+        *,
+        agent_id: str,
+        channel: str,
+        score: int,
+        passed: bool,
+    ) -> None:
+        self.response_quality_counter.labels(
+            agent_id=agent_id or "unknown",
+            channel=channel or "unknown",
+            passed=str(bool(passed)).lower(),
+        ).inc()
+        self.response_quality_score.labels(
+            agent_id=agent_id or "unknown",
+            channel=channel or "unknown",
+        ).observe(max(0, min(100, int(score))))
+
+    def record_retrieval_router(
+        self,
+        *,
+        agent_id: str,
+        status: str,
+        cache_hit: bool,
+        grounding_score: float,
+    ) -> None:
+        self.retrieval_router_counter.labels(
+            agent_id=agent_id or "unknown",
+            status=status or "unknown",
+            cache_hit=str(bool(cache_hit)).lower(),
+        ).inc()
+        self.retrieval_grounding_score.labels(
+            agent_id=agent_id or "unknown",
+            status=status or "unknown",
+        ).observe(max(0.0, min(1.0, float(grounding_score))))
 
 
 # Module-level singleton

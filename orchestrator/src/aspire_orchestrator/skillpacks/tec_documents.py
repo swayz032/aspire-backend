@@ -130,6 +130,54 @@ def _make_receipt(
 
 
 class TecDocumentsSkillPack:
+    async def document_generate(
+        self,
+        template_id: str,
+        data: dict[str, Any],
+        context: TecContext,
+        *,
+        execute_tool_fn: Any | None = None,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.generate_document(
+            template_id=template_id,
+            data=data,
+            context=context,
+            execute_tool_fn=execute_tool_fn,
+        )
+
+    async def document_preview(
+        self,
+        document_id: str,
+        context: TecContext,
+        *,
+        execute_tool_fn: Any | None = None,
+        expires_in: int = DEFAULT_URL_EXPIRY_SECONDS,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.preview_document(
+            document_id=document_id,
+            context=context,
+            execute_tool_fn=execute_tool_fn,
+            expires_in=expires_in,
+        )
+
+    async def document_share(
+        self,
+        document_id: str,
+        recipients: list[str],
+        context: TecContext,
+        *,
+        execute_tool_fn: Any | None = None,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.share_document(
+            document_id=document_id,
+            recipients=recipients,
+            context=context,
+            execute_tool_fn=execute_tool_fn,
+        )
+
     """Tec Documents skill pack — PDF generation, preview, sharing.
 
     All methods are async to match the tool executor interface.

@@ -147,6 +147,53 @@ def _check_binding_fields(
 
 
 class QuinnInvoicingSkillPack:
+    async def invoice_create(
+        self,
+        customer: str,
+        line_items: list[dict[str, Any]],
+        context: QuinnContext,
+        *,
+        amount: int | None = None,
+        currency: str = "usd",
+        description: str = "",
+        due_days: int = 30,
+    ) -> SkillPackResult:
+        return await self.create_invoice(customer=customer, line_items=line_items, context=context, amount=amount, currency=currency, description=description, due_days=due_days)
+
+    async def invoice_send(
+        self,
+        invoice_id: str,
+        context: QuinnContext,
+    ) -> SkillPackResult:
+        return await self.send_invoice(invoice_id=invoice_id, context=context)
+
+    async def invoice_void(
+        self,
+        invoice_id: str,
+        reason: str,
+        context: QuinnContext,
+    ) -> SkillPackResult:
+        return await self.void_invoice(invoice_id=invoice_id, reason=reason, context=context)
+
+    async def quote_create(
+        self,
+        customer: str,
+        line_items: list[dict[str, Any]],
+        expiry: str | None,
+        context: QuinnContext,
+        *,
+        amount: int | None = None,
+        currency: str = "usd",
+    ) -> SkillPackResult:
+        return await self.create_quote(customer=customer, line_items=line_items, expiry=expiry, context=context, amount=amount, currency=currency)
+
+    async def quote_send(
+        self,
+        quote_id: str,
+        context: QuinnContext,
+    ) -> SkillPackResult:
+        return await self.send_quote(quote_id=quote_id, context=context)
+
     """Quinn Invoicing Skill Pack — governed invoice and quote operations.
 
     All methods require a QuinnContext for tenant scoping (Law #6)

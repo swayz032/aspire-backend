@@ -30,6 +30,11 @@ from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.services.agent_identity import (
     resolve_assigned_agent as _resolve_assigned_agent_shared,
 )
+from aspire_orchestrator.services.metrics import METRICS
+from aspire_orchestrator.services.pack_policy_loader import get_prompt_contract
+from aspire_orchestrator.services.response_quality_guard import enforce_response_quality
+from aspire_orchestrator.services.retrieval_verifier import verify_retrieval_grounding
+from aspire_orchestrator.services.task_queue import TaskQueueFullError, get_task_queue
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -37,18 +42,24 @@ logger = logging.getLogger(__name__)
 # Agent persona files (same map as respond.py)
 _PERSONA_MAP: dict[str, str] = {
     "ava": "ava_user_system_prompt.md",
-    "finn": "finn_fm_system_prompt.md",
-    "finn_fm": "finn_fm_system_prompt.md",
-    "eli": "eli_system_prompt.md",
-    "quinn": "quinn_system_prompt.md",
-    "nora": "nora_system_prompt.md",
-    "sarah": "sarah_system_prompt.md",
-    "adam": "adam_system_prompt.md",
-    "tec": "tec_system_prompt.md",
-    "teressa": "teressa_system_prompt.md",
-    "milo": "milo_system_prompt.md",
-    "clara": "clara_system_prompt.md",
-    "mail_ops": "mail_ops_system_prompt.md",
+    "ava_user": "ava_user_system_prompt.md",
+    "ava_admin": "ava_admin_system_prompt.md",
+    "finn": "finn_finance_manager_system_prompt.md",
+    "finn_fm": "finn_finance_manager_system_prompt.md",
+    "eli": "eli_inbox_system_prompt.md",
+    "quinn": "quinn_invoicing_system_prompt.md",
+    "nora": "nora_conference_system_prompt.md",
+    "sarah": "sarah_front_desk_system_prompt.md",
+    "adam": "adam_research_system_prompt.md",
+    "tec": "tec_documents_system_prompt.md",
+    "teressa": "teressa_books_system_prompt.md",
+    "milo": "milo_payroll_system_prompt.md",
+    "clara": "clara_legal_system_prompt.md",
+    "mail_ops": "mail_ops_desk_system_prompt.md",
+    "qa": "qa_evals_system_prompt.md",
+    "security": "security_review_system_prompt.md",
+    "sre": "sre_triage_system_prompt.md",
+    "release": "release_manager_system_prompt.md",
 }
 
 _PERSONAS_DIR = Path(__file__).parent.parent / "config" / "pack_personas"
@@ -156,6 +167,15 @@ def _build_aspire_awareness() -> str:
         "for small business professionals."
     )
     return _AWARENESS_CACHE
+
+
+def _load_prompt_contract(agent_id: str) -> str:
+    """Load runtime prompt contract for the agent if present."""
+    try:
+        return get_prompt_contract(agent_id).strip()
+    except Exception as e:
+        logger.warning("Failed to load prompt contract for %s: %s", agent_id, e)
+        return ""
 
 
 def _build_user_context(state: OrchestratorState) -> str:
@@ -353,9 +373,13 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     awareness = _build_aspire_awareness()
     user_ctx = _build_user_context(state)
     channel_ctx = _build_channel_context(state)
+    prompt_contract = _load_prompt_contract(agent_id)
 
     # 3. Agentic RAG retrieval (cross-domain if needed)
     rag_context = ""
+    retrieval_status = "not_applicable"
+    retrieval_grounding_score = 0.0
+    retrieval_conflicts: list[str] = []
     try:
         from aspire_orchestrator.services.retrieval_router import get_retrieval_router
         router = get_retrieval_router()
@@ -366,6 +390,14 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
             suite_id=suite_id,
         )
         rag_context = retrieval_result.context
+        retrieval_status = retrieval_result.status
+        retrieval_grounding_score = retrieval_result.grounding_score
+        retrieval_conflicts = list(retrieval_result.conflict_flags or [])
+        if retrieval_result.status in {"offline", "degraded"} and retrieval_result.degraded_reason:
+            rag_context = (
+                f"{rag_context}\n\n## Retrieval Status\n"
+                f"Grounding status: {retrieval_result.status} ({retrieval_result.degraded_reason})"
+            ).strip()
         if retrieval_result.receipt_id:
             existing_receipts = list(state.get("pipeline_receipts", []))
             # Retrieval receipt added to pipeline
@@ -431,6 +463,8 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
         system_parts.extend(["", memory_ctx])
     if rag_context:
         system_parts.extend(["", rag_context])
+    if prompt_contract:
+        system_parts.extend(["", "## Runtime Prompt Contract", prompt_contract])
     system_parts.extend(["", channel_ctx])
     system_message = "\n".join(system_parts)
 
@@ -476,6 +510,48 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
 
     # 7. Guard output (strip phantom action claims)
     response_text = _guard_output(response_text, agent_id)
+    grounding_report = verify_retrieval_grounding(
+        intent_type=intent_type,
+        retrieval_status=retrieval_status,
+        grounding_score=retrieval_grounding_score,
+        agent_id=agent_id,
+        conflict_flags=retrieval_conflicts,
+    )
+    if not grounding_report.passed:
+        response_text = grounding_report.fallback_text
+    channel = "voice"
+    profile = state.get("user_profile")
+    if isinstance(profile, dict):
+        channel = profile.get("channel", "voice")
+
+    fallback_map = {
+        "ava": "I can help with that. Tell me the exact piece you want me to handle and I'll keep it grounded.",
+        "finn": "I'm Finn. Give me the finance question or number you want to work through and I'll keep it precise.",
+        "eli": "I'm Eli. Tell me the message or inbox situation and I'll keep the answer direct.",
+        "nora": "I'm Nora. Tell me the scheduling issue and I'll keep it tight.",
+        "clara": "I'm Clara. Tell me the contract or compliance point you want reviewed and I'll stay grounded.",
+        "quinn": "I'm Quinn. Tell me the invoice or payment issue and I'll keep it specific.",
+        "sarah": "I'm Sarah. Tell me the front-desk situation you want covered.",
+        "adam": "I'm Adam. Tell me what you want researched and I'll keep it evidence-based.",
+        "tec": "I'm Tec. Tell me the document task and I'll keep it structured.",
+        "teressa": "I'm Teressa. Tell me the books issue and I'll keep it clean.",
+        "milo": "I'm Milo. Tell me the payroll issue and I'll keep it exact.",
+        "mail_ops": "I'm Mail Ops. Tell me the mailbox or domain issue and I'll keep it specific.",
+    }
+    response_text, quality_report = enforce_response_quality(
+        text=response_text,
+        channel=channel,
+        agent_id=agent_id,
+        prompt_contract=prompt_contract,
+        fallback_text=fallback_map.get(agent_id, fallback_map["ava"]),
+        allow_markdown=channel not in {"voice", "avatar"},
+    )
+    METRICS.record_response_quality(
+        agent_id=agent_id,
+        channel=channel,
+        score=quality_report.score,
+        passed=quality_report.passed,
+    )
 
     # 8. Save turns to working memory (user utterance + agent response)
     if session_id:
@@ -500,19 +576,36 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
         # Non-blocking long-term memory persistence (semantic + episodic).
         if _ENABLE_BACKGROUND_MEMORY_PERSISTENCE:
             try:
-                asyncio.create_task(
-                    _persist_memory_layers(
-                        session_id=session_id,
-                        suite_id=suite_id,
-                        actor_id=actor_id,
-                        agent_id=agent_id,
-                    )
+                queue = get_task_queue()
+                await queue.enqueue(
+                    _persist_memory_layers,
+                    session_id=session_id,
+                    suite_id=suite_id,
+                    actor_id=actor_id,
+                    agent_id=agent_id,
                 )
+            except TaskQueueFullError:
+                logger.warning("Background memory persistence skipped: task queue at capacity")
             except Exception as e:
                 logger.warning("Failed to schedule background memory persistence: %s", e)
 
     # 9. Generate receipt (Law #2)
     receipt = _make_conversation_receipt(state, agent_id, intent_type, len(response_text))
+    receipt["quality_report"] = {
+        "score": quality_report.score,
+        "passed": quality_report.passed,
+        "violations": quality_report.violations,
+        "warnings": quality_report.warnings,
+        "style_signals": quality_report.style_signals,
+    }
+    receipt["retrieval_verification"] = {
+        "passed": grounding_report.passed,
+        "mode": grounding_report.mode,
+        "confidence": grounding_report.confidence,
+        "reasons": grounding_report.reasons,
+        "retrieval_status": retrieval_status,
+        "grounding_score": retrieval_grounding_score,
+    }
 
     # 10. Add to pipeline receipts
     existing_receipts = list(state.get("pipeline_receipts", []))

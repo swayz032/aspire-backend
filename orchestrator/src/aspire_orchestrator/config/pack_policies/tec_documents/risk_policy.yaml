@@ -1,0 +1,20 @@
+# Tec Documents - Risk Policy
+pack_id: tec-docs
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "document.generate":
+    risk_tier: green
+    approval_required: false
+    description: "document.generate action for tec_documents"
+
+  "document.preview":
+    risk_tier: green
+    approval_required: false
+    description: "document.preview action for tec_documents"
+
+  "document.share":
+    risk_tier: yellow
+    approval_required: true
+    description: "document.share action for tec_documents"

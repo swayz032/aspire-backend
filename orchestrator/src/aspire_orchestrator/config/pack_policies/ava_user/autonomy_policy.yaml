@@ -1,0 +1,7 @@
+autonomy:
+  auto_triage: true
+  auto_draft: true
+  auto_send: false
+  max_agentic_iterations: 1
+  max_retrieval_domains: 1
+  timeout_ms: 2500

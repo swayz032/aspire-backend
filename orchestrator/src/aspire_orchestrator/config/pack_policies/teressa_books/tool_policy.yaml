@@ -1,0 +1,25 @@
+tool_policy:
+  "books.sync":
+    tool_id: quickbooks.sync
+    allowed: true
+    risk_tier: yellow
+
+  "books.categorize":
+    tool_id: qbo.read_transactions
+    allowed: true
+    risk_tier: green
+
+  "books.report":
+    tool_id: qbo.read_accounts
+    allowed: true
+    risk_tier: green
+
+  "books.journal_entry":
+    tool_id: qbo.journal_entry.create
+    allowed: true
+    risk_tier: yellow
+
+# tool: quickbooks.sync
+# tool: qbo.read_transactions
+# tool: qbo.read_accounts
+# tool: qbo.journal_entry.create

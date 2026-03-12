@@ -3,17 +3,19 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * Playwright configuration for Aspire Desktop E2E tests.
  *
- * Base URL: http://localhost:3100 (Express server serving Expo web build)
+ * Base URL: http://localhost:5000 (Express server serving Expo web build)
  * Projects: Chromium only (desktop web app)
  */
 export default defineConfig({
   testDir: './specs',
+  globalSetup: './playwright.global-setup.ts',
+  globalTeardown: './playwright.global-teardown.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
   timeout: 30_000,
-  globalTimeout: 60_000,
+  globalTimeout: 20 * 60_000,
 
   reporter: [
     ['list'],
@@ -21,7 +23,7 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: 'http://localhost:3100',
+    baseURL: process.env.BASE_URL || 'http://localhost:5000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'on-first-retry',
@@ -35,12 +37,4 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-
-  webServer: {
-    command: 'npm start',
-    cwd: '../../../Aspire-desktop',
-    port: 3100,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
 });

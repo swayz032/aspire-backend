@@ -1,0 +1,30 @@
+# Finn Finance Manager - Risk Policy
+pack_id: finn-finance-manager
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "finance.snapshot.read":
+    risk_tier: green
+    approval_required: false
+    description: "finance.snapshot.read action for finn_finance_manager"
+
+  "finance.exceptions.read":
+    risk_tier: green
+    approval_required: false
+    description: "finance.exceptions.read action for finn_finance_manager"
+
+  "finance.packet.draft":
+    risk_tier: yellow
+    approval_required: true
+    description: "finance.packet.draft action for finn_finance_manager"
+
+  "finance.proposal.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "finance.proposal.create action for finn_finance_manager"
+
+  "a2a.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "a2a.create action for finn_finance_manager"

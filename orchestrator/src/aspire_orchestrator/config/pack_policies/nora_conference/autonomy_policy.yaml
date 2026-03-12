@@ -1,0 +1,13 @@
+default_mode: memory-assisted
+actions:
+  "meeting.create_room":
+    autonomy: guided
+    binding_fields: [room_name]
+
+  "meeting.schedule":
+    autonomy: approval-gated
+    binding_fields: [participants, time, agenda]
+
+  "meeting.summarize":
+    autonomy: guided
+    binding_fields: [room_id]

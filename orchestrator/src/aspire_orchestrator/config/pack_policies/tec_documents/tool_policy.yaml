@@ -1,0 +1,19 @@
+tool_policy:
+  "document.generate":
+    tool_id: puppeteer.pdf.generate
+    allowed: true
+    risk_tier: green
+
+  "document.preview":
+    tool_id: s3.url.sign
+    allowed: true
+    risk_tier: green
+
+  "document.share":
+    tool_id: s3.document.upload
+    allowed: true
+    risk_tier: yellow
+
+# tool: puppeteer.pdf.generate
+# tool: s3.document.upload
+# tool: s3.url.sign

@@ -1,0 +1,20 @@
+tool_policy:
+  "security.scan.execute":
+    tool_id: internal.security.scan_execute
+    allowed: true
+    risk_tier: green
+
+  "security.report.generate":
+    tool_id: internal.security.report_generate
+    allowed: true
+    risk_tier: green
+
+  "security.violation.flag":
+    tool_id: internal.security.violation_flag
+    allowed: true
+    risk_tier: red
+
+  "security.review.request":
+    tool_id: internal.security.review_request
+    allowed: true
+    risk_tier: red

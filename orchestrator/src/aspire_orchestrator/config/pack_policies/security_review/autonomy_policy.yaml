@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "security.scan.execute":
+    autonomy: guided
+    binding_fields: [request]
+
+  "security.report.generate":
+    autonomy: guided
+    binding_fields: [request]
+
+  "security.violation.flag":
+    autonomy: approval-gated
+    binding_fields: [request]
+
+  "security.review.request":
+    autonomy: approval-gated
+    binding_fields: [request]

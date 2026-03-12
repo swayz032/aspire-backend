@@ -49,7 +49,7 @@ async function ensureAuthenticatedSession(page: any, email: string, password: st
     if (homeVisible) return;
     const emailInputVisible = await page.getByPlaceholder('you@company.com').isVisible().catch(() => false);
     if (!emailInputVisible) {
-      await page.goto('https://www.aspireos.app/login', { waitUntil: 'networkidle' });
+      await page.goto('/login', { waitUntil: 'networkidle' });
     }
     const emailInput = page.getByPlaceholder('you@company.com');
     const passwordInput = page.getByPlaceholder('Enter your password');
@@ -103,7 +103,7 @@ test.describe('Production Intake -> Profile Sync -> Founder Hub', () => {
     await page.goto('/');
 
     if (!(await page.getByPlaceholder('you@company.com').isVisible().catch(() => false))) {
-      await page.goto('https://www.aspireos.app/login', { waitUntil: 'networkidle' });
+      await page.goto('/login', { waitUntil: 'networkidle' });
     }
 
     const loginEmailInput = page.getByPlaceholder('you@company.com');
@@ -117,7 +117,7 @@ test.describe('Production Intake -> Profile Sync -> Founder Hub', () => {
       await page.getByText('Create Account').first().click();
       // Signup can leave a partial client session on production.
       // Force a clean credential login before onboarding submit.
-      await page.goto('https://www.aspireos.app/login', { waitUntil: 'networkidle' });
+      await page.goto('/login', { waitUntil: 'networkidle' });
       await page.getByPlaceholder('you@company.com').fill(onboardingEmail);
       const loginPasswordInput = page.getByPlaceholder('Enter your password');
       await loginPasswordInput.fill(onboardingPassword);
@@ -134,7 +134,7 @@ test.describe('Production Intake -> Profile Sync -> Founder Hub', () => {
 
     await page.waitForLoadState('networkidle');
     if (!(await page.getByTestId('onboarding-screen').isVisible().catch(() => false))) {
-      await page.goto('https://www.aspireos.app/onboarding', { waitUntil: 'networkidle' });
+      await page.goto('/onboarding', { waitUntil: 'networkidle' });
       await page.waitForLoadState('networkidle');
     }
     const onboardingVisible =
@@ -202,6 +202,10 @@ test.describe('Production Intake -> Profile Sync -> Founder Hub', () => {
       .getByTestId('onboarding-premium-loading-screen')
       .isVisible({ timeout: 15_000 })
       .catch(() => false);
+    test.info().annotations.push({
+      type: 'premium-loading-screen',
+      description: loadingVisible ? 'visible' : 'not-visible',
+    });
     if (!loadingVisible) {
       await page.waitForLoadState('networkidle');
     }
@@ -253,14 +257,36 @@ test.describe('Production Intake -> Profile Sync -> Founder Hub', () => {
     }
     expect(suiteDisplayId).toBeTruthy();
     expect(officeDisplayId).toBeTruthy();
+    test.info().annotations.push({
+      type: 'suite-office',
+      description: `Suite ${suiteDisplayId} / Office ${officeDisplayId}`,
+    });
     expect(dashboardText).toContain(`Suite ${suiteDisplayId}`);
     expect(dashboardText).toContain(`Office ${officeDisplayId}`);
     expect(dashboardText).toContain(businessName);
+
+    const headerBusinessName = page.getByTestId('desktop-header-business-name');
+    const headerSuiteOffice = page.getByTestId('desktop-header-suite-office');
+    if (await headerBusinessName.isVisible().catch(() => false)) {
+      await expect(headerBusinessName).toContainText(businessName);
+    }
+    if (await headerSuiteOffice.isVisible().catch(() => false)) {
+      await expect(headerSuiteOffice).toContainText(`Suite ${suiteDisplayId}`);
+      await expect(headerSuiteOffice).toContainText(`Office ${officeDisplayId}`);
+    }
 
     await page.goto('/session/conference-lobby');
     const conferenceHeader = page.getByTestId('conference-header-suite-office').or(page.locator('text=/Suite\\s+[A-Za-z0-9-]+\\s+•\\s+Office\\s+[A-Za-z0-9-]+/').first()).first();
     await expect(conferenceHeader).toContainText(`Suite ${suiteDisplayId}`);
     await expect(conferenceHeader).toContainText(`Office ${officeDisplayId}`);
+
+    await page.goto('/more/office-identity');
+    await expect(page.getByText('Office Identity').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(businessName).first()).toBeVisible();
+    await expect(page.getByText('Suite ID')).toBeVisible();
+    await expect(page.getByText(suiteDisplayId).first()).toBeVisible();
+    await expect(page.getByText('Office ID')).toBeVisible();
+    await expect(page.getByText(officeDisplayId).first()).toBeVisible();
 
     await page.goto('/founder-hub/daily-brief');
     const briefPageVisible = await page.getByTestId('founder-hub-daily-brief-page').isVisible({ timeout: 20_000 }).catch(() => false);

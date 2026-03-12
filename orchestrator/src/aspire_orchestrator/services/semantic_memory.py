@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -230,6 +231,7 @@ class SemanticMemory:
         )
 
         now = datetime.now(timezone.utc).isoformat()
+        embedding = await self._embed_fact_text(f"{fact_key}: {fact_value}")
 
         # Check if fact exists
         filters = (
@@ -243,20 +245,23 @@ class SemanticMemory:
         if existing:
             # Update existing fact
             row_id = existing[0].get("id")
-            await supabase_update(
-                "agent_semantic_memory",
-                f"id=eq.{row_id}",
-                {
-                    "fact_value": fact_value,
-                    "fact_type": fact_type,
-                    "confidence": confidence,
-                    "source_episode_id": source_episode_id,
-                    "updated_at": now,
-                },
-            )
+            update_payload = {
+                "fact_value": fact_value,
+                "fact_type": fact_type,
+                "confidence": confidence,
+                "source_episode_id": source_episode_id,
+                "updated_at": now,
+            }
+            if embedding is not None:
+                update_payload["embedding"] = embedding
+            try:
+                await supabase_update("agent_semantic_memory", f"id=eq.{row_id}", update_payload)
+            except Exception:
+                update_payload.pop("embedding", None)
+                await supabase_update("agent_semantic_memory", f"id=eq.{row_id}", update_payload)
         else:
             # Insert new fact
-            await supabase_insert("agent_semantic_memory", {
+            insert_payload = {
                 "id": str(uuid.uuid4()),
                 "suite_id": suite_id,
                 "user_id": user_id,
@@ -268,7 +273,78 @@ class SemanticMemory:
                 "source_episode_id": source_episode_id,
                 "created_at": now,
                 "updated_at": now,
-            })
+            }
+            if embedding is not None:
+                insert_payload["embedding"] = embedding
+            try:
+                await supabase_insert("agent_semantic_memory", insert_payload)
+            except Exception:
+                insert_payload.pop("embedding", None)
+                await supabase_insert("agent_semantic_memory", insert_payload)
+
+    async def _embed_fact_text(self, text: str) -> list[float] | None:
+        try:
+            from aspire_orchestrator.services.embedding_cache import get_embedding_cache
+            from aspire_orchestrator.services.legal_embedding_service import embed_text
+
+            cache = get_embedding_cache()
+            return await cache.get_or_embed(text, embed_text, model=settings.embedding_model)
+        except Exception as e:
+            logger.warning("Semantic fact embedding failed (non-fatal): %s", e)
+            return None
+
+    async def search_facts(
+        self,
+        *,
+        query: str,
+        suite_id: str,
+        user_id: str,
+        agent_id: str,
+        fact_type: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Hybrid semantic + lexical search over semantic memory facts."""
+        if not query or not query.strip():
+            return []
+        if not _is_uuid(suite_id) or not _is_uuid(user_id):
+            return []
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            filters = [f"suite_id=eq.{suite_id}", f"user_id=eq.{user_id}", f"agent_id=eq.{agent_id}"]
+            if fact_type:
+                filters.append(f"fact_type=eq.{fact_type}")
+            rows = await supabase_select("agent_semantic_memory", "&".join(filters), order_by="updated_at.desc", limit=200)
+            if not rows:
+                return []
+
+            query_embedding = await self._embed_fact_text(query)
+            query_terms = [part for part in _normalize_text(query).split() if len(part) >= 3][:8]
+            scored_rows: list[tuple[float, dict[str, Any]]] = []
+            for row in rows:
+                confidence = float(row.get("confidence", 0.0) or 0.0)
+                if confidence <= 0.0:
+                    continue
+                candidate_text = f"{row.get('fact_key', '')} {row.get('fact_value', '')}".strip()
+                lexical = _lexical_score(query_terms, candidate_text)
+                semantic = _semantic_similarity(query_embedding, row.get("embedding"))
+                if lexical <= 0 and semantic <= 0:
+                    continue
+                recency = _recency_score(str(row.get("updated_at", "")))
+                combined = (semantic * 0.65) + (lexical * 0.25) + (confidence * 0.05) + (recency * 0.05)
+                enriched = dict(row)
+                enriched["relevance_score"] = round(combined, 4)
+                enriched["semantic_score"] = round(semantic, 4)
+                enriched["lexical_score"] = round(lexical, 4)
+                enriched["recency_score"] = round(recency, 4)
+                scored_rows.append((combined, enriched))
+
+            scored_rows.sort(key=lambda item: item[0], reverse=True)
+            return [row for _, row in scored_rows[:limit]]
+        except Exception as e:
+            logger.warning("Semantic fact search failed (non-fatal): %s", e)
+            return []
 
     async def get_user_facts(
         self,
@@ -324,3 +400,49 @@ def get_semantic_memory() -> SemanticMemory:
     if _memory is None:
         _memory = SemanticMemory()
     return _memory
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join((value or "").lower().split())
+
+
+def _lexical_score(query_terms: list[str], candidate_text: str) -> float:
+    if not query_terms:
+        return 0.0
+    haystack = _normalize_text(candidate_text)
+    if not haystack:
+        return 0.0
+    matches = sum(1 for term in query_terms if term in haystack)
+    return matches / len(query_terms)
+
+
+def _semantic_similarity(query_embedding: list[float] | None, candidate_embedding: Any) -> float:
+    if not query_embedding or candidate_embedding is None:
+        return 0.0
+    embedding = candidate_embedding
+    if isinstance(candidate_embedding, str):
+        try:
+            embedding = json.loads(candidate_embedding)
+        except Exception:
+            return 0.0
+    if not isinstance(embedding, list) or not embedding:
+        return 0.0
+    if len(embedding) != len(query_embedding):
+        return 0.0
+    dot = sum(float(a) * float(b) for a, b in zip(query_embedding, embedding))
+    q_norm = math.sqrt(sum(float(a) * float(a) for a in query_embedding))
+    e_norm = math.sqrt(sum(float(b) * float(b) for b in embedding))
+    if q_norm == 0 or e_norm == 0:
+        return 0.0
+    return max(0.0, min(1.0, dot / (q_norm * e_norm)))
+
+
+def _recency_score(updated_at: str) -> float:
+    if not updated_at:
+        return 0.0
+    try:
+        ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        age_days = max(0.0, (datetime.now(timezone.utc) - ts).total_seconds() / 86400.0)
+        return max(0.0, min(1.0, 1.0 / (1.0 + (age_days / 30.0))))
+    except Exception:
+        return 0.0

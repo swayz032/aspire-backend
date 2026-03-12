@@ -1,0 +1,25 @@
+# Milo Payroll - Risk Policy
+pack_id: milo-payroll
+default_risk_tier: green
+max_risk_tier: red
+
+actions:
+  "payroll.run":
+    risk_tier: red
+    approval_required: true
+    description: "payroll.run action for milo_payroll"
+
+  "payroll.snapshot":
+    risk_tier: green
+    approval_required: false
+    description: "payroll.snapshot action for milo_payroll"
+
+  "payroll.schedule":
+    risk_tier: yellow
+    approval_required: true
+    description: "payroll.schedule action for milo_payroll"
+
+  "payroll.deadline":
+    risk_tier: green
+    approval_required: false
+    description: "payroll.deadline action for milo_payroll"

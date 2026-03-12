@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "qa.eval.execute":
+    autonomy: guided
+    binding_fields: [request]
+
+  "qa.report.generate":
+    autonomy: guided
+    binding_fields: [request]
+
+  "qa.trend.track":
+    autonomy: guided
+    binding_fields: [request]
+
+  "qa.regression.flag":
+    autonomy: guided
+    binding_fields: [request]

@@ -1,0 +1,40 @@
+# Mail Ops Desk - Risk Policy
+pack_id: mail-ops-desk
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "domain.check":
+    risk_tier: green
+    approval_required: false
+    description: "domain.check action for mail_ops_desk"
+
+  "domain.verify":
+    risk_tier: green
+    approval_required: false
+    description: "domain.verify action for mail_ops_desk"
+
+  "domain.dns.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "domain.dns.create action for mail_ops_desk"
+
+  "domain.purchase":
+    risk_tier: yellow
+    approval_required: true
+    description: "domain.purchase action for mail_ops_desk"
+
+  "domain.delete":
+    risk_tier: yellow
+    approval_required: true
+    description: "domain.delete action for mail_ops_desk"
+
+  "mail.account.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "mail.account.create action for mail_ops_desk"
+
+  "mail.account.read":
+    risk_tier: green
+    approval_required: false
+    description: "mail.account.read action for mail_ops_desk"

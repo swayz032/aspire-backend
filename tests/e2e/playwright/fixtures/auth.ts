@@ -50,7 +50,7 @@ export const test = base.extend<AuthFixtures>({
     const page: Page = await context.newPage();
 
     // Navigate to origin first so we can set localStorage
-    const baseURL = process.env.BASE_URL || 'http://localhost:3100';
+    const baseURL = process.env.BASE_URL || 'http://localhost:5000';
     await page.goto(baseURL, { waitUntil: 'domcontentloaded' });
 
     // Inject the Supabase auth session into localStorage
@@ -83,11 +83,11 @@ export const test = base.extend<AuthFixtures>({
       }
     );
 
-    // Reload so the app picks up the session from localStorage
-    await page.reload({ waitUntil: 'networkidle' });
-
-    // Wait for auth gate to settle (should redirect to tabs or stay on tabs)
-    await page.waitForTimeout(2000);
+    // Reload so the app picks up the session from localStorage.
+    // The desktop shell keeps background activity alive, so networkidle is too strict here.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('body').waitFor({ state: 'visible', timeout: 15_000 });
+    await page.waitForTimeout(1500);
 
     await use(page);
 

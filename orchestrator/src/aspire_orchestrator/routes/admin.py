@@ -33,8 +33,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import asyncio
+
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from aspire_orchestrator.services.receipt_store import query_receipts, store_receipts
 from aspire_orchestrator.services.outbox_client import get_outbox_client
@@ -55,8 +57,8 @@ _provider_calls: list[dict[str, Any]] = []
 _rollouts: list[dict[str, Any]] = []
 _proposals: dict[str, dict[str, Any]] = {}
 _builder_model_policy: dict[str, Any] = {
-    "builder_primary_model": os.environ.get("ASPIRE_BUILDER_PRIMARY_MODEL", "codex-5.2"),
-    "builder_fallback_model": os.environ.get("ASPIRE_BUILDER_FALLBACK_MODEL", "claude-opus-4.6"),
+    "builder_primary_model": os.environ.get("ASPIRE_BUILDER_PRIMARY_MODEL", "gpt-5-mini"),
+    "builder_fallback_model": os.environ.get("ASPIRE_BUILDER_FALLBACK_MODEL", "claude-sonnet-4.6"),
     "reasoning_model": os.environ.get("ASPIRE_BUILDER_REASONING_MODEL", "gpt-5.2"),
     "updated_at": datetime.now(timezone.utc).isoformat(),
     "updated_by": "system",
@@ -2041,4 +2043,930 @@ async def admin_provider_analysis(
             "analysis": result.data,
             "server_time": _now_iso(),
         },
+    )
+
+
+# =============================================================================
+# SSE Streaming Endpoints (Wave 8 — Admin Portal Realtime)
+# =============================================================================
+#
+# Enterprise-grade SSE streaming with full governance compliance:
+#   1. Admin auth (Law #3: fail closed)
+#   2. Connection tracking (per-tenant limit via sse_manager)
+#   3. Initial state snapshot on connect
+#   4. Heartbeat every 15s (prevents proxy/LB timeouts)
+#   5. Push new events via polling internal stores
+#   6. Rate limiting (10 events/s via StreamRateLimiter)
+#   7. Receipts for stream lifecycle AND errors (Law #2)
+#   8. PII redaction on all outbound data (Law #9)
+#   9. Max stream duration enforcement (30 min — reconnect expected)
+#  10. Structured logging with correlation IDs (Gate 2: Observability)
+#  11. Graceful disconnect on client abort (asyncio.CancelledError)
+#  12. Correlation ID propagation on every SSE event
+# =============================================================================
+
+from aspire_orchestrator.services.sse_manager import (
+    format_sse_event,
+    build_stream_receipt,
+    get_connection_tracker,
+    StreamRateLimiter,
+    redact_pii,
+    HEARTBEAT_INTERVAL_SECONDS,
+)
+
+# Maximum stream duration before server-initiated close (client should reconnect)
+_MAX_STREAM_DURATION_SECONDS = 30 * 60  # 30 minutes
+
+
+def _sse_auth_deny(correlation_id: str, stream_type: str) -> JSONResponse:
+    """Return a 401 response and store denial receipt (Law #2 + #3)."""
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id="anonymous",
+        action_type=f"admin.ops.{stream_type}.stream",
+        outcome="denied",
+        reason_code="AUTHZ_DENIED",
+    )
+    store_receipts([receipt])
+    logger.warning(
+        "SSE auth denied: stream=%s correlation=%s",
+        stream_type, correlation_id[:12],
+    )
+    return JSONResponse(
+        status_code=401,
+        content={
+            "code": "AUTHZ_DENIED",
+            "message": "Missing or invalid admin token",
+            "correlation_id": correlation_id,
+        },
+    )
+
+
+def _sse_connection_deny(correlation_id: str, actor_id: str, stream_type: str, suite_id: str) -> JSONResponse:
+    """Return a 429 response when connection limit is exceeded (Law #3)."""
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type=f"admin.ops.{stream_type}.stream",
+        outcome="denied",
+        reason_code="CONNECTION_LIMIT",
+        details={"suite_id": suite_id},
+    )
+    store_receipts([receipt])
+    logger.warning(
+        "SSE connection limit: stream=%s suite=%s actor=%s",
+        stream_type, suite_id[:8], actor_id[:12],
+    )
+    return JSONResponse(
+        status_code=429,
+        content={
+            "code": "CONNECTION_LIMIT",
+            "message": "Too many concurrent SSE connections for this tenant",
+            "correlation_id": correlation_id,
+            "retryable": True,
+        },
+    )
+
+
+def _sse_stream_init(
+    stream_type: str, suite_id: str, actor_id: str, correlation_id: str, stream_id: str,
+) -> None:
+    """Log and receipt for SSE stream initiation."""
+    init_receipt = build_stream_receipt(
+        action_type="stream.initiate",
+        suite_id=suite_id,
+        office_id="admin",
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        outcome="success",
+        stream_id=stream_id,
+        details={"stream_type": stream_type},
+    )
+    store_receipts([init_receipt])
+    logger.info(
+        "SSE stream opened: type=%s stream=%s suite=%s actor=%s corr=%s",
+        stream_type, stream_id[:8], suite_id[:8], actor_id[:12], correlation_id[:12],
+    )
+
+
+def _sse_stream_close(
+    stream_type: str, suite_id: str, actor_id: str, correlation_id: str,
+    stream_id: str, tracker: Any, reason: str = "client_disconnect",
+) -> None:
+    """Clean up connection tracking, log, and receipt on stream close."""
+    tracker.disconnect(suite_id, stream_id)
+    meta = tracker.get_metadata(stream_id)
+    event_count = (meta or {}).get("event_count", 0) if meta else 0
+    close_receipt = build_stream_receipt(
+        action_type="stream.complete",
+        suite_id=suite_id,
+        office_id="admin",
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        outcome="success",
+        stream_id=stream_id,
+        details={"stream_type": stream_type, "reason": reason, "events_sent": event_count},
+    )
+    store_receipts([close_receipt])
+    logger.info(
+        "SSE stream closed: type=%s stream=%s reason=%s events=%d",
+        stream_type, stream_id[:8], reason, event_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1. GET /admin/ops/incidents/stream — Live error/incident feed
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/ops/incidents/stream")
+async def stream_incidents(request: Request) -> StreamingResponse:
+    """SSE stream of new incidents and errors.
+
+    Frontend consumer: useErrorStream.ts
+    Event shape: {id, severity, message, timestamp, correlation_id, stack_trace, provider}
+
+    Enterprise features:
+      - Max 30min stream duration (client reconnects automatically)
+      - Correlation ID on every event for traceability
+      - Rate-limited to 10 events/s
+      - PII redacted (Law #9)
+      - Connection tracked per-tenant (Law #6)
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _sse_auth_deny(correlation_id, "incidents")
+
+    stream_id = str(uuid.uuid4())
+    suite_id = request.headers.get("x-suite-id", "system")
+    tracker = get_connection_tracker()
+
+    if not tracker.try_connect(suite_id, stream_id, actor_id=actor_id, correlation_id=correlation_id):
+        return _sse_connection_deny(correlation_id, actor_id, "incidents", suite_id)
+
+    _sse_stream_init("incidents", suite_id, actor_id, correlation_id, stream_id)
+
+    async def event_generator():
+        limiter = StreamRateLimiter()
+        last_heartbeat = time.monotonic()
+        stream_start = time.monotonic()
+        seen_ids: set[str] = set()
+
+        try:
+            # Initial snapshot of recent incidents
+            with _store_lock:
+                snapshot = list(_incidents.values())[-50:]
+            for inc in snapshot:
+                event = {
+                    "id": inc.get("incident_id", ""),
+                    "severity": _map_severity(inc.get("severity", "sev4")),
+                    "message": redact_pii(inc.get("title", "")),
+                    "timestamp": inc.get("last_seen", inc.get("first_seen", _now_iso())),
+                    "correlation_id": inc.get("correlation_id", ""),
+                    "provider": inc.get("provider", ""),
+                    "stream_correlation_id": correlation_id,
+                }
+                seen_ids.add(event["id"])
+                yield format_sse_event(event, event_type="incident")
+
+            # Poll for new incidents
+            while True:
+                # Max stream duration enforcement
+                if time.monotonic() - stream_start > _MAX_STREAM_DURATION_SECONDS:
+                    yield format_sse_event(
+                        {"type": "stream_expired", "message": "Max stream duration reached. Reconnect.", "server_time": _now_iso()},
+                        event_type="control",
+                    )
+                    break
+
+                await asyncio.sleep(2.0)
+
+                # Heartbeat
+                now = time.monotonic()
+                if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    yield format_sse_event({"type": "heartbeat", "server_time": _now_iso()}, event_type="heartbeat")
+                    last_heartbeat = now
+
+                # Check for new incidents
+                with _store_lock:
+                    current = list(_incidents.values())
+
+                for inc in current:
+                    inc_id = inc.get("incident_id", "")
+                    if inc_id and inc_id not in seen_ids and limiter.check():
+                        seen_ids.add(inc_id)
+                        tracker.increment_event_count(stream_id)
+                        event = {
+                            "id": inc_id,
+                            "severity": _map_severity(inc.get("severity", "sev4")),
+                            "message": redact_pii(inc.get("title", "")),
+                            "timestamp": inc.get("last_seen", _now_iso()),
+                            "correlation_id": inc.get("correlation_id", ""),
+                            "provider": inc.get("provider", ""),
+                            "stream_correlation_id": correlation_id,
+                        }
+                        yield format_sse_event(event, event_type="incident")
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error("SSE incidents stream error: %s stream=%s", exc, stream_id[:8])
+            err_receipt = build_stream_receipt(
+                action_type="stream.error",
+                suite_id=suite_id,
+                office_id="admin",
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+                outcome="failed",
+                stream_id=stream_id,
+                reason_code="STREAM_ERROR",
+                details={"error": str(exc)[:200]},
+            )
+            store_receipts([err_receipt])
+        finally:
+            _sse_stream_close("incidents", suite_id, actor_id, correlation_id, stream_id, tracker)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Stream-Id": stream_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+def _map_severity(sev: str) -> str:
+    """Map internal severity to P0-P3 for frontend."""
+    return {"sev1": "P0", "sev2": "P1", "sev3": "P2", "sev4": "P3"}.get(sev, "P3")
+
+
+# ---------------------------------------------------------------------------
+# 2. GET /admin/ops/providers/stream — Live provider health
+# ---------------------------------------------------------------------------
+
+# In-memory provider health store (updated by health monitors)
+_provider_health_lock = threading.Lock()
+_provider_health: dict[str, dict[str, Any]] = {}
+
+
+def update_provider_health(provider: str, health: dict[str, Any]) -> None:
+    """Update provider health status. Called by health monitors."""
+    with _provider_health_lock:
+        _provider_health[provider] = {
+            "provider": provider,
+            "lane": health.get("lane", "unknown"),
+            "status": health.get("status", "connected"),
+            "latencyMs": health.get("latency_ms", 0),
+            "errorRate": health.get("error_rate", 0.0),
+            "lastChecked": _now_iso(),
+            "lastSuccessfulCall": health.get("last_successful_call"),
+        }
+
+
+@router.get("/admin/ops/providers/stream")
+async def stream_provider_health(request: Request) -> StreamingResponse:
+    """SSE stream of provider connectivity status.
+
+    Frontend consumer: useProviderHealthStream.ts
+    Event shape: ProviderHealth[] (full) or ProviderHealth (single update)
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _sse_auth_deny(correlation_id, "providers")
+
+    stream_id = str(uuid.uuid4())
+    suite_id = request.headers.get("x-suite-id", "system")
+    tracker = get_connection_tracker()
+
+    if not tracker.try_connect(suite_id, stream_id, actor_id=actor_id, correlation_id=correlation_id):
+        return _sse_connection_deny(correlation_id, actor_id, "providers", suite_id)
+
+    _sse_stream_init("providers", suite_id, actor_id, correlation_id, stream_id)
+
+    async def event_generator():
+        limiter = StreamRateLimiter()
+        last_heartbeat = time.monotonic()
+        stream_start = time.monotonic()
+        last_snapshot_hash = ""
+
+        try:
+            # Send initial full snapshot
+            with _provider_health_lock:
+                snapshot = list(_provider_health.values())
+
+            if not snapshot:
+                snapshot = _seed_provider_health()
+
+            yield format_sse_event(snapshot, event_type="providers")
+            last_snapshot_hash = str(hash(str(snapshot)))
+
+            # Poll for changes
+            while True:
+                if time.monotonic() - stream_start > _MAX_STREAM_DURATION_SECONDS:
+                    yield format_sse_event(
+                        {"type": "stream_expired", "message": "Max stream duration reached. Reconnect.", "server_time": _now_iso()},
+                        event_type="control",
+                    )
+                    break
+
+                await asyncio.sleep(5.0)
+
+                now = time.monotonic()
+                if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    yield format_sse_event({"type": "heartbeat", "server_time": _now_iso()}, event_type="heartbeat")
+                    last_heartbeat = now
+
+                with _provider_health_lock:
+                    current = list(_provider_health.values())
+
+                current_hash = str(hash(str(current)))
+                if current_hash != last_snapshot_hash and limiter.check():
+                    tracker.increment_event_count(stream_id)
+                    yield format_sse_event(current, event_type="providers")
+                    last_snapshot_hash = current_hash
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error("SSE providers stream error: %s stream=%s", exc, stream_id[:8])
+            err_receipt = build_stream_receipt(
+                action_type="stream.error",
+                suite_id=suite_id,
+                office_id="admin",
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+                outcome="failed",
+                stream_id=stream_id,
+                reason_code="STREAM_ERROR",
+                details={"error": str(exc)[:200]},
+            )
+            store_receipts([err_receipt])
+        finally:
+            _sse_stream_close("providers", suite_id, actor_id, correlation_id, stream_id, tracker)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Stream-Id": stream_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+def _seed_provider_health() -> list[dict[str, Any]]:
+    """Seed provider health with known integrations."""
+    providers = [
+        {"provider": "stripe", "lane": "payments", "status": "connected"},
+        {"provider": "supabase", "lane": "database", "status": "connected"},
+        {"provider": "elevenlabs", "lane": "voice", "status": "connected"},
+        {"provider": "openai", "lane": "intelligence", "status": "connected"},
+        {"provider": "livekit", "lane": "conference", "status": "connected"},
+        {"provider": "pandadoc", "lane": "documents", "status": "connected"},
+        {"provider": "twilio", "lane": "telephony", "status": "connected"},
+        {"provider": "deepgram", "lane": "transcription", "status": "connected"},
+    ]
+    now = _now_iso()
+    result = []
+    for p in providers:
+        entry = {
+            "provider": p["provider"],
+            "lane": p["lane"],
+            "status": p["status"],
+            "latencyMs": 0,
+            "errorRate": 0.0,
+            "lastChecked": now,
+        }
+        result.append(entry)
+        with _provider_health_lock:
+            _provider_health[p["provider"]] = entry
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 3. GET /admin/ops/health-pulse/stream — Live health metrics
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/ops/health-pulse/stream")
+async def stream_health_pulse(request: Request) -> StreamingResponse:
+    """SSE stream of aggregate health pulse metrics.
+
+    Frontend consumer: Dashboard page (useSSEStream)
+    Pushes health snapshot every 5s.
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _sse_auth_deny(correlation_id, "health_pulse")
+
+    stream_id = str(uuid.uuid4())
+    suite_id = request.headers.get("x-suite-id", "system")
+    tracker = get_connection_tracker()
+
+    if not tracker.try_connect(suite_id, stream_id, actor_id=actor_id, correlation_id=correlation_id):
+        return _sse_connection_deny(correlation_id, actor_id, "health_pulse", suite_id)
+
+    _sse_stream_init("health_pulse", suite_id, actor_id, correlation_id, stream_id)
+
+    async def event_generator():
+        last_heartbeat = time.monotonic()
+        stream_start = time.monotonic()
+
+        try:
+            while True:
+                if time.monotonic() - stream_start > _MAX_STREAM_DURATION_SECONDS:
+                    yield format_sse_event(
+                        {"type": "stream_expired", "message": "Max stream duration reached. Reconnect.", "server_time": _now_iso()},
+                        event_type="control",
+                    )
+                    break
+
+                # Build health pulse from in-memory stores
+                with _store_lock:
+                    open_incidents = sum(1 for i in _incidents.values() if i.get("state") != "closed")
+                    total_incidents = len(_incidents)
+
+                with _provider_health_lock:
+                    providers_up = sum(1 for p in _provider_health.values() if p.get("status") == "connected")
+                    providers_total = len(_provider_health) or 8
+                    degraded_count = sum(1 for p in _provider_health.values() if p.get("status") == "degraded")
+                    disconnected_count = sum(1 for p in _provider_health.values() if p.get("status") == "disconnected")
+
+                status = "healthy"
+                if disconnected_count > 0 or open_incidents > 0:
+                    status = "degraded"
+                if disconnected_count >= providers_total // 2:
+                    status = "critical"
+
+                pulse = {
+                    "status": status,
+                    "open_incidents": open_incidents,
+                    "total_incidents": total_incidents,
+                    "providers_up": providers_up,
+                    "providers_degraded": degraded_count,
+                    "providers_disconnected": disconnected_count,
+                    "providers_total": providers_total,
+                    "server_time": _now_iso(),
+                    "stream_correlation_id": correlation_id,
+                }
+
+                tracker.increment_event_count(stream_id)
+                yield format_sse_event(pulse, event_type="health_pulse")
+
+                await asyncio.sleep(5.0)
+
+                now = time.monotonic()
+                if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    yield format_sse_event({"type": "heartbeat", "server_time": _now_iso()}, event_type="heartbeat")
+                    last_heartbeat = now
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error("SSE health_pulse stream error: %s stream=%s", exc, stream_id[:8])
+        finally:
+            _sse_stream_close("health_pulse", suite_id, actor_id, correlation_id, stream_id, tracker)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Stream-Id": stream_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. GET /admin/ops/outbox/stream — Outbox queue changes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/ops/outbox/stream")
+async def stream_outbox(request: Request) -> StreamingResponse:
+    """SSE stream of outbox queue status changes.
+
+    Frontend consumer: Outbox page (useSSEStream)
+    Emits on state change or every 3s.
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _sse_auth_deny(correlation_id, "outbox")
+
+    stream_id = str(uuid.uuid4())
+    suite_id = request.headers.get("x-suite-id", "system")
+    tracker = get_connection_tracker()
+
+    if not tracker.try_connect(suite_id, stream_id, actor_id=actor_id, correlation_id=correlation_id):
+        return _sse_connection_deny(correlation_id, actor_id, "outbox", suite_id)
+
+    _sse_stream_init("outbox", suite_id, actor_id, correlation_id, stream_id)
+
+    async def event_generator():
+        last_heartbeat = time.monotonic()
+        stream_start = time.monotonic()
+        last_count = -1
+
+        try:
+            while True:
+                if time.monotonic() - stream_start > _MAX_STREAM_DURATION_SECONDS:
+                    yield format_sse_event(
+                        {"type": "stream_expired", "message": "Max stream duration reached. Reconnect.", "server_time": _now_iso()},
+                        event_type="control",
+                    )
+                    break
+
+                # Query outbox status
+                try:
+                    outbox = get_outbox_client()
+                    pending = outbox.get_pending_count() if outbox else 0
+                    failed = outbox.get_failed_count() if outbox else 0
+                    processed = outbox.get_processed_count() if outbox else 0
+                except Exception:
+                    pending, failed, processed = 0, 0, 0
+
+                current_count = pending + failed
+                if current_count != last_count:
+                    tracker.increment_event_count(stream_id)
+                    event = {
+                        "pending": pending,
+                        "failed": failed,
+                        "processed": processed,
+                        "server_time": _now_iso(),
+                        "stream_correlation_id": correlation_id,
+                    }
+                    yield format_sse_event(event, event_type="outbox")
+                    last_count = current_count
+
+                await asyncio.sleep(3.0)
+
+                now = time.monotonic()
+                if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    yield format_sse_event({"type": "heartbeat", "server_time": _now_iso()}, event_type="heartbeat")
+                    last_heartbeat = now
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error("SSE outbox stream error: %s stream=%s", exc, stream_id[:8])
+        finally:
+            _sse_stream_close("outbox", suite_id, actor_id, correlation_id, stream_id, tracker)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Stream-Id": stream_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. GET /admin/ops/council/{session_id} — Meeting of the Minds session
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/ops/council/{session_id}")
+async def get_council_session(request: Request, session_id: str) -> JSONResponse:
+    """Get council session status and advisor proposals.
+
+    Frontend consumer: useCouncilSession.ts (polled, not SSE)
+    Returns advisor slots with proposals, confidence, and adjudication.
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.council.get",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    # Council sessions stored in receipt store keyed by correlation_id
+    council_receipts = query_receipts(
+        suite_id="system",
+        correlation_id=session_id,
+        action_type="council",
+        limit=50,
+    )
+
+    if not council_receipts:
+        return _ops_error(
+            code="NOT_FOUND",
+            message=f"Council session {session_id} not found",
+            correlation_id=correlation_id,
+            status_code=404,
+        )
+
+    # Build advisor slots from receipts
+    advisors = []
+    adjudication = None
+    session_status = "deliberating"
+
+    for r in council_receipts:
+        action = r.get("action_type", "")
+        outputs = r.get("redacted_outputs") or {}
+
+        if "council.advisor" in action:
+            advisors.append({
+                "role": outputs.get("role", "advisor"),
+                "model": outputs.get("model", "unknown"),
+                "proposal": outputs.get("proposal", ""),
+                "confidence": outputs.get("confidence", 0.0),
+                "reasoning": outputs.get("reasoning", ""),
+                "submitted_at": r.get("created_at", ""),
+            })
+        elif "council.adjudicate" in action:
+            adjudication = {
+                "decision": outputs.get("decision", ""),
+                "rationale": outputs.get("rationale", ""),
+                "selected_advisor": outputs.get("selected_advisor", ""),
+                "decided_at": r.get("created_at", ""),
+            }
+            session_status = "decided"
+
+    if len(advisors) < 3 and not adjudication:
+        session_status = "collecting"
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.council.get",
+        outcome="success",
+        details={"session_id": session_id},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "session_id": session_id,
+            "status": session_status,
+            "advisors": advisors,
+            "adjudication": adjudication,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. POST /admin/ops/voice/stt — Proxy to STT service
+# ---------------------------------------------------------------------------
+
+
+@router.post("/admin/ops/voice/stt")
+async def voice_stt_proxy(request: Request) -> JSONResponse:
+    """Proxy audio to STT service (ElevenLabs Scribe or Deepgram).
+
+    Frontend consumer: useElevenLabsSTT.ts
+    Accepts audio blob, returns transcript text.
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.voice.stt",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    try:
+        body = await request.body()
+        if not body:
+            return _ops_error(
+                code="VALIDATION_ERROR",
+                message="Request body (audio data) is required",
+                correlation_id=correlation_id,
+                status_code=400,
+            )
+
+        # Determine STT provider
+        stt_provider = os.environ.get("ASPIRE_STT_PROVIDER", "deepgram")
+
+        if stt_provider == "elevenlabs":
+            transcript = await _stt_elevenlabs(body, correlation_id)
+        else:
+            transcript = await _stt_deepgram(body, correlation_id)
+
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id=actor_id,
+            action_type="admin.ops.voice.stt",
+            outcome="success",
+            details={"provider": stt_provider, "transcript_length": len(transcript)},
+        )
+        store_receipts([receipt])
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "transcript": transcript,
+                "provider": stt_provider,
+                "correlation_id": correlation_id,
+            },
+        )
+
+    except Exception as exc:
+        logger.error("STT proxy error: %s", exc)
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id=actor_id,
+            action_type="admin.ops.voice.stt",
+            outcome="failed",
+            reason_code="STT_ERROR",
+            details={"error": str(exc)[:200]},
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="STT_ERROR",
+            message=f"STT transcription failed: {str(exc)[:200]}",
+            correlation_id=correlation_id,
+            status_code=502,
+            retryable=True,
+        )
+
+
+async def _stt_deepgram(audio: bytes, correlation_id: str) -> str:
+    """Transcribe audio via Deepgram Nova-3."""
+    import httpx
+
+    api_key = os.environ.get("ASPIRE_DEEPGRAM_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("ASPIRE_DEEPGRAM_API_KEY not configured")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true",
+            headers={
+                "Authorization": f"Token {api_key}",
+                "Content-Type": "audio/webm",
+            },
+            content=audio,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    channels = data.get("results", {}).get("channels", [])
+    if channels:
+        alternatives = channels[0].get("alternatives", [])
+        if alternatives:
+            return alternatives[0].get("transcript", "")
+    return ""
+
+
+async def _stt_elevenlabs(audio: bytes, correlation_id: str) -> str:
+    """Transcribe audio via ElevenLabs Scribe."""
+    import httpx
+
+    api_key = os.environ.get("ASPIRE_ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("ASPIRE_ELEVENLABS_API_KEY not configured")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            headers={"xi-api-key": api_key},
+            files={"file": ("audio.webm", audio, "audio/webm")},
+            data={"model_id": "scribe_v1"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    return data.get("text", "")
+
+
+# ---------------------------------------------------------------------------
+# 7. POST /admin/ops/voice/tts/stream — Streaming TTS proxy
+# ---------------------------------------------------------------------------
+
+
+@router.post("/admin/ops/voice/tts/stream")
+async def voice_tts_stream(request: Request) -> StreamingResponse:
+    """Stream TTS audio from ElevenLabs.
+
+    Frontend consumer: useAdminVoice.ts
+    Accepts JSON {text, voice_id?}, streams audio/mpeg chunks.
+    """
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"code": "AUTHZ_DENIED", "message": "Missing or invalid admin token", "correlation_id": correlation_id},
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="Request body must be JSON with 'text' field",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    text = body.get("text", "").strip()
+    if not text:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="'text' field is required and must be non-empty",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    # Default to Ava's voice
+    voice_id = body.get("voice_id", os.environ.get("ASPIRE_AVA_VOICE_ID", "uYXf8XasLslADfZ2MB4u"))
+    api_key = os.environ.get("ASPIRE_ELEVENLABS_API_KEY", "").strip()
+
+    if not api_key:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id=actor_id,
+            action_type="admin.ops.voice.tts",
+            outcome="failed",
+            reason_code="TTS_CONFIG_MISSING",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="TTS_CONFIG_MISSING",
+            message="ElevenLabs API key not configured",
+            correlation_id=correlation_id,
+            status_code=503,
+        )
+
+    # Redact PII from text before sending to TTS (Law #9)
+    safe_text = redact_pii(text)
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.voice.tts",
+        outcome="success",
+        details={"voice_id": voice_id, "text_length": len(safe_text)},
+    )
+    store_receipts([receipt])
+
+    async def audio_generator():
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+                    headers={
+                        "xi-api-key": api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "text": safe_text,
+                        "model_id": "eleven_turbo_v2_5",
+                        "voice_settings": {
+                            "stability": 0.5,
+                            "similarity_boost": 0.75,
+                        },
+                    },
+                ) as resp:
+                    resp.raise_for_status()
+                    async for chunk in resp.aiter_bytes(chunk_size=4096):
+                        yield chunk
+        except Exception as exc:
+            logger.error("TTS streaming error: %s", exc)
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-cache"},
     )

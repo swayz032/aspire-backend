@@ -2,15 +2,16 @@
   "skillpack_id": "sarah-frontdesk",
   "name": "Sarah Front Desk",
   "agent_name": "Sarah",
+  "registry_id": "sarah_front_desk",
+  "owner_key": "sarah",
+  "persona_filename": "sarah_front_desk_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Call routing, voicemail transcription, visitor logging, appointment booking via Twilio + LiveKit.",
+  "version": "1.0.0",
+  "description": "Call routing, transfers, and visitor logging workflows. Default risk tier yellow.",
   "capabilities": [
     "can_route_calls",
     "can_transfer_calls",
-    "can_transcribe_voicemail",
-    "can_log_visitors",
-    "can_book_appointments"
+    "can_log_visitors"
   ],
   "risk_profile": {
     "default_risk_tier": "green",
@@ -20,9 +21,67 @@
     "twilio.call.create",
     "internal.visitor.log"
   ],
-  "providers": ["twilio", "livekit"],
-  "actions": ["call.route", "call.transfer", "visitor.log"],
+  "providers": [
+    "twilio"
+  ],
+  "actions": [
+    "call.route",
+    "call.transfer",
+    "visitor.log"
+  ],
   "certification_status": "uncertified",
-  "outputs": ["call_log", "voicemail_transcript", "visitor_record"],
-  "dependencies": []
+  "outputs": [
+    "call_route_result",
+    "call_transfer_result",
+    "visitor_log_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "sarah_front_desk_system_prompt.md",
+    "tone": "warm",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "sarah_front_desk",
+      "frontdesk",
+      "telephony"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "call.route",
+      "call.transfer",
+      "visitor.log"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "sarah_front_desk"
+  }
 }

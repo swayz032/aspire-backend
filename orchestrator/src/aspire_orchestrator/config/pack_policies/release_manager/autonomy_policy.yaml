@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "release.checklist.enforce":
+    autonomy: guided
+    binding_fields: [request]
+
+  "release.pipeline.track":
+    autonomy: guided
+    binding_fields: [request]
+
+  "release.notes.generate":
+    autonomy: guided
+    binding_fields: [request]
+
+  "release.deploy.prepare":
+    autonomy: approval-gated
+    binding_fields: [request]

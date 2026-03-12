@@ -43,7 +43,7 @@ test.describe('Navigation', () => {
     const page = await context.newPage();
 
     // We need to authenticate for mobile view too
-    await page.goto('http://localhost:3100');
+    await page.goto(process.env.BASE_URL || 'http://localhost:5000');
     await page.waitForTimeout(3000);
 
     // On mobile, the tab bar should be visible (unless desktop-only mode hides it)

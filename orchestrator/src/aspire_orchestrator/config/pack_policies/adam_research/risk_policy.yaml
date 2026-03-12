@@ -1,0 +1,25 @@
+# Adam Research - Risk Policy
+pack_id: adam-research
+default_risk_tier: green
+max_risk_tier: green
+
+actions:
+  "research.search":
+    risk_tier: green
+    approval_required: false
+    description: "research.search action for adam_research"
+
+  "research.places":
+    risk_tier: green
+    approval_required: false
+    description: "research.places action for adam_research"
+
+  "research.compare":
+    risk_tier: green
+    approval_required: false
+    description: "research.compare action for adam_research"
+
+  "research.rfq":
+    risk_tier: green
+    approval_required: false
+    description: "research.rfq action for adam_research"

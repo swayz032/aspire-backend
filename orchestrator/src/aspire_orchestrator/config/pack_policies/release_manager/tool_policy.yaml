@@ -1,0 +1,20 @@
+tool_policy:
+  "release.checklist.enforce":
+    tool_id: internal.release.checklist_enforce
+    allowed: true
+    risk_tier: green
+
+  "release.pipeline.track":
+    tool_id: internal.release.pipeline_track
+    allowed: true
+    risk_tier: green
+
+  "release.notes.generate":
+    tool_id: internal.release.notes_generate
+    allowed: true
+    risk_tier: green
+
+  "release.deploy.prepare":
+    tool_id: internal.release.deploy_prepare
+    allowed: true
+    risk_tier: yellow

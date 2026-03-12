@@ -1,6 +1,6 @@
 """Legal Embedding Service — Vector embeddings for Clara RAG knowledge base.
 
-Uses OpenAI text-embedding-3-large (3072 dimensions) for high-quality
+Uses OpenAI text-embedding-3-large (1536 dimensions, reduced from 3072) for high-quality
 legal document embeddings. All calls produce receipts (Law #2).
 
 Rate limiting: Token bucket (10 req/s burst 20) to stay within OpenAI limits.
@@ -130,7 +130,7 @@ async def embed_text(
         suite_id: Suite ID for receipt tracking.
 
     Returns:
-        A list of floats (3072 dimensions by default).
+        A list of floats (1536 dimensions by default).
 
     Raises:
         EmbeddingError: On API failure or rate limiting (fail-closed).

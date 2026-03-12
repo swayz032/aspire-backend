@@ -1,0 +1,109 @@
+{
+  "skillpack_id": "mail-ops-desk",
+  "name": "Mail Ops Desk",
+  "agent_name": "Mail Ops",
+  "registry_id": "mail_ops_desk",
+  "owner_key": "mail_ops",
+  "persona_filename": "mail_ops_desk_system_prompt.md",
+  "channel": "internal_backend",
+  "version": "1.0.0",
+  "description": "Domain and mailbox administration workflows with approval-gated infrastructure changes. Default risk tier yellow.",
+  "capabilities": [
+    "can_check_domains",
+    "can_verify_domains",
+    "can_create_dns_records",
+    "can_purchase_domains",
+    "can_delete_domains",
+    "can_create_mailboxes",
+    "can_read_mailboxes"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "domain.check",
+    "domain.verify",
+    "domain.dns.create",
+    "domain.purchase",
+    "domain.delete",
+    "polaris.account.create",
+    "polaris.account.read"
+  ],
+  "providers": [
+    "polarism"
+  ],
+  "actions": [
+    "domain.check",
+    "domain.verify",
+    "domain.dns.create",
+    "domain.purchase",
+    "domain.delete",
+    "mail.account.create",
+    "mail.account.read"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "domain_check_result",
+    "domain_verify_result",
+    "dns_create_result",
+    "domain_purchase_result",
+    "domain_delete_result",
+    "mail_account_create_result",
+    "mail_account_read_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "mail_ops_desk_system_prompt.md",
+    "tone": "direct",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "mail_ops_desk",
+      "mail",
+      "domain"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "domain.check",
+      "domain.verify",
+      "domain.dns.create",
+      "domain.purchase",
+      "domain.delete",
+      "mail.account.create",
+      "mail.account.read"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "mail_ops_desk"
+  },
+  "internal_only": true
+}

@@ -287,6 +287,24 @@ def preflight_validate(template_key: str, terms: dict[str, Any]) -> list[str]:
 
 
 class ClaraLegalSkillPack:
+    async def templates_list(self, query: str | None, context: ClaraContext) -> SkillPackResult:
+        return await self.browse_templates(query=query, context=context)
+
+    async def templates_details(self, template_id: str, context: ClaraContext) -> SkillPackResult:
+        return await self.get_template_details(template_id=template_id, context=context)
+
+    async def contract_generate(self, template_type: str, parties: list[dict[str, Any]], terms: dict[str, Any], context: ClaraContext) -> SkillPackResult:
+        return await self.generate_contract(template_type=template_type, parties=parties, terms=terms, context=context)
+
+    async def contract_review(self, contract_id: str, context: ClaraContext) -> SkillPackResult:
+        return await self.review_contract(contract_id=contract_id, context=context)
+
+    async def contract_sign(self, contract_id: str, signer_name: str, signer_email: str, context: ClaraContext) -> SkillPackResult:
+        return await self.sign_contract(contract_id=contract_id, signer_name=signer_name, signer_email=signer_email, context=context)
+
+    async def contract_compliance(self, contract_id: str, context: ClaraContext) -> SkillPackResult:
+        return await self.track_compliance(contract_id=contract_id, context=context)
+
     """Clara Legal Skill Pack -- governed contract management operations.
 
     All methods require a ClaraContext for tenant scoping (Law #6)
@@ -1004,6 +1022,33 @@ async def _intelligent_compliance_assessment(
                 rag_context = svc.assemble_rag_context(rag_result)
         except Exception:
             pass
+
+        preferred_model = getattr(settings, "ava_llm_model", None)
+        if not isinstance(preferred_model, str) or not preferred_model.strip():
+            preferred_model = getattr(settings, "router_model_reasoner", None)
+        model = preferred_model if isinstance(preferred_model, str) and preferred_model.strip() else "gpt-5-mini"
+        _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+        system_role = "developer" if _is_reasoning else "system"
+        prompt = (
+            f"Contract ID: {contract_id}\n"
+            f"Contract Name: {contract_data.get('name', '')}\n"
+            f"Current Status: {base.get('status', 'unknown')}\n"
+            f"Compliance Status: {base.get('compliance_status', 'unknown')}\n"
+            f"Expiration Date: {base.get('expiration_date')}\n"
+            f"Days Until Expiry: {base.get('days_until_expiry')}\n"
+            f"Urgency Level: {base.get('urgency_level', 'none')}\n"
+            f"Existing Alerts: {json.dumps(base.get('alerts', []), default=str)}\n"
+            f"Needs Renewal: {base.get('needs_renewal', False)}\n\n"
+            f"Contract Data:\n{json.dumps(contract_data, default=str)[:2500]}\n"
+        )
+        if rag_context:
+            prompt += f"\nRelevant Legal Compliance Context:\n{rag_context[:2500]}\n"
+        prompt += (
+            "\nReturn strict JSON with keys: "
+            "specialist_assessment (string), "
+            "recommended_actions (array of strings), "
+            "risk_score (integer 0-100)."
+        )
 
         content = await generate_text_async(
             model=model,

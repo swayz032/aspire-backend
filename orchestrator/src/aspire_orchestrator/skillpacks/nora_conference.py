@@ -92,6 +92,38 @@ def _make_receipt(
 
 
 class NoraConferenceSkillPack:
+    async def meeting_create_room(
+        self,
+        room_name: str,
+        settings: dict[str, Any] | None,
+        context: NoraContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.create_room(room_name=room_name, settings=settings, context=context)
+
+    async def meeting_schedule(
+        self,
+        participants: list[str],
+        time: str,
+        agenda: str,
+        context: NoraContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.schedule_meeting(
+            participants=participants,
+            time=time,
+            agenda=agenda,
+            context=context,
+        )
+
+    async def meeting_summarize(
+        self,
+        room_id: str,
+        context: NoraContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.summarize_meeting(room_id=room_id, context=context)
+
     """Nora Conference Skill Pack — governed meeting operations.
 
     All methods require a NoraContext for tenant scoping (Law #6)

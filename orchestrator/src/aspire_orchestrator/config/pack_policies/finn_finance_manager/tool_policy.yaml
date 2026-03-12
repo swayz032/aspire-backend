@@ -1,0 +1,31 @@
+tool_policy:
+  "finance.snapshot.read":
+    tool_id: finance.snapshot.read
+    allowed: true
+    risk_tier: green
+
+  "finance.exceptions.read":
+    tool_id: finance.exceptions.read
+    allowed: true
+    risk_tier: green
+
+  "finance.packet.draft":
+    tool_id: finance.packet.draft
+    allowed: true
+    risk_tier: yellow
+
+  "finance.proposal.create":
+    tool_id: finance.proposal.create
+    allowed: true
+    risk_tier: yellow
+
+  "a2a.create":
+    tool_id: a2a.dispatch
+    allowed: true
+    risk_tier: yellow
+
+# tool: finance.snapshot.read
+# tool: finance.exceptions.read
+# tool: finance.packet.draft
+# tool: finance.proposal.create
+# tool: a2a.dispatch

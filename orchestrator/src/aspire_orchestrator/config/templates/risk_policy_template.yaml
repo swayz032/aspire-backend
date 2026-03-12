@@ -1,0 +1,32 @@
+# {Agent Display Name} — Risk Policy
+# {Brief description of risk profile}
+
+pack_id: "{agent-id}"
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "{domain}.read":
+    risk_tier: green
+    approval_required: false
+    description: "Read and list {domain} data"
+
+  "{domain}.{action}":
+    risk_tier: yellow
+    approval_required: true
+    description: "{Human-readable description of what this action does}"
+
+  # Add more actions following the pattern:
+  # "{domain}.{verb}":
+  #   risk_tier: green|yellow|red
+  #   approval_required: true|false
+  #   description: "What this action does"
+
+# Optional: DLP redaction config
+# dlp_redaction:
+#   enabled: true
+#   redact_in_receipts: true
+#   patterns:
+#     - SSN
+#     - credit_card
+#     - phone_number

@@ -366,6 +366,61 @@ from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResul
 
 
 class EnhancedFinnFinanceManager(EnhancedSkillPack):
+    async def finance_snapshot_read(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
+        result = read_finance_snapshot(
+            fm_ctx,
+            period=str(params.get("period", "current_month")),
+            include_tax=bool(params.get("include_tax", False)),
+        )
+        return AgentResult(success=result.success, data=result.data, receipt=result.receipt, error=result.error, approval_required=result.approval_required)
+
+    async def finance_exceptions_read(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
+        result = read_finance_exceptions(
+            fm_ctx,
+            severity=str(params.get("severity", "all")),
+        )
+        return AgentResult(success=result.success, data=result.data, receipt=result.receipt, error=result.error, approval_required=result.approval_required)
+
+    async def finance_packet_draft(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
+        result = draft_finance_packet(
+            fm_ctx,
+            packet_type=str(params.get("packet_type", "general")),
+            title=str(params.get("title", "")),
+            description=str(params.get("description", "")),
+            evidence_ids=list(params.get("evidence_ids", [])),
+        )
+        return AgentResult(success=result.success, data=result.data, receipt=result.receipt, error=result.error, approval_required=result.approval_required)
+
+    async def finance_proposal_create(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
+        amount_cents = params.get("amount_cents")
+        if amount_cents is not None:
+            try:
+                amount_cents = int(amount_cents)
+            except (TypeError, ValueError):
+                amount_cents = None
+        result = create_finance_proposal(
+            fm_ctx,
+            packet_id=str(params.get("packet_id", "")),
+            proposal_type=str(params.get("proposal_type", "")),
+            amount_cents=amount_cents,
+        )
+        return AgentResult(success=result.success, data=result.data, receipt=result.receipt, error=result.error, approval_required=result.approval_required)
+
+    async def a2a_create(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
+        result = dispatch_a2a_delegation(
+            fm_ctx,
+            to_agent=str(params.get("to_agent", "")),
+            request_type=str(params.get("request_type", "ResearchRequest")),
+            payload=dict(params.get("payload", {})),
+            delegation_depth=int(params.get("delegation_depth", 0) or 0),
+        )
+        return AgentResult(success=result.success, data=result.data, receipt=result.receipt, error=result.error, approval_required=result.approval_required)
+
     """LLM-enhanced Finn Finance Manager — strategic financial intelligence.
 
     Extends rule-based FinnFM with:

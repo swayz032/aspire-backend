@@ -57,10 +57,13 @@ test.describe('Sandbox Health', () => {
 
     // The endpoint may include a summary field
     if (body.summary) {
-      // Summary should show X/10 configured or similar
-      expect(body.summary).toHaveProperty('total');
-      expect(body.summary).toHaveProperty('configured');
-      expect(typeof body.summary.configured).toBe('number');
+      if (typeof body.summary === 'string') {
+        expect(body.summary).toMatch(/\d+\s*\/\s*\d+\s+providers?\s+configured/i);
+      } else {
+        expect(body.summary).toHaveProperty('total');
+        expect(body.summary).toHaveProperty('configured');
+        expect(typeof body.summary.configured).toBe('number');
+      }
     } else {
       // Count configured providers manually
       const checks = body.checks || body;

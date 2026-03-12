@@ -1,0 +1,90 @@
+{
+  "skillpack_id": "ava-user",
+  "name": "Ava User",
+  "agent_name": "Ava User",
+  "registry_id": "ava_user",
+  "owner_key": "ava",
+  "persona_filename": "ava_user_system_prompt.md",
+  "channel": "frontend_orchestrator",
+  "version": "1.0.0",
+  "description": "User-facing Ava orchestrator for intent classification, routing plans, and governance previews.",
+  "capabilities": [
+    "can_classify_intent",
+    "can_build_route_plan",
+    "can_preview_governance"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "green"
+  },
+  "tools": [
+    "internal.intent_classifier",
+    "internal.skill_router",
+    "internal.policy_preview"
+  ],
+  "providers": [
+    "internal"
+  ],
+  "actions": [
+    "intent.classify",
+    "route.plan",
+    "governance.preview"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "intent_result",
+    "routing_plan",
+    "governance_preview"
+  ],
+  "dependencies": [
+    "langgraph_orchestrator",
+    "policy_engine"
+  ],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "ava_user_system_prompt.md",
+    "tone": "direct",
+    "style": "executive-assistant",
+    "guardrails": [
+      "never claim execution without receipts",
+      "route through governance before any mutation",
+      "stay as the user-facing orchestrator"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "ava_user",
+      "orchestrator",
+      "frontend"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "policy_denial_spike",
+      "routing_denial_spike"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "routing_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "intent.classify",
+      "route.plan",
+      "governance.preview"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "wave6_migration",
+    "preset": null,
+    "registry_id": "ava_user"
+  }
+}

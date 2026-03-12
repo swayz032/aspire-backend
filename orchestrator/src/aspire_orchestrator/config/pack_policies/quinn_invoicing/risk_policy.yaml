@@ -1,0 +1,30 @@
+# Quinn Invoicing - Risk Policy
+pack_id: quinn-invoicing
+default_risk_tier: yellow
+max_risk_tier: yellow
+
+actions:
+  "invoice.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "invoice.create action for quinn_invoicing"
+
+  "invoice.send":
+    risk_tier: yellow
+    approval_required: true
+    description: "invoice.send action for quinn_invoicing"
+
+  "invoice.void":
+    risk_tier: yellow
+    approval_required: true
+    description: "invoice.void action for quinn_invoicing"
+
+  "quote.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "quote.create action for quinn_invoicing"
+
+  "quote.send":
+    risk_tier: yellow
+    approval_required: true
+    description: "quote.send action for quinn_invoicing"

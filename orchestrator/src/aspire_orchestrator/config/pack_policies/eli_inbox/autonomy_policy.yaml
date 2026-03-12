@@ -1,0 +1,33 @@
+default_mode: memory-assisted
+actions:
+  "email.read":
+    autonomy: guided
+    binding_fields: [filters]
+
+  "email.triage":
+    autonomy: guided
+    binding_fields: [email_id]
+
+  "email.draft":
+    autonomy: approval-gated
+    binding_fields: [email_id, draft_content]
+
+  "email.send":
+    autonomy: approval-gated
+    binding_fields: [draft_id, send_payload]
+
+  "office.read":
+    autonomy: guided
+    binding_fields: [filters]
+
+  "office.create":
+    autonomy: approval-gated
+    binding_fields: [office_payload]
+
+  "office.draft":
+    autonomy: approval-gated
+    binding_fields: [office_payload]
+
+  "office.send":
+    autonomy: approval-gated
+    binding_fields: [office_payload]

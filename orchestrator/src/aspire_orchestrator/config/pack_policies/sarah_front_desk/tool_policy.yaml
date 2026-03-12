@@ -1,0 +1,18 @@
+tool_policy:
+  "call.route":
+    tool_id: twilio.call.create
+    allowed: true
+    risk_tier: green
+
+  "call.transfer":
+    tool_id: twilio.call.create
+    allowed: true
+    risk_tier: yellow
+
+  "visitor.log":
+    tool_id: internal.visitor.log
+    allowed: true
+    risk_tier: green
+
+# tool: twilio.call.create
+# tool: internal.visitor.log

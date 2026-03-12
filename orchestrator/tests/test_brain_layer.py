@@ -502,6 +502,41 @@ class TestSkillRouting:
 
         assert plan.estimated_risk_tier == RiskTier.RED
 
+    @pytest.mark.asyncio
+    async def test_route_denies_internal_pack_without_admin_bridge(self) -> None:
+        """User-facing routing must fail closed for internal-only packs."""
+        intent = _make_intent_result(
+            action_type="security.scan.execute",
+            skill_pack="security_review",
+            risk_tier=RiskTier.RED,
+        )
+        router = SkillRouter()
+        plan = await router.route(
+            intent,
+            context={"current_agent": "ava", "allow_internal_routing": False},
+        )
+
+        assert plan.steps == []
+        assert plan.deny_reason == "internal_only_pack"
+
+    @pytest.mark.asyncio
+    async def test_route_allows_internal_pack_with_admin_bridge(self) -> None:
+        """Approved admin bridge may route to internal-only packs."""
+        intent = _make_intent_result(
+            action_type="security.scan.execute",
+            skill_pack="security_review",
+            risk_tier=RiskTier.RED,
+        )
+        router = SkillRouter()
+        plan = await router.route(
+            intent,
+            context={"current_agent": "ava_admin", "allow_internal_routing": True},
+        )
+
+        assert len(plan.steps) == 1
+        assert plan.steps[0].skill_pack == "security_review"
+        assert plan.deny_reason is None
+
 
 # =====================================================================
 # 3. QA Loop Tests (8 tests)
@@ -875,6 +910,34 @@ class TestIntentsEndpoint:
         assert "governance" in data
         assert "receipt_ids" in data["governance"]
         assert len(data["governance"]["receipt_ids"]) > 0
+
+    def test_classify_endpoint_denies_internal_pack_without_bridge(self, client, monkeypatch) -> None:
+        """Frontend classify path cannot route directly into internal backend packs."""
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        import aspire_orchestrator.services.intent_classifier as ic_mod
+        ic_mod._cached_classifier = None
+
+        llm_resp = _make_llm_response(
+            action_type="security.scan.execute",
+            skill_pack="security_review",
+            confidence=0.95,
+        )
+        mock_completion = _mock_openai_completion(llm_resp)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
+
+        with patch("aspire_orchestrator.services.intent_classifier.openai.AsyncOpenAI", return_value=mock_client):
+            resp = client.post(
+                "/v1/intents/classify",
+                json=_make_classify_request("Run a security scan"),
+                headers=self._auth_headers(),
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["route"]["action"] == "denied"
+        assert data["route"]["deny_reason"] == "internal_only_pack"
+        assert data["plan"]["status"] == "denied"
 
 
 # =====================================================================

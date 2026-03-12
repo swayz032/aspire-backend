@@ -127,6 +127,14 @@ def _emit_receipt(
 
 
 class AdamResearchSkillPack:
+    async def research_search(
+        self,
+        query: str,
+        context: AdamResearchContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.search_web(query=query, context=context)
+
     """Adam Research skill pack — web search, places, vendor comparison, RFQ."""
 
     async def search_web(
@@ -199,6 +207,15 @@ class AdamResearchSkillPack:
             receipt=receipt,
             error=result.error,
         )
+
+    async def research_places(
+        self,
+        query: str,
+        location: str | None,
+        context: AdamResearchContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.search_places(query=query, location=location, context=context)
 
     async def search_places(
         self,
@@ -344,6 +361,14 @@ class AdamResearchSkillPack:
             error=None if any_success else "All search providers failed",
         )
 
+    async def research_compare(
+        self,
+        criteria: dict[str, Any],
+        context: AdamResearchContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.compare_vendors(criteria=criteria, context=context)
+
     async def generate_rfq(
         self,
         vendor_data: dict[str, Any],
@@ -391,6 +416,19 @@ class AdamResearchSkillPack:
             success=True,
             data=rfq_document,
             receipt=receipt,
+        )
+
+    async def research_rfq(
+        self,
+        vendor_data: dict[str, Any],
+        requirements: dict[str, Any],
+        context: AdamResearchContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.generate_rfq(
+            vendor_data=vendor_data,
+            requirements=requirements,
+            context=context,
         )
 
 

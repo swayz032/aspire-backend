@@ -40,6 +40,9 @@ from aspire_orchestrator.services.persona_loader import (
     load_all_personas,
 )
 from aspire_orchestrator.services.pack_policy_loader import (
+    get_autonomy_policy,
+    get_observability_policy,
+    get_prompt_contract,
     load_pack_policies,
     load_all_pack_policies,
     get_risk_policy,
@@ -124,14 +127,20 @@ def temp_policy_dir():
         pack_dir = Path(tmpdir) / "test_agent"
         pack_dir.mkdir()
 
-        risk_policy = {"default_tier": "green", "max_tier": "yellow"}
-        tool_policy = {"allowed_tools": ["test.tool.run"]}
-
         (pack_dir / "risk_policy.yaml").write_text(
             "default_tier: green\nmax_tier: yellow\n"
         )
         (pack_dir / "tool_policy.yaml").write_text(
             "allowed_tools:\n  - test.tool.run\n"
+        )
+        (pack_dir / "autonomy_policy.yaml").write_text(
+            "autonomy:\n  max_agentic_iterations: 3\n  timeout_ms: 7000\n"
+        )
+        (pack_dir / "observability_policy.yaml").write_text(
+            "alerts:\n  - quality_regression\nmetrics:\n  - response_quality_score\n"
+        )
+        (pack_dir / "prompt_contract.md").write_text(
+            "Never claim execution without receipt.\nUse concise operational language.\n"
         )
         yield tmpdir
 
@@ -157,6 +166,14 @@ class TestAspireAgentBase:
         manifest = {"skillpack_id": "test", "name": "Test", "version": "1.0.0"}
         base_agent.set_manifest(manifest)
         assert base_agent.manifest == manifest
+
+    def test_build_effective_system_prompt_includes_prompt_contract(self, base_agent):
+        base_agent.set_persona("You are a test agent.")
+        base_agent.set_policies({"prompt_contract": "Never claim execution without receipt."})
+        prompt = base_agent.build_effective_system_prompt()
+        assert "You are a test agent." in prompt
+        assert "Runtime Prompt Contract" in prompt
+        assert "Never claim execution without receipt." in prompt
 
     def test_compute_inputs_hash_deterministic(self, base_agent):
         inputs = {"action": "test", "value": 42}
@@ -334,6 +351,20 @@ class TestPackPolicyLoader:
         tool_pol = get_tool_policy("nonexistent")
         assert tool_pol.get("allowed_tools") == []
 
+    def test_get_autonomy_policy_from_loaded(self, temp_policy_dir):
+        policies = load_pack_policies("test_agent", directory=temp_policy_dir)
+        autonomy = get_autonomy_policy("test_agent", policies)
+        assert autonomy["autonomy"]["max_agentic_iterations"] == 3
+
+    def test_get_observability_policy_from_loaded(self, temp_policy_dir):
+        policies = load_pack_policies("test_agent", directory=temp_policy_dir)
+        observability = get_observability_policy("test_agent", policies)
+        assert "quality_regression" in observability["alerts"]
+
+    def test_get_prompt_contract_from_directory(self, temp_policy_dir):
+        contract = get_prompt_contract("test_agent", load_pack_policies("test_agent", directory=temp_policy_dir))
+        assert "Never claim execution without receipt." in contract
+
 
 # =============================================================================
 # EnhancedSkillPack Tests
@@ -421,6 +452,14 @@ class TestEnhancedSkillPack:
             },
         })
         assert pack.get_max_risk_tier() == "red"
+
+    def test_get_autonomy_policy_default(self):
+        pack = EnhancedSkillPack(
+            agent_id="test-pack",
+            agent_name="Test Pack",
+            auto_load_config=False,
+        )
+        assert pack.get_autonomy_policy()["autonomy"]["max_agentic_iterations"] >= 1
 
 
 # =============================================================================

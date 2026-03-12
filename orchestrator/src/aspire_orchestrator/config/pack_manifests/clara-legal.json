@@ -1,0 +1,103 @@
+{
+  "skillpack_id": "clara-legal",
+  "name": "Clara Legal",
+  "agent_name": "Clara",
+  "registry_id": "clara_legal",
+  "owner_key": "clara",
+  "persona_filename": "clara_legal_system_prompt.md",
+  "channel": "internal_frontend",
+  "version": "1.0.0",
+  "description": "Contract drafting, review, signing, template discovery, and compliance tracking workflows. Default risk tier red.",
+  "capabilities": [
+    "can_browse_templates",
+    "can_get_template_details",
+    "can_generate_contracts",
+    "can_review_contracts",
+    "can_sign_contracts",
+    "can_track_compliance"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "red"
+  },
+  "tools": [
+    "pandadoc.templates.list",
+    "pandadoc.templates.details",
+    "pandadoc.contract.generate",
+    "pandadoc.contract.read",
+    "pandadoc.contract.sign",
+    "pandadoc.contract.send",
+    "pandadoc.contract.session"
+  ],
+  "providers": [
+    "pandadoc"
+  ],
+  "actions": [
+    "templates.list",
+    "templates.details",
+    "contract.generate",
+    "contract.review",
+    "contract.sign",
+    "contract.compliance"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "contract",
+    "contract_review",
+    "contract_signature_plan",
+    "compliance_report"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "clara_legal_system_prompt.md",
+    "tone": "precise",
+    "style": "compliance-first",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "clara_legal",
+      "legal",
+      "contracts"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "high_risk_action_attempts",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "templates.list",
+      "templates.details",
+      "contract.generate",
+      "contract.review",
+      "contract.sign",
+      "contract.compliance"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "clara_legal"
+  }
+}

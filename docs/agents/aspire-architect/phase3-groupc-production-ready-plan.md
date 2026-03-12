@@ -89,7 +89,7 @@ Group C closes these gaps to achieve **unconditional production readiness**.
 **[CREATE] `Aspire-admin-portal/railway.json`** — Railway config for admin portal service
 **[MODIFY] `Aspire-desktop/server/admin.py`** — Remove hardcoded localhost, use Railway URL from env
 **[CREATE] `docs/operations/admin-portal-deploy.md`** — Deployment checklist + rollback procedure
-**[CREATE] `tests/e2e/playwright/admin-portal-health.spec.ts`** — Smoke test for deployed admin portal
+**[CREATE] `backend/tests/e2e/playwright/admin-portal-health.spec.ts`** — Smoke test for deployed admin portal
 
 ### Wave 2: Anam Avatar Integration
 
@@ -97,7 +97,7 @@ Group C closes these gaps to achieve **unconditional production readiness**.
 **[MODIFY] `Aspire-desktop/components/desktop/AvaDeskPanel.tsx`** — Replace iframe with Anam SDK components
 **[MODIFY] `Aspire-desktop/package.json`** — Add Anam SDK dependency
 **[CREATE] `Aspire-desktop/hooks/useAnamAvatar.ts`** — React hook for Anam session lifecycle
-**[CREATE] `tests/e2e/playwright/ava-anam-avatar.spec.ts`** — Verify avatar renders on "Video with Ava" toggle
+**[CREATE] `backend/tests/e2e/playwright/ava-anam-avatar.spec.ts`** — Verify avatar renders on "Video with Ava" toggle
 
 ### Wave 3: Load Test Execution
 
@@ -348,7 +348,7 @@ ALTER TYPE receipt_type ADD VALUE IF NOT EXISTS 'brain_layer_call';
 **Done Condition:** Checklist includes pre-deploy, deploy, verify, rollback steps
 
 **Step 1.5:** Playwright smoke test for deployed admin portal
-**Files:** `tests/e2e/playwright/admin-portal-health.spec.ts`
+**Files:** `backend/tests/e2e/playwright/admin-portal-health.spec.ts`
 **Done Condition:** Smoke test passes against admin.aspireos.app
 
 ### Wave 2: Anam Avatar Integration
@@ -372,7 +372,7 @@ ALTER TYPE receipt_type ADD VALUE IF NOT EXISTS 'brain_layer_call';
 **Done Condition:** "Video with Ava" toggle renders Anam component (NOT iframe)
 
 **Step 2.5:** Playwright test for Anam avatar rendering
-**Files:** `tests/e2e/playwright/ava-anam-avatar.spec.ts`
+**Files:** `backend/tests/e2e/playwright/ava-anam-avatar.spec.ts`
 **Done Condition:** Test verifies Anam component visible when Video mode active
 
 ### Wave 3: Load Test Execution

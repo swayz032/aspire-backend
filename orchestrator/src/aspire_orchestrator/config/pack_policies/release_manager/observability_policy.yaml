@@ -1,0 +1,12 @@
+registry_id: release_manager
+tags: [release_manager, release, deploy]
+alerts:
+  - receipt_failure_rate
+  - agent_loop_timeout_rate
+  - policy_denial_spike
+  - memory_write_failures
+metrics:
+  - response_quality_score
+  - receipts_emitted
+  - policy_denials
+  - llm_latency_ms

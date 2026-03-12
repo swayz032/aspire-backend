@@ -1,0 +1,94 @@
+{
+  "skillpack_id": "qa-evals",
+  "name": "QA Evals",
+  "agent_name": "QA Evals",
+  "registry_id": "qa_evals",
+  "owner_key": "qa",
+  "persona_filename": "qa_evals_system_prompt.md",
+  "channel": "internal_backend",
+  "version": "1.0.0",
+  "description": "QA evaluation automation. Default risk tier green.",
+  "capabilities": [
+    "can_eval_execute",
+    "can_report_generate",
+    "can_trend_track",
+    "can_regression_flag"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "green"
+  },
+  "tools": [
+    "internal.qa.eval_execute",
+    "internal.qa.report_generate",
+    "internal.qa.trend_track",
+    "internal.qa.regression_flag"
+  ],
+  "providers": [
+    "internal"
+  ],
+  "actions": [
+    "qa.eval.execute",
+    "qa.report.generate",
+    "qa.trend.track",
+    "qa.regression.flag"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "qa_eval_execute_result",
+    "qa_report_generate_result",
+    "qa_trend_track_result",
+    "qa_regression_flag_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "qa_evals_system_prompt.md",
+    "tone": "precise",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "qa_evals",
+      "qa",
+      "evals"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "qa.eval.execute",
+      "qa.report.generate",
+      "qa.trend.track",
+      "qa.regression.flag"
+    ]
+  },
+  "internal_only": true,
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "qa_evals"
+  }
+}

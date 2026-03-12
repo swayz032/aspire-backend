@@ -1,0 +1,25 @@
+# Teressa Books - Risk Policy
+pack_id: teressa-books
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "books.sync":
+    risk_tier: yellow
+    approval_required: true
+    description: "books.sync action for teressa_books"
+
+  "books.categorize":
+    risk_tier: green
+    approval_required: false
+    description: "books.categorize action for teressa_books"
+
+  "books.report":
+    risk_tier: green
+    approval_required: false
+    description: "books.report action for teressa_books"
+
+  "books.journal_entry":
+    risk_tier: yellow
+    approval_required: true
+    description: "books.journal_entry action for teressa_books"

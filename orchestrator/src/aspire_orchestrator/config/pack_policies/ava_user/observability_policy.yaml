@@ -1,0 +1,11 @@
+registry_id: ava_user
+tags: [ava_user, orchestrator, frontend]
+alerts:
+  - receipt_failure_rate
+  - policy_denial_spike
+  - routing_denial_spike
+metrics:
+  - response_quality_score
+  - receipts_emitted
+  - policy_denials
+  - routing_latency_ms

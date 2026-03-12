@@ -2,17 +2,21 @@
   "skillpack_id": "eli-inbox",
   "name": "Eli Inbox",
   "agent_name": "Eli",
+  "registry_id": "eli_inbox",
+  "owner_key": "eli",
+  "persona_filename": "eli_inbox_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Email triage, drafting, and sending via PolarisM white-label email. YELLOW tier for sends.",
+  "version": "1.0.0",
+  "description": "Inbox triage, drafting, sending, and internal office messaging workflows. Default risk tier yellow.",
   "capabilities": [
+    "can_read_email",
     "can_triage_email",
     "can_draft_email",
     "can_send_email",
-    "can_generate_digest"
+    "can_manage_office_messages"
   ],
   "risk_profile": {
-    "default_risk_tier": "yellow",
+    "default_risk_tier": "green",
     "max_risk_tier": "yellow"
   },
   "tools": [
@@ -25,9 +29,79 @@
     "internal.office.draft",
     "internal.office.send"
   ],
-  "providers": ["polaris_email"],
-  "actions": ["email.read", "email.triage", "email.draft", "email.send", "office.read", "office.create", "office.draft", "office.send"],
+  "providers": [
+    "polaris_email",
+    "internal"
+  ],
+  "actions": [
+    "email.read",
+    "email.triage",
+    "email.draft",
+    "email.send",
+    "office.read",
+    "office.create",
+    "office.draft",
+    "office.send"
+  ],
   "certification_status": "uncertified",
-  "outputs": ["email_draft", "triage_classification", "inbox_digest"],
-  "dependencies": []
+  "outputs": [
+    "email_draft",
+    "triage_classification",
+    "inbox_digest",
+    "office_message_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "eli_inbox_system_prompt.md",
+    "tone": "direct",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "eli_inbox",
+      "email",
+      "office"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "email.read",
+      "email.triage",
+      "email.draft",
+      "email.send",
+      "office.read",
+      "office.create",
+      "office.draft",
+      "office.send"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "eli_inbox"
+  }
 }

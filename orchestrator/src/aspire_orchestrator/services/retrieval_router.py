@@ -24,6 +24,7 @@ Law compliance:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 import uuid
@@ -31,6 +32,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.receipt_store import store_receipts
 
 logger = logging.getLogger(__name__)
@@ -88,8 +91,13 @@ class RetrievalRouterResult:
     """Result from cross-domain retrieval routing."""
 
     context: str = ""
+    status: str = "not_applicable"
     domains_queried: list[str] = field(default_factory=list)
     total_chunks: int = 0
+    sources: list[str] = field(default_factory=list)
+    grounding_score: float = 0.0
+    conflict_flags: list[str] = field(default_factory=list)
+    degraded_reason: str = ""
     timing_ms: float = 0.0
     receipt_id: str = ""
 
@@ -100,6 +108,13 @@ class RetrievalRouter:
 
     Thread-safe for concurrent async usage.
     """
+
+    MAX_DOMAINS = 3
+
+    def __init__(self) -> None:
+        self._cache: dict[str, tuple[float, RetrievalRouterResult]] = {}
+        self._cache_ttl = max(1, int(settings.retrieval_router_cache_ttl_seconds))
+        self._cache_max = max(10, int(settings.retrieval_router_cache_max_entries))
 
     def _determine_domains(self, agent_id: str, query: str) -> list[str]:
         """Determine which RAG domains to query.
@@ -131,7 +146,27 @@ class RetrievalRouter:
                 if "general" not in agent_domains:
                     agent_domains.append("general")
 
-        return agent_domains
+        return agent_domains[: self.MAX_DOMAINS]
+
+    def _cache_key(self, *, query: str, agent_id: str, suite_id: str | None) -> str:
+        suite = suite_id or "system"
+        return f"{agent_id}::{suite}::{query.strip().lower()}"
+
+    def _cache_get(self, key: str) -> RetrievalRouterResult | None:
+        cached = self._cache.get(key)
+        if cached is None:
+            return None
+        ts, result = cached
+        if time.monotonic() - ts > self._cache_ttl:
+            self._cache.pop(key, None)
+            return None
+        return copy.deepcopy(result)
+
+    def _cache_put(self, key: str, result: RetrievalRouterResult) -> None:
+        if len(self._cache) >= self._cache_max:
+            oldest_key = min(self._cache, key=lambda item: self._cache[item][0])
+            self._cache.pop(oldest_key, None)
+        self._cache[key] = (time.monotonic(), copy.deepcopy(result))
 
     async def _retrieve_domain(
         self,
@@ -194,7 +229,7 @@ class RetrievalRouter:
     def _assemble_context(
         self,
         domain_results: list[tuple[str, list[dict[str, Any]]]],
-    ) -> str:
+    ) -> tuple[str, float, list[str]]:
         """Assemble retrieved chunks into unified context string."""
         all_chunks: list[tuple[str, dict[str, Any]]] = []
         for domain, chunks in domain_results:
@@ -202,7 +237,7 @@ class RetrievalRouter:
                 all_chunks.append((domain, chunk))
 
         if not all_chunks:
-            return ""
+            return "", 0.0, []
 
         # Sort by combined_score descending across all domains
         all_chunks.sort(
@@ -215,11 +250,20 @@ class RetrievalRouter:
 
         lines = ["--- RELEVANT KNOWLEDGE ---"]
         total = len(top_chunks)
+        score_total = 0.0
+        sources: list[str] = []
 
         for i, (domain, chunk) in enumerate(top_chunks, 1):
             similarity = chunk.get("combined_score") or chunk.get("vector_similarity", 0)
             chunk_type = chunk.get("chunk_type", "")
             content = chunk.get("content", "")
+            score_total += float(similarity or 0.0)
+
+            source_name = (
+                str(chunk.get("source") or chunk.get("title") or domain).strip()
+            )
+            if source_name and source_name not in sources:
+                sources.append(source_name)
 
             meta_parts = [f"Source: {domain}"]
             if chunk_type:
@@ -230,7 +274,8 @@ class RetrievalRouter:
             lines.append(content.strip())
 
         lines.append("\n--- END KNOWLEDGE ---")
-        return "\n".join(lines)
+        grounding_score = score_total / total if total else 0.0
+        return "\n".join(lines), grounding_score, sources
 
     def _make_retrieval_receipt(
         self,
@@ -240,6 +285,7 @@ class RetrievalRouter:
         agent_id: str,
         domains_queried: list[str],
         total_chunks: int,
+        grounding_score: float,
         timing_ms: float,
     ) -> dict[str, Any]:
         """Generate receipt for cross-domain retrieval (Law #2)."""
@@ -257,6 +303,7 @@ class RetrievalRouter:
             "agent_id": agent_id,
             "domains_queried": domains_queried,
             "total_chunks": total_chunks,
+            "grounding_score": round(grounding_score, 3),
             "timing_ms": round(timing_ms, 2),
         }
         store_receipts([receipt])
@@ -283,7 +330,30 @@ class RetrievalRouter:
         receipt_id = f"rcpt-rr-{uuid.uuid4().hex[:12]}"
 
         if not query or not query.strip():
-            return RetrievalRouterResult(receipt_id=receipt_id)
+            result = RetrievalRouterResult(
+                receipt_id=receipt_id,
+                status="not_applicable",
+            )
+            METRICS.record_retrieval_router(
+                agent_id=agent_id,
+                status=result.status,
+                cache_hit=False,
+                grounding_score=result.grounding_score,
+            )
+            return result
+
+        cache_key = self._cache_key(query=query, agent_id=agent_id, suite_id=suite_id)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            cached.receipt_id = receipt_id
+            cached.timing_ms = (time.monotonic() - start) * 1000
+            METRICS.record_retrieval_router(
+                agent_id=agent_id,
+                status=cached.status,
+                cache_hit=True,
+                grounding_score=cached.grounding_score,
+            )
+            return cached
 
         # 1. Determine which domains to query
         domains = self._determine_domains(agent_id, query)
@@ -292,10 +362,18 @@ class RetrievalRouter:
             logger.debug(
                 "No RAG domains for agent=%s, skipping retrieval", agent_id,
             )
-            return RetrievalRouterResult(
+            result = RetrievalRouterResult(
                 receipt_id=receipt_id,
+                status="not_applicable",
                 timing_ms=(time.monotonic() - start) * 1000,
             )
+            METRICS.record_retrieval_router(
+                agent_id=agent_id,
+                status=result.status,
+                cache_hit=False,
+                grounding_score=result.grounding_score,
+            )
+            return result
 
         # 2. Parallel retrieval across all needed domains
         try:
@@ -309,14 +387,25 @@ class RetrievalRouter:
                 "Cross-domain retrieval failed (non-fatal): %s (%.1fms)",
                 e, elapsed,
             )
-            return RetrievalRouterResult(
+            result = RetrievalRouterResult(
                 receipt_id=receipt_id,
+                status="offline",
+                degraded_reason="parallel_retrieval_failed",
                 timing_ms=elapsed,
             )
+            METRICS.record_retrieval_router(
+                agent_id=agent_id,
+                status=result.status,
+                cache_hit=False,
+                grounding_score=result.grounding_score,
+            )
+            return result
 
         # 3. Assemble unified context
-        context = self._assemble_context(list(domain_results))
+        context, grounding_score, sources = self._assemble_context(list(domain_results))
         total_chunks = sum(len(chunks) for _, chunks in domain_results)
+        status = "primary" if total_chunks > 0 else "degraded"
+        degraded_reason = "" if total_chunks > 0 else "no_chunks_retrieved"
 
         elapsed = (time.monotonic() - start) * 1000
 
@@ -327,6 +416,7 @@ class RetrievalRouter:
             agent_id=agent_id,
             domains_queried=domains,
             total_chunks=total_chunks,
+            grounding_score=grounding_score,
             timing_ms=elapsed,
         )
 
@@ -335,13 +425,25 @@ class RetrievalRouter:
             agent_id, domains, total_chunks, elapsed,
         )
 
-        return RetrievalRouterResult(
+        result = RetrievalRouterResult(
             context=context,
+            status=status,
             domains_queried=domains,
             total_chunks=total_chunks,
+            sources=sources,
+            grounding_score=grounding_score,
+            degraded_reason=degraded_reason,
             timing_ms=elapsed,
             receipt_id=receipt_id,
         )
+        self._cache_put(cache_key, result)
+        METRICS.record_retrieval_router(
+            agent_id=agent_id,
+            status=result.status,
+            cache_hit=False,
+            grounding_score=result.grounding_score,
+        )
+        return result
 
 
 # ---------------------------------------------------------------------------

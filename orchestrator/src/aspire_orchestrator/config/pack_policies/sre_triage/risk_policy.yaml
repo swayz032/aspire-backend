@@ -1,0 +1,25 @@
+# SRE Triage - Risk Policy
+pack_id: sre-triage
+default_risk_tier: yellow
+max_risk_tier: yellow
+
+actions:
+  "sre.alert.detect":
+    risk_tier: green
+    approval_required: false
+    description: "sre.alert.detect action for sre"
+
+  "sre.incident.triage":
+    risk_tier: green
+    approval_required: false
+    description: "sre.incident.triage action for sre"
+
+  "sre.incident.route":
+    risk_tier: yellow
+    approval_required: true
+    description: "sre.incident.route action for sre"
+
+  "sre.report.generate":
+    risk_tier: green
+    approval_required: false
+    description: "sre.report.generate action for sre"

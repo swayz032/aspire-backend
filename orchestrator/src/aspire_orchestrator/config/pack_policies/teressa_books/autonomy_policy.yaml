@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "books.sync":
+    autonomy: approval-gated
+    binding_fields: [account_id]
+
+  "books.categorize":
+    autonomy: guided
+    binding_fields: [transaction]
+
+  "books.report":
+    autonomy: guided
+    binding_fields: [report_type, date_range]
+
+  "books.journal_entry":
+    autonomy: approval-gated
+    binding_fields: [entry_data]

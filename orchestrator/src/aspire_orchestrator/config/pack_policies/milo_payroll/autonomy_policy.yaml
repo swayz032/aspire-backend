@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "payroll.run":
+    autonomy: approval-gated
+    binding_fields: [payroll_id, pay_period, total_amount]
+
+  "payroll.snapshot":
+    autonomy: guided
+    binding_fields: [payroll_period, company_id]
+
+  "payroll.schedule":
+    autonomy: approval-gated
+    binding_fields: [payroll_period, run_date]
+
+  "payroll.deadline":
+    autonomy: guided
+    binding_fields: [company_id]

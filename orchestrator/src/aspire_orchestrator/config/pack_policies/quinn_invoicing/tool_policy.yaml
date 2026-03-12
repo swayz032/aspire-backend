@@ -1,0 +1,31 @@
+tool_policy:
+  "invoice.create":
+    tool_id: stripe.invoice.create
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.send":
+    tool_id: stripe.invoice.send
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.void":
+    tool_id: stripe.invoice.void
+    allowed: true
+    risk_tier: yellow
+
+  "quote.create":
+    tool_id: stripe.quote.create
+    allowed: true
+    risk_tier: yellow
+
+  "quote.send":
+    tool_id: stripe.quote.send
+    allowed: true
+    risk_tier: yellow
+
+# tool: stripe.invoice.create
+# tool: stripe.invoice.send
+# tool: stripe.invoice.void
+# tool: stripe.quote.create
+# tool: stripe.quote.send

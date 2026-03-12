@@ -1,0 +1,25 @@
+# QA Evals - Risk Policy
+pack_id: qa-evals
+default_risk_tier: green
+max_risk_tier: green
+
+actions:
+  "qa.eval.execute":
+    risk_tier: green
+    approval_required: false
+    description: "qa.eval.execute action for qa"
+
+  "qa.report.generate":
+    risk_tier: green
+    approval_required: false
+    description: "qa.report.generate action for qa"
+
+  "qa.trend.track":
+    risk_tier: green
+    approval_required: false
+    description: "qa.trend.track action for qa"
+
+  "qa.regression.flag":
+    risk_tier: green
+    approval_required: false
+    description: "qa.regression.flag action for qa"

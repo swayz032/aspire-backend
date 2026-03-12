@@ -1,0 +1,37 @@
+tool_policy:
+  "admin.ops.health_pulse":
+    tool_id: internal.admin.health_pulse
+    allowed: true
+    risk_tier: green
+
+  "admin.ops.triage":
+    tool_id: internal.admin.incident_triage
+    allowed: true
+    risk_tier: green
+
+  "admin.ops.provider_analysis":
+    tool_id: internal.admin.provider_analysis
+    allowed: true
+    risk_tier: green
+
+  "admin.ops.robot_triage":
+    tool_id: internal.admin.robot_triage
+    allowed: true
+    risk_tier: green
+
+  "admin.ops.council.dispatch":
+    tool_id: internal.admin.council.dispatch
+    allowed: true
+    risk_tier: yellow
+
+  "admin.ops.learning_entry.create":
+    tool_id: internal.admin.learning_entry
+    allowed: true
+    risk_tier: yellow
+
+# tool: internal.admin.health_pulse
+# tool: internal.admin.incident_triage
+# tool: internal.admin.provider_analysis
+# tool: internal.admin.robot_triage
+# tool: internal.admin.council.dispatch
+# tool: internal.admin.learning_entry

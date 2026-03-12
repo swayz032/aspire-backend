@@ -1,0 +1,25 @@
+# Security Review - Risk Policy
+pack_id: security-review
+default_risk_tier: red
+max_risk_tier: red
+
+actions:
+  "security.scan.execute":
+    risk_tier: green
+    approval_required: false
+    description: "security.scan.execute action for security"
+
+  "security.report.generate":
+    risk_tier: green
+    approval_required: false
+    description: "security.report.generate action for security"
+
+  "security.violation.flag":
+    risk_tier: red
+    approval_required: true
+    description: "security.violation.flag action for security"
+
+  "security.review.request":
+    risk_tier: red
+    approval_required: true
+    description: "security.review.request action for security"

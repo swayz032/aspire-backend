@@ -219,7 +219,7 @@ pytest tests/e2e/verification/test_orchestrator_workflows.py -v
 ### W8 Playwright Tests (Requires Desktop UI Running)
 ```bash
 # Install Playwright browsers if not already installed
-cd C:\Users\tonio\Projects\myapp\tests\e2e\playwright
+cd C:\Users\tonio\Projects\myapp\backend\tests\e2e\playwright
 npx playwright install
 
 # Run all Playwright tests headless
@@ -656,7 +656,7 @@ RECOMMENDATION: PROCEED TO MANUAL VERIFICATION
 4. **EXECUTE W8 PLAYWRIGHT TESTS**
    ```bash
    # Start Desktop UI (port 5173)
-   cd C:\Users\tonio\Projects\myapp\tests\e2e\playwright
+   cd C:\Users\tonio\Projects\myapp\backend\tests\e2e\playwright
    npx playwright test
    ```
    - Expected: 78/78 PASS

@@ -325,12 +325,17 @@ async def classify_intent(request: Request) -> JSONResponse:
     current_agent = str(requested_agent).strip().lower() or "ava"
 
     try:
+        allow_internal_routing = bool(
+            req.payload.get("allow_internal_routing")
+            or req.payload.get("admin_bridge_approved")
+        )
         routing_plan: RoutingPlan = await skill_router.route(
             intent_result,
             context={
                 "suite_id": suite_id,
                 "office_id": office_id,
                 "current_agent": current_agent,
+                "allow_internal_routing": allow_internal_routing,
             },
         )
     except Exception as exc:

@@ -98,6 +98,31 @@ def _emit_receipt(
 
 
 class SarahFrontDeskSkillPack:
+    async def call_route(
+        self,
+        caller_info: dict[str, Any],
+        context: SarahFrontDeskContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.route_call(caller_info=caller_info, context=context)
+
+    async def call_transfer(
+        self,
+        call_id: str,
+        destination: str,
+        context: SarahFrontDeskContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.transfer_call(call_id=call_id, destination=destination, context=context)
+
+    async def visitor_log(
+        self,
+        visitor_info: dict[str, Any],
+        context: SarahFrontDeskContext,
+    ) -> SkillPackResult:
+        """Compatibility wrapper for registry-aligned action validation."""
+        return await self.log_visitor(visitor_info=visitor_info, context=context)
+
     """Sarah Front Desk skill pack — call routing, transfer, visitor logging."""
 
     async def route_call(

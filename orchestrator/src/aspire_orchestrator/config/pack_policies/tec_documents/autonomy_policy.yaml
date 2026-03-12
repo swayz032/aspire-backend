@@ -1,0 +1,13 @@
+default_mode: memory-assisted
+actions:
+  "document.generate":
+    autonomy: guided
+    binding_fields: [template_id, data]
+
+  "document.preview":
+    autonomy: guided
+    binding_fields: [document_id]
+
+  "document.share":
+    autonomy: approval-gated
+    binding_fields: [document_id, recipients]

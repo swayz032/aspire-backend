@@ -125,3 +125,71 @@ def get_tool_policy(pack_id: str, policies: dict[str, Any] | None = None) -> dic
 
     loaded = load_pack_policies(pack_id)
     return loaded.get("tool_policy", {"allowed_tools": []})
+
+
+def get_autonomy_policy(pack_id: str, policies: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Get the autonomy policy for a pack.
+
+    Returns the autonomy policy if loaded, or bounded safe defaults.
+    """
+    if policies and "autonomy_policy" in policies:
+        return policies["autonomy_policy"]
+
+    loaded = load_pack_policies(pack_id)
+    return loaded.get(
+        "autonomy_policy",
+        {
+            "autonomy": {
+                "auto_triage": True,
+                "auto_draft": True,
+                "auto_send": False,
+                "max_agentic_iterations": 2,
+                "max_retrieval_domains": 2,
+                "timeout_ms": 4500,
+            },
+        },
+    )
+
+
+def get_observability_policy(pack_id: str, policies: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Get the observability policy for a pack."""
+    if policies and "observability_policy" in policies:
+        return policies["observability_policy"]
+
+    loaded = load_pack_policies(pack_id)
+    return loaded.get(
+        "observability_policy",
+        {
+            "receipt_requirements": {
+                "success": True,
+                "denied": True,
+                "failed": True,
+            },
+            "alerts": [],
+            "metrics": [],
+        },
+    )
+
+
+def get_prompt_contract(pack_id: str, policies: dict[str, Any] | None = None) -> str:
+    """Get the prompt contract for a pack as raw markdown/text."""
+    if policies and "prompt_contract" in policies:
+        contract = policies["prompt_contract"]
+        if isinstance(contract, str):
+            return contract
+        if isinstance(contract, dict):
+            return str(contract.get("content", "")).strip()
+
+    directory = Path(__file__).parent.parent / "config" / "pack_policies"
+    for candidate in (
+        directory / pack_id / "prompt_contract.md",
+        directory / pack_id.replace("-", "_") / "prompt_contract.md",
+        directory / pack_id.replace("_", "-") / "prompt_contract.md",
+    ):
+        if candidate.exists():
+            try:
+                return candidate.read_text(encoding="utf-8").strip()
+            except Exception as e:
+                logger.warning("Failed to read prompt_contract for pack %s: %s", pack_id, e)
+                break
+    return ""

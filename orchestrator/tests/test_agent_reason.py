@@ -1,10 +1,4 @@
-"""Tests for agent_reason_node — conversational intelligence.
-
-Covers: full node execution with mocked LLM/memory/RAG,
-        phantom action guard, persona loading, channel context,
-        aspire awareness, receipt generation (Law #2),
-        fail-closed behavior (Law #3).
-"""
+"""Tests for agent_reason_node conversational intelligence."""
 
 from __future__ import annotations
 
@@ -17,17 +11,13 @@ from aspire_orchestrator.nodes.agent_reason import (
     _build_user_context,
     _guard_output,
     _load_persona,
+    _load_prompt_contract,
     _make_conversation_receipt,
     agent_reason_node,
 )
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 def _make_state(**overrides) -> dict:
-    """Build a minimal OrchestratorState dict."""
     state = {
         "utterance": "What is a tax write-off?",
         "agent_target": "finn",
@@ -43,74 +33,58 @@ def _make_state(**overrides) -> dict:
     return state
 
 
-# ---------------------------------------------------------------------------
-# _load_persona
-# ---------------------------------------------------------------------------
-
 class TestLoadPersona:
     def test_known_agent_loads(self):
-        # Should not raise — Finn persona file exists
         persona = _load_persona("finn")
         assert len(persona) > 0
         assert "Finn" in persona or "finn" in persona.lower()
 
     def test_unknown_agent_falls_back_to_ava(self):
         persona = _load_persona("nonexistent_agent")
-        assert len(persona) > 0  # Ava fallback
+        assert len(persona) > 0
 
 
-# ---------------------------------------------------------------------------
-# _build_user_context
-# ---------------------------------------------------------------------------
+class TestLoadPromptContract:
+    def test_missing_prompt_contract_is_safe(self):
+        assert isinstance(_load_prompt_contract("nonexistent_agent"), str)
+
 
 class TestBuildUserContext:
     def test_no_profile(self):
         assert _build_user_context({"user_profile": None}) == ""
 
     def test_full_profile(self):
-        ctx = _build_user_context({
-            "user_profile": {
-                "display_name": "John",
-                "business_name": "Pallet Co",
-                "industry": "manufacturing",
+        ctx = _build_user_context(
+            {
+                "user_profile": {
+                    "display_name": "John",
+                    "business_name": "Pallet Co",
+                    "industry": "manufacturing",
+                }
             }
-        })
+        )
         assert "John" in ctx
         assert "Pallet Co" in ctx
         assert "manufacturing" in ctx
 
     def test_partial_profile(self):
-        ctx = _build_user_context({
-            "user_profile": {"display_name": "Jane"}
-        })
+        ctx = _build_user_context({"user_profile": {"display_name": "Jane"}})
         assert "Jane" in ctx
 
 
-# ---------------------------------------------------------------------------
-# _build_channel_context
-# ---------------------------------------------------------------------------
-
 class TestBuildChannelContext:
     def test_voice_channel(self):
-        ctx = _build_channel_context({"user_profile": {"channel": "voice"}})
-        assert "1-3 sentences" in ctx
+        assert "1-3 sentences" in _build_channel_context({"user_profile": {"channel": "voice"}})
 
     def test_avatar_channel(self):
-        ctx = _build_channel_context({"user_profile": {"channel": "avatar"}})
-        assert "1-3 sentences" in ctx
+        assert "1-3 sentences" in _build_channel_context({"user_profile": {"channel": "avatar"}})
 
     def test_chat_channel(self):
-        ctx = _build_channel_context({"user_profile": {"channel": "chat"}})
-        assert "more detailed" in ctx
+        assert "more detailed" in _build_channel_context({"user_profile": {"channel": "chat"}})
 
     def test_default_is_voice(self):
-        ctx = _build_channel_context({})
-        assert "1-3 sentences" in ctx
+        assert "1-3 sentences" in _build_channel_context({})
 
-
-# ---------------------------------------------------------------------------
-# _guard_output
-# ---------------------------------------------------------------------------
 
 class TestGuardOutput:
     def test_clean_text_passes_through(self):
@@ -124,30 +98,22 @@ class TestGuardOutput:
         assert "I've sent" not in result
 
     def test_multiple_phantom_markers(self):
-        markers = [
+        for marker in (
             "I've created your invoice",
             "Payment processed successfully",
             "Meeting scheduled for tomorrow",
-        ]
-        for marker in markers:
+        ):
             result = _guard_output(marker, "ava")
             assert "approval process" in result
 
     def test_case_insensitive(self):
-        text = "i've scheduled the meeting for you"
-        result = _guard_output(text, "nora")
+        result = _guard_output("i've scheduled the meeting for you", "nora")
         assert "approval process" in result
 
 
-# ---------------------------------------------------------------------------
-# _make_conversation_receipt
-# ---------------------------------------------------------------------------
-
 class TestMakeConversationReceipt:
     def test_receipt_has_required_fields(self):
-        receipt = _make_conversation_receipt(
-            _make_state(), "finn", "knowledge", 150,
-        )
+        receipt = _make_conversation_receipt(_make_state(), "finn", "knowledge", 150)
         assert receipt["action_type"] == "agent.conversation"
         assert receipt["risk_tier"] == "green"
         assert receipt["agent_id"] == "finn"
@@ -159,10 +125,6 @@ class TestMakeConversationReceipt:
         assert receipt["suite_id"] == "suite-aaa"
 
 
-# ---------------------------------------------------------------------------
-# agent_reason_node (full integration)
-# ---------------------------------------------------------------------------
-
 class TestAgentReasonNode:
     @pytest.mark.asyncio
     @patch("aspire_orchestrator.services.working_memory.get_working_memory")
@@ -172,12 +134,15 @@ class TestAgentReasonNode:
     async def test_successful_conversation(
         self, mock_router_fn, mock_sm_fn, mock_em_fn, mock_wm_fn,
     ):
-        # Mock retrieval router
         mock_router = AsyncMock()
-        mock_router.retrieve.return_value = MagicMock(context="", receipt_id="rcpt-1")
+        mock_router.retrieve.return_value = MagicMock(
+            context="",
+            receipt_id="rcpt-1",
+            status="not_applicable",
+            degraded_reason="",
+        )
         mock_router_fn.return_value = mock_router
 
-        # Mock memory services
         mock_wm = AsyncMock()
         mock_wm.get_recent_turns.return_value = []
         mock_wm.add_turn.return_value = None
@@ -191,60 +156,60 @@ class TestAgentReasonNode:
         mock_sm.get_user_facts.return_value = []
         mock_sm_fn.return_value = mock_sm
 
-        # Mock OpenAI
-        mock_choice = MagicMock()
-        mock_choice.message.content = "A tax write-off is a business expense that reduces your taxable income."
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create.return_value = mock_response
-
-        with patch("openai.AsyncOpenAI", return_value=mock_client):
-            with patch("aspire_orchestrator.config.settings.settings", MagicMock(
-                openai_api_key="test", ava_llm_model="gpt-5-mini",
-            )):
-                result = await agent_reason_node(_make_state())
+        with patch(
+            "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+            new=AsyncMock(
+                return_value="A tax write-off is a business expense that reduces your taxable income."
+            ),
+        ):
+            result = await agent_reason_node(_make_state())
 
         assert "conversation_response" in result
         assert "tax" in result["conversation_response"].lower() or "write-off" in result["conversation_response"].lower()
         assert len(result["pipeline_receipts"]) >= 1
-        # Working memory should have been called to save turns
-        assert mock_wm.add_turn.call_count == 2  # user + agent turn
+        assert mock_wm.add_turn.call_count == 2
+        assert result["pipeline_receipts"][-1]["quality_report"]["passed"] is True
 
     @pytest.mark.asyncio
     async def test_llm_failure_returns_persona_fallback(self):
-        """LLM failure → persona-specific fallback, not generic error."""
         with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr:
             mock_router = AsyncMock()
-            mock_router.retrieve.return_value = MagicMock(context="", receipt_id="")
+            mock_router.retrieve.return_value = MagicMock(
+                context="",
+                receipt_id="",
+                status="not_applicable",
+                degraded_reason="",
+            )
             mock_rr.return_value = mock_router
 
-            with patch("openai.AsyncOpenAI", side_effect=Exception("API down")):
-                with patch("aspire_orchestrator.config.settings.settings", MagicMock(
-                    openai_api_key="test", ava_llm_model="gpt-5-mini",
-                )):
-                    result = await agent_reason_node(_make_state())
+            with patch(
+                "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+                new=AsyncMock(side_effect=Exception("API down")),
+            ):
+                result = await agent_reason_node(_make_state())
 
         response = result["conversation_response"]
-        assert "Finn" in response  # Persona-specific fallback
-        assert "I wasn't sure" not in response  # NOT the old generic fallback
+        assert "Finn" in response
+        assert "I wasn't sure" not in response
 
     @pytest.mark.asyncio
     async def test_ava_fallback_for_unknown_agent(self):
-        """Unknown agent → uses Ava persona as fallback."""
         with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr:
             mock_router = AsyncMock()
-            mock_router.retrieve.return_value = MagicMock(context="", receipt_id="")
+            mock_router.retrieve.return_value = MagicMock(
+                context="",
+                receipt_id="",
+                status="not_applicable",
+                degraded_reason="",
+            )
             mock_rr.return_value = mock_router
 
-            with patch("openai.AsyncOpenAI", side_effect=Exception("fail")):
-                with patch("aspire_orchestrator.config.settings.settings", MagicMock(
-                    openai_api_key="test", ava_llm_model="gpt-5-mini",
-                )):
-                    result = await agent_reason_node(_make_state(agent_target="nonexistent"))
+            with patch(
+                "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+                new=AsyncMock(side_effect=Exception("fail")),
+            ):
+                result = await agent_reason_node(_make_state(agent_target="nonexistent"))
 
-        # Should get Ava's fallback (the default)
         assert "rephrase" in result["conversation_response"].lower()
 
     @pytest.mark.asyncio
@@ -255,9 +220,13 @@ class TestAgentReasonNode:
     async def test_phantom_action_stripped_in_response(
         self, mock_router_fn, mock_sm_fn, mock_em_fn, mock_wm_fn,
     ):
-        """If LLM generates phantom action claim, it should be stripped."""
         mock_router = AsyncMock()
-        mock_router.retrieve.return_value = MagicMock(context="", receipt_id="")
+        mock_router.retrieve.return_value = MagicMock(
+            context="",
+            receipt_id="",
+            status="not_applicable",
+            degraded_reason="",
+        )
         mock_router_fn.return_value = mock_router
 
         mock_wm = AsyncMock()
@@ -273,38 +242,124 @@ class TestAgentReasonNode:
         mock_sm.get_user_facts.return_value = []
         mock_sm_fn.return_value = mock_sm
 
-        mock_choice = MagicMock()
-        mock_choice.message.content = "I've sent the invoice to your client."
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create.return_value = mock_response
-
-        with patch("openai.AsyncOpenAI", return_value=mock_client):
-            with patch("aspire_orchestrator.config.settings.settings", MagicMock(
-                openai_api_key="test", ava_llm_model="gpt-5-mini",
-            )):
-                result = await agent_reason_node(_make_state())
+        with patch(
+            "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+            new=AsyncMock(return_value="I've sent the invoice to your client."),
+        ):
+            result = await agent_reason_node(_make_state())
 
         assert "approval process" in result["conversation_response"]
         assert "I've sent" not in result["conversation_response"]
 
     @pytest.mark.asyncio
     async def test_receipt_always_generated(self):
-        """Every conversation generates a receipt — even on LLM failure (Law #2)."""
         with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr:
             mock_router = AsyncMock()
-            mock_router.retrieve.return_value = MagicMock(context="", receipt_id="")
+            mock_router.retrieve.return_value = MagicMock(
+                context="",
+                receipt_id="",
+                status="not_applicable",
+                degraded_reason="",
+            )
             mock_rr.return_value = mock_router
 
-            with patch("openai.AsyncOpenAI", side_effect=Exception("fail")):
-                with patch("aspire_orchestrator.config.settings.settings", MagicMock(
-                    openai_api_key="test", ava_llm_model="gpt-5-mini",
-                )):
-                    result = await agent_reason_node(_make_state())
+            with patch(
+                "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+                new=AsyncMock(side_effect=Exception("fail")),
+            ):
+                result = await agent_reason_node(_make_state())
 
         assert len(result["pipeline_receipts"]) >= 1
         receipt = result["pipeline_receipts"][-1]
         assert receipt["action_type"] == "agent.conversation"
-        assert receipt["outcome"] == "success"  # Fallback is still "success"
+        assert receipt["outcome"] == "success"
+        assert "quality_report" in receipt
+
+    @pytest.mark.asyncio
+    @patch("aspire_orchestrator.services.working_memory.get_working_memory")
+    @patch("aspire_orchestrator.services.episodic_memory.get_episodic_memory")
+    @patch("aspire_orchestrator.services.semantic_memory.get_semantic_memory")
+    @patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router")
+    async def test_quality_guard_rewrites_ai_style_output(
+        self, mock_router_fn, mock_sm_fn, mock_em_fn, mock_wm_fn,
+    ):
+        mock_router = AsyncMock()
+        mock_router.retrieve.return_value = MagicMock(
+            context="",
+            receipt_id="",
+            status="not_applicable",
+            degraded_reason="",
+        )
+        mock_router_fn.return_value = mock_router
+
+        mock_wm = AsyncMock()
+        mock_wm.get_recent_turns.return_value = []
+        mock_wm.add_turn.return_value = None
+        mock_wm_fn.return_value = mock_wm
+
+        mock_em = AsyncMock()
+        mock_em.search_relevant_episodes.return_value = []
+        mock_em_fn.return_value = mock_em
+
+        mock_sm = AsyncMock()
+        mock_sm.get_user_facts.return_value = []
+        mock_sm_fn.return_value = mock_sm
+
+        with patch(
+            "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+            new=AsyncMock(return_value="As an AI, I'd be happy to help with that."),
+        ):
+            result = await agent_reason_node(
+                _make_state(agent_target="eli", user_profile={"channel": "chat"})
+            )
+
+        assert "as an ai" not in result["conversation_response"].lower()
+        assert "I'm Eli" in result["conversation_response"]
+        receipt = result["pipeline_receipts"][-1]
+        assert receipt["quality_report"]["passed"] is False
+        assert receipt["quality_report"]["violations"]
+
+    @pytest.mark.asyncio
+    @patch("aspire_orchestrator.services.working_memory.get_working_memory")
+    @patch("aspire_orchestrator.services.episodic_memory.get_episodic_memory")
+    @patch("aspire_orchestrator.services.semantic_memory.get_semantic_memory")
+    @patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router")
+    async def test_weak_grounding_forces_grounded_fallback(
+        self, mock_router_fn, mock_sm_fn, mock_em_fn, mock_wm_fn,
+    ):
+        mock_router = AsyncMock()
+        mock_router.retrieve.return_value = MagicMock(
+            context="Weak context",
+            receipt_id="",
+            status="degraded",
+            degraded_reason="no_chunks_retrieved",
+            grounding_score=0.12,
+            conflict_flags=[],
+        )
+        mock_router_fn.return_value = mock_router
+
+        mock_wm = AsyncMock()
+        mock_wm.get_recent_turns.return_value = []
+        mock_wm.add_turn.return_value = None
+        mock_wm_fn.return_value = mock_wm
+
+        mock_em = AsyncMock()
+        mock_em.search_relevant_episodes.return_value = []
+        mock_em_fn.return_value = mock_em
+
+        mock_sm = AsyncMock()
+        mock_sm.get_user_facts.return_value = []
+        mock_sm_fn.return_value = mock_sm
+
+        with patch(
+            "aspire_orchestrator.nodes.agent_reason.generate_text_async",
+            new=AsyncMock(return_value="Here is the exact legal answer."),
+        ):
+            result = await agent_reason_node(
+                _make_state(agent_target="clara", intent_type="knowledge", user_profile={"channel": "chat"})
+            )
+
+        assert "grounded legal context" in result["conversation_response"].lower()
+        receipt = result["pipeline_receipts"][-1]
+        assert receipt["retrieval_verification"]["passed"] is False
+        assert receipt["retrieval_verification"]["mode"] in {"degraded", "weak_grounding"}

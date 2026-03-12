@@ -1,0 +1,30 @@
+tool_policy:
+  "research.search":
+    tool_id: brave.search
+    allowed: true
+    risk_tier: green
+
+  "research.places":
+    tool_id: google_places.search
+    allowed: true
+    risk_tier: green
+
+  "research.compare":
+    tool_id: tavily.search
+    allowed: true
+    risk_tier: green
+
+  "research.rfq":
+    tool_id: internal.document.generate
+    allowed: true
+    risk_tier: green
+
+# tool: brave.search
+# tool: tavily.search
+# tool: google_places.search
+# tool: tomtom.search
+# tool: here.search
+# tool: foursquare.search
+# tool: osm_overpass.query
+# tool: mapbox.geocode
+# tool: internal.document.generate

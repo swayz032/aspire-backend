@@ -28,7 +28,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.openai_client import generate_text_async
+from aspire_orchestrator.services.response_quality_guard import enforce_response_quality
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +259,32 @@ class AspireAgentBase:
         """Set the agent's policies."""
         self._policies = policies
 
+    def get_policy(self, name: str, default: Any = None) -> Any:
+        """Get a loaded per-pack policy by name."""
+        return self._policies.get(name, default)
+
+    def get_prompt_contract(self) -> str:
+        """Return the loaded prompt contract text if available."""
+        contract = self._policies.get("prompt_contract")
+        if isinstance(contract, str):
+            return contract.strip()
+        if isinstance(contract, dict):
+            return str(contract.get("content", "")).strip()
+        return ""
+
+    def build_effective_system_prompt(self, system_prompt: str | None = None) -> str:
+        """Build the final system prompt using persona plus prompt contract."""
+        parts: list[str] = []
+        if system_prompt:
+            parts.append(system_prompt.strip())
+        elif self._persona:
+            parts.append(self._persona.strip())
+
+        prompt_contract = self.get_prompt_contract()
+        if prompt_contract:
+            parts.extend(["", "## Runtime Prompt Contract", prompt_contract])
+        return "\n".join(part for part in parts if part is not None).strip()
+
     async def call_llm(
         self,
         prompt: str,
@@ -280,7 +308,7 @@ class AspireAgentBase:
         import os
 
         effective_risk = risk_tier or self._default_risk_tier
-        effective_system = system_prompt or self._persona or ""
+        effective_system = self.build_effective_system_prompt(system_prompt)
 
         # Route to appropriate model
         model = "gpt-5-mini"
@@ -355,6 +383,19 @@ class AspireAgentBase:
                 temperature=None if _is_reasoning else route_temperature,
                 prefer_responses_api=True,
             )
+            content, quality_report = enforce_response_quality(
+                text=content,
+                channel="chat",
+                agent_id=self._agent_id,
+                prompt_contract=self.get_prompt_contract(),
+                allow_markdown=True,
+            )
+            METRICS.record_response_quality(
+                agent_id=self._agent_id,
+                channel="chat",
+                score=quality_report.score,
+                passed=quality_report.passed,
+            )
 
             return {
                 "content": content,
@@ -362,6 +403,13 @@ class AspireAgentBase:
                 "profile_used": profile_used,
                 "error": None,
                 "receipt": route_receipt,
+                "quality_report": {
+                    "score": quality_report.score,
+                    "passed": quality_report.passed,
+                    "violations": quality_report.violations,
+                    "warnings": quality_report.warnings,
+                    "style_signals": quality_report.style_signals,
+                },
             }
 
         except Exception as e:

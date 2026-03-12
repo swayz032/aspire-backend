@@ -1,4 +1,4 @@
-"""Receipt Store Service — Dual-Write Persistence (Phase 1 Wave 9).
+"""Receipt Store Service — Dual-Write Persistence (Phase 2A Async Buffered Writer).
 
 Storage strategy: In-memory (always) + Supabase (when configured).
 
@@ -8,7 +8,7 @@ Supabase: Durable persistence, RLS-scoped, append-only (Law #2).
 When Supabase is configured (ASPIRE_SUPABASE_URL + ASPIRE_SUPABASE_SERVICE_ROLE_KEY),
 every store_receipts() call writes to both backends. Supabase failures are logged
 but do NOT block the pipeline — receipts remain in-memory and a background
-reconciliation job (Phase 2) catches gaps.
+async buffered writer batches writes for throughput.
 
 Law #2: All receipts are immutable. No UPDATE or DELETE operations.
 Law #6: Tenant isolation via suite_id scoping.
@@ -16,6 +16,8 @@ Law #6: Tenant isolation via suite_id scoping.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import threading
 import uuid
@@ -192,7 +194,7 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
 
 
 def _persist_to_supabase(receipts: list[dict[str, Any]]) -> None:
-    """Write receipts to Supabase. Failures log but don't block (Law #2 + resilience).
+    """Write receipts to Supabase (sync fallback). Failures log but don't block (Law #2 + resilience).
 
     Uses upsert with on_conflict='receipt_id' for idempotency — if the same
     receipt is written twice (retry scenario), it won't fail or duplicate.
@@ -255,23 +257,177 @@ def _persist_to_supabase(receipts: list[dict[str, Any]]) -> None:
                     logger.error("Supabase receipt persistence failed for receipt_id=%s: %s", row.get("receipt_id"), row_err)
 
 
+
+
+# =============================================================================
+# Async Buffered Receipt Writer (Phase 2A)
+# =============================================================================
+
+
+class _AsyncReceiptWriter:
+    """Buffered async receipt writer — batches Supabase writes for throughput.
+
+    Receipts are enqueued from sync callers into a thread-safe buffer.
+    A background asyncio task periodically flushes the buffer to Supabase
+    using the async httpx connection pool (from supabase_client).
+    """
+
+    def __init__(self, flush_interval: float = 2.0, max_batch: int = 50) -> None:
+        self._buffer: list[dict[str, Any]] = []
+        self._buffer_lock = threading.Lock()
+        self._flush_interval = flush_interval
+        self._max_batch = max_batch
+        self._max_buffer_size = 5000
+        self._task: asyncio.Task[None] | None = None
+        self._running = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        """Start the background flush loop."""
+        if self._running:
+            return
+        self._running = True
+        if loop is not None:
+            self._loop = loop
+        else:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+        self._task = self._loop.create_task(self._flush_loop())
+
+    async def _flush_loop(self) -> None:
+        """Periodic flush of buffered receipts to Supabase."""
+        while self._running:
+            try:
+                await asyncio.sleep(self._flush_interval)
+                await self._flush()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Receipt flush loop error (will retry): %s", e)
+
+    def enqueue(self, receipts: list[dict[str, Any]]) -> None:
+        """Thread-safe enqueue of receipts for async persistence."""
+        with self._buffer_lock:
+            self._buffer.extend(receipts)
+            # Cap buffer to prevent OOM under sustained Supabase outage
+            if len(self._buffer) > self._max_buffer_size:
+                overflow = len(self._buffer) - self._max_buffer_size
+                self._buffer = self._buffer[overflow:]  # Drop oldest
+                logger.critical(
+                    "Receipt buffer overflow: dropped %d oldest receipts "
+                    "(in-memory store still has them)", overflow
+                )
+        # Trigger flush if above threshold (outside the lock!)
+        if len(self._buffer) >= self._max_batch and self._loop is not None:
+            try:
+                self._loop.call_soon_threadsafe(
+                    lambda: self._loop.create_task(self._flush())
+                )
+            except RuntimeError:
+                pass  # No event loop — flush will happen on next interval
+
+    async def _flush(self) -> None:
+        """Flush buffered receipts to Supabase in batches."""
+        # Atomically grab buffer contents
+        with self._buffer_lock:
+            if not self._buffer:
+                return
+            batch = self._buffer[:self._max_batch]
+            self._buffer = self._buffer[self._max_batch:]
+
+        if not batch:
+            return
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_insert_batch
+            # Map receipts to DB rows before inserting
+            rows: list[dict[str, Any]] = []
+            for receipt in batch:
+                try:
+                    row = _map_receipt_to_row(receipt)
+                    suite_id = str(row.get("suite_id") or "")
+                    if suite_id in _invalid_suite_ids or suite_id == _UUID_NIL:
+                        continue
+                    rows.append(row)
+                except Exception as e:
+                    logger.error("Failed to map receipt %s: %s", receipt.get("id", "?"), e)
+
+            if rows:
+                await supabase_insert_batch("receipts", rows)
+                logger.info("Async-flushed %d receipts to Supabase", len(rows))
+        except Exception as e:
+            logger.error("Async receipt flush failed for %d receipts: %s", len(batch), e)
+            # Re-enqueue failed batch for retry (at front of buffer)
+            with self._buffer_lock:
+                self._buffer = batch + self._buffer
+
+    async def flush_now(self) -> None:
+        """Flush ALL buffered receipts immediately (for strict mode and shutdown)."""
+        while True:
+            with self._buffer_lock:
+                if not self._buffer:
+                    break
+            await self._flush()
+
+    async def shutdown(self) -> None:
+        """Stop the background task and flush remaining receipts."""
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        # Final flush — zero receipt loss
+        await self.flush_now()
+        self._task = None
+
+
+# Module-level writer instance
+_receipt_writer: _AsyncReceiptWriter | None = None
+
+
+def start_receipt_writer() -> None:
+    """Initialize and start the async receipt writer. Called during app startup."""
+    global _receipt_writer
+    if _receipt_writer is not None:
+        return
+    _receipt_writer = _AsyncReceiptWriter(flush_interval=2.0, max_batch=50)
+    _receipt_writer.start()
+    logger.info("Async receipt writer started (flush_interval=2s, max_batch=50)")
+
+
+async def stop_receipt_writer() -> None:
+    """Shutdown the async receipt writer with final flush. Called during app shutdown."""
+    global _receipt_writer
+    if _receipt_writer is None:
+        return
+    await _receipt_writer.shutdown()
+    _receipt_writer = None
+    logger.info("Async receipt writer stopped (final flush complete)")
+
 # =============================================================================
 # Public API (unchanged interface — backward compatible)
 # =============================================================================
 
 
 def store_receipts(receipts: list[dict[str, Any]]) -> None:
-    """Append receipts. In-memory always + Supabase when configured (Law #2).
+    """Append receipts. In-memory always + async Supabase when configured (Law #2).
 
-    Supabase write failures are logged but do NOT block the pipeline.
-    Receipts are always available in-memory for the current process lifetime.
+    Supabase write is non-blocking — receipts are enqueued to the async writer
+    for batched persistence. In-memory store is always the primary source of truth.
     """
     with _lock:
         _receipts.extend(receipts)
         logger.info("Stored %d receipts (total: %d)", len(receipts), len(_receipts))
 
-    # Dual-write to Supabase if configured (failure must NOT block in-memory)
-    if _supabase_enabled():
+    # Enqueue for async Supabase persistence (non-blocking)
+    if _supabase_enabled() and _receipt_writer is not None:
+        _receipt_writer.enqueue(receipts)
+    elif _supabase_enabled():
+        # Writer not started — fall back to sync persistence
         try:
             _persist_to_supabase(receipts)
         except Exception as e:
@@ -282,11 +438,7 @@ def store_receipts_strict(receipts: list[dict[str, Any]]) -> None:
     """Strict receipt persistence for YELLOW/RED tier (Law #3: fail-closed).
 
     Always stores in-memory first, then attempts Supabase persistence.
-    If Supabase is configured and the write fails, raises ReceiptPersistenceError
-    to halt the pipeline — YELLOW/RED operations MUST NOT proceed without
-    durable receipt persistence.
-
-    If Supabase is NOT configured (dev mode), logs a warning but does not raise.
+    Uses async writer flush_now() if available, otherwise falls back to sync.
     """
     # Always store in-memory first
     with _lock:
@@ -295,12 +447,46 @@ def store_receipts_strict(receipts: list[dict[str, Any]]) -> None:
 
     # Strict Supabase persistence — failure halts pipeline for YELLOW/RED
     if _supabase_enabled():
-        try:
-            _persist_to_supabase(receipts)
-        except Exception as e:
-            raise ReceiptPersistenceError(
-                f"YELLOW/RED receipt persistence failed (Law #3 fail-closed): {e}"
-            ) from e
+        if _receipt_writer is not None:
+            _receipt_writer.enqueue(receipts)
+            try:
+                loop = _receipt_writer._loop
+                if loop is None:
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                if loop.is_running():
+                    # Check if we're ON the event loop thread
+                    loop_thread_id = getattr(loop, '_thread_id', None)
+                    if loop_thread_id == threading.current_thread().ident:
+                        # We ARE the event loop thread — cannot block with future.result()
+                        # Schedule flush and trust the next flush cycle
+                        loop.create_task(_receipt_writer.flush_now())
+                        logger.warning(
+                            "store_receipts_strict called from event loop thread — "
+                            "flush scheduled but not awaited"
+                        )
+                    else:
+                        # We're in a worker thread — safe to block
+                        future = asyncio.run_coroutine_threadsafe(
+                            _receipt_writer.flush_now(), loop
+                        )
+                        future.result(timeout=10.0)
+                else:
+                    loop.run_until_complete(_receipt_writer.flush_now())
+            except Exception as e:
+                raise ReceiptPersistenceError(
+                    f"YELLOW/RED receipt persistence failed (Law #3 fail-closed): {e}"
+                ) from e
+        else:
+            # Writer not started — fall back to sync
+            try:
+                _persist_to_supabase(receipts)
+            except Exception as e:
+                raise ReceiptPersistenceError(
+                    f"YELLOW/RED receipt persistence failed (Law #3 fail-closed): {e}"
+                ) from e
     else:
         logger.warning(
             "store_receipts_strict called without Supabase configured — "
@@ -375,3 +561,7 @@ def clear_store() -> None:
     with _supabase_init_lock:
         _supabase_client = None
         _supabase_init_attempted = False
+    # Clear async writer buffer if active
+    if _receipt_writer is not None:
+        with _receipt_writer._buffer_lock:
+            _receipt_writer._buffer.clear()

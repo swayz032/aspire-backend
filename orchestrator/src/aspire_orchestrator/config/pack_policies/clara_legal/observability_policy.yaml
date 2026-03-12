@@ -1,0 +1,13 @@
+registry_id: clara_legal
+tags: [clara_legal, legal, contracts]
+alerts:
+  - receipt_failure_rate
+  - agent_loop_timeout_rate
+  - policy_denial_spike
+  - high_risk_action_attempts
+  - memory_write_failures
+metrics:
+  - response_quality_score
+  - receipts_emitted
+  - policy_denials
+  - llm_latency_ms

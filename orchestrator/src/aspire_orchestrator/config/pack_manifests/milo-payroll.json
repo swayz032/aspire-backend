@@ -2,28 +2,90 @@
   "skillpack_id": "milo-payroll",
   "name": "Milo Payroll",
   "agent_name": "Milo",
+  "registry_id": "milo_payroll",
+  "owner_key": "milo",
+  "persona_filename": "milo_payroll_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Payroll processing, tax calculation verification, Gusto integration. RED tier — requires dual approval.",
+  "version": "1.0.0",
+  "description": "Payroll run, snapshot, scheduling, and deadline workflows with red-tier governance. Default risk tier red.",
   "capabilities": [
     "can_plan_payroll_run",
-    "can_verify_tax_calculations",
     "can_generate_payroll_snapshot",
+    "can_schedule_payroll",
     "can_track_payroll_deadlines"
   ],
   "risk_profile": {
-    "default_risk_tier": "red",
+    "default_risk_tier": "green",
     "max_risk_tier": "red"
   },
   "tools": [
     "gusto.payroll.run",
     "gusto.read_payrolls"
   ],
-  "providers": ["gusto"],
+  "providers": [
+    "gusto"
+  ],
   "actions": [
-    "payroll.run", "payroll.snapshot", "payroll.schedule", "payroll.deadline"
+    "payroll.run",
+    "payroll.snapshot",
+    "payroll.schedule",
+    "payroll.deadline"
   ],
   "certification_status": "uncertified",
-  "outputs": ["payroll_plan", "payroll_snapshot", "tax_verification"],
-  "dependencies": []
+  "outputs": [
+    "payroll_plan",
+    "payroll_snapshot",
+    "tax_verification"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "milo_payroll_system_prompt.md",
+    "tone": "precise",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "milo_payroll",
+      "payroll",
+      "gusto"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "high_risk_action_attempts",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "payroll.run",
+      "payroll.snapshot",
+      "payroll.schedule",
+      "payroll.deadline"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "milo_payroll"
+  }
 }

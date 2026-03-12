@@ -7,6 +7,9 @@ import { test, expect } from '@playwright/test';
  * successful sign-in, and error handling.
  */
 test.describe('Login', () => {
+  const signInButton = (page: any) =>
+    page.getByText(/^Sign In$/).last();
+
   test('redirects unauthenticated user to login page', async ({ page }) => {
     await page.goto('/');
     // Auth gate should redirect to login
@@ -14,7 +17,7 @@ test.describe('Login', () => {
 
     // Verify login page content is visible
     // data-testid suggestion: [data-testid="login-brand-name"]
-    await expect(page.getByText('Aspire')).toBeVisible();
+    await expect(page.getByText(/^Aspire(?:\s+—\s+Private Beta)?$/).first()).toBeVisible();
     await expect(page.getByText('Governed AI execution for your business')).toBeVisible();
   });
 
@@ -36,9 +39,9 @@ test.describe('Login', () => {
 
     // Click Sign In without filling fields
     // data-testid suggestion: [data-testid="login-submit-button"]
-    const signInButton = page.getByText('Sign In');
-    await expect(signInButton).toBeVisible();
-    await signInButton.click();
+    const submitButton = signInButton(page);
+    await expect(submitButton).toBeVisible();
+    await submitButton.click();
 
     // Should show validation error
     await expect(
@@ -56,13 +59,13 @@ test.describe('Login', () => {
     await emailInput.fill('invalid@example.com');
     await passwordInput.fill('wrongpassword123');
 
-    const signInButton = page.getByText('Sign In');
-    await signInButton.click();
+    await signInButton(page).click();
 
     // Supabase returns an error message for invalid credentials
-    // The exact message may vary, but an error box should appear
-    const errorBox = page.locator('[style*="rgba(239, 68, 68"]');
-    await expect(errorBox).toBeVisible({ timeout: 10_000 });
+    // The exact styling may vary, but the auth error text should appear.
+    await expect(
+      page.getByText(/invalid login credentials|invalid credentials|authentication failed/i).first()
+    ).toBeVisible({ timeout: 10_000 });
   });
 
   test('successful login redirects to home or onboarding', async ({ page }) => {
@@ -80,13 +83,33 @@ test.describe('Login', () => {
     await emailInput.fill(email);
     await passwordInput.fill(password!);
 
-    const signInButton = page.getByText('Sign In');
-    await signInButton.click();
+    await signInButton(page).click();
 
-    // Should redirect away from login — either to tabs (home) or onboarding
-    await page.waitForURL(
-      /\/\(tabs\)|\/\(auth\)\/onboarding/,
+    // Successful auth may land on onboarding or directly on the desktop home shell.
+    const loginUrlPattern = /\/\(auth\)\/login|\/login/;
+    await page.waitForFunction(
+      (pattern) => !new RegExp(pattern).test(window.location.pathname),
+      loginUrlPattern.source,
       { timeout: 15_000 }
     );
+
+    const homeMarkers = [
+      page.getByText(/Good (morning|afternoon|evening|night)\./i).first(),
+      page.getByPlaceholder('Message Ava...'),
+      page.getByText('Home').first(),
+    ];
+    const onboardingMarkers = [
+      page.getByText(/Step 1 of 3|Step 2 of 3|Step 3 of 3/i).first(),
+      page.getByText(/Tell us about your business|What do you need help with\?|You are all set/i).first(),
+    ];
+
+    const landedOnHome = await Promise.any(
+      homeMarkers.map((locator) => locator.waitFor({ state: 'visible', timeout: 15_000 }))
+    ).then(() => true).catch(() => false);
+    const landedOnOnboarding = await Promise.any(
+      onboardingMarkers.map((locator) => locator.waitFor({ state: 'visible', timeout: 5_000 }))
+    ).then(() => true).catch(() => false);
+
+    expect(landedOnHome || landedOnOnboarding).toBeTruthy();
   });
 });

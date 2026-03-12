@@ -131,7 +131,7 @@ Phase 3 Group B implemented 9 waves of desktop production infrastructure:
 
 - ⚠️ **README updated (if new directory/module)**
   - NEW: tests/e2e/verification/ (W7) — README not found
-  - NEW: tests/e2e/playwright/ (W8) — playwright.config.ts serves as documentation
+  - NEW: backend/tests/e2e/playwright/ (W8) — playwright.config.ts serves as documentation
   - ADVISORY: Add tests/e2e/README.md explaining live service dependencies
 
 - ✅ **Runbook updated (if behavior changed)**
@@ -187,7 +187,7 @@ cd C:\Users\tonio\Projects\myapp
 pytest tests/e2e/verification/ -v --tb=short
 
 # W8 Playwright tests (require Desktop UI running)
-cd C:\Users\tonio\Projects\myapp\tests\e2e\playwright
+cd C:\Users\tonio\Projects\myapp\backend\tests\e2e\playwright
 npx playwright test
 ```
 
@@ -256,17 +256,17 @@ npx playwright test
    - `login.spec.ts`: Login form display, invalid credentials, successful login → SPECIFIED
    - `onboarding.spec.ts`: 3-step form, suite name validation, skip/continue flow → SPECIFIED
    - `authority-queue.spec.ts`: Approve action, deny action, reason required → SPECIFIED
-   - Evidence: tests/e2e/playwright/specs/desktop/
+   - Evidence: backend/tests/e2e/playwright/specs/desktop/
 
 10. **Admin UI (15 tests across 5 specs)**
     - `admin-dashboard.spec.ts`: Real KPI data or loading state, telemetry integration → SPECIFIED
     - `admin-receipts.spec.ts`: All receipts view, filtering by suite, receipt detail → SPECIFIED
-    - Evidence: tests/e2e/playwright/specs/admin/
+    - Evidence: backend/tests/e2e/playwright/specs/admin/
 
 11. **Cross-Surface Integration (3 tests across 3 specs)**
     - `receipt-flow.spec.ts`: Chat message → receipt appears in receipts page → SPECIFIED
     - `approval-flow.spec.ts`: YELLOW action → approval queue → approve → receipt emitted → SPECIFIED
-    - Evidence: tests/e2e/playwright/specs/cross-surface/
+    - Evidence: backend/tests/e2e/playwright/specs/cross-surface/
 
 #### How to Reproduce Locally
 
@@ -286,7 +286,7 @@ npx playwright test
 
 **W8 Playwright Tests:**
 1. Start Desktop UI: `cd Aspire-desktop && pnpm dev` (port 5173)
-2. Install Playwright: `cd tests/e2e/playwright && npx playwright install`
+2. Install Playwright: `cd backend/tests/e2e/playwright && npx playwright install`
 3. Run tests: `npx playwright test`
 4. Expected: 78/78 PASS
 

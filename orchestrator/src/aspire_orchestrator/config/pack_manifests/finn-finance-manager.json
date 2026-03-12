@@ -2,9 +2,12 @@
   "skillpack_id": "finn-finance-manager",
   "name": "Finn Finance Manager",
   "agent_name": "Finn",
+  "registry_id": "finn_finance_manager",
+  "owner_key": "finn",
+  "persona_filename": "finn_finance_manager_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Strategic finance manager — snapshots, exceptions, proposals, A2A delegation, tax strategy.",
+  "version": "1.0.0",
+  "description": "Strategic financial analysis, packet drafting, proposals, and A2A delegation workflows. Default risk tier yellow.",
   "capabilities": [
     "can_read_finance_snapshot",
     "can_read_finance_exceptions",
@@ -13,7 +16,7 @@
     "can_delegate_to_agents"
   ],
   "risk_profile": {
-    "default_risk_tier": "yellow",
+    "default_risk_tier": "green",
     "max_risk_tier": "yellow"
   },
   "tools": [
@@ -23,12 +26,72 @@
     "finance.proposal.create",
     "a2a.dispatch"
   ],
-  "providers": ["internal"],
+  "providers": [
+    "internal"
+  ],
   "actions": [
-    "finance.snapshot.read", "finance.exceptions.read",
-    "finance.packet.draft", "finance.proposal.create", "a2a.create"
+    "finance.snapshot.read",
+    "finance.exceptions.read",
+    "finance.packet.draft",
+    "finance.proposal.create",
+    "a2a.create"
   ],
   "certification_status": "uncertified",
-  "outputs": ["finance_snapshot", "exception_report", "finance_packet", "finance_proposal"],
-  "dependencies": []
+  "outputs": [
+    "finance_snapshot",
+    "exception_report",
+    "finance_packet",
+    "finance_proposal"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "finn_finance_manager_system_prompt.md",
+    "tone": "direct",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "finn_finance_manager",
+      "finance",
+      "strategy"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "finance.snapshot.read",
+      "finance.exceptions.read",
+      "finance.packet.draft",
+      "finance.proposal.create",
+      "a2a.create"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "finn_finance_manager"
+  }
 }

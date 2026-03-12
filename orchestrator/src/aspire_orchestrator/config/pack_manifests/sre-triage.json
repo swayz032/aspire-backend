@@ -1,0 +1,94 @@
+{
+  "skillpack_id": "sre-triage",
+  "name": "SRE Triage",
+  "agent_name": "SRE Triage",
+  "registry_id": "sre_triage",
+  "owner_key": "sre",
+  "persona_filename": "sre_triage_system_prompt.md",
+  "channel": "internal_backend",
+  "version": "1.0.0",
+  "description": "SRE incident triage automation. Default risk tier yellow.",
+  "capabilities": [
+    "can_alert_detect",
+    "can_incident_triage",
+    "can_incident_route",
+    "can_report_generate"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "yellow",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "internal.sre.alert_detect",
+    "internal.sre.incident_triage",
+    "internal.sre.incident_route",
+    "internal.sre.report_generate"
+  ],
+  "providers": [
+    "internal"
+  ],
+  "actions": [
+    "sre.alert.detect",
+    "sre.incident.triage",
+    "sre.incident.route",
+    "sre.report.generate"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "sre_alert_detect_result",
+    "sre_incident_triage_result",
+    "sre_incident_route_result",
+    "sre_report_generate_result"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "sre_triage_system_prompt.md",
+    "tone": "direct",
+    "style": "operational",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "sre_triage",
+      "sre",
+      "ops"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "sre.alert.detect",
+      "sre.incident.triage",
+      "sre.incident.route",
+      "sre.report.generate"
+    ]
+  },
+  "internal_only": true,
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "sre_triage"
+  }
+}

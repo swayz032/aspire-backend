@@ -1,0 +1,25 @@
+default_mode: memory-assisted
+actions:
+  "templates.list":
+    autonomy: guided
+    binding_fields: [query]
+
+  "templates.details":
+    autonomy: guided
+    binding_fields: [template_id]
+
+  "contract.generate":
+    autonomy: approval-gated
+    binding_fields: [party_names, template_id]
+
+  "contract.review":
+    autonomy: guided
+    binding_fields: [contract_id]
+
+  "contract.sign":
+    autonomy: approval-gated
+    binding_fields: [contract_id, signer_name, signer_email]
+
+  "contract.compliance":
+    autonomy: guided
+    binding_fields: [contract_id]

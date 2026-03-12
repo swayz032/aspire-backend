@@ -1,0 +1,49 @@
+tool_policy:
+  "email.read":
+    tool_id: polaris.email.read
+    allowed: true
+    risk_tier: green
+
+  "email.triage":
+    tool_id: internal.email.triage
+    allowed: true
+    risk_tier: green
+
+  "email.draft":
+    tool_id: polaris.email.draft
+    allowed: true
+    risk_tier: yellow
+
+  "email.send":
+    tool_id: polaris.email.send
+    allowed: true
+    risk_tier: yellow
+
+  "office.read":
+    tool_id: internal.office.read
+    allowed: true
+    risk_tier: green
+
+  "office.create":
+    tool_id: internal.office.create
+    allowed: true
+    risk_tier: yellow
+
+  "office.draft":
+    tool_id: internal.office.draft
+    allowed: true
+    risk_tier: yellow
+
+  "office.send":
+    tool_id: internal.office.send
+    allowed: true
+    risk_tier: yellow
+
+# tool: polaris.email.read
+# tool: polaris.email.draft
+# tool: polaris.email.send
+# tool: internal.email.triage
+# tool: internal.office.read
+# tool: internal.office.create
+# tool: internal.office.draft
+# tool: internal.office.send

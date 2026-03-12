@@ -32,6 +32,34 @@ defaults:
 # ──────────────────────────────────────────────
 
 skill_packs:
+  ava_user:
+    id: ava_user
+    name: "Ava User"
+    owner: ava
+    category: channel
+    risk_tier: green
+    status: active
+    description: "User-facing Ava orchestrator for intent classification, routing plans, and governance previews"
+    actions: [intent.classify, route.plan, governance.preview]
+    providers: [internal]
+    capability_scopes: [brain:classify, brain:route, governance:preview]
+    tools: [internal.intent_classifier, internal.skill_router, internal.policy_preview]
+    per_suite_enabled: true
+
+  ava_admin:
+    id: ava_admin
+    name: "Ava Admin"
+    owner: ava_admin
+    category: internal_admin
+    risk_tier: yellow
+    status: active
+    description: "Internal Ava control-plane operator for health pulse, triage, provider analysis, council dispatch, and learning-loop workflows"
+    actions: [admin.ops.health_pulse, admin.ops.triage, admin.ops.provider_analysis, admin.ops.robot_triage, admin.ops.council.dispatch, admin.ops.learning_entry.create]
+    providers: [internal]
+    capability_scopes: [admin:health_pulse, admin:triage, admin:provider_analysis, admin:robot_triage, admin:council:dispatch, admin:learning_entry:create]
+    tools: [internal.admin.health_pulse, internal.admin.incident_triage, internal.admin.provider_analysis, internal.admin.robot_triage, internal.admin.council.dispatch, internal.admin.learning_entry]
+    per_suite_enabled: false
+
   sarah_front_desk:
     id: sarah_front_desk
     name: "Sarah (Front Desk)"
@@ -39,7 +67,7 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: active
-    description: "Telephony, call routing, call transfer, front desk reception, visitor logging"
+    description: "Call routing, transfers, and visitor logging workflows"
     actions: [call.route, call.transfer, visitor.log]
     providers: [twilio]
     capability_scopes: [call:route, call:transfer, visitor:log]
@@ -53,9 +81,9 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: active
-    description: "Email and office-message handling, triage, draft responses, and sending"
+    description: "Inbox triage, drafting, sending, and internal office messaging workflows"
     actions: [email.read, email.triage, email.draft, email.send, office.read, office.create, office.draft, office.send]
-    providers: [polarism]
+    providers: [polarism, internal]
     capability_scopes: [email:read, email:triage, comms:draft_email, comms:send_email, office:read, office:create, office:draft, office:send]
     tools: [polaris.email.read, internal.email.triage, polaris.email.draft, polaris.email.send, internal.office.read, internal.office.create, internal.office.draft, internal.office.send]
     per_suite_enabled: true
@@ -71,7 +99,7 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: active
-    description: "Invoice creation, quote sending, payment tracking via Stripe Connect"
+    description: "Invoice and quote proposal workflows with approval-gated execution"
     actions: [invoice.create, invoice.send, invoice.void, quote.create, quote.send]
     providers: [stripe]
     capability_scopes: [invoicing:create, invoicing:send, invoicing:void, quotes:create, quotes:send]
@@ -85,9 +113,9 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: active
-    description: "Video meetings, room management, transcription, post-meeting summaries"
+    description: "Meeting room creation, scheduling, and meeting summarization"
     actions: [meeting.schedule, meeting.create_room, meeting.summarize]
-    providers: [livekit, deepgram, elevenlabs]
+    providers: [livekit, deepgram]
     capability_scopes: [meetings:schedule, meeting:create_room, meeting:summarize]
     tools: [livekit.meeting.schedule, livekit.room.create, deepgram.transcribe]
     per_suite_enabled: true
@@ -103,10 +131,10 @@ skill_packs:
     category: channel
     risk_tier: green
     status: active
-    description: "Vendor search, web research, places lookup, vendor comparison, RFQ generation"
-    actions: [research.search, research.places, research.image, research.compare, research.rfq]
+    description: "Web search, places lookup, vendor comparison, and RFQ generation"
+    actions: [research.search, research.places, research.compare, research.rfq]
     providers: [brave, tavily, google_places, tomtom, here, foursquare, osm_overpass, mapbox]
-    capability_scopes: [research:search, research:places, research:image, research:compare, research:rfq]
+    capability_scopes: [research:search, research:places, research:compare, research:rfq]
     tools: [brave.search, tavily.search, google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode, internal.document.generate]
     per_suite_enabled: true
     knowledge_domains:
@@ -121,11 +149,11 @@ skill_packs:
     category: channel
     risk_tier: yellow
     status: active
-    description: "PDF generation, document preview, document sharing"
+    description: "Document generation, preview, and governed sharing workflows"
     actions: [document.generate, document.preview, document.share]
-    providers: [puppeteer, s3, polarism]
+    providers: [puppeteer, s3]
     capability_scopes: [document:generate, document:preview, document:share]
-    tools: [puppeteer.pdf.generate, s3.document.upload, s3.url.sign, polaris.email.send]
+    tools: [puppeteer.pdf.generate, s3.document.upload, s3.url.sign]
     per_suite_enabled: true
 
 # ──────────────────────────────────────────────
@@ -171,7 +199,7 @@ skill_packs:
     category: finance
     risk_tier: yellow
     status: active
-    description: "Accounting, QuickBooks sync, transaction categorization, financial reports, journal entries"
+    description: "Books sync, categorization, reporting, and journal entry workflows"
     actions: [books.sync, books.categorize, books.report, books.journal_entry]
     providers: [quickbooks]
     capability_scopes: [books:sync, books:categorize, books:report, books:journal_entry]
@@ -189,7 +217,7 @@ skill_packs:
     category: legal
     risk_tier: red
     status: active
-    description: "Contract management, review, compliance tracking, e-signatures via PandaDoc. Template library browsing and field discovery."
+    description: "Contract drafting, review, signing, template discovery, and compliance tracking workflows"
     actions: [contract.generate, contract.review, contract.sign, contract.send, contract.session, contract.compliance, templates.list, templates.details]
     providers: [pandadoc]
     capability_scopes: [contracts:generate, contracts:review, contracts:sign, contracts:send, contracts:session, contracts:compliance, templates:read]
@@ -211,7 +239,7 @@ skill_packs:
     category: internal_admin
     risk_tier: yellow
     status: active
-    description: "Domain and mailbox management for PolarisM"
+    description: "Domain and mailbox administration workflows with approval-gated infrastructure changes"
     actions: [domain.check, domain.verify, domain.dns.create, domain.purchase, domain.delete, mail.account.create, mail.account.read]
     providers: [polarism]
     capability_scopes: [domain:read, domain:dns:write, domain:purchase, domain:delete, mail:account:read, mail:account:write]
@@ -221,6 +249,62 @@ skill_packs:
 # ──────────────────────────────────────────────
 # TOOL DEFINITIONS — Maps tool IDs to providers
 # ──────────────────────────────────────────────
+
+  sre_triage:
+    id: sre_triage
+    name: "SRE Triage"
+    owner: sre
+    category: internal
+    risk_tier: yellow
+    status: active
+    description: "Internal incident triage, alert review, responder routing, and incident report generation"
+    actions: [sre.alert.detect, sre.incident.triage, sre.incident.route, sre.report.generate]
+    providers: [internal]
+    capability_scopes: [sre:alert:detect, sre:incident:triage, sre:incident:route, sre:report:generate]
+    tools: [internal.sre.alert_detect, internal.sre.incident_triage, internal.sre.incident_route, internal.sre.report_generate]
+    per_suite_enabled: true
+
+  qa_evals:
+    id: qa_evals
+    name: "QA Evals"
+    owner: qa
+    category: internal
+    risk_tier: green
+    status: active
+    description: "Internal evaluation execution, regression tracking, and quality reporting"
+    actions: [qa.eval.execute, qa.report.generate, qa.trend.track, qa.regression.flag]
+    providers: [internal]
+    capability_scopes: [qa:eval:execute, qa:report:generate, qa:trend:track, qa:regression:flag]
+    tools: [internal.qa.eval_execute, internal.qa.report_generate, internal.qa.trend_track, internal.qa.regression_flag]
+    per_suite_enabled: true
+
+  security_review:
+    id: security_review
+    name: "Security Review"
+    owner: security
+    category: internal
+    risk_tier: red
+    status: active
+    description: "Internal security scanning, review packet generation, and gated violation escalation"
+    actions: [security.scan.execute, security.report.generate, security.violation.flag, security.review.request]
+    providers: [internal]
+    capability_scopes: [security:scan:execute, security:report:generate, security:violation:flag, security:review:request]
+    tools: [internal.security.scan_execute, internal.security.report_generate, internal.security.violation_flag, internal.security.review_request]
+    per_suite_enabled: true
+
+  release_manager:
+    id: release_manager
+    name: "Release Manager"
+    owner: release
+    category: internal
+    risk_tier: yellow
+    status: active
+    description: "Internal release readiness, checklist enforcement, pipeline tracking, and deployment preparation"
+    actions: [release.checklist.enforce, release.pipeline.track, release.notes.generate, release.deploy.prepare]
+    providers: [internal]
+    capability_scopes: [release:checklist:enforce, release:pipeline:track, release:notes:generate, release:deploy:prepare]
+    tools: [internal.release.checklist_enforce, internal.release.pipeline_track, internal.release.notes_generate, internal.release.deploy_prepare]
+    per_suite_enabled: true
 
 tools:
   google.calendar.read:
@@ -515,6 +599,42 @@ tools:
     provider: internal
     category: telephony
     risk_tier: green
+  internal.intent_classifier:
+    provider: internal
+    category: brain
+    risk_tier: green
+  internal.skill_router:
+    provider: internal
+    category: brain
+    risk_tier: green
+  internal.policy_preview:
+    provider: internal
+    category: governance
+    risk_tier: green
+  internal.admin.health_pulse:
+    provider: internal
+    category: admin
+    risk_tier: green
+  internal.admin.incident_triage:
+    provider: internal
+    category: admin
+    risk_tier: green
+  internal.admin.provider_analysis:
+    provider: internal
+    category: admin
+    risk_tier: green
+  internal.admin.robot_triage:
+    provider: internal
+    category: admin
+    risk_tier: green
+  internal.admin.council.dispatch:
+    provider: internal
+    category: admin
+    risk_tier: yellow
+  internal.admin.learning_entry:
+    provider: internal
+    category: admin
+    risk_tier: yellow
 
 # ──────────────────────────────────────────────
 # PROVIDER REGISTRY — External service metadata

@@ -37,6 +37,8 @@ from aspire_orchestrator.services.registry import (
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_ONLY_CATEGORIES = {"internal", "internal_admin"}
+
 
 # =============================================================================
 # Risk tier ordering for MAX computation
@@ -219,6 +221,7 @@ class SkillRouter:
         """
         ctx = context or {}
         current_agent = ctx.get("current_agent", "ava")
+        allow_internal_routing = bool(ctx.get("allow_internal_routing", False))
 
         # Collect action types from all intents
         action_types: list[str] = []
@@ -292,6 +295,26 @@ class SkillRouter:
                 delegation_required=False,
                 deny_reason=f"unknown_action: {', '.join(denied_actions)}",
             )
+
+        if not allow_internal_routing:
+            internal_steps = [
+                step.skill_pack
+                for step in steps
+                if self._is_internal_only_pack(step.skill_pack)
+            ]
+            if internal_steps:
+                logger.warning(
+                    "Routing DENY: internal-only skill pack(s) %s requested without admin bridge",
+                    internal_steps,
+                )
+                return RoutingPlan(
+                    steps=[],
+                    execution_strategy=ExecutionStrategy.SEQUENTIAL,
+                    estimated_risk_tier=RiskTier.GREEN,
+                    requires_compound_approval=False,
+                    delegation_required=False,
+                    deny_reason="internal_only_pack",
+                )
 
         # Resolve dependencies and assign depends_on
         deps = _detect_dependencies(action_types)
@@ -420,6 +443,13 @@ class SkillRouter:
         if pack is None:
             return False
         return pack.owner != current_agent
+
+    def _is_internal_only_pack(self, pack_id: str) -> bool:
+        """Return True when a pack is restricted to internal/admin routing."""
+        pack = self._registry.get_skill_pack(pack_id)
+        if pack is None:
+            return False
+        return pack.category in _INTERNAL_ONLY_CATEGORIES
 
 
 # =============================================================================

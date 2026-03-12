@@ -1,0 +1,11 @@
+registry_id: ava_admin
+tags: [ava_admin, control_plane, internal]
+alerts:
+  - receipt_failure_rate
+  - policy_denial_spike
+  - high_risk_action_attempts
+metrics:
+  - response_quality_score
+  - receipts_emitted
+  - policy_denials
+  - llm_latency_ms

@@ -424,7 +424,7 @@ cd C:\Users\tonio\Projects\myapp
 pytest tests/e2e/verification/ -v --tb=short
 
 # W8 Playwright tests (requires Desktop UI running)
-cd tests/e2e/playwright
+cd backend/tests/e2e/playwright
 npx playwright test
 ```
 

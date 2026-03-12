@@ -756,15 +756,17 @@ class TestOutboxEndpointRealData:
 
         outbox = get_outbox_client()
         outbox.clear_jobs()
+        original_backend = outbox.backend
+        outbox.backend = "memory"
 
         # Submit a job
         job = OutboxJob(
-            suite_id="suite-1",
-            office_id="office-1",
+            suite_id="00000000-0000-0000-0000-000000000101",
+            office_id="00000000-0000-0000-0000-000000000201",
             correlation_id="corr-outbox-test",
             action_type="payment.send",
         )
-        asyncio.get_event_loop().run_until_complete(outbox.submit_job(job))
+        asyncio.run(outbox.submit_job(job))
 
         response = client.get("/admin/ops/outbox", headers=admin_headers)
         assert response.status_code == 200
@@ -772,6 +774,7 @@ class TestOutboxEndpointRealData:
         assert data["queue_depth"] >= 1
 
         outbox.clear_jobs()
+        outbox.backend = original_backend
 
 
 # =============================================================================

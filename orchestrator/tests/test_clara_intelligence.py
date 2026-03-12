@@ -203,22 +203,20 @@ class TestIntelligentComplianceAssessment:
         """When LLM works, compliance data is enriched with specialist assessment."""
         from aspire_orchestrator.skillpacks.clara_legal import _intelligent_compliance_assessment
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({
+        mock_content = json.dumps({
             "specialist_assessment": "Contract is active with no compliance issues.",
             "recommended_actions": ["Schedule 60-day renewal review"],
             "risk_score": 15,
         })
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
         with patch("aspire_orchestrator.config.settings.settings") as mock_settings:
             mock_settings.openai_api_key = "test-key"
             mock_settings.openai_base_url = None
             mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+            with patch(
+                "aspire_orchestrator.skillpacks.clara_legal.generate_text_async",
+                AsyncMock(return_value=mock_content),
+            ):
                 result = await _intelligent_compliance_assessment(
                     {"status": "document.completed", "name": "Active MSA"},
                     "active-id",
@@ -239,7 +237,10 @@ class TestIntelligentComplianceAssessment:
             mock_settings.openai_api_key = "test-key"
             mock_settings.openai_base_url = None
             mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", side_effect=Exception("boom")):
+            with patch(
+                "aspire_orchestrator.skillpacks.clara_legal.generate_text_async",
+                AsyncMock(side_effect=Exception("boom")),
+            ):
                 result = await _intelligent_compliance_assessment(
                     {"status": "document.sent", "name": "Sent Contract"},
                     "sent-id",

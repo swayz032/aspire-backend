@@ -1,0 +1,21 @@
+default_mode: memory-assisted
+actions:
+  "invoice.create":
+    autonomy: approval-gated
+    binding_fields: [customer_id, amount, currency, line_items]
+
+  "invoice.send":
+    autonomy: approval-gated
+    binding_fields: [invoice_id]
+
+  "invoice.void":
+    autonomy: approval-gated
+    binding_fields: [invoice_id]
+
+  "quote.create":
+    autonomy: approval-gated
+    binding_fields: [customer_id, amount, currency, line_items]
+
+  "quote.send":
+    autonomy: approval-gated
+    binding_fields: [quote_id]

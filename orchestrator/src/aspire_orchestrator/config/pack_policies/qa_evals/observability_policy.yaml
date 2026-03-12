@@ -1,0 +1,12 @@
+registry_id: qa_evals
+tags: [qa_evals, qa, evals]
+alerts:
+  - receipt_failure_rate
+  - agent_loop_timeout_rate
+  - policy_denial_spike
+  - memory_write_failures
+metrics:
+  - response_quality_score
+  - receipts_emitted
+  - policy_denials
+  - llm_latency_ms

@@ -1,0 +1,35 @@
+# Clara Legal - Risk Policy
+pack_id: clara-legal
+default_risk_tier: green
+max_risk_tier: red
+
+actions:
+  "templates.list":
+    risk_tier: green
+    approval_required: false
+    description: "templates.list action for clara_legal"
+
+  "templates.details":
+    risk_tier: green
+    approval_required: false
+    description: "templates.details action for clara_legal"
+
+  "contract.generate":
+    risk_tier: yellow
+    approval_required: true
+    description: "contract.generate action for clara_legal"
+
+  "contract.review":
+    risk_tier: green
+    approval_required: false
+    description: "contract.review action for clara_legal"
+
+  "contract.sign":
+    risk_tier: red
+    approval_required: true
+    description: "contract.sign action for clara_legal"
+
+  "contract.compliance":
+    risk_tier: green
+    approval_required: false
+    description: "contract.compliance action for clara_legal"

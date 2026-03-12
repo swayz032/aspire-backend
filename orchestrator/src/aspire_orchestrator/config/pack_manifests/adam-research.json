@@ -2,15 +2,16 @@
   "skillpack_id": "adam-research",
   "name": "Adam Research",
   "agent_name": "Adam",
+  "registry_id": "adam_research",
+  "owner_key": "adam",
+  "persona_filename": "adam_research_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "3.0.0",
-  "description": "Web search, places, vendor comparison, RFQ generation. All GREEN tier.",
+  "version": "1.0.0",
+  "description": "Web search, places lookup, vendor comparison, and RFQ generation. Default risk tier green.",
   "capabilities": [
     "can_search_web",
     "can_search_places",
-    "can_search_images",
     "can_compare_vendors",
-    "can_generate_vendor_outreach_packets",
     "can_generate_rfq"
   ],
   "risk_profile": {
@@ -28,9 +29,76 @@
     "mapbox.geocode",
     "internal.document.generate"
   ],
-  "providers": ["brave", "tavily", "google_maps", "tomtom", "here", "foursquare", "mapbox"],
-  "actions": ["research.search", "research.places", "research.image", "research.compare", "research.rfq"],
+  "providers": [
+    "brave",
+    "tavily",
+    "google_maps",
+    "tomtom",
+    "here",
+    "foursquare",
+    "mapbox"
+  ],
+  "actions": [
+    "research.search",
+    "research.places",
+    "research.compare",
+    "research.rfq"
+  ],
   "certification_status": "uncertified",
-  "outputs": ["research_packet", "vendor_comparison", "rfq_document", "evidence_item"],
-  "dependencies": []
+  "outputs": [
+    "research_packet",
+    "vendor_comparison",
+    "rfq_document",
+    "evidence_item"
+  ],
+  "dependencies": [],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "preference",
+      "business_fact",
+      "workflow"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "adam_research_system_prompt.md",
+    "tone": "direct",
+    "style": "evidence-first",
+    "guardrails": [
+      "state assumptions explicitly",
+      "never claim execution without receipts",
+      "stay inside the assigned domain"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "adam_research",
+      "research",
+      "vendors"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "agent_loop_timeout_rate",
+      "policy_denial_spike",
+      "memory_write_failures"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "research.search",
+      "research.places",
+      "research.compare",
+      "research.rfq"
+    ]
+  },
+  "scaffold_metadata": {
+    "generated_by": "scripts/scaffold_agent.py",
+    "preset": null,
+    "registry_id": "adam_research"
+  }
 }

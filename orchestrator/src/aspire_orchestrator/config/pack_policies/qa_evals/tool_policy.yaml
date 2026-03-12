@@ -1,0 +1,20 @@
+tool_policy:
+  "qa.eval.execute":
+    tool_id: internal.qa.eval_execute
+    allowed: true
+    risk_tier: green
+
+  "qa.report.generate":
+    tool_id: internal.qa.report_generate
+    allowed: true
+    risk_tier: green
+
+  "qa.trend.track":
+    tool_id: internal.qa.trend_track
+    allowed: true
+    risk_tier: green
+
+  "qa.regression.flag":
+    tool_id: internal.qa.regression_flag
+    allowed: true
+    risk_tier: green

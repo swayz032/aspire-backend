@@ -97,12 +97,17 @@ class Settings(BaseSettings):
 
     # --- Clara RAG Knowledge Base ---
     embedding_model: str = "text-embedding-3-large"
-    embedding_dimensions: int = 3072
+    embedding_dimensions: int = 1536  # Reduced from 3072 for cost savings (99% quality retention)
     embedding_batch_size: int = 50
     rag_max_chunks_per_query: int = 10
     rag_min_similarity: float = 0.3
     rag_vector_weight: float = 0.7
     rag_text_weight: float = 0.3
+    retrieval_min_grounding_score: float = 0.55
+    retrieval_router_cache_ttl_seconds: int = 60
+    retrieval_router_cache_max_entries: int = 500
+    task_queue_max_concurrent: int = 20
+    task_queue_max_pending: int = 500
 
     # --- Timeouts ---
     openai_timeout_seconds: int = 15  # Railway adds latency; 8s was too short

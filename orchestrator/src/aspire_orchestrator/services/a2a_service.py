@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.supabase_client import _get_sync_pool
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,15 @@ class A2ATaskStatus(str, Enum):
     DONE = "done"
     FAILED = "failed"
     QUARANTINED = "quarantined"
+    CANCELED = "canceled"
+
+
+class A2AEventType(str, Enum):
+    """Event types emitted during A2A task lifecycle."""
+    CREATED = "created"
+    CLAIMED = "claimed"
+    COMPLETED = "completed"
+    FAILED = "failed"
     CANCELED = "canceled"
 
 
@@ -546,15 +556,15 @@ class A2AService:
         attempts = [fn_name]
         if fn_name.startswith("app."):
             attempts.append(fn_name.split(".", 1)[1])
-        with httpx.Client(timeout=8.0) as client:
-            last_error = ""
-            for name in attempts:
-                url = f"{base}/rest/v1/rpc/{name}"
-                resp = client.post(url, json=params, headers=headers)
-                if resp.status_code < 400:
-                    return resp.json()
-                last_error = resp.text
-            raise RuntimeError(last_error or f"RPC failed: {fn_name}")
+        client = _get_sync_pool()
+        last_error = ""
+        for name in attempts:
+            url = f"{base}/rest/v1/rpc/{name}"
+            resp = client.post(url, json=params, headers=headers, timeout=8.0)
+            if resp.status_code < 400:
+                return resp.json()
+            last_error = resp.text
+        raise RuntimeError(last_error or f"RPC failed: {fn_name}")
 
     def _select_sync(self, table: str, query: str) -> list[dict[str, Any]]:
         base = settings.supabase_url.rstrip("/")
@@ -563,12 +573,12 @@ class A2AService:
             "apikey": settings.supabase_service_role_key,
             "Authorization": f"Bearer {settings.supabase_service_role_key}",
         }
-        with httpx.Client(timeout=8.0) as client:
-            resp = client.get(url, headers=headers)
-            if resp.status_code >= 400:
-                return []
-            data = resp.json()
-            return data if isinstance(data, list) else []
+        client = _get_sync_pool()
+        resp = client.get(url, headers=headers, timeout=8.0)
+        if resp.status_code >= 400:
+            return []
+        data = resp.json()
+        return data if isinstance(data, list) else []
 
 
 _service: A2AService | None = None

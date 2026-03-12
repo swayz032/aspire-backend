@@ -1,0 +1,20 @@
+tool_policy:
+  "sre.alert.detect":
+    tool_id: internal.sre.alert_detect
+    allowed: true
+    risk_tier: green
+
+  "sre.incident.triage":
+    tool_id: internal.sre.incident_triage
+    allowed: true
+    risk_tier: green
+
+  "sre.incident.route":
+    tool_id: internal.sre.incident_route
+    allowed: true
+    risk_tier: yellow
+
+  "sre.report.generate":
+    tool_id: internal.sre.report_generate
+    allowed: true
+    risk_tier: green

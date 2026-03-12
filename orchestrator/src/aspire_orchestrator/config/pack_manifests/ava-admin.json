@@ -1,0 +1,104 @@
+{
+  "skillpack_id": "ava-admin",
+  "name": "Ava Admin",
+  "agent_name": "Ava Admin",
+  "registry_id": "ava_admin",
+  "owner_key": "ava_admin",
+  "persona_filename": "ava_admin_system_prompt.md",
+  "channel": "internal_backend",
+  "version": "1.0.0",
+  "description": "Internal Ava control-plane operator for health pulse, triage, provider analysis, council dispatch, and learning-loop workflows.",
+  "capabilities": [
+    "can_get_health_pulse",
+    "can_triage_incident",
+    "can_analyze_provider_errors",
+    "can_triage_robot_failure",
+    "can_dispatch_council",
+    "can_create_learning_entry"
+  ],
+  "risk_profile": {
+    "default_risk_tier": "green",
+    "max_risk_tier": "yellow"
+  },
+  "tools": [
+    "internal.admin.health_pulse",
+    "internal.admin.incident_triage",
+    "internal.admin.provider_analysis",
+    "internal.admin.robot_triage",
+    "internal.admin.council.dispatch",
+    "internal.admin.learning_entry"
+  ],
+  "providers": [
+    "internal"
+  ],
+  "actions": [
+    "admin.ops.health_pulse",
+    "admin.ops.triage",
+    "admin.ops.provider_analysis",
+    "admin.ops.robot_triage",
+    "admin.ops.council.dispatch",
+    "admin.ops.learning_entry.create"
+  ],
+  "certification_status": "uncertified",
+  "outputs": [
+    "health_pulse_report",
+    "incident_triage_report",
+    "provider_analysis",
+    "robot_triage_report",
+    "council_dispatch_result",
+    "learning_entry"
+  ],
+  "dependencies": [
+    "ava_admin_desk"
+  ],
+  "memory": {
+    "enabled": true,
+    "fact_types": [
+      "workflow",
+      "incident_pattern"
+    ],
+    "default_keys": []
+  },
+  "prompt_defaults": {
+    "persona_file": "ava_admin_system_prompt.md",
+    "tone": "precise",
+    "style": "control-plane-operator",
+    "guardrails": [
+      "observe and propose, do not execute unapproved mutations",
+      "state insufficient evidence explicitly",
+      "stay as the internal admin operator"
+    ]
+  },
+  "observability": {
+    "tags": [
+      "ava_admin",
+      "control_plane",
+      "internal"
+    ],
+    "alerts": [
+      "receipt_failure_rate",
+      "policy_denial_spike",
+      "high_risk_action_attempts"
+    ],
+    "metrics": [
+      "response_quality_score",
+      "receipts_emitted",
+      "policy_denials",
+      "llm_latency_ms"
+    ],
+    "expected_receipt_events": [
+      "admin.ops.health_pulse",
+      "admin.ops.triage",
+      "admin.ops.provider_analysis",
+      "admin.ops.robot_triage",
+      "admin.ops.council.dispatch",
+      "admin.ops.learning_entry.create"
+    ]
+  },
+  "internal_only": true,
+  "scaffold_metadata": {
+    "generated_by": "wave6_migration",
+    "preset": null,
+    "registry_id": "ava_admin"
+  }
+}

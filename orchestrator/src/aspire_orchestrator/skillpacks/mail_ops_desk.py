@@ -150,6 +150,66 @@ def _contains_blocked_content(payload: dict[str, Any]) -> bool:
 
 
 class MailOpsDeskSkillPack:
+    async def domain_check(
+        self,
+        domain_name: str,
+        context: MailOpsContext,
+    ) -> SkillPackResult:
+        return await self.check_domain(domain_name=domain_name, context=context)
+
+    async def domain_verify(
+        self,
+        domain_name: str,
+        context: MailOpsContext,
+    ) -> SkillPackResult:
+        return await self.verify_domain(domain_name=domain_name, context=context)
+
+    async def domain_dns_create(
+        self,
+        domain_name: str,
+        record_type: str,
+        name: str,
+        value: str,
+        context: MailOpsContext,
+        *,
+        ttl: int = 3600,
+    ) -> SkillPackResult:
+        return await self.create_dns_record(domain_name=domain_name, record_type=record_type, name=name, value=value, context=context, ttl=ttl)
+
+    async def domain_purchase(
+        self,
+        domain_name: str,
+        years: int,
+        contact_email: str,
+        context: MailOpsContext,
+    ) -> SkillPackResult:
+        return await self.purchase_domain(domain_name=domain_name, years=years, contact_email=contact_email, context=context)
+
+    async def domain_delete(
+        self,
+        domain_name: str,
+        context: MailOpsContext,
+        *,
+        confirm: bool = False,
+    ) -> SkillPackResult:
+        return await self.delete_domain(domain_name=domain_name, context=context, confirm=confirm)
+
+    async def mail_account_create(
+        self,
+        domain_name: str,
+        mailbox_name: str,
+        password: str,
+        context: MailOpsContext,
+    ) -> SkillPackResult:
+        return await self.create_mail_account(domain_name=domain_name, mailbox_name=mailbox_name, password=password, context=context)
+
+    async def mail_account_read(
+        self,
+        email_address: str,
+        context: MailOpsContext,
+    ) -> SkillPackResult:
+        return await self.read_mail_account(email_address=email_address, context=context)
+
     """mail_ops_desk Admin Skill Pack — governed domain & mailbox management.
 
     All methods require a MailOpsContext for tenant scoping (Law #6)

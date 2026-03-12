@@ -138,6 +138,18 @@ def clear_payroll_snapshots() -> None:
 
 
 class MiloPayrollSkillPack:
+    async def payroll_run(self, payroll_period: str, context: MiloContext, **kwargs: Any) -> SkillPackResult:
+        return await self.run_payroll(payroll_period=payroll_period, context=context, **kwargs)
+
+    async def payroll_snapshot(self, payroll_period: str, context: MiloContext, **kwargs: Any) -> SkillPackResult:
+        return await self.generate_snapshot(payroll_period=payroll_period, context=context, **kwargs)
+
+    async def payroll_schedule(self, payroll_period: str, run_date: str, context: MiloContext, **kwargs: Any) -> SkillPackResult:
+        return await self.schedule_payroll(payroll_period=payroll_period, run_date=run_date, context=context, **kwargs)
+
+    async def payroll_deadline(self, context: MiloContext, **kwargs: Any) -> SkillPackResult:
+        return await self.check_deadline(context=context, **kwargs)
+
     """Milo Payroll skill pack — payroll processing via Gusto."""
 
     async def run_payroll(

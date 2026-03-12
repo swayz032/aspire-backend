@@ -1,0 +1,17 @@
+default_mode: memory-assisted
+actions:
+  "research.search":
+    autonomy: guided
+    binding_fields: [query]
+
+  "research.places":
+    autonomy: guided
+    binding_fields: [query]
+
+  "research.compare":
+    autonomy: guided
+    binding_fields: [criteria]
+
+  "research.rfq":
+    autonomy: guided
+    binding_fields: [vendor_data, requirements]

@@ -1,0 +1,19 @@
+tool_policy:
+  "intent.classify":
+    tool_id: internal.intent_classifier
+    allowed: true
+    risk_tier: green
+
+  "route.plan":
+    tool_id: internal.skill_router
+    allowed: true
+    risk_tier: green
+
+  "governance.preview":
+    tool_id: internal.policy_preview
+    allowed: true
+    risk_tier: green
+
+# tool: internal.intent_classifier
+# tool: internal.skill_router
+# tool: internal.policy_preview

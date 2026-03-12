@@ -58,6 +58,110 @@ actions:
       type: none
     redact_fields: [utterance]
 
+  intent.classify:
+    risk_tier: green
+    tools: [internal.intent_classifier]
+    capability_scope: brain:classify
+    category: brain
+    approval:
+      type: none
+    params:
+      required: [utterance]
+      constraints: {}
+    redact_fields: [utterance]
+
+  route.plan:
+    risk_tier: green
+    tools: [internal.skill_router]
+    capability_scope: brain:route
+    category: brain
+    approval:
+      type: none
+    params:
+      required: [action_type]
+      constraints: {}
+    redact_fields: []
+
+  governance.preview:
+    risk_tier: green
+    tools: [internal.policy_preview]
+    capability_scope: governance:preview
+    category: governance
+    approval:
+      type: none
+    params:
+      required: [action_type]
+      constraints: {}
+    redact_fields: []
+
+  admin.ops.health_pulse:
+    risk_tier: green
+    tools: [internal.admin.health_pulse]
+    capability_scope: admin:health_pulse
+    category: admin
+    approval:
+      type: none
+    redact_fields: []
+
+  admin.ops.triage:
+    risk_tier: green
+    tools: [internal.admin.incident_triage]
+    capability_scope: admin:triage
+    category: admin
+    approval:
+      type: none
+    params:
+      required: [incident_id]
+      constraints: {}
+    redact_fields: []
+
+  admin.ops.provider_analysis:
+    risk_tier: green
+    tools: [internal.admin.provider_analysis]
+    capability_scope: admin:provider_analysis
+    category: admin
+    approval:
+      type: none
+    redact_fields: []
+
+  admin.ops.robot_triage:
+    risk_tier: green
+    tools: [internal.admin.robot_triage]
+    capability_scope: admin:robot_triage
+    category: admin
+    approval:
+      type: none
+    params:
+      required: [run_id]
+      constraints: {}
+    redact_fields: []
+
+  admin.ops.council.dispatch:
+    risk_tier: yellow
+    tools: [internal.admin.council.dispatch]
+    capability_scope: admin:council:dispatch
+    category: admin
+    approval:
+      type: explicit
+      binding_fields: [incident_id]
+    params:
+      required: [incident_id]
+      constraints: {}
+    redact_fields: []
+
+  admin.ops.learning_entry.create:
+    risk_tier: yellow
+    tools: [internal.admin.learning_entry]
+    capability_scope: admin:learning_entry:create
+    category: admin
+    approval:
+      type: explicit
+      binding_fields: [incident_id, lesson]
+    params:
+      required: [incident_id, lesson]
+      constraints: {}
+    redact_fields: []
+
   # Calendar
   calendar.read:
     risk_tier: green
@@ -768,3 +872,187 @@ actions:
       type: explicit
       binding_fields: [domain_name]
     redact_fields: []
+  # Internal Ops - QA Evals
+  qa.eval.execute:
+    risk_tier: green
+    tools: [internal.qa.eval_execute]
+    capability_scope: qa:eval:execute
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  qa.report.generate:
+    risk_tier: green
+    tools: [internal.qa.report_generate]
+    capability_scope: qa:report:generate
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  qa.trend.track:
+    risk_tier: green
+    tools: [internal.qa.trend_track]
+    capability_scope: qa:trend:track
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  qa.regression.flag:
+    risk_tier: green
+    tools: [internal.qa.regression_flag]
+    capability_scope: qa:regression:flag
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  # Internal Ops - Security Review
+  security.scan.execute:
+    risk_tier: green
+    tools: [internal.security.scan_execute]
+    capability_scope: security:scan:execute
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  security.report.generate:
+    risk_tier: green
+    tools: [internal.security.report_generate]
+    capability_scope: security:report:generate
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  security.violation.flag:
+    risk_tier: red
+    tools: [internal.security.violation_flag]
+    capability_scope: security:violation:flag
+    category: internal
+    approval:
+      type: explicit
+      binding_fields: [request, severity]
+    params:
+      required: [request]
+    redact_fields: []
+
+  security.review.request:
+    risk_tier: red
+    tools: [internal.security.review_request]
+    capability_scope: security:review:request
+    category: internal
+    approval:
+      type: explicit
+      binding_fields: [request, review_scope]
+    params:
+      required: [request]
+    redact_fields: []
+
+  # Internal Ops - SRE Triage
+  sre.alert.detect:
+    risk_tier: green
+    tools: [internal.sre.alert_detect]
+    capability_scope: sre:alert:detect
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  sre.incident.triage:
+    risk_tier: green
+    tools: [internal.sre.incident_triage]
+    capability_scope: sre:incident:triage
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  sre.incident.route:
+    risk_tier: yellow
+    tools: [internal.sre.incident_route]
+    capability_scope: sre:incident:route
+    category: internal
+    approval:
+      type: explicit
+      binding_fields: [request, responder]
+    params:
+      required: [request]
+    redact_fields: []
+
+  sre.report.generate:
+    risk_tier: green
+    tools: [internal.sre.report_generate]
+    capability_scope: sre:report:generate
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  # Internal Ops - Release Manager
+  release.checklist.enforce:
+    risk_tier: green
+    tools: [internal.release.checklist_enforce]
+    capability_scope: release:checklist:enforce
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  release.pipeline.track:
+    risk_tier: green
+    tools: [internal.release.pipeline_track]
+    capability_scope: release:pipeline:track
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  release.notes.generate:
+    risk_tier: green
+    tools: [internal.release.notes_generate]
+    capability_scope: release:notes:generate
+    category: internal
+    approval:
+      type: none
+    params:
+      required: [request]
+    redact_fields: []
+
+  release.deploy.prepare:
+    risk_tier: yellow
+    tools: [internal.release.deploy_prepare]
+    capability_scope: release:deploy:prepare
+    category: internal
+    approval:
+      type: explicit
+      binding_fields: [request, environment]
+    params:
+      required: [request]
+    redact_fields: []
+

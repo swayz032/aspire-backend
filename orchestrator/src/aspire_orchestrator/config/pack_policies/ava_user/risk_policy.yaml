@@ -1,0 +1,20 @@
+# Ava User - Risk Policy
+pack_id: ava-user
+default_risk_tier: green
+max_risk_tier: green
+
+actions:
+  "intent.classify":
+    risk_tier: green
+    approval_required: false
+    description: "Intent classification for the Ava user-facing orchestrator"
+
+  "route.plan":
+    risk_tier: green
+    approval_required: false
+    description: "Routing-plan generation for the Ava user-facing orchestrator"
+
+  "governance.preview":
+    risk_tier: green
+    approval_required: false
+    description: "Governance preview for the Ava user-facing orchestrator"

@@ -1,0 +1,21 @@
+default_mode: memory-assisted
+actions:
+  "finance.snapshot.read":
+    autonomy: guided
+    binding_fields: [period]
+
+  "finance.exceptions.read":
+    autonomy: guided
+    binding_fields: [severity]
+
+  "finance.packet.draft":
+    autonomy: approval-gated
+    binding_fields: [packet_type, title]
+
+  "finance.proposal.create":
+    autonomy: approval-gated
+    binding_fields: [packet_id, proposal_type]
+
+  "a2a.create":
+    autonomy: approval-gated
+    binding_fields: [to_agent, request_type]

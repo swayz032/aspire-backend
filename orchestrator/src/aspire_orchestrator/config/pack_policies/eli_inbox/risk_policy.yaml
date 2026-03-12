@@ -1,0 +1,45 @@
+# Eli Inbox - Risk Policy
+pack_id: eli-inbox
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "email.read":
+    risk_tier: green
+    approval_required: false
+    description: "email.read action for eli_inbox"
+
+  "email.triage":
+    risk_tier: green
+    approval_required: false
+    description: "email.triage action for eli_inbox"
+
+  "email.draft":
+    risk_tier: yellow
+    approval_required: true
+    description: "email.draft action for eli_inbox"
+
+  "email.send":
+    risk_tier: yellow
+    approval_required: true
+    description: "email.send action for eli_inbox"
+
+  "office.read":
+    risk_tier: green
+    approval_required: false
+    description: "office.read action for eli_inbox"
+
+  "office.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "office.create action for eli_inbox"
+
+  "office.draft":
+    risk_tier: yellow
+    approval_required: true
+    description: "office.draft action for eli_inbox"
+
+  "office.send":
+    risk_tier: yellow
+    approval_required: true
+    description: "office.send action for eli_inbox"

@@ -1,0 +1,38 @@
+tool_policy:
+  "templates.list":
+    tool_id: pandadoc.templates.list
+    allowed: true
+    risk_tier: green
+
+  "templates.details":
+    tool_id: pandadoc.templates.details
+    allowed: true
+    risk_tier: green
+
+  "contract.generate":
+    tool_id: pandadoc.contract.generate
+    allowed: true
+    risk_tier: yellow
+
+  "contract.review":
+    tool_id: pandadoc.contract.read
+    allowed: true
+    risk_tier: green
+
+  "contract.sign":
+    tool_id: pandadoc.contract.sign
+    allowed: true
+    risk_tier: red
+
+  "contract.compliance":
+    tool_id: pandadoc.contract.read
+    allowed: true
+    risk_tier: green
+
+# tool: pandadoc.templates.list
+# tool: pandadoc.templates.details
+# tool: pandadoc.contract.generate
+# tool: pandadoc.contract.read
+# tool: pandadoc.contract.sign
+# tool: pandadoc.contract.send
+# tool: pandadoc.contract.session

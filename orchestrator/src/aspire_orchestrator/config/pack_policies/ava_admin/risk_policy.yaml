@@ -1,0 +1,35 @@
+# Ava Admin - Risk Policy
+pack_id: ava-admin
+default_risk_tier: green
+max_risk_tier: yellow
+
+actions:
+  "admin.ops.health_pulse":
+    risk_tier: green
+    approval_required: false
+    description: "Read-only platform health pulse"
+
+  "admin.ops.triage":
+    risk_tier: green
+    approval_required: false
+    description: "Incident commander triage report"
+
+  "admin.ops.provider_analysis":
+    risk_tier: green
+    approval_required: false
+    description: "Provider error analysis"
+
+  "admin.ops.robot_triage":
+    risk_tier: green
+    approval_required: false
+    description: "Robot failure triage"
+
+  "admin.ops.council.dispatch":
+    risk_tier: yellow
+    approval_required: true
+    description: "Dispatch read-only council advisors"
+
+  "admin.ops.learning_entry.create":
+    risk_tier: yellow
+    approval_required: true
+    description: "Create learning-loop entry from an incident"

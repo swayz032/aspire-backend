@@ -36,7 +36,12 @@ from aspire_orchestrator.services.agent_sdk_base import (
 )
 from aspire_orchestrator.services.manifest_loader import load_manifest, load_all_manifests
 from aspire_orchestrator.services.persona_loader import load_persona
-from aspire_orchestrator.services.pack_policy_loader import load_pack_policies
+from aspire_orchestrator.services.pack_policy_loader import (
+    get_autonomy_policy,
+    get_observability_policy,
+    get_prompt_contract,
+    load_pack_policies,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +97,9 @@ class EnhancedSkillPack(AspireAgentBase):
         try:
             policies = load_pack_policies(self._agent_id)
             if policies:
+                prompt_contract = get_prompt_contract(self._agent_id, policies)
+                if prompt_contract:
+                    policies["prompt_contract"] = prompt_contract
                 self.set_policies(policies)
         except Exception as e:
             logger.debug("Policies not available for %s: %s", self._agent_id, e)
@@ -165,6 +173,7 @@ class EnhancedSkillPack(AspireAgentBase):
             metadata={
                 "model_used": llm_result.get("model_used"),
                 "profile_used": llm_result.get("profile_used"),
+                "quality_report": llm_result.get("quality_report", {}),
             },
         )
         await self.emit_receipt(receipt)
@@ -176,6 +185,14 @@ class EnhancedSkillPack(AspireAgentBase):
             model_used=llm_result.get("model_used"),
             profile_used=llm_result.get("profile_used"),
         )
+
+    def get_autonomy_policy(self) -> dict[str, Any]:
+        """Get the pack autonomy policy."""
+        return get_autonomy_policy(self._agent_id, self._policies)
+
+    def get_observability_policy(self) -> dict[str, Any]:
+        """Get the pack observability policy."""
+        return get_observability_policy(self._agent_id, self._policies)
 
     def get_capability_list(self) -> list[str]:
         """Get the list of capabilities from the manifest."""

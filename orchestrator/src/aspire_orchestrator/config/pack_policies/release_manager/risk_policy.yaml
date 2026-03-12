@@ -1,0 +1,25 @@
+# Release Manager - Risk Policy
+pack_id: release-manager
+default_risk_tier: yellow
+max_risk_tier: yellow
+
+actions:
+  "release.checklist.enforce":
+    risk_tier: green
+    approval_required: false
+    description: "release.checklist.enforce action for release"
+
+  "release.pipeline.track":
+    risk_tier: green
+    approval_required: false
+    description: "release.pipeline.track action for release"
+
+  "release.notes.generate":
+    risk_tier: green
+    approval_required: false
+    description: "release.notes.generate action for release"
+
+  "release.deploy.prepare":
+    risk_tier: yellow
+    approval_required: true
+    description: "release.deploy.prepare action for release"
