@@ -15,7 +15,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aspire_orchestrator.models import Outcome, ReceiptType
@@ -28,6 +28,9 @@ async def resume_after_approval(
     suite_id: str,
     office_id: str,
     actor_id: str,
+    *,
+    presence_token: dict[str, Any] | None = None,
+    resume_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Execute a previously drafted operation after user approval.
 
@@ -111,6 +114,20 @@ async def resume_after_approval(
         if not secrets.compare_digest(computed_hash, stored_hash):
             logger.warning("Resume DENIED: payload hash mismatch (approve-then-swap detected)")
             return _error("PAYLOAD_HASH_MISMATCH", "Payload integrity check failed", correlation_id, suite_id, office_id, receipts)
+
+    thread_id = str(approval.get("thread_id") or "").strip()
+    request_id = str(approval.get("request_id") or "").strip()
+    if resume_runner is not None and thread_id and request_id:
+        return await _resume_via_langgraph(
+            approval=approval,
+            suite_id=suite_id,
+            office_id=office_id,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            computed_hash=computed_hash if execution_payload and stored_hash else None,
+            presence_token=presence_token,
+            resume_runner=resume_runner,
+        )
 
     # --- Step 2: Retrieve ---
     tool_used = approval.get("tool", "unknown")
@@ -319,4 +336,90 @@ def _error(
         "error_code": code,
         "error_message": message,
         "receipt_id": receipt_id,
+    }
+
+
+async def _resume_via_langgraph(
+    *,
+    approval: dict[str, Any],
+    suite_id: str,
+    office_id: str,
+    actor_id: str,
+    correlation_id: str,
+    computed_hash: str | None,
+    presence_token: dict[str, Any] | None,
+    resume_runner: Any,
+) -> dict[str, Any]:
+    from aspire_orchestrator.services.approval_service import (
+        CURRENT_POLICY_VERSION,
+        DEFAULT_APPROVAL_EXPIRY_SECONDS,
+    )
+    from aspire_orchestrator.services.supabase_client import supabase_update
+
+    thread_id = str(approval.get("thread_id") or "").strip()
+    request_id = str(approval.get("request_id") or "").strip()
+    payload_hash = (
+        str(approval.get("approval_hash") or "").strip()
+        or computed_hash
+        or ""
+    )
+
+    now = datetime.now(timezone.utc)
+    expires_at = approval.get("expires_at")
+    if not expires_at:
+        expires_at = (now + timedelta(seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS)).isoformat()
+
+    resume_payload: dict[str, Any] = {
+        "approval_evidence": {
+            "approver_id": actor_id,
+            "approval_method": "ui_button",
+            "approved_at": now.isoformat(),
+            "payload_hash": payload_hash,
+            "policy_version": approval.get("policy_version") or CURRENT_POLICY_VERSION,
+            "request_id": request_id,
+            "expires_at": expires_at,
+        },
+    }
+    if presence_token is not None:
+        resume_payload["presence_token"] = presence_token
+
+    graph_result = await resume_runner(thread_id, resume_payload)
+    response = graph_result.get("response", {}) if isinstance(graph_result, dict) else {}
+    if not isinstance(response, dict):
+        return {
+            "success": False,
+            "error_code": "RESUME_GRAPH_INVALID",
+            "error_message": "LangGraph resume returned no response",
+            "receipt_id": None,
+        }
+
+    receipt_ids = response.get("receipt_ids") or graph_result.get("receipt_ids") or []
+    receipt_id = receipt_ids[0] if isinstance(receipt_ids, list) and receipt_ids else None
+    error = response.get("error")
+    if error:
+        return {
+            "success": False,
+            "error_code": error,
+            "error_message": response.get("message") or response.get("text") or "Resume failed",
+            "receipt_id": receipt_id,
+        }
+
+    try:
+        await supabase_update(
+            "approval_requests",
+            f"approval_id=eq.{approval['approval_id']}",
+            {"status": "executed"},
+        )
+    except Exception as e:
+        logger.warning("Failed to update approval status to executed after LangGraph resume: %s", e)
+
+    execution_result = graph_result.get("execution_result") if isinstance(graph_result, dict) else None
+    if execution_result is None:
+        execution_result = response.get("data")
+
+    return {
+        "success": True,
+        "narration_text": response.get("text") or response.get("message") or "",
+        "receipt_id": receipt_id,
+        "execution_result": execution_result,
     }

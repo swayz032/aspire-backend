@@ -36,6 +36,7 @@ class OrchestratorState(TypedDict, total=False):
     request_id: str
     suite_id: str  # Derived from auth, NOT from client payload
     office_id: str  # Derived from auth, NOT from client payload
+    thread_id: str | None  # LangGraph thread identifier for checkpoint continuity
     actor_type: ActorType
     actor_id: str
     task_type: str

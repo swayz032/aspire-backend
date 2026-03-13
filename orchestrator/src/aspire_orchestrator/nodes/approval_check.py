@@ -22,12 +22,13 @@ Per presence_sessions.md:
 from __future__ import annotations
 
 import copy
-import json
 import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from langgraph.types import interrupt
 
 from aspire_orchestrator.models import (
     AspireErrorCode,
@@ -38,6 +39,7 @@ from aspire_orchestrator.models import (
 from aspire_orchestrator.services.approval_service import (
     ApprovalBinding,
     ApprovalBindingError,
+    CURRENT_POLICY_VERSION,
     compute_payload_hash,
     verify_approval_binding,
 )
@@ -231,6 +233,52 @@ def _make_receipt(
     return receipt
 
 
+def _append_receipt(
+    receipts: list[dict[str, Any]],
+    receipt: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if any(existing.get("id") == receipt.get("id") for existing in receipts):
+        return receipts
+    return [*receipts, receipt]
+
+
+def _build_approval_request_id(
+    *,
+    suite_id: str,
+    request_id: str,
+    payload_hash: str,
+    task_type: str,
+) -> str:
+    raw = f"aspire:approval:{suite_id}:{request_id}:{payload_hash}:{task_type}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
+
+
+def _build_approval_receipt_id(approval_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"aspire:approval-receipt:{approval_id}"))
+
+
+def _build_pending_interrupt_payload(
+    state: OrchestratorState,
+    pending_update: dict[str, Any],
+) -> dict[str, Any]:
+    from aspire_orchestrator.nodes.respond import respond_node
+
+    pending_state = {
+        **state,
+        **pending_update,
+    }
+    response = respond_node(pending_state).get("response", {})
+    if isinstance(response, dict):
+        pending_update = {
+            **pending_update,
+            "receipt_ids": list(response.get("receipt_ids", pending_update.get("receipt_ids", []))),
+        }
+    return {
+        "response": response,
+        "state_update": pending_update,
+    }
+
+
 def _map_binding_error_to_error_code(
     error: ApprovalBindingError,
 ) -> AspireErrorCode:
@@ -366,6 +414,13 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
             else AspireErrorCode.APPROVAL_REQUIRED
         )
 
+        approval_id = _build_approval_request_id(
+            suite_id=suite_id,
+            request_id=request_id,
+            payload_hash=payload_hash,
+            task_type=state.get("task_type", "unknown"),
+        )
+
         receipt = _make_receipt(
             correlation_id=correlation_id,
             suite_id=suite_id,
@@ -379,8 +434,8 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
             receipt_type=ReceiptType.APPROVAL_REQUESTED.value,
             details={"payload_hash": payload_hash},
         )
-        existing_receipts = list(state.get("pipeline_receipts", []))
-        existing_receipts.append(receipt)
+        receipt["id"] = _build_approval_receipt_id(approval_id)
+        existing_receipts = _append_receipt(list(state.get("pipeline_receipts", [])), receipt)
 
         if is_red:
             error_msg = "Red-tier action requires video presence approval"
@@ -389,60 +444,53 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
 
         # --- Draft-First: Persist draft to Supabase for Authority Queue ---
         draft_id = None
-        draft_persistence_status = "skipped"  # skipped | success | failed
+        draft_persistence_status = "failed"
         execution_params = state.get("execution_params")
-        if execution_params:
-            try:
-                import hashlib
+        approval_row: dict[str, Any] = {
+            "approval_id": approval_id,
+            "tenant_id": suite_id,
+            "run_id": correlation_id,
+            "request_id": request_id,
+            "thread_id": state.get("thread_id"),
+            "session_id": state.get("session_id"),
+            "tool": state.get("tool_used", "unknown"),
+            "operation": state.get("task_type", "unknown"),
+            "risk_tier": risk_tier_value,
+            "policy_version": CURRENT_POLICY_VERSION,
+            "approval_hash": payload_hash,
+            "status": "pending",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+            "assigned_agent": state.get("assigned_agent", "ava"),
+            "draft_summary": _build_draft_summary(
+                state.get("task_type", "unknown"),
+                execution_params or {},
+            ),
+        }
+        if execution_params is not None:
+            approval_row["execution_payload"] = execution_params
+            approval_row["execution_params_hash"] = compute_payload_hash(execution_params)
+            approval_row["payload_redacted"] = _redact_pii(execution_params)
 
-                from aspire_orchestrator.services.supabase_client import supabase_insert_sync
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_upsert_sync
 
-                task_type = state.get("task_type", "unknown")
-                draft_summary = _build_draft_summary(task_type, execution_params)
-                assigned_agent = state.get("assigned_agent", "ava")
-                params_hash = hashlib.sha256(
-                    json.dumps(execution_params, sort_keys=True, default=str).encode()
-                ).hexdigest()
+            supabase_upsert_sync(
+                "approval_requests",
+                approval_row,
+                on_conflict="approval_id",
+            )
+            draft_id = approval_id
+            draft_persistence_status = "success"
+            logger.info("Draft upserted: draft_id=%s suite=%s", draft_id, suite_id[:8])
+        except Exception as e:
+            logger.warning(
+                "Draft persistence failed: %s (suite=%s, task=%s)",
+                e,
+                suite_id[:8],
+                state.get("task_type", "?"),
+            )
 
-                # PII redaction: redact sensitive fields for audit/display columns (Law #9)
-                # execution_payload stores FULL params (needed for resume execution)
-                # payload_redacted stores PII-scrubbed version for audit trail
-                redacted_params = _redact_pii(execution_params)
-
-                approval_id = str(uuid.uuid4())
-                now_utc = datetime.now(timezone.utc)
-                expires_at = now_utc + timedelta(hours=24)
-
-                draft_data = {
-                    "approval_id": approval_id,
-                    "tenant_id": suite_id,
-                    "run_id": correlation_id,
-                    "tool": state.get("tool_used", "unknown"),
-                    "operation": task_type,
-                    "risk_tier": risk_tier_value,
-                    "policy_version": "v1",
-                    "approval_hash": payload_hash,
-                    "status": "pending",
-                    "expires_at": expires_at.isoformat(),
-                    "execution_payload": execution_params,
-                    "draft_summary": draft_summary,
-                    "assigned_agent": assigned_agent,
-                    "execution_params_hash": params_hash,
-                    "payload_redacted": redacted_params,
-                }
-
-                supabase_insert_sync("approval_requests", draft_data)
-
-                draft_id = approval_id
-                draft_persistence_status = "success"
-                logger.info("Draft persisted: draft_id=%s suite=%s", draft_id, suite_id[:8])
-
-            except Exception as e:
-                draft_persistence_status = "failed"
-                logger.warning("Draft persistence failed: %s (suite=%s, task=%s)",
-                               e, suite_id[:8], state.get("task_type", "?"))
-
-        return {
+        pending_update: dict[str, Any] = {
             "approval_status": "pending",
             "approval_payload_hash": payload_hash,
             "error_code": error_code.value,
@@ -453,9 +501,54 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
             "draft_id": draft_id,
             "draft_persistence_status": draft_persistence_status,
             "pipeline_receipts": existing_receipts,
+            "receipt_ids": [],
         }
 
+        try:
+            resumed = interrupt(_build_pending_interrupt_payload(state, pending_update))
+        except RuntimeError as exc:
+            if "runnable context" in str(exc).lower():
+                return pending_update
+            raise
+        state = {
+            **state,
+            **pending_update,
+        }
+        if isinstance(resumed, dict):
+            approval_evidence = resumed.get("approval_evidence")
+            if "presence_token" in resumed:
+                state["presence_token"] = resumed.get("presence_token")
+        else:
+            approval_evidence = None
+
     # --- Approval evidence exists — verify binding ---
+
+    if approval_evidence is None:
+        logger.warning(
+            "Approval binding REJECTED: missing approval_evidence after resume, correlation=%s",
+            correlation_id[:8],
+        )
+        receipt = _make_receipt(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            actor_type="system",
+            actor_id="orchestrator",
+            action_type="approval.deny",
+            risk_tier=risk_tier_value,
+            outcome=Outcome.DENIED.value,
+            reason_code=AspireErrorCode.APPROVAL_BINDING_FAILED.value,
+            receipt_type=ReceiptType.APPROVAL_DENIED.value,
+            details={"reason": "Approval resume missing approval evidence"},
+        )
+        existing_receipts = _append_receipt(list(state.get("pipeline_receipts", [])), receipt)
+        return {
+            "approval_status": "rejected",
+            "error_code": AspireErrorCode.APPROVAL_BINDING_FAILED.value,
+            "error_message": "Approval evidence missing",
+            "outcome": Outcome.DENIED,
+            "pipeline_receipts": existing_receipts,
+        }
 
     # Extract fields from ApprovalEvidence (Pydantic model or dict)
     if hasattr(approval_evidence, "approver_id"):
@@ -514,9 +607,6 @@ def approval_check_node(state: OrchestratorState) -> dict[str, Any]:
         evidence_payload_hash = approval_evidence.get("payload_hash", payload_hash)
     else:
         evidence_payload_hash = payload_hash
-
-    # Get policy_version from evidence or use current
-    from aspire_orchestrator.services.approval_service import CURRENT_POLICY_VERSION
 
     evidence_policy_version = ""
     if hasattr(approval_evidence, "policy_version"):

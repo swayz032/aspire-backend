@@ -216,6 +216,30 @@ def supabase_insert_sync(table: str, data: dict[str, Any]) -> dict[str, Any]:
         raise SupabaseClientError(f"insert/{table}", detail=str(e))
 
 
+def supabase_upsert_sync(
+    table: str, data: dict[str, Any], on_conflict: str = ""
+) -> dict[str, Any]:
+    """UPSERT (insert or update on conflict) a row in a Supabase table (sync)."""
+    url = f"{_base_url()}/{table}"
+    headers = _headers()
+    headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+    if on_conflict:
+        url = f"{url}?on_conflict={on_conflict}"
+    try:
+        client = _get_sync_pool()
+        resp = client.post(url, json=data, headers=headers)
+        result = _handle_response(resp, f"upsert/{table}")
+        return result[0] if isinstance(result, list) and result else result
+    except SupabaseClientError:
+        raise
+    except httpx.TimeoutException:
+        raise SupabaseClientError(f"upsert/{table}", detail="Request timed out")
+    except httpx.ConnectError:
+        raise SupabaseClientError(f"upsert/{table}", detail="Connection failed")
+    except Exception as e:
+        raise SupabaseClientError(f"upsert/{table}", detail=str(e))
+
+
 async def supabase_select(
     table: str, filters: str | dict[str, Any], *, order_by: str | None = None, limit: int | None = None
 ) -> list[dict[str, Any]]:

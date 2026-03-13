@@ -36,6 +36,7 @@ import os
 import uuid
 from typing import Any
 
+from langgraph.checkpoint.base import empty_checkpoint
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -71,6 +72,7 @@ _CHECKPOINTER_RUNTIME: dict[str, str] = {
     "backend": "MemorySaver",
 }
 _CHECKPOINTER_CTX: Any | None = None
+_ACTIVE_CHECKPOINTER: Any | None = None
 
 
 def _build_checkpointer_serde() -> JsonPlusSerializer:
@@ -134,19 +136,49 @@ class _CompiledGraphCompat:
         }
         return config
 
+    def _normalize_interrupt_result(self, result: Any) -> Any:
+        if not isinstance(result, dict) or "__interrupt__" not in result:
+            return result
+
+        interrupts = result.get("__interrupt__") or []
+        if not interrupts:
+            return result
+
+        interrupt_value = getattr(interrupts[0], "value", None)
+        normalized = dict(result)
+
+        if isinstance(interrupt_value, dict):
+            state_update = interrupt_value.get("state_update")
+            response = interrupt_value.get("response")
+            if isinstance(state_update, dict):
+                normalized = {
+                    **state_update,
+                    **normalized,
+                }
+            if response is not None:
+                normalized["response"] = response
+            elif "response" not in normalized:
+                normalized["response"] = interrupt_value
+        elif "response" not in normalized:
+            normalized["response"] = interrupt_value
+
+        return normalized
+
     def invoke(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
-        return self._compiled_graph.invoke(
+        result = self._compiled_graph.invoke(
             state,
             config=self._ensure_config(state, config),
             **kwargs,
         )
+        return self._normalize_interrupt_result(result)
 
     async def ainvoke(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
-        return await self._compiled_graph.ainvoke(
+        result = await self._compiled_graph.ainvoke(
             state,
             config=self._ensure_config(state, config),
             **kwargs,
         )
+        return self._normalize_interrupt_result(result)
 
     def stream(self, state: Any, config: Any | None = None, **kwargs: Any) -> Any:
         return self._compiled_graph.stream(
@@ -648,6 +680,8 @@ async def build_orchestrator_graph_async() -> StateGraph:
     # Enable thread-scoped checkpointing so HITL/resume and multi-turn continuity
     # can use LangGraph's configurable.thread_id contract.
     checkpointer = await _build_checkpointer()
+    global _ACTIVE_CHECKPOINTER
+    _ACTIVE_CHECKPOINTER = checkpointer
     return _CompiledGraphCompat(graph.compile(checkpointer=checkpointer))
 
 
@@ -674,7 +708,8 @@ def get_checkpointer_runtime() -> dict[str, str]:
 
 async def close_checkpointer_runtime() -> None:
     """Close persistent checkpointer resources on shutdown."""
-    global _CHECKPOINTER_CTX
+    global _CHECKPOINTER_CTX, _ACTIVE_CHECKPOINTER
+    _ACTIVE_CHECKPOINTER = None
     if _CHECKPOINTER_CTX is None:
         return
     try:
@@ -687,6 +722,78 @@ async def close_checkpointer_runtime() -> None:
         pass
     finally:
         _CHECKPOINTER_CTX = None
+
+
+async def probe_checkpointer_roundtrip() -> bool:
+    """Persist and reload a synthetic checkpoint against the active saver."""
+    saver = _ACTIVE_CHECKPOINTER
+    if saver is None:
+        return False
+
+    thread_id = f"readyz:{uuid.uuid4()}"
+    probe_id = str(uuid.uuid4())
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "checkpoint_ns": "",
+        }
+    }
+
+    try:
+        if hasattr(saver, "aput"):
+            stored_config = await saver.aput(
+                config,
+                empty_checkpoint(),
+                {"source": "readyz_probe", "step": 0, "probe_id": probe_id},
+                {},
+            )
+        else:
+            stored_config = await asyncio.to_thread(
+                saver.put,
+                config,
+                empty_checkpoint(),
+                {"source": "readyz_probe", "step": 0, "probe_id": probe_id},
+                {},
+            )
+
+        lookup_config = stored_config if isinstance(stored_config, dict) else config
+        if hasattr(saver, "aget_tuple"):
+            checkpoint_tuple = await saver.aget_tuple(lookup_config)
+        else:
+            checkpoint_tuple = await asyncio.to_thread(saver.get_tuple, lookup_config)
+
+        if checkpoint_tuple is None:
+            return False
+
+        metadata = getattr(checkpoint_tuple, "metadata", None)
+        tuple_config = getattr(checkpoint_tuple, "config", None)
+        checkpoint = getattr(checkpoint_tuple, "checkpoint", None)
+
+        if not isinstance(metadata, dict) or metadata.get("probe_id") != probe_id:
+            return False
+        if not isinstance(tuple_config, dict):
+            return False
+        if (
+            tuple_config.get("configurable", {}).get("thread_id") != thread_id
+        ):
+            return False
+
+        expected_checkpoint_id = lookup_config.get("configurable", {}).get("checkpoint_id")
+        if expected_checkpoint_id and isinstance(checkpoint, dict):
+            return checkpoint.get("id") == expected_checkpoint_id
+        return True
+    except Exception as exc:
+        logger.warning("LangGraph checkpointer round-trip probe failed: %s", exc)
+        return False
+    finally:
+        try:
+            if hasattr(saver, "adelete_thread"):
+                await saver.adelete_thread(thread_id)
+            elif hasattr(saver, "delete_thread"):
+                await asyncio.to_thread(saver.delete_thread, thread_id)
+        except Exception:
+            # Best-effort cleanup; probe result already determined above.
+            pass
 
 
 async def _build_checkpointer() -> Any:

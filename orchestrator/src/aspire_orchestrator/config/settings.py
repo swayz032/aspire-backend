@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     pandadoc_api_key: str = ""
     pandadoc_webhook_secret: str = ""
+    stripe_webhook_secret: str = ""
     pandadoc_credential_last_rotated: str | None = None  # ISO8601 date — rotation policy is 30 days
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""

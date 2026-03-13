@@ -86,6 +86,8 @@ _SETTINGS_PREFIX_MAP: dict[str, str] = {
     "ASPIRE_ANAM_API_KEY": "ANAM_API_KEY",
     # Token signing
     "ASPIRE_TOKEN_SIGNING_KEY": "TOKEN_SIGNING_SECRET",
+    # Stripe webhook
+    "ASPIRE_STRIPE_WEBHOOK_SECRET": "STRIPE_WEBHOOK_SECRET",
 }
 
 

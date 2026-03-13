@@ -64,6 +64,7 @@ from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from langgraph.types import Command
 
 from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
@@ -74,6 +75,7 @@ from aspire_orchestrator.graph import (
     build_orchestrator_graph_async,
     close_checkpointer_runtime,
     get_checkpointer_runtime,
+    probe_checkpointer_roundtrip,
 )
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.receipt_store import query_receipts, get_chain_receipts, store_receipts
@@ -90,6 +92,7 @@ from aspire_orchestrator.services.openai_client import (
 from aspire_orchestrator.routes.intents import router as intents_router
 from aspire_orchestrator.routes.admin import router as admin_router
 from aspire_orchestrator.routes.robots import router as robots_router
+from aspire_orchestrator.routes.webhooks import router as webhooks_router
 from aspire_orchestrator.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -174,6 +177,9 @@ app.include_router(admin_router)
 
 # Include Robot Ingest routes (Wave 3 — Enterprise Sync)
 app.include_router(robots_router)
+
+# Include Webhook routes (Stripe Connect callbacks)
+app.include_router(webhooks_router)
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
@@ -340,9 +346,11 @@ async def readyz() -> JSONResponse:
             checks["langgraph_checkpoint_store"] = bool(settings.langgraph_postgres_dsn)
         else:
             checks["langgraph_checkpoint_store"] = True
+        checks["langgraph_checkpoint_roundtrip"] = await probe_checkpointer_roundtrip()
     except Exception:
         checks["langgraph_checkpointer"] = False
         checks["langgraph_checkpoint_store"] = False
+        checks["langgraph_checkpoint_roundtrip"] = False
 
     # Check model probe cache health
     try:
@@ -361,7 +369,14 @@ async def readyz() -> JSONResponse:
     # Determine if partially ready (some non-critical deps down)
     critical_checks = {
         k: v for k, v in checks.items()
-        if k in ("signing_key_configured", "graph_built", "receipt_store")
+        if k in (
+            "signing_key_configured",
+            "graph_built",
+            "receipt_store",
+            "langgraph_checkpointer",
+            "langgraph_checkpoint_store",
+            "langgraph_checkpoint_roundtrip",
+        )
     }
     critical_ready = all(critical_checks.values())
 
@@ -708,7 +723,7 @@ async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
                     os.environ["ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD"] = prev_allow
 
 
-async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id: str) -> dict[str, Any]:
+async def _invoke_orchestrator_graph(initial_state: Any, *, thread_id: str) -> dict[str, Any]:
     """Invoke orchestrator graph with async-first strategy and sync fallback."""
     global orchestrator_graph
     if orchestrator_graph is None:
@@ -738,6 +753,14 @@ async def _invoke_orchestrator_graph(initial_state: dict[str, Any], *, thread_id
                 "CHECKPOINTER_UNAVAILABLE: Postgres checkpointer failover to memory failed",
             ) from invoke_err
         raise
+
+
+async def _resume_orchestrator_graph(thread_id: str, resume_payload: dict[str, Any]) -> dict[str, Any]:
+    """Resume a paused LangGraph thread after an approval event."""
+    return await _invoke_orchestrator_graph(
+        Command(resume=resume_payload),
+        thread_id=thread_id,
+    )
 
 
 @app.post("/v1/intents", response_model=None)
@@ -821,6 +844,8 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
     # it as a top-level state field (approval_check reads state["approval_evidence"]).
     if isinstance(body, dict) and "approval_evidence" in body:
         initial_state["approval_evidence"] = body["approval_evidence"]
+    if isinstance(body, dict) and "presence_token" in body:
+        initial_state["presence_token"] = body["presence_token"]
 
     # Wave 4 + SSE Enterprise: If stream=true, return SSE stream instead of JSON response
     if stream:
@@ -1512,6 +1537,13 @@ async def resume_execution(approval_id: str, request: Request) -> JSONResponse:
     """Resume execution of an approved draft operation."""
     import re
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
     # Validate UUID format
     if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', approval_id, re.I):
         return JSONResponse(status_code=400, content={"error": "INVALID_ID", "message": "Invalid approval ID format"})
@@ -1554,7 +1586,14 @@ async def resume_execution(approval_id: str, request: Request) -> JSONResponse:
 
     try:
         from aspire_orchestrator.nodes.resume import resume_after_approval
-        result = await resume_after_approval(approval_id, suite_id, office_id, actor_id)
+        result = await resume_after_approval(
+            approval_id,
+            suite_id,
+            office_id,
+            actor_id,
+            presence_token=body.get("presence_token"),
+            resume_runner=_resume_orchestrator_graph,
+        )
 
         if result.get("success"):
             return JSONResponse(content={
