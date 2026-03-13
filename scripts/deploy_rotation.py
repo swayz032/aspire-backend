@@ -436,7 +436,7 @@ def deploy_cloudwatch_alarms(failures_topic):
 
     # Secret age alarms for manual-rotation providers
     manual_providers = [
-        "elevenlabs", "deepgram", "anam", "livekit",
+        "elevenlabs", "anam", "livekit",
         "tavily", "brave", "google_maps",
     ]
 

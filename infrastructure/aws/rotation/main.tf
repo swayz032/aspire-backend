@@ -84,6 +84,13 @@ locals {
       risk_tier   = "red"
       overlap_min = 30
     }
+    deepgram = {
+      secret_arn  = local.secret_arns.providers
+      adapter     = "deepgram"
+      schedule    = "rate(90 days)"
+      risk_tier   = "yellow"
+      overlap_min = 15
+    }
   }
 }
 
@@ -331,7 +338,7 @@ resource "aws_api_gateway_stage" "prod" {
 
 resource "aws_cloudwatch_metric_alarm" "secret_age" {
   for_each = toset([
-    "elevenlabs", "deepgram", "anam", "livekit",
+    "elevenlabs", "anam", "livekit",
     "tavily", "brave", "google_maps",
   ])
 

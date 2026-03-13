@@ -45,6 +45,11 @@ OPS_WORKFLOW_MAP: dict[str, str] = {
     "slo-monitor": "dRR36XPA6KuQfL0T",
 }
 
+ROTATION_WORKFLOW_MAP: dict[str, str] = {
+    "rotation-monitor": "uI4JbtvTA4Vo8Rg4",
+    "rotation-orchestrator": "Jyewljst0Znk1mBS",
+}
+
 
 def _api_request(path: str) -> dict[str, Any]:
     url = f"{N8N_API_URL}/api/v1{path}"
@@ -90,7 +95,7 @@ def _normalize_workflow(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_local(path: str) -> dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 
@@ -137,6 +142,7 @@ def main() -> int:
     drifts: list[str] = []
     drifts.extend(_check_group("agent", AGENT_WORKFLOW_MAP, os.path.join("infrastructure", "n8n-workflows")))
     drifts.extend(_check_group("ops", OPS_WORKFLOW_MAP, os.path.join("infrastructure", "n8n")))
+    drifts.extend(_check_group("rotation", ROTATION_WORKFLOW_MAP, os.path.join("infrastructure", "n8n-workflows")))
 
     if drifts:
         print("")

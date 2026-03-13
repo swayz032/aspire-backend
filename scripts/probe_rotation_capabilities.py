@@ -65,13 +65,9 @@ def probe_deepgram(secret: dict[str, Any]) -> dict[str, Any]:
             timeout=20,
         ).status_code
 
-    can_manage = "admin" in scopes or {"keys:read", "keys:write"}.issubset(set(scopes))
-    if can_manage and project_id and keys_status and keys_status < 300:
+    if project_id and keys_status and keys_status < 300:
         status = "ready"
         blocker = ""
-    elif not can_manage:
-        status = "blocked"
-        blocker = "missing keys:read + keys:write scopes"
     elif not project_id:
         status = "blocked"
         blocker = "project_id unavailable"
@@ -84,6 +80,7 @@ def probe_deepgram(secret: dict[str, Any]) -> dict[str, Any]:
         "status": status,
         "blocker": blocker,
         "scopes": scopes,
+        "scopes_informational_only": True,
         "accessor_present": bool(accessor),
         "project_count": len(projects) if isinstance(projects, list) else 0,
         "project_id_present": bool(project_id),

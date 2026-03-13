@@ -22,10 +22,11 @@ def test_rotation_lambda_adapter_sources_compile() -> None:
         py_compile.compile(str(path), doraise=True)
 
 
-def test_rotation_inventory_reports_adapter_ready_manual_providers() -> None:
+def test_rotation_inventory_reports_manual_and_automated_adapter_alignment() -> None:
     report = build_rotation_inventory_report()
 
-    assert "deepgram" in report["manual_alerted_with_adapter_modules"]
+    assert "deepgram" in report["automated_providers"]
+    assert "deepgram" not in report["manual_alerted_with_adapter_modules"]
     assert "elevenlabs" in report["manual_alerted_with_adapter_modules"]
     assert "deepgram" not in report["manual_alerted_without_adapter_modules"]
     assert "elevenlabs" not in report["manual_alerted_without_adapter_modules"]
