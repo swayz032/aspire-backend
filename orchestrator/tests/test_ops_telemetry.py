@@ -271,12 +271,15 @@ class TestResponseShapes:
     def test_providers_include_runtime_env_inventory_and_infra(self, client, headers, monkeypatch) -> None:
         monkeypatch.setenv("ASPIRE_OPENAI_API_KEY", "openai-test-key")
         monkeypatch.setenv("ASPIRE_TWILIO_ACCOUNT_SID", "AC123")
+        monkeypatch.setenv("ASPIRE_TWILIO_AUTH_TOKEN", "twilio-secret")
         monkeypatch.setenv("ASPIRE_GUSTO_CLIENT_ID", "gusto-client")
+        monkeypatch.setenv("ASPIRE_GUSTO_CLIENT_SECRET", "gusto-secret")
         monkeypatch.setenv("ANAM_API_KEY", "anam-key")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "aws-test-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-test-secret")
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+        monkeypatch.setenv("N8N_API_KEY", "n8n-api-key")
         monkeypatch.setenv("N8N_WEBHOOK_SECRET", "n8n-secret")
 
         response = client.get("/admin/ops/providers", headers=headers)
@@ -285,12 +288,16 @@ class TestResponseShapes:
         items = response.json()["items"]
         openai_item = next(item for item in items if item["provider"] == "openai")
         twilio_item = next(item for item in items if item["provider"] == "twilio")
+        n8n_item = next(item for item in items if item["provider"] == "n8n")
         secret_manager_item = next(item for item in items if item["provider"] == "secret_manager")
         provider_ids = {item["provider"] for item in items}
         assert {"openai", "twilio", "gusto", "anam", "secret_manager", "railway", "n8n"}.issubset(provider_ids)
         assert "s3" not in provider_ids
         assert openai_item["rotation_mode"] == "automated"
         assert twilio_item["rotation_mode"] == "automated"
+        assert openai_item["verification_source"] == "aws_step_functions"
+        assert twilio_item["adapter_type"] == "aws_rotation_lambda"
+        assert n8n_item["automation_status"] == "planned"
         assert secret_manager_item["secret_source"] == "aws_secrets_manager"
         assert openai_item["production_verified"] is True
 

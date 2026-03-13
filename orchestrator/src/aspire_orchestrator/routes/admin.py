@@ -43,6 +43,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from aspire_orchestrator.services.receipt_store import query_receipts, store_receipts
 from aspire_orchestrator.services.outbox_client import get_outbox_client
 from aspire_orchestrator.services.a2a_service import get_a2a_service
+from aspire_orchestrator.services.provider_secret_registry import (
+    get_provider_secret_alias_map,
+    get_provider_secret_registry,
+    is_registry_provider_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1331,45 +1336,15 @@ async def voice_config(request: Request) -> JSONResponse:
 # 7A. GET /admin/ops/providers — Provider Connectivity Snapshot
 # =============================================================================
 
-_PROVIDER_ALIAS_MAP: dict[str, str] = {
-    "qbo": "quickbooks",
-}
-
-_PROVIDER_RUNTIME_CATALOG: tuple[dict[str, Any], ...] = (
-    {"provider": "openai", "lane": "ai", "env_vars": ("ASPIRE_OPENAI_API_KEY", "OPENAI_API_KEY"), "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
-    {"provider": "elevenlabs", "lane": "voice", "env_vars": ("ASPIRE_ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "deepgram", "lane": "transcription", "env_vars": ("ASPIRE_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "livekit", "lane": "conference", "env_vars": ("ASPIRE_LIVEKIT_API_KEY", "LIVEKIT_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "twilio", "lane": "telephony", "env_vars": ("ASPIRE_TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID"), "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
-    {"provider": "stripe", "lane": "payments", "env_vars": ("ASPIRE_STRIPE_API_KEY", "STRIPE_SECRET_KEY"), "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
-    {"provider": "plaid", "lane": "banking", "env_vars": ("ASPIRE_PLAID_CLIENT_ID", "PLAID_CLIENT_ID"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "pandadoc", "lane": "documents", "env_vars": ("ASPIRE_PANDADOC_API_KEY", "PANDADOC_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "quickbooks", "lane": "accounting", "env_vars": ("ASPIRE_QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_ID"), "aliases": ("qbo",), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "gusto", "lane": "payroll", "env_vars": ("ASPIRE_GUSTO_CLIENT_ID", "GUSTO_CLIENT_ID"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "brave", "lane": "search", "env_vars": ("ASPIRE_BRAVE_API_KEY", "BRAVE_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "tavily", "lane": "search", "env_vars": ("ASPIRE_TAVILY_API_KEY", "TAVILY_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "google_places", "lane": "places", "env_vars": ("ASPIRE_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "here", "lane": "places", "env_vars": ("ASPIRE_HERE_API_KEY", "HERE_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "foursquare", "lane": "places", "env_vars": ("ASPIRE_FOURSQUARE_API_KEY", "FOURSQUARE_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "mapbox", "lane": "maps", "env_vars": ("ASPIRE_MAPBOX_ACCESS_TOKEN", "MAPBOX_ACCESS_TOKEN"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "tomtom", "lane": "places", "env_vars": ("ASPIRE_TOMTOM_API_KEY", "TOMTOM_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "anam", "lane": "avatar", "env_vars": ("ASPIRE_ANAM_API_KEY", "ANAM_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
-    {"provider": "supabase", "lane": "database", "env_vars": ("ASPIRE_SUPABASE_URL", "SUPABASE_URL"), "always_include": True, "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
-    {"provider": "n8n", "lane": "automation", "env_vars": ("N8N_API_KEY", "N8N_WEBHOOK_SECRET"), "always_include": True, "rotation_mode": "manual_alerted", "secret_source": "railway_runtime"},
-    {"provider": "railway", "lane": "infrastructure", "env_vars": ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_NAME", "ASPIRE_DOMAIN_RAIL_URL"), "always_include": True, "rotation_mode": "infrastructure", "secret_source": "railway_runtime"},
-    {"provider": "secret_manager", "lane": "security", "env_vars": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"), "always_include": True, "rotation_mode": "infrastructure", "secret_source": "aws_secrets_manager"},
-)
-
-
 def _normalize_provider_key(value: Any) -> str:
     key = str(value or "").strip().lower()
     if not key:
         return ""
-    return _PROVIDER_ALIAS_MAP.get(key, key)
+    return get_provider_secret_alias_map().get(key, key)
 
 
 def _provider_env_configured(meta: dict[str, Any]) -> bool:
-    return any(str(os.environ.get(name, "")).strip() for name in meta.get("env_vars", ()))
+    return is_registry_provider_configured(meta)
 
 
 def _make_provider_snapshot_item(
@@ -1393,6 +1368,11 @@ def _make_provider_snapshot_item(
         "error_rate": 0.0,
         "webhook_error_rate": 0.0,
         "rotation_mode": "unknown",
+        "automation_status": "unknown",
+        "verification_source": "unknown",
+        "adapter_type": "unknown",
+        "adapter_name": "",
+        "secret_id": "",
         "secret_source": "unknown",
         "production_verified": False,
     }
@@ -1402,7 +1382,7 @@ def _build_runtime_provider_items() -> dict[str, dict[str, Any]]:
     now_iso = _now_iso()
     items: dict[str, dict[str, Any]] = {}
 
-    for meta in _PROVIDER_RUNTIME_CATALOG:
+    for meta in get_provider_secret_registry():
         provider = meta["provider"]
         configured = _provider_env_configured(meta)
         if not configured and not bool(meta.get("always_include")):
@@ -1425,11 +1405,13 @@ def _build_runtime_provider_items() -> dict[str, dict[str, Any]]:
             last_checked=now_iso,
         )
         items[provider]["rotation_mode"] = str(meta.get("rotation_mode") or "unknown")
+        items[provider]["automation_status"] = str(meta.get("automation_status") or "unknown")
+        items[provider]["verification_source"] = str(meta.get("verification_source") or "unknown")
+        items[provider]["adapter_type"] = str(meta.get("adapter_type") or "unknown")
+        items[provider]["adapter_name"] = str(meta.get("adapter_name") or "")
+        items[provider]["secret_id"] = str(meta.get("secret_id") or "")
         items[provider]["secret_source"] = str(meta.get("secret_source") or "unknown")
         items[provider]["production_verified"] = configured
-
-        for alias in meta.get("aliases", ()):
-            _PROVIDER_ALIAS_MAP.setdefault(str(alias).strip().lower(), provider)
 
     return items
 
@@ -1575,6 +1557,11 @@ async def list_providers(
     for key, item in _build_runtime_provider_items().items():
         existing = items_map.setdefault(key, item)
         existing["rotation_mode"] = item.get("rotation_mode", existing.get("rotation_mode", "unknown"))
+        existing["automation_status"] = item.get("automation_status", existing.get("automation_status", "unknown"))
+        existing["verification_source"] = item.get("verification_source", existing.get("verification_source", "unknown"))
+        existing["adapter_type"] = item.get("adapter_type", existing.get("adapter_type", "unknown"))
+        existing["adapter_name"] = item.get("adapter_name", existing.get("adapter_name", ""))
+        existing["secret_id"] = item.get("secret_id", existing.get("secret_id", ""))
         existing["secret_source"] = item.get("secret_source", existing.get("secret_source", "unknown"))
         existing["production_verified"] = bool(existing.get("production_verified")) or bool(item.get("production_verified"))
 
