@@ -22,13 +22,21 @@ import hashlib
 import time
 import requests
 
+from _n8n_runtime import (
+    get_n8n_admin_email,
+    get_n8n_admin_password,
+    get_n8n_api_key,
+    get_n8n_base_url,
+    get_webhook_secret,
+)
+
 # Fix Windows console encoding
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ========== Configuration ==========
-N8N_API_URL = "http://localhost:5678"
-N8N_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZmQ3OWU4OS0zMDE3LTRkYmUtOGNlYy02NzZmY2FiNmY5MzgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYTMxN2Y3YTgtNWMwZS00NGE4LTg5NTgtNGE3YTcxYmIyNDM3IiwiaWF0IjoxNzcxNDQyMjQ0LCJleHAiOjE3NzM5NzkyMDB9.iyLco0Fb_EoeFwDDFGCpvMPAwbJduSuS4TXtfRMm1fk"
+N8N_API_URL = get_n8n_base_url()
+N8N_API_KEY = get_n8n_api_key()
 
 HEADERS = {"X-N8N-API-KEY": N8N_API_KEY}
 
@@ -51,7 +59,7 @@ ALL_WORKFLOWS = {
 WEBHOOK_WORKFLOWS = {
     "intake-activation": {
         "url": f"{N8N_API_URL}/webhook/intake-activation",
-        "secret": "aspire-n8n-dev-secret",
+        "secret": get_webhook_secret("intake"),
         "response_mode": "responseImmediately",
         "payload": {
             "suiteId": "c4eebdbd-e019-42c0-9143-077762e92bbc",
@@ -63,7 +71,7 @@ WEBHOOK_WORKFLOWS = {
     },
     "eli-email-triage": {
         "url": f"{N8N_API_URL}/webhook/eli-email-triage",
-        "secret": "aspire-eli-dev-secret",
+        "secret": get_webhook_secret("eli"),
         "response_mode": "lastNode",
         "payload": {
             "email_id": "test-email-001",
@@ -76,7 +84,7 @@ WEBHOOK_WORKFLOWS = {
     },
     "sarah-call-handler": {
         "url": f"{N8N_API_URL}/webhook/sarah-call-handler",
-        "secret": "aspire-sarah-dev-secret",
+        "secret": get_webhook_secret("sarah"),
         "response_mode": "lastNode",
         "payload": {
             "call_sid": "test-call-001",
@@ -88,7 +96,7 @@ WEBHOOK_WORKFLOWS = {
     },
     "nora-meeting-summary": {
         "url": f"{N8N_API_URL}/webhook/nora-meeting-summary",
-        "secret": "aspire-nora-dev-secret",
+        "secret": get_webhook_secret("nora"),
         "response_mode": "responseImmediately",
         "payload": {
             "room_name": "test-room-001",
@@ -135,8 +143,8 @@ def get_session_cookie():
     """Login to n8n internal API and get session cookie."""
     session = requests.Session()
     r = session.post(f'{N8N_API_URL}/rest/login', json={
-        'emailOrLdapLoginId': 'admin@aspireos.app',
-        'password': 'AspireN8N2026!'
+        'emailOrLdapLoginId': get_n8n_admin_email(),
+        'password': get_n8n_admin_password()
     }, timeout=5)
     if r.status_code == 200:
         cookie = dict(r.cookies).get('n8n-auth', '')

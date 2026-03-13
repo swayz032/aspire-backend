@@ -8,8 +8,10 @@ import sys
 import urllib.request
 import urllib.error
 
-BASE_URL = "http://localhost:5678"
-API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZmQ3OWU4OS0zMDE3LTRkYmUtOGNlYy02NzZmY2FiNmY5MzgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYTMxN2Y3YTgtNWMwZS00NGE4LTg5NTgtNGE3YTcxYmIyNDM3IiwiaWF0IjoxNzcxNDQyMjQ0LCJleHAiOjE3NzM5NzkyMDB9.iyLco0Fb_EoeFwDDFGCpvMPAwbJduSuS4TXtfRMm1fk"
+from _n8n_runtime import get_n8n_api_key, get_n8n_base_url
+
+BASE_URL = get_n8n_base_url()
+API_KEY = get_n8n_api_key()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOWS_DIR = os.path.join(PROJECT_ROOT, "infrastructure", "n8n-workflows")

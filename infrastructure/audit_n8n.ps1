@@ -1,4 +1,17 @@
-$apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZmQ3OWU4OS0zMDE3LTRkYmUtOGNlYy02NzZmY2FiNmY5MzgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiMDZlMDU0ZjctOTliMy00ZmMxLWFjNTktMDAyMjFkMjFlZDcyIiwiaWF0IjoxNzcxMjQ5Mzc2LCJleHAiOjE3NzM4MDY0MDB9.lSn5WSSAHSBM52j5GpCcT8n-QAPx4w7x0RAKTChrbDc"
+$apiKey = $env:N8N_API_KEY
+if (-not $apiKey) {
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
+    $mcpPath = Join-Path $repoRoot ".mcp.json"
+    if (Test-Path $mcpPath) {
+        $mcp = Get-Content $mcpPath -Raw | ConvertFrom-Json
+        $apiKey = $mcp.mcpServers."n8n-mcp".env.N8N_API_KEY
+    }
+}
+
+if (-not $apiKey) {
+    throw "Set N8N_API_KEY in the environment or configure .mcp.json before running audit_n8n.ps1"
+}
+
 $headers = @{"X-N8N-API-KEY" = $apiKey}
 
 $response = Invoke-RestMethod "http://localhost:5678/api/v1/workflows?limit=50" -Headers $headers

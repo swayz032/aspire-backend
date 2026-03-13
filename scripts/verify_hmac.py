@@ -4,9 +4,31 @@ import json
 import sys
 import io
 
+from _n8n_runtime import get_n8n_admin_email, get_n8n_admin_password, get_n8n_base_url
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-AUTH_COOKIE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjRmZDc5ZTg5LTMwMTctNGRiZS04Y2VjLTY3NmZjYWI2ZjkzOCIsImhhc2giOiJmdm50Sm90OUFSIiwidXNlZE1mYSI6ZmFsc2UsImlhdCI6MTc3MTQ1NTIzNSwiZXhwIjoxNzcyMDYwMDM1fQ.oHz5suoUVo6GSp2odxioI1a229hNH_KHxNvkLaXFoLU'
+N8N_BASE = get_n8n_base_url()
+
+
+def get_auth_cookie() -> str:
+    session = requests.Session()
+    response = session.post(
+        f"{N8N_BASE}/rest/login",
+        json={
+            "emailOrLdapLoginId": get_n8n_admin_email(),
+            "password": get_n8n_admin_password(),
+        },
+        timeout=5,
+    )
+    response.raise_for_status()
+    auth_cookie = dict(response.cookies).get("n8n-auth", "")
+    if not auth_cookie:
+        raise RuntimeError("No n8n-auth cookie returned from login")
+    return auth_cookie
+
+
+AUTH_COOKIE = get_auth_cookie()
 
 
 def search_flatted(flatted_str, keywords):
@@ -48,7 +70,7 @@ keywords = [
 
 for ex_id, desc in test_execs:
     r = requests.get(
-        f'http://localhost:5678/rest/executions/{ex_id}',
+        f'{N8N_BASE}/rest/executions/{ex_id}',
         headers={'Cookie': f'n8n-auth={AUTH_COOKIE}'},
         timeout=10
     )

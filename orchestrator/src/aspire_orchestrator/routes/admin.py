@@ -126,6 +126,11 @@ def clear_admin_stores() -> None:
         _provider_calls.clear()
         _rollouts.clear()
         _proposals.clear()
+    try:
+        with _provider_health_lock:
+            _provider_health.clear()
+    except NameError:
+        pass
 
 
 def _get_supabase_client() -> Any | None:
@@ -1326,6 +1331,136 @@ async def voice_config(request: Request) -> JSONResponse:
 # 7A. GET /admin/ops/providers — Provider Connectivity Snapshot
 # =============================================================================
 
+_PROVIDER_ALIAS_MAP: dict[str, str] = {
+    "qbo": "quickbooks",
+}
+
+_PROVIDER_RUNTIME_CATALOG: tuple[dict[str, Any], ...] = (
+    {"provider": "openai", "lane": "ai", "env_vars": ("ASPIRE_OPENAI_API_KEY", "OPENAI_API_KEY"), "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
+    {"provider": "elevenlabs", "lane": "voice", "env_vars": ("ASPIRE_ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "deepgram", "lane": "transcription", "env_vars": ("ASPIRE_DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "livekit", "lane": "conference", "env_vars": ("ASPIRE_LIVEKIT_API_KEY", "LIVEKIT_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "twilio", "lane": "telephony", "env_vars": ("ASPIRE_TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID"), "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
+    {"provider": "stripe", "lane": "payments", "env_vars": ("ASPIRE_STRIPE_API_KEY", "STRIPE_SECRET_KEY"), "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
+    {"provider": "plaid", "lane": "banking", "env_vars": ("ASPIRE_PLAID_CLIENT_ID", "PLAID_CLIENT_ID"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "pandadoc", "lane": "documents", "env_vars": ("ASPIRE_PANDADOC_API_KEY", "PANDADOC_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "quickbooks", "lane": "accounting", "env_vars": ("ASPIRE_QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_ID"), "aliases": ("qbo",), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "gusto", "lane": "payroll", "env_vars": ("ASPIRE_GUSTO_CLIENT_ID", "GUSTO_CLIENT_ID"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "brave", "lane": "search", "env_vars": ("ASPIRE_BRAVE_API_KEY", "BRAVE_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "tavily", "lane": "search", "env_vars": ("ASPIRE_TAVILY_API_KEY", "TAVILY_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "google_places", "lane": "places", "env_vars": ("ASPIRE_GOOGLE_MAPS_API_KEY", "GOOGLE_MAPS_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "here", "lane": "places", "env_vars": ("ASPIRE_HERE_API_KEY", "HERE_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "foursquare", "lane": "places", "env_vars": ("ASPIRE_FOURSQUARE_API_KEY", "FOURSQUARE_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "mapbox", "lane": "maps", "env_vars": ("ASPIRE_MAPBOX_ACCESS_TOKEN", "MAPBOX_ACCESS_TOKEN"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "tomtom", "lane": "places", "env_vars": ("ASPIRE_TOMTOM_API_KEY", "TOMTOM_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "anam", "lane": "avatar", "env_vars": ("ASPIRE_ANAM_API_KEY", "ANAM_API_KEY"), "rotation_mode": "manual_alerted", "secret_source": "aws_secrets_manager"},
+    {"provider": "supabase", "lane": "database", "env_vars": ("ASPIRE_SUPABASE_URL", "SUPABASE_URL"), "always_include": True, "rotation_mode": "automated", "secret_source": "aws_secrets_manager"},
+    {"provider": "n8n", "lane": "automation", "env_vars": ("N8N_API_KEY", "N8N_WEBHOOK_SECRET"), "always_include": True, "rotation_mode": "manual_alerted", "secret_source": "railway_runtime"},
+    {"provider": "railway", "lane": "infrastructure", "env_vars": ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_NAME", "ASPIRE_DOMAIN_RAIL_URL"), "always_include": True, "rotation_mode": "infrastructure", "secret_source": "railway_runtime"},
+    {"provider": "secret_manager", "lane": "security", "env_vars": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"), "always_include": True, "rotation_mode": "infrastructure", "secret_source": "aws_secrets_manager"},
+)
+
+
+def _normalize_provider_key(value: Any) -> str:
+    key = str(value or "").strip().lower()
+    if not key:
+        return ""
+    return _PROVIDER_ALIAS_MAP.get(key, key)
+
+
+def _provider_env_configured(meta: dict[str, Any]) -> bool:
+    return any(str(os.environ.get(name, "")).strip() for name in meta.get("env_vars", ()))
+
+
+def _make_provider_snapshot_item(
+    *,
+    provider: str,
+    lane: str,
+    status: str,
+    connection_status: str,
+    last_checked: str | None = None,
+    scopes: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "lane": lane,
+        "status": status,
+        "connection_status": connection_status,
+        "scopes": scopes or [],
+        "last_checked": last_checked,
+        "latency_ms": 0,
+        "p95_latency_ms": 0,
+        "error_rate": 0.0,
+        "webhook_error_rate": 0.0,
+        "rotation_mode": "unknown",
+        "secret_source": "unknown",
+        "production_verified": False,
+    }
+
+
+def _build_runtime_provider_items() -> dict[str, dict[str, Any]]:
+    now_iso = _now_iso()
+    items: dict[str, dict[str, Any]] = {}
+
+    for meta in _PROVIDER_RUNTIME_CATALOG:
+        provider = meta["provider"]
+        configured = _provider_env_configured(meta)
+        if not configured and not bool(meta.get("always_include")):
+            continue
+
+        if provider == "secret_manager":
+            connection_status = "aws_sm" if configured else "unknown"
+        elif provider == "railway":
+            connection_status = "configured" if configured else "unknown"
+        elif provider == "n8n":
+            connection_status = "configured" if configured else "unknown"
+        else:
+            connection_status = "configured" if configured else "unknown"
+
+        items[provider] = _make_provider_snapshot_item(
+            provider=provider,
+            lane=str(meta.get("lane") or "unknown"),
+            status="connected" if configured else "disconnected",
+            connection_status=connection_status,
+            last_checked=now_iso,
+        )
+        items[provider]["rotation_mode"] = str(meta.get("rotation_mode") or "unknown")
+        items[provider]["secret_source"] = str(meta.get("secret_source") or "unknown")
+        items[provider]["production_verified"] = configured
+
+        for alias in meta.get("aliases", ()):
+            _PROVIDER_ALIAS_MAP.setdefault(str(alias).strip().lower(), provider)
+
+    return items
+
+
+def _overlay_live_provider_health(items_map: dict[str, dict[str, Any]]) -> None:
+    with _provider_health_lock:
+        current_health = list(_provider_health.values())
+
+    for live in current_health:
+        key = _normalize_provider_key(live.get("provider"))
+        if not key:
+            continue
+        item = items_map.setdefault(
+            key,
+            _make_provider_snapshot_item(
+                provider=key,
+                lane=str(live.get("lane") or "unknown"),
+                status="disconnected",
+                connection_status="unknown",
+            ),
+        )
+        item["lane"] = str(live.get("lane") or item.get("lane") or "unknown")
+        item["status"] = str(live.get("status") or item.get("status") or "disconnected")
+        item["connection_status"] = item["status"]
+        item["last_checked"] = live.get("lastChecked") or item.get("last_checked")
+        latency_ms = int(live.get("latencyMs") or 0)
+        item["latency_ms"] = latency_ms
+        item["p95_latency_ms"] = max(int(item.get("p95_latency_ms") or 0), latency_ms)
+        item["error_rate"] = float(live.get("errorRate") or item.get("error_rate") or 0.0)
+        item["production_verified"] = bool(item.get("production_verified")) or item["status"] in {"connected", "degraded"}
+
 
 @router.get("/admin/ops/providers")
 async def list_providers(
@@ -1351,17 +1486,6 @@ async def list_providers(
             correlation_id=correlation_id,
             status_code=401,
         )
-
-    known_providers: list[dict[str, Any]] = [
-        {"provider": "openai", "lane": "ai"},
-        {"provider": "elevenlabs", "lane": "ai"},
-        {"provider": "stripe", "lane": "payments"},
-        {"provider": "plaid", "lane": "banking"},
-        {"provider": "twilio", "lane": "telephony"},
-        {"provider": "supabase", "lane": "storage"},
-        {"provider": "railway", "lane": "infrastructure"},
-        {"provider": "n8n", "lane": "automation"},
-    ]
 
     now = datetime.now(timezone.utc)
     since_iso = (now - timedelta(hours=24)).isoformat()
@@ -1432,43 +1556,27 @@ async def list_providers(
 
     items_map: dict[str, dict[str, Any]] = {}
     for row in provider_rows:
-        key = str(row.get("provider") or row.get("provider_name") or "").strip().lower()
+        key = _normalize_provider_key(row.get("provider") or row.get("provider_name"))
         if not key:
             continue
         conn_status = str(
             row.get("connection_status") or row.get("status") or row.get("state") or "connected"
         ).strip().lower()
         connected = conn_status in {"connected", "active", "healthy", "ok"}
-        items_map[key] = {
-            "provider": key,
-            "lane": row.get("provider_type") or "unknown",
-            "status": "connected" if connected else "disconnected",
-            "connection_status": conn_status,
-            "scopes": row.get("scopes") or [],
-            "last_checked": row.get("last_webhook_at") or row.get("updated_at") or row.get("created_at"),
-            "latency_ms": 0,
-            "p95_latency_ms": 0,
-            "error_rate": 0.0,
-            "webhook_error_rate": 0.0,
-        }
-
-    for provider_meta in known_providers:
-        key = provider_meta["provider"]
-        items_map.setdefault(
-            key,
-            {
-                "provider": key,
-                "lane": provider_meta["lane"],
-                "status": "disconnected",
-                "connection_status": "unknown",
-                "scopes": [],
-                "last_checked": None,
-                "latency_ms": 0,
-                "p95_latency_ms": 0,
-                "error_rate": 0.0,
-                "webhook_error_rate": 0.0,
-            },
+        items_map[key] = _make_provider_snapshot_item(
+            provider=key,
+            lane=str(row.get("provider_type") or row.get("lane") or "unknown"),
+            status="connected" if connected else "disconnected",
+            connection_status=conn_status,
+            last_checked=row.get("last_webhook_at") or row.get("updated_at") or row.get("created_at"),
+            scopes=list(row.get("scopes") or []),
         )
+
+    for key, item in _build_runtime_provider_items().items():
+        existing = items_map.setdefault(key, item)
+        existing["rotation_mode"] = item.get("rotation_mode", existing.get("rotation_mode", "unknown"))
+        existing["secret_source"] = item.get("secret_source", existing.get("secret_source", "unknown"))
+        existing["production_verified"] = bool(existing.get("production_verified")) or bool(item.get("production_verified"))
 
     for key, item in items_map.items():
         call_stats = stats_by_provider.get(key)
@@ -1478,15 +1586,22 @@ async def list_providers(
             item["latency_ms"] = latency
             item["p95_latency_ms"] = int(call_stats["max_ms"])
             item["error_rate"] = error_rate
+            if str(item.get("status")) == "disconnected":
+                item["status"] = "connected"
+                item["connection_status"] = "recent_activity"
             if item["status"] == "connected" and (error_rate >= 5.0 or latency >= 2000):
                 item["status"] = "degraded"
         wb_stats = webhook_by_provider.get(key)
         if wb_stats and wb_stats["total"] > 0:
             item["webhook_error_rate"] = round((wb_stats["failed"] / wb_stats["total"]) * 100, 2)
+            if item["status"] == "connected" and item["webhook_error_rate"] >= 5.0:
+                item["status"] = "degraded"
+
+    _overlay_live_provider_health(items_map)
 
     items = list(items_map.values())
     if provider:
-        wanted = provider.strip().lower()
+        wanted = _normalize_provider_key(provider)
         items = [p for p in items if p.get("provider") == wanted]
     if status:
         wanted_status = status.strip().lower()
@@ -2596,6 +2711,40 @@ def update_provider_health(provider: str, health: dict[str, Any]) -> None:
         }
 
 
+def _build_stream_provider_snapshot() -> list[dict[str, Any]]:
+    defaults = _build_runtime_provider_items()
+    snapshot_map: dict[str, dict[str, Any]] = {
+        key: {
+            "provider": item["provider"],
+            "lane": item["lane"],
+            "status": item["status"],
+            "latencyMs": int(item.get("latency_ms") or 0),
+            "errorRate": float(item.get("error_rate") or 0.0),
+            "lastChecked": item.get("last_checked") or _now_iso(),
+        }
+        for key, item in defaults.items()
+    }
+
+    with _provider_health_lock:
+        current = list(_provider_health.values())
+
+    for live in current:
+        key = _normalize_provider_key(live.get("provider"))
+        if not key:
+            continue
+        snapshot_map[key] = {
+            "provider": key,
+            "lane": str(live.get("lane") or snapshot_map.get(key, {}).get("lane") or "unknown"),
+            "status": str(live.get("status") or snapshot_map.get(key, {}).get("status") or "disconnected"),
+            "latencyMs": int(live.get("latencyMs") or 0),
+            "errorRate": float(live.get("errorRate") or 0.0),
+            "lastChecked": live.get("lastChecked") or snapshot_map.get(key, {}).get("lastChecked") or _now_iso(),
+            "lastSuccessfulCall": live.get("lastSuccessfulCall"),
+        }
+
+    return [snapshot_map[key] for key in sorted(snapshot_map)]
+
+
 @router.get("/admin/ops/providers/stream")
 async def stream_provider_health(request: Request) -> StreamingResponse:
     """SSE stream of provider connectivity status.
@@ -2625,9 +2774,7 @@ async def stream_provider_health(request: Request) -> StreamingResponse:
 
         try:
             # Send initial full snapshot
-            with _provider_health_lock:
-                snapshot = list(_provider_health.values())
-
+            snapshot = _build_stream_provider_snapshot()
             if not snapshot:
                 snapshot = _seed_provider_health()
 
@@ -2650,8 +2797,7 @@ async def stream_provider_health(request: Request) -> StreamingResponse:
                     yield format_sse_event({"type": "heartbeat", "server_time": _now_iso()}, event_type="heartbeat")
                     last_heartbeat = now
 
-                with _provider_health_lock:
-                    current = list(_provider_health.values())
+                current = _build_stream_provider_snapshot()
 
                 current_hash = str(hash(str(current)))
                 if current_hash != last_snapshot_hash and limiter.check():
@@ -2691,27 +2837,17 @@ async def stream_provider_health(request: Request) -> StreamingResponse:
 
 
 def _seed_provider_health() -> list[dict[str, Any]]:
-    """Seed provider health with known integrations."""
-    providers = [
-        {"provider": "stripe", "lane": "payments", "status": "connected"},
-        {"provider": "supabase", "lane": "database", "status": "connected"},
-        {"provider": "elevenlabs", "lane": "voice", "status": "connected"},
-        {"provider": "openai", "lane": "intelligence", "status": "connected"},
-        {"provider": "livekit", "lane": "conference", "status": "connected"},
-        {"provider": "pandadoc", "lane": "documents", "status": "connected"},
-        {"provider": "twilio", "lane": "telephony", "status": "connected"},
-        {"provider": "deepgram", "lane": "transcription", "status": "connected"},
-    ]
-    now = _now_iso()
-    result = []
-    for p in providers:
+    """Seed provider health from the same runtime provider catalog as the snapshot API."""
+    providers = list(_build_runtime_provider_items().values())
+    result: list[dict[str, Any]] = []
+    for p in sorted(providers, key=lambda item: str(item.get("provider", ""))):
         entry = {
             "provider": p["provider"],
             "lane": p["lane"],
             "status": p["status"],
-            "latencyMs": 0,
-            "errorRate": 0.0,
-            "lastChecked": now,
+            "latencyMs": int(p.get("latency_ms") or 0),
+            "errorRate": float(p.get("error_rate") or 0.0),
+            "lastChecked": p.get("last_checked") or _now_iso(),
         }
         result.append(entry)
         with _provider_health_lock:
@@ -2763,11 +2899,11 @@ async def stream_health_pulse(request: Request) -> StreamingResponse:
                     open_incidents = sum(1 for i in _incidents.values() if i.get("state") != "closed")
                     total_incidents = len(_incidents)
 
-                with _provider_health_lock:
-                    providers_up = sum(1 for p in _provider_health.values() if p.get("status") == "connected")
-                    providers_total = len(_provider_health) or 8
-                    degraded_count = sum(1 for p in _provider_health.values() if p.get("status") == "degraded")
-                    disconnected_count = sum(1 for p in _provider_health.values() if p.get("status") == "disconnected")
+                provider_snapshot = _build_stream_provider_snapshot()
+                providers_up = sum(1 for p in provider_snapshot if p.get("status") == "connected")
+                providers_total = len(provider_snapshot) or 4
+                degraded_count = sum(1 for p in provider_snapshot if p.get("status") == "degraded")
+                disconnected_count = sum(1 for p in provider_snapshot if p.get("status") == "disconnected")
 
                 status = "healthy"
                 if disconnected_count > 0 or open_incidents > 0:

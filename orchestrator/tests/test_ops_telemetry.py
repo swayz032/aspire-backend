@@ -25,6 +25,7 @@ from aspire_orchestrator.routes.admin import (
     clear_admin_stores,
     register_incident,
     register_provider_call,
+    update_provider_health,
 )
 from aspire_orchestrator.services.receipt_store import clear_store, store_receipts
 
@@ -266,6 +267,52 @@ class TestResponseShapes:
             "finished_at", "redacted_payload_preview",
         }
         assert expected_keys.issubset(set(item.keys()))
+
+    def test_providers_include_runtime_env_inventory_and_infra(self, client, headers, monkeypatch) -> None:
+        monkeypatch.setenv("ASPIRE_OPENAI_API_KEY", "openai-test-key")
+        monkeypatch.setenv("ASPIRE_TWILIO_ACCOUNT_SID", "AC123")
+        monkeypatch.setenv("ASPIRE_GUSTO_CLIENT_ID", "gusto-client")
+        monkeypatch.setenv("ANAM_API_KEY", "anam-key")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "aws-test-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-test-secret")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+        monkeypatch.setenv("N8N_WEBHOOK_SECRET", "n8n-secret")
+
+        response = client.get("/admin/ops/providers", headers=headers)
+        assert response.status_code == 200
+
+        items = response.json()["items"]
+        openai_item = next(item for item in items if item["provider"] == "openai")
+        twilio_item = next(item for item in items if item["provider"] == "twilio")
+        secret_manager_item = next(item for item in items if item["provider"] == "secret_manager")
+        provider_ids = {item["provider"] for item in items}
+        assert {"openai", "twilio", "gusto", "anam", "secret_manager", "railway", "n8n"}.issubset(provider_ids)
+        assert "s3" not in provider_ids
+        assert openai_item["rotation_mode"] == "automated"
+        assert twilio_item["rotation_mode"] == "automated"
+        assert secret_manager_item["secret_source"] == "aws_secrets_manager"
+        assert openai_item["production_verified"] is True
+
+    def test_providers_overlay_live_health_for_stream_and_snapshot(self, client, headers) -> None:
+        update_provider_health(
+            "n8n",
+            {
+                "lane": "automation",
+                "status": "degraded",
+                "latency_ms": 875,
+                "error_rate": 12.5,
+            },
+        )
+
+        response = client.get("/admin/ops/providers", headers=headers, params={"provider": "n8n"})
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["provider"] == "n8n"
+        assert items[0]["status"] == "degraded"
+        assert items[0]["latency_ms"] == 875
+        assert items[0]["error_rate"] == 12.5
 
 
 # =============================================================================

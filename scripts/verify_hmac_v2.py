@@ -4,13 +4,16 @@ import json
 import sys
 import io
 
+from _n8n_runtime import get_n8n_admin_email, get_n8n_admin_password, get_n8n_base_url
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+N8N_BASE = get_n8n_base_url()
 
 # Get a fresh session cookie
 session = requests.Session()
-r = session.post('http://localhost:5678/rest/login', json={
-    'emailOrLdapLoginId': 'admin@aspireos.app',
-    'password': 'AspireN8N2026!'
+r = session.post(f'{N8N_BASE}/rest/login', json={
+    'emailOrLdapLoginId': get_n8n_admin_email(),
+    'password': get_n8n_admin_password()
 }, timeout=5)
 AUTH_COOKIE = dict(r.cookies).get('n8n-auth', '')
 
@@ -66,7 +69,7 @@ all_hmac_correct = True
 
 for ex_id, desc, should_hmac_pass in test_execs:
     r = requests.get(
-        f'http://localhost:5678/rest/executions/{ex_id}',
+        f'{N8N_BASE}/rest/executions/{ex_id}',
         headers={'Cookie': f'n8n-auth={AUTH_COOKIE}'},
         timeout=10
     )

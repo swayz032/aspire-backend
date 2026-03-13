@@ -15,10 +15,18 @@ import sys
 import io
 import re
 
+from _n8n_runtime import (
+    get_n8n_admin_email,
+    get_n8n_admin_password,
+    get_n8n_api_key,
+    get_n8n_base_url,
+    get_webhook_secret,
+)
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-N8N_BASE = "http://localhost:5678"
-N8N_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ZmQ3OWU4OS0zMDE3LTRkYmUtOGNlYy02NzZmY2FiNmY5MzgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYTMxN2Y3YTgtNWMwZS00NGE4LTg5NTgtNGE3YTcxYmIyNDM3IiwiaWF0IjoxNzcxNDQyMjQ0LCJleHAiOjE3NzM5NzkyMDB9.iyLco0Fb_EoeFwDDFGCpvMPAwbJduSuS4TXtfRMm1fk"
+N8N_BASE = get_n8n_base_url()
+N8N_API_KEY = get_n8n_api_key()
 
 WF_MAP = {
     "aDeQEKoBawhGdUtE": "intake-activation",
@@ -69,8 +77,8 @@ def send_webhook(name, url, payload, secret, valid_hmac=True):
 
 def n8n_login():
     data = json.dumps({
-        'emailOrLdapLoginId': 'admin@aspireos.app',
-        'password': 'AspireN8N2026!'
+        'emailOrLdapLoginId': get_n8n_admin_email(),
+        'password': get_n8n_admin_password()
     }).encode()
     req = urllib.request.Request(
         f"{N8N_BASE}/rest/login",
@@ -248,7 +256,7 @@ WEBHOOKS = [
     {
         "name": "intake-activation",
         "url": f"{N8N_BASE}/webhook/intake-activation",
-        "secret": "aspire-n8n-dev-secret",
+        "secret": get_webhook_secret("intake"),
         "payload": {
             "suiteId": "c4eebdbd-e019-42c0-9143-077762e92bbc",
             "officeId": "c4eebdbd-e019-42c0-9143-077762e92bbc",
@@ -260,7 +268,7 @@ WEBHOOKS = [
     {
         "name": "eli-email-triage",
         "url": f"{N8N_BASE}/webhook/eli-email-triage",
-        "secret": "aspire-eli-dev-secret",
+        "secret": get_webhook_secret("eli"),
         "payload": {
             "email_id": "retest-email-002",
             "from": "customer@example.com",
@@ -273,7 +281,7 @@ WEBHOOKS = [
     {
         "name": "sarah-call-handler",
         "url": f"{N8N_BASE}/webhook/sarah-call-handler",
-        "secret": "aspire-sarah-dev-secret",
+        "secret": get_webhook_secret("sarah"),
         "payload": {
             "call_sid": "retest-call-002",
             "from_number": "+15551234567",
@@ -285,7 +293,7 @@ WEBHOOKS = [
     {
         "name": "nora-meeting-summary",
         "url": f"{N8N_BASE}/webhook/nora-meeting-summary",
-        "secret": "aspire-nora-dev-secret",
+        "secret": get_webhook_secret("nora"),
         "payload": {
             "room_name": "retest-room-002",
             "duration": 1800,

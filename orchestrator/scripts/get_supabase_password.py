@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""Get Supabase database password from AWS Secrets Manager."""
+"""Get Supabase database password metadata from AWS Secrets Manager."""
 
-import os
-import boto3
 import json
+import os
 
-# AWS credentials from .env
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "AKIA4IY2OBQHG7PBSERR")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "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")  # Need actual secret
-os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+import boto3
 
-sm = boto3.client("secretsmanager", region_name="us-east-1")
+region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+sm = boto3.client("secretsmanager", region_name=region)
 
 # Check for Supabase credentials
 try:

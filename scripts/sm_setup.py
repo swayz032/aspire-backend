@@ -1,12 +1,7 @@
-"""AWS Secrets Manager Setup — Create secret groups + import values from .env files.
+"""AWS Secrets Manager Setup - Create secret groups from environment-backed values.
 
-Run via WSL:
-  source ~/venvs/aspire/bin/activate
-  AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret> python scripts/sm_setup.py
-
-Creates 6 SM secret groups under aspire/dev/*:
-  aspire/dev/stripe, aspire/dev/supabase, aspire/dev/openai,
-  aspire/dev/twilio, aspire/dev/internal, aspire/dev/providers
+Run with the required secret values exported in the environment. This script never
+stores live credentials in source control.
 """
 
 import json
@@ -16,89 +11,106 @@ import sys
 import boto3
 from botocore.exceptions import ClientError
 
-REGION = "us-east-1"
+REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-# ── Secret Groups ──────────────────────────────────────────────────────────────
 
-SECRETS = {
+def _env(*names: str) -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+SECRET_TEMPLATES = {
     "aspire/dev/stripe": {
-        "description": "Stripe sandbox API keys (Scott Consultants test account)",
+        "description": "Stripe sandbox API keys (environment-backed import)",
         "values": {
-            "restricted_key": "rk_test_51Sx304HG2dxKUrArr9uPAdZprd6GkWIaRI5MHXGprgKMMYIY4y4lc2dau8dPTBzNOFURl0IJLqQIf2l7ickjO74W00vJGp2Hxh",
-            "secret_key": "sk_test_51Sx304HG2dxKUrArb8S48wzY0peUgAr34sTZ1St7MhAm4PX0yZuC16LonBhSdBChKKcM7dyN7KGqdAxJaTPYCveV00TcXeqBrZ",
-            "publishable_key": "pk_test_51Sx304HG2dxKUrAr7DQI36dNUhNYeoGqNWgIXyIU4SuZA2jBRLrbCfABroE3hc69nOxiFp7eVafn7KfZcCjW2H2X00TsDy4rDV",
-            "webhook_secret": "",
+            "restricted_key": ("STRIPE_RESTRICTED_KEY", "ASPIRE_STRIPE_RESTRICTED_KEY"),
+            "secret_key": ("STRIPE_SECRET_KEY", "ASPIRE_STRIPE_API_KEY"),
+            "publishable_key": ("STRIPE_PUBLISHABLE_KEY", "ASPIRE_STRIPE_PUBLISHABLE_KEY"),
+            "webhook_secret": ("STRIPE_WEBHOOK_SECRET", "ASPIRE_STRIPE_WEBHOOK_SECRET"),
         },
     },
     "aspire/dev/supabase": {
         "description": "Supabase project credentials",
         "values": {
-            "service_role_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF0dWVoanFsY21mY2FzY3FqamhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTg0MzY2MiwiZXhwIjoyMDgxNDE5NjYyfQ.qfoKM6lyk95qTVmapP7UGeLDBo8WcLlyPLWfSJMuSDE",
-            "jwt_secret": "",
+            "service_role_key": ("SUPABASE_SERVICE_ROLE_KEY", "ASPIRE_SUPABASE_SERVICE_ROLE_KEY"),
+            "jwt_secret": ("SUPABASE_JWT_SECRET", "ASPIRE_SUPABASE_JWT_SECRET"),
         },
     },
     "aspire/dev/openai": {
         "description": "OpenAI API key (Ava Brain)",
         "values": {
-            "api_key": "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",
+            "api_key": ("OPENAI_API_KEY", "ASPIRE_OPENAI_API_KEY"),
         },
     },
     "aspire/dev/twilio": {
-        "description": "Twilio trial credentials (Sarah Front Desk)",
+        "description": "Twilio credentials",
         "values": {
-            "account_sid": "ACec203fae571300ffade21ce91c5d0bfb",
-            "auth_token": "aba7a11a10f487cd4a183718f8e528f4",
-            "api_key": "",
-            "api_secret": "",
+            "account_sid": ("TWILIO_ACCOUNT_SID", "ASPIRE_TWILIO_ACCOUNT_SID"),
+            "auth_token": ("TWILIO_AUTH_TOKEN", "ASPIRE_TWILIO_AUTH_TOKEN"),
+            "api_key": ("TWILIO_API_KEY", "ASPIRE_TWILIO_API_KEY"),
+            "api_secret": ("TWILIO_API_SECRET", "ASPIRE_TWILIO_API_SECRET"),
         },
     },
     "aspire/dev/internal": {
         "description": "Internal signing, encryption, and HMAC keys",
         "values": {
-            "token_signing_secret": "0713b7e0899b4db6f312ced928ee5dcff8ff2087fbf15f234a50c5534005730f",
-            "token_encryption_key": "9077c233a854d71ed00d58402991750a",
-            "n8n_hmac_secret": "aspire-n8n-dev-secret",
-            "n8n_eli_webhook_secret": "aspire-eli-dev-secret",
-            "n8n_sarah_webhook_secret": "aspire-sarah-dev-secret",
-            "n8n_nora_webhook_secret": "aspire-nora-dev-secret",
-            "domain_rail_hmac_secret": "A5DWNJ8gP5jiaGkprzNOSm2bypgsSgfFPCXA2AKKA6k",
-            "gateway_internal_key": "",
+            "token_signing_secret": ("TOKEN_SIGNING_SECRET", "ASPIRE_TOKEN_SIGNING_SECRET"),
+            "token_encryption_key": ("TOKEN_ENCRYPTION_KEY", "ASPIRE_TOKEN_ENCRYPTION_KEY"),
+            "n8n_hmac_secret": ("ASPIRE_N8N_HMAC_SECRET", "N8N_INTAKE_WEBHOOK_SECRET"),
+            "n8n_eli_webhook_secret": ("N8N_ELI_WEBHOOK_SECRET",),
+            "n8n_sarah_webhook_secret": ("N8N_SARAH_WEBHOOK_SECRET",),
+            "n8n_nora_webhook_secret": ("N8N_NORA_WEBHOOK_SECRET",),
+            "domain_rail_hmac_secret": ("DOMAIN_RAIL_HMAC_SECRET", "ASPIRE_DOMAIN_RAIL_HMAC_SECRET"),
+            "gateway_internal_key": ("GATEWAY_INTERNAL_KEY", "ASPIRE_GATEWAY_INTERNAL_KEY"),
         },
     },
     "aspire/dev/providers": {
-        "description": "Third-party provider API keys (Tier 2 — alert-based rotation)",
+        "description": "Third-party provider API keys (environment-backed import)",
         "values": {
-            "elevenlabs_key": "sk_648c94797fbd0c1bb72a249d4b5b1d304978475395055e1b",
-            "deepgram_key": "3dc18b941e09110033d3a3745849e09dd5785dfb",
-            "livekit_key": "API5GKMaontnTq4",
-            "livekit_secret": "VRIt6ojPJqf940Y63Y2olvGIPDXl8veFfaj0Lb6S32PB",
-            "anam_key": "ZDY3ZmViMGItMjNmNy00MTFlLWJlMDAtNDc0NzIxZmRjZDEwOi9pa3ZQcXI0Z1F3NzRnZlpoVGNCWW5Ca1M2TnNwZlA1MDV0N0lpb1BnRlk9",
-            "tavily_key": "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",
-            "brave_key": "BSAgu5P1nU6-AGkVyT5faLz63AphY18",
-            "google_maps_key": "AIzaSyDfOXAUQAbW-yg7vEpQVllMhlmw-cY5d2g",
-            "plaid_client_id": "69831b28fd4ffa0021dbf0b6",
-            "plaid_secret": "5f23214d156844ee7de641fd9b7533",
-            "quickbooks_client_id": "ABKpjf7ZbKu25f6ssn5rWorTXA0s4W6nB9PbH4Cn1wHtI6ngpQ",
-            "quickbooks_client_secret": "urZLrgDKl5ZdGe2jfJDNCy0BwlAUbpB0WPhmuO8y",
-            "gusto_client_id": "jo5P_4IYILNEhyEpEr2KZDt5sUZPak7PSzyUL4IT9Nw",
-            "gusto_client_secret": "mMfUhCZU8dG77vg3FfW-wPglJik1opOATqnIQy9sYQg",
-            "pandadoc_api_key": "f414d4ab73ba0d1a6a584f56b07f1b5267ae7d7e",
-            "moov_api_key": "NqHAP4_vPgX6kf2n",
-            "moov_client_id": "NqHAP4_vPgX6kf2n",
-            "moov_client_secret": "NffXvpq7icKNotTV8qJo03f0S5Ppdyor",
-            "resellerclub_userid": "1315307",
-            "resellerclub_api_key": "Ztyk3X1ooNV6i3wNJpGKcVwEbjzUOqWx",
+            "elevenlabs_key": ("ELEVENLABS_API_KEY", "ASPIRE_ELEVENLABS_API_KEY"),
+            "deepgram_key": ("DEEPGRAM_API_KEY", "ASPIRE_DEEPGRAM_API_KEY"),
+            "livekit_key": ("LIVEKIT_API_KEY", "ASPIRE_LIVEKIT_API_KEY"),
+            "livekit_secret": ("LIVEKIT_API_SECRET", "ASPIRE_LIVEKIT_API_SECRET"),
+            "anam_key": ("ANAM_API_KEY", "ASPIRE_ANAM_API_KEY"),
+            "tavily_key": ("TAVILY_API_KEY", "ASPIRE_TAVILY_API_KEY"),
+            "brave_key": ("BRAVE_API_KEY", "ASPIRE_BRAVE_API_KEY"),
+            "google_maps_key": ("GOOGLE_MAPS_API_KEY", "ASPIRE_GOOGLE_MAPS_API_KEY"),
+            "plaid_client_id": ("PLAID_CLIENT_ID", "ASPIRE_PLAID_CLIENT_ID"),
+            "plaid_secret": ("PLAID_SECRET", "ASPIRE_PLAID_SECRET"),
+            "quickbooks_client_id": ("QUICKBOOKS_CLIENT_ID", "ASPIRE_QUICKBOOKS_CLIENT_ID"),
+            "quickbooks_client_secret": ("QUICKBOOKS_CLIENT_SECRET", "ASPIRE_QUICKBOOKS_CLIENT_SECRET"),
+            "gusto_client_id": ("GUSTO_CLIENT_ID", "ASPIRE_GUSTO_CLIENT_ID"),
+            "gusto_client_secret": ("GUSTO_CLIENT_SECRET", "ASPIRE_GUSTO_CLIENT_SECRET"),
+            "pandadoc_api_key": ("PANDADOC_API_KEY", "ASPIRE_PANDADOC_API_KEY"),
+            "moov_api_key": ("MOOV_API_KEY", "ASPIRE_MOOV_API_KEY"),
+            "moov_client_id": ("MOOV_CLIENT_ID", "ASPIRE_MOOV_CLIENT_ID"),
+            "moov_client_secret": ("MOOV_CLIENT_SECRET", "ASPIRE_MOOV_CLIENT_SECRET"),
+            "resellerclub_userid": ("RESELLERCLUB_USERID", "ASPIRE_RESELLERCLUB_USERID"),
+            "resellerclub_api_key": ("RESELLERCLUB_API_KEY", "ASPIRE_RESELLERCLUB_API_KEY"),
         },
     },
 }
 
 
+def build_secret_payloads() -> dict[str, dict[str, object]]:
+    payloads: dict[str, dict[str, object]] = {}
+    for path, config in SECRET_TEMPLATES.items():
+        values = {key: _env(*env_names) for key, env_names in config["values"].items()}
+        payloads[path] = {
+            "description": config["description"],
+            "values": values,
+        }
+    return payloads
+
+
 def main():
     print("=" * 60)
-    print("AWS Secrets Manager Setup — Aspire Dev Environment")
+    print("AWS Secrets Manager Setup - Aspire Dev Environment")
     print("=" * 60)
 
-    # ── Step 1: Verify credentials ──
     print("\n[1/4] Verifying AWS credentials...")
     client = boto3.client("secretsmanager", region_name=REGION)
     sts = boto3.client("sts", region_name=REGION)
@@ -108,19 +120,19 @@ def main():
         print(f"  Account: {identity['Account']}")
         print(f"  ARN: {identity['Arn']}")
         print(f"  UserID: {identity['UserId']}")
-    except Exception as e:
-        print(f"  FATAL: AWS credential verification failed: {e}")
+    except Exception as exc:
+        print(f"  FATAL: AWS credential verification failed: {exc}")
         sys.exit(1)
 
-    # ── Step 2: Create or update secrets ──
-    print(f"\n[2/4] Creating {len(SECRETS)} secret groups...")
+    secrets = build_secret_payloads()
+
+    print(f"\n[2/4] Creating {len(secrets)} secret groups...")
     created = 0
     updated = 0
 
-    for path, config in SECRETS.items():
+    for path, config in secrets.items():
         secret_string = json.dumps(config["values"])
         try:
-            # Try to create new secret
             client.create_secret(
                 Name=path,
                 Description=config["description"],
@@ -133,38 +145,35 @@ def main():
             )
             print(f"  CREATED: {path} ({len(config['values'])} keys)")
             created += 1
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ResourceExistsException":
-                # Secret already exists — update it
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ResourceExistsException":
                 client.put_secret_value(SecretId=path, SecretString=secret_string)
                 print(f"  UPDATED: {path} ({len(config['values'])} keys)")
                 updated += 1
             else:
-                print(f"  FAILED: {path}: {e}")
+                print(f"  FAILED: {path}: {exc}")
                 raise
 
     print(f"\n  Summary: {created} created, {updated} updated")
 
-    # ── Step 3: Verify by reading back ──
-    print(f"\n[3/4] Verifying all {len(SECRETS)} secrets readable...")
-    for path in SECRETS:
+    print(f"\n[3/4] Verifying all {len(secrets)} secrets readable...")
+    for path in secrets:
         try:
             resp = client.get_secret_value(SecretId=path)
             data = json.loads(resp["SecretString"])
             key_count = len(data)
-            non_empty = sum(1 for v in data.values() if v)
-            print(f"  OK: {path} — {key_count} keys ({non_empty} non-empty)")
-        except Exception as e:
-            print(f"  FAIL: {path}: {e}")
+            non_empty = sum(1 for value in data.values() if value)
+            print(f"  OK: {path} - {key_count} keys ({non_empty} non-empty)")
+        except Exception as exc:
+            print(f"  FAIL: {path}: {exc}")
 
-    # ── Step 4: List all aspire secrets ──
     print("\n[4/4] Listing all aspire/* secrets in SM...")
     paginator = client.get_paginator("list_secrets")
     for page in paginator.paginate(Filters=[{"Key": "name", "Values": ["aspire/"]}]):
-        for s in page["SecretList"]:
-            print(f"  {s['Name']} — {s.get('Description', 'no desc')}")
-            if "LastRotatedDate" in s:
-                print(f"    Last rotated: {s['LastRotatedDate']}")
+        for secret in page["SecretList"]:
+            print(f"  {secret['Name']} - {secret.get('Description', 'no desc')}")
+            if "LastRotatedDate" in secret:
+                print(f"    Last rotated: {secret['LastRotatedDate']}")
 
     print("\n" + "=" * 60)
     print("SM setup complete. Secrets ready for service bootstrap.")

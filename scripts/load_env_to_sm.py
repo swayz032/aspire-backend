@@ -9,6 +9,7 @@ Does NOT store config values (URLs, ports) — only actual secrets.
 import json
 import os
 import sys
+from pathlib import Path
 
 # Parse .env file into dict
 def parse_env(path):
@@ -24,10 +25,10 @@ def parse_env(path):
                     env[k] = v
     return env
 
-BASE = "/mnt/c/Users/tonio/Projects/myapp"
-desktop_env = parse_env(f"{BASE}/Aspire-desktop/.env")
-orch_env = parse_env(f"{BASE}/backend/orchestrator/.env")
-docker_env = parse_env(f"{BASE}/infrastructure/docker/.env")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+desktop_env = parse_env(REPO_ROOT / "Aspire-desktop" / ".env")
+orch_env = parse_env(REPO_ROOT / "backend" / "orchestrator" / ".env")
+docker_env = parse_env(REPO_ROOT / "backend" / "infrastructure" / "docker" / ".env")
 
 # --- Build secret groups ---
 
@@ -141,5 +142,4 @@ print("NOT STORED (config, not secrets):")
 print("  SUPABASE_URL, LIVEKIT_URL, DOMAIN_RAIL_URL, RESCLUB_BASE_URL")
 print("  QUICKBOOKS_BASE_URL, ANAM_PERSONA_ID, AWS region/ports")
 print()
-print("WARNING: backend/orchestrator/.env contains OLD AWS key AKIA4IY2OBQHKKC5P5NZ")
-print("  This key should be DEACTIVATED if not already done.")
+print("WARNING: verify that any legacy AWS access keys previously stored in backend/orchestrator/.env are deactivated.")

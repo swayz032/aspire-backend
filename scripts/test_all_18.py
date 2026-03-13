@@ -22,6 +22,15 @@ import copy
 import requests
 from datetime import datetime, timezone
 
+from _n8n_runtime import (
+    get_gateway_url,
+    get_n8n_admin_email,
+    get_n8n_admin_password,
+    get_n8n_api_key,
+    get_n8n_base_url,
+    get_webhook_secret,
+)
+
 # Fix Windows console encoding
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
@@ -30,20 +39,14 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 # CONFIGURATION
 # =============================================================================
 
-N8N_URL = "http://localhost:5678"
-N8N_API_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJzdWIiOiI0ZmQ3OWU4OS0zMDE3LTRkYmUtOGNlYy02NzZmY2FiNmY5MzgiLCJpc3MiOiJu"
-    "OG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYTMxN2Y3YTgtNWMwZS00NGE4LTg5NTgt"
-    "NGE3YTcxYmIyNDM3IiwiaWF0IjoxNzcxNDQyMjQ0LCJleHAiOjE3NzM5NzkyMDB9."
-    "iyLco0Fb_EoeFwDDFGCpvMPAwbJduSuS4TXtfRMm1fk"
-)
+N8N_URL = get_n8n_base_url()
+N8N_API_KEY = get_n8n_api_key()
 API_HEADERS = {"X-N8N-API-KEY": N8N_API_KEY, "Content-Type": "application/json"}
 
-N8N_ADMIN_EMAIL = "admin@aspireos.app"
-N8N_ADMIN_PASSWORD = "AspireN8N2026!"
+N8N_ADMIN_EMAIL = get_n8n_admin_email()
+N8N_ADMIN_PASSWORD = get_n8n_admin_password()
 
-GATEWAY_URL = "http://localhost:5000"
+GATEWAY_URL = get_gateway_url()
 
 # Timeout for webhook trigger responses (seconds)
 WEBHOOK_TIMEOUT = 30
@@ -76,7 +79,7 @@ WEBHOOK_WORKFLOWS = {
     "intake-activation": {
         "id": "aDeQEKoBawhGdUtE",
         "path": "/webhook/intake-activation",
-        "secret": "aspire-n8n-dev-secret",
+        "secret": get_webhook_secret("intake"),
         "payload": {
             "suiteId": "c4eebdbd-e019-42c0-9143-077762e92bbc",
             "officeId": "c4eebdbd-e019-42c0-9143-077762e92bbc",
@@ -88,7 +91,7 @@ WEBHOOK_WORKFLOWS = {
     "eli-email-triage": {
         "id": "s1JqxMYrEDbPVbMT",
         "path": "/webhook/eli-email-triage",
-        "secret": "aspire-eli-dev-secret",
+        "secret": get_webhook_secret("eli"),
         "payload": {
             "email_id": "test-email-001",
             "from": "client@example.com",
@@ -101,7 +104,7 @@ WEBHOOK_WORKFLOWS = {
     "sarah-call-handler": {
         "id": "Mf7SSxqkCQLflZt3",
         "path": "/webhook/sarah-call-handler",
-        "secret": "aspire-sarah-dev-secret",
+        "secret": get_webhook_secret("sarah"),
         "payload": {
             "call_sid": "CA-test-001",
             "from_number": "+15551234567",
@@ -114,7 +117,7 @@ WEBHOOK_WORKFLOWS = {
     "nora-meeting-summary": {
         "id": "6PXnv0hogAIbKG8F",
         "path": "/webhook/nora-meeting-summary",
-        "secret": "aspire-nora-dev-secret",
+        "secret": get_webhook_secret("nora"),
         "payload": {
             "room_name": "test-room-001",
             "duration": 1800,

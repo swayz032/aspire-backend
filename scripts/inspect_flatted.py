@@ -5,14 +5,16 @@ import urllib.request
 import sys
 import io
 
+from _n8n_runtime import get_n8n_admin_email, get_n8n_admin_password, get_n8n_base_url
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-N8N_BASE = "http://localhost:5678"
+N8N_BASE = get_n8n_base_url()
 
 # Login
 data = json.dumps({
-    'emailOrLdapLoginId': 'admin@aspireos.app',
-    'password': 'AspireN8N2026!'
+    'emailOrLdapLoginId': get_n8n_admin_email(),
+    'password': get_n8n_admin_password(),
 }).encode()
 req = urllib.request.Request(f"{N8N_BASE}/rest/login", data=data, headers={'Content-Type': 'application/json'})
 resp = urllib.request.urlopen(req, timeout=10)
