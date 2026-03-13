@@ -446,33 +446,72 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
             status_code=401,
         )
 
-    supabase_secret = _get_supabase_jwt_secret()
     admin_secret = (os.environ.get("ASPIRE_ADMIN_JWT_SECRET") or "").strip()
-    if not supabase_secret or not admin_secret:
+    if not admin_secret:
         return _ops_error(
             code="AUTH_CONFIG_MISSING",
-            message="Admin auth secrets are not configured",
+            message="Admin auth secret is not configured",
             correlation_id=correlation_id,
             status_code=503,
             retryable=False,
         )
 
-    try:
-        payload = pyjwt.decode(
-            access_token,
-            supabase_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-    except Exception:
-        return _ops_error(
-            code="AUTHZ_DENIED",
-            message="Invalid session token",
-            correlation_id=correlation_id,
-            status_code=401,
-        )
+    payload: dict[str, Any] = {}
+    actor_id = ""
+    email = ""
+    role = "authenticated"
 
-    actor_id = str(payload.get("sub") or "").strip()
+    supabase_secret = _get_supabase_jwt_secret()
+    if supabase_secret:
+        try:
+            payload = pyjwt.decode(
+                access_token,
+                supabase_secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+            )
+            actor_id = str(payload.get("sub") or "").strip()
+            email = str(payload.get("email") or "").strip().lower()
+            role = str(payload.get("role") or "authenticated")
+        except Exception:
+            return _ops_error(
+                code="AUTHZ_DENIED",
+                message="Invalid session token",
+                correlation_id=correlation_id,
+                status_code=401,
+            )
+    else:
+        # Production fallback: verify Supabase token against Auth API with service-role client.
+        supabase = _get_supabase_client()
+        if supabase is None:
+            return _ops_error(
+                code="AUTH_CONFIG_MISSING",
+                message="Supabase auth verifier is not configured",
+                correlation_id=correlation_id,
+                status_code=503,
+                retryable=False,
+            )
+        try:
+            user_response = supabase.auth.get_user(access_token)
+            user = getattr(user_response, "user", None)
+            if user is None:
+                return _ops_error(
+                    code="AUTHZ_DENIED",
+                    message="Invalid session token",
+                    correlation_id=correlation_id,
+                    status_code=401,
+                )
+            actor_id = str(getattr(user, "id", "") or "").strip()
+            email = str(getattr(user, "email", "") or "").strip().lower()
+            role = "authenticated"
+        except Exception:
+            return _ops_error(
+                code="AUTHZ_DENIED",
+                message="Invalid session token",
+                correlation_id=correlation_id,
+                status_code=401,
+            )
+
     if not actor_id:
         return _ops_error(
             code="AUTHZ_DENIED",
@@ -480,9 +519,6 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
             correlation_id=correlation_id,
             status_code=401,
         )
-
-    email = str(payload.get("email") or "").strip().lower()
-    role = str(payload.get("role") or "authenticated")
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=1)
     admin_payload = {
