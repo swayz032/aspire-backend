@@ -122,13 +122,13 @@ def _get_executions(workflow_id: str) -> list[dict]:
 
 
 def _wait_for_new_execution(workflow_id: str, baseline: set[str]) -> str:
-    deadline = time.time() + 20
+    deadline = time.time() + 30
     while time.time() < deadline:
         current = _get_executions(workflow_id)
         delta = [item for item in current if str(item["id"]) not in baseline]
         if delta:
             delta.sort(key=lambda item: int(item["id"]), reverse=True)
-            for preferred_mode in ("trigger", "webhook"):
+            for preferred_mode in ("webhook", "trigger"):
                 for item in delta:
                     if item.get("mode") == preferred_mode:
                         return str(item["id"])
@@ -154,6 +154,19 @@ def _extract_request_id(execution_detail: dict) -> str:
     if not request_id:
         raise RuntimeError("missing requestId in Kill Switch + Prep output")
     return str(request_id)
+
+
+def _wait_for_request_id(execution_id: str) -> str:
+    deadline = time.time() + 30
+    last_error = None
+    while time.time() < deadline:
+        detail = _get_execution_detail(execution_id)
+        try:
+            return _extract_request_id(detail)
+        except RuntimeError as exc:
+            last_error = exc
+            time.sleep(1.0)
+    raise RuntimeError(str(last_error or "missing requestId in execution detail"))
 
 
 def _fetch_robot_runs() -> list[dict]:
@@ -292,8 +305,7 @@ def main() -> int:
         for name, cfg in WORKFLOWS.items():
             _trigger_webhook(cfg["webhook_path"])
             execution_id = _wait_for_new_execution(cfg["id"], baselines[name])
-            detail = _get_execution_detail(execution_id)
-            request_ids[name] = _extract_request_id(detail)
+            request_ids[name] = _wait_for_request_id(execution_id)
             print(f"OK execution {name} -> {execution_id} run_id={request_ids[name]}")
 
         deadline = time.time() + 30

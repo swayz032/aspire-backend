@@ -1,5 +1,5 @@
 {
-  "name": "Provider Health Check — Every 15min",
+  "name": "Provider Health Check \u2014 Every 15min",
   "nodes": [
     {
       "parameters": {
@@ -58,23 +58,26 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.ASPIRE_GATEWAY_URL }}/internal/provider-health",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/provider_call_log?select=external_provider,status,http_status,started_at,completed_at,created_at&order=started_at.desc&limit=250",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-correlation-id",
-              "value": "={{ $('Kill Switch + Prep').item.json.correlationId }}"
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
             },
             {
-              "name": "x-n8n-workflow-id",
-              "value": "provider-health"
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
             },
             {
-              "name": "x-idempotency-key",
-              "value": "={{ $('Kill Switch + Prep').item.json.idempotencyKey }}"
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
             }
           ]
         },
@@ -88,19 +91,14 @@
         }
       },
       "id": "check-providers",
-      "name": "Check Provider Health (via Gateway)",
+      "name": "Load Provider Calls (via Supabase)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         880,
         400
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "J84m12hyzSwSHo6S",
-          "name": "Gateway Internal Key"
-        }
-      }
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -130,7 +128,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-provider-health-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').item.json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-provider-health', action: { action_type: 'ops.provider_health_check', risk_tier: ($json.overallStatus === 'failed' ? 'yellow' : 'green'), providers: $json.providers || [], robot_status: $json.overallStatus || 'partial' }, created_at: new Date().toISOString() }) }}",
+        "jsonBody": "={{ JSON.stringify({ receipt_id: 'n8n-provider-health-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), tenant_id: 'system', office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || 'ffffffff-0000-0000-0000-system000000'), receipt_type: 'n8n_ops', status: 'SUCCEEDED', correlation_id: $('Kill Switch + Prep').first().json.correlationId, actor_type: 'SYSTEM', actor_id: 'n8n-provider-health', action: { action_type: 'ops.provider_health_check', risk_tier: ($json.overallStatus === 'passed' ? 'green' : 'yellow'), providers: $json.providers || [], robot_status: $json.overallStatus || 'partial', source: $json.source || 'provider_call_log', queried_rows: $json.queriedRows || 0 }, created_at: new Date().toISOString() }) }}",
         "options": {
           "timeout": 5000
         }
@@ -241,7 +239,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const flatInput = $input.all().map((item) => item.json);\nconst flat = Array.isArray(flatInput[0]) ? flatInput[0] : flatInput;\nconst first = flat[0] || {};\nconst monitored = ($env.ASPIRE_PROVIDER_MONITOR_LIST || 'openai,twilio,livekit,deepgram,elevenlabs,pandadoc,stripe,supabase').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);\nconst invalidSource = Boolean(first && typeof first.data === 'string' && first.data.trim().startsWith('<!DOCTYPE html'));\nconst providersMap = new Map();\nfor (const name of monitored) {\n  providersMap.set(name, { provider: name, totalCalls: 0, failedCalls: 0, avgLatencyMs: 0, healthStatus: 'no_data', lastSeen: null });\n}\nconst rows = flat.filter((row) => row && typeof row === 'object' && !Array.isArray(row) && (row.external_provider || row.provider));\nfor (const row of rows) {\n  const name = String(row.external_provider || row.provider || 'unknown').trim().toLowerCase();\n  if (!providersMap.has(name)) {\n    providersMap.set(name, { provider: name, totalCalls: 0, failedCalls: 0, avgLatencyMs: 0, healthStatus: 'no_data', lastSeen: null });\n  }\n  const entry = providersMap.get(name);\n  entry.totalCalls += 1;\n  const status = String(row.status || '').toLowerCase();\n  if (['failed', 'partial', 'canceled', 'timeout'].includes(status)) {\n    entry.failedCalls += 1;\n  }\n  const started = Date.parse(row.started_at || '');\n  const completed = Date.parse(row.completed_at || '');\n  if (Number.isFinite(started) && Number.isFinite(completed) && completed >= started) {\n    const sampleCount = entry.totalCalls;\n    const latency = completed - started;\n    entry.avgLatencyMs = Math.round(((entry.avgLatencyMs * (sampleCount - 1)) + latency) / sampleCount);\n  }\n  entry.lastSeen = row.started_at || row.created_at || entry.lastSeen;\n}\nconst providers = Array.from(providersMap.values()).map((entry) => {\n  if (entry.totalCalls === 0) {\n    entry.healthStatus = 'no_data';\n    entry.errorRate = 0;\n    return entry;\n  }\n  entry.errorRate = Math.round((entry.failedCalls / entry.totalCalls) * 10000) / 100;\n  if (entry.errorRate >= 50) {\n    entry.healthStatus = 'disconnected';\n  } else if (entry.errorRate > 0) {\n    entry.healthStatus = 'degraded';\n  } else {\n    entry.healthStatus = 'connected';\n  }\n  return entry;\n});\nlet overallStatus = 'passed';\nlet summary = '';\nif (invalidSource) {\n  overallStatus = 'failed';\n  summary = 'Provider health endpoint returned non-JSON content';\n} else if (providers.some((entry) => entry.healthStatus === 'disconnected')) {\n  overallStatus = 'failed';\n  summary = `Disconnected providers detected (${providers.filter((entry) => entry.healthStatus === 'disconnected').map((entry) => entry.provider).join(', ')})`;\n} else if (providers.some((entry) => entry.healthStatus === 'degraded' || entry.healthStatus === 'no_data')) {\n  overallStatus = 'partial';\n  summary = `Provider health degraded or missing data (${providers.filter((entry) => entry.healthStatus !== 'connected').map((entry) => `${entry.provider}:${entry.healthStatus}`).join(', ')})`;\n} else {\n  summary = `All monitored providers healthy (${providers.length} providers)`;\n}\nreturn [{ json: { overallStatus, summary, providers, invalidSource } }];"
+        "jsCode": "const rawItems = $input.all().map((item) => item.json || {});\nconst rows = Array.isArray(rawItems[0]) ? rawItems[0] : rawItems;\nconst explicitMonitored = ($env.ASPIRE_PROVIDER_MONITOR_LIST || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);\nconst requireRecent = ['true', '1', 'yes'].includes(String($env.ASPIRE_PROVIDER_REQUIRE_RECENT || 'false').toLowerCase());\nconst providersMap = new Map();\nconst windowStart = Date.now() - (24 * 60 * 60 * 1000);\nconst dataRows = rows.filter((row) => {\n  if (!row || typeof row !== 'object' || Array.isArray(row) || !(row.external_provider || row.provider)) {\n    return false;\n  }\n  const started = Date.parse(row.started_at || row.created_at || '');\n  return Number.isFinite(started) && started >= windowStart;\n});\nconst derivedMonitored = [...new Set(dataRows.map((row) => String(row.external_provider || row.provider || 'unknown').trim().toLowerCase()).filter(Boolean))];\nconst monitored = explicitMonitored.length > 0 ? explicitMonitored : derivedMonitored;\nfor (const name of monitored) {\n  providersMap.set(name, {\n    provider: name,\n    totalCalls: 0,\n    failedCalls: 0,\n    avgLatencyMs: 0,\n    healthStatus: 'no_data',\n    lastSeen: null,\n    lastSuccessfulCall: null,\n  });\n}\nfor (const row of dataRows) {\n  const name = String(row.external_provider || row.provider || 'unknown').trim().toLowerCase();\n  if (!providersMap.has(name)) {\n    providersMap.set(name, {\n      provider: name,\n      totalCalls: 0,\n      failedCalls: 0,\n      avgLatencyMs: 0,\n      healthStatus: 'no_data',\n      lastSeen: null,\n      lastSuccessfulCall: null,\n    });\n  }\n  const entry = providersMap.get(name);\n  entry.totalCalls += 1;\n  const status = String(row.status || '').toLowerCase();\n  if (['failed', 'partial', 'canceled', 'error'].includes(status)) {\n    entry.failedCalls += 1;\n  }\n  const started = Date.parse(row.started_at || row.created_at || '');\n  const completed = Date.parse(row.completed_at || row.finished_at || row.created_at || '');\n  if (Number.isFinite(started) && Number.isFinite(completed) && completed >= started) {\n    const latency = completed - started;\n    const previousCount = Math.max(entry.totalCalls - 1, 0);\n    entry.avgLatencyMs = Math.round(((entry.avgLatencyMs * previousCount) + latency) / entry.totalCalls);\n  }\n  entry.lastSeen = row.started_at || row.created_at || entry.lastSeen;\n  if (status === 'success') {\n    entry.lastSuccessfulCall = row.completed_at || row.finished_at || row.started_at || row.created_at || entry.lastSuccessfulCall;\n  }\n}\nconst providers = Array.from(providersMap.values()).map((entry) => {\n  if (entry.totalCalls === 0) {\n    entry.healthStatus = 'no_data';\n    entry.errorRate = 0;\n    return entry;\n  }\n  entry.errorRate = Math.round((entry.failedCalls / entry.totalCalls) * 10000) / 100;\n  if (entry.errorRate >= 50) {\n    entry.healthStatus = 'disconnected';\n  } else if (entry.errorRate > 0) {\n    entry.healthStatus = 'degraded';\n  } else {\n    entry.healthStatus = 'connected';\n  }\n  return entry;\n});\nconst disconnected = providers.filter((entry) => entry.healthStatus === 'disconnected');\nconst degraded = providers.filter((entry) => entry.healthStatus === 'degraded');\nconst noData = providers.filter((entry) => entry.healthStatus === 'no_data');\nlet overallStatus = 'passed';\nlet summary = '';\nif (disconnected.length > 0) {\n  overallStatus = 'failed';\n  summary = `Disconnected providers detected (${disconnected.map((entry) => entry.provider).join(', ')})`;\n} else if (degraded.length > 0) {\n  overallStatus = 'partial';\n  summary = `Provider health degraded (${degraded.map((entry) => `${entry.provider}:${entry.errorRate}%`).join(', ')})`;\n} else if (providers.length === 0) {\n  summary = 'No recent provider traffic in last 24h';\n} else if (noData.length > 0 && requireRecent) {\n  overallStatus = 'partial';\n  summary = `Missing recent provider traffic (${noData.map((entry) => entry.provider).join(', ')})`;\n} else if (noData.length > 0) {\n  summary = `No provider errors detected; idle providers (${noData.map((entry) => entry.provider).join(', ')})`;\n} else {\n  summary = `All monitored providers healthy (${providers.length} providers)`;\n}\nreturn [{ json: { overallStatus, summary, providers, source: 'provider_call_log', queriedRows: dataRows.length, requireRecent, explicitMonitorCount: explicitMonitored.length } }];"
       },
       "id": "provider-evaluate-health",
       "name": "Evaluate Provider Health",
@@ -254,7 +252,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst prep = $('Kill Switch + Prep').item.json;\nconst payload = {\n  id: prep.requestId,\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: $json.overallStatus || 'partial',\n  startedAt: prep.timestamp || new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':provider-health',\n  summary: $json.summary || 'Provider health workflow completed',\n  scenarios: [{\n    name: 'provider_health',\n    status: $json.overallStatus || 'partial',\n    summary: $json.summary || 'Provider health workflow completed',\n    evidence: [\n      `correlation:${prep.correlationId}`,\n      `providers:${($json.providers || []).length}`,\n      `invalid_source:${Boolean($json.invalidSource)}`\n    ]\n  }],\n  meta: { workflow: 'provider-health', correlationId: prep.correlationId, requestId: prep.requestId, invalidSource: Boolean($json.invalidSource), providers: $json.providers || [] }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
+        "jsCode": "const crypto = require('crypto');\nconst prep = $('Kill Switch + Prep').first().json;\nconst payload = {\n  id: prep.requestId,\n  env: $env.ASPIRE_ROBOT_ENV || 'production',\n  suite: $env.ASPIRE_ROBOT_SUITE || 'aspire_robots',\n  status: $json.overallStatus || 'partial',\n  startedAt: prep.timestamp || new Date().toISOString(),\n  finishedAt: new Date().toISOString(),\n  versionRef: ($env.ASPIRE_ROBOT_VERSION_REF || 'n8n-live') + ':provider-health',\n  summary: $json.summary || 'Provider health workflow completed',\n  scenarios: [{\n    name: 'provider_health',\n    status: $json.overallStatus || 'partial',\n    summary: $json.summary || 'Provider health workflow completed',\n    evidence: [\n      `correlation:${prep.correlationId}`,\n      `providers:${($json.providers || []).length}`,\n      `invalid_source:${Boolean($json.invalidSource)}`\n    ]\n  }],\n  meta: { workflow: 'provider-health', correlationId: prep.correlationId, requestId: prep.requestId, invalidSource: Boolean($json.invalidSource), providers: $json.providers || [] }\n};\nconst robotBody = JSON.stringify(payload);\nconst robotSignature = crypto.createHmac('sha256', $env.ASPIRE_ROBOT_S2S_SECRET).update(robotBody).digest('hex');\nreturn [{ json: { ...$json, robotBody, robotSignature } }];"
       },
       "id": "provider-build-robot",
       "name": "Build Provider Robot Run",
@@ -384,7 +382,7 @@
       "main": [
         [
           {
-            "node": "Check Provider Health (via Gateway)",
+            "node": "Load Provider Calls (via Supabase)",
             "type": "main",
             "index": 0
           }
@@ -392,17 +390,6 @@
         [
           {
             "node": "Emit Kill Switch Receipt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Provider Health (via Gateway)": {
-      "main": [
-        [
-          {
-            "node": "Evaluate Provider Health",
             "type": "main",
             "index": 0
           }
@@ -469,6 +456,17 @@
         [
           {
             "node": "Emit Failure Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Provider Calls (via Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Provider Health",
             "type": "main",
             "index": 0
           }
