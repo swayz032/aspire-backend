@@ -288,18 +288,30 @@ class TestResponseShapes:
         items = response.json()["items"]
         openai_item = next(item for item in items if item["provider"] == "openai")
         twilio_item = next(item for item in items if item["provider"] == "twilio")
+        internal_item = next(item for item in items if item["provider"] == "internal")
         n8n_item = next(item for item in items if item["provider"] == "n8n")
         secret_manager_item = next(item for item in items if item["provider"] == "secret_manager")
         provider_ids = {item["provider"] for item in items}
-        assert {"openai", "twilio", "gusto", "anam", "secret_manager", "railway", "n8n"}.issubset(provider_ids)
+        assert {"openai", "twilio", "gusto", "anam", "secret_manager", "railway", "n8n", "internal"}.issubset(provider_ids)
         assert "s3" not in provider_ids
         assert openai_item["rotation_mode"] == "automated"
         assert twilio_item["rotation_mode"] == "automated"
+        assert internal_item["rotation_mode"] == "automated"
         assert openai_item["verification_source"] == "aws_step_functions"
         assert twilio_item["adapter_type"] == "aws_rotation_lambda"
         assert n8n_item["automation_status"] == "planned"
         assert secret_manager_item["secret_source"] == "aws_secrets_manager"
         assert openai_item["production_verified"] is True
+
+    def test_provider_rotation_summary_reports_gap_state(self, client, headers) -> None:
+        response = client.get("/admin/ops/providers/rotation-summary", headers=headers)
+        assert response.status_code == 200
+
+        payload = response.json()["summary"]
+        assert payload["automated_count"] >= 5
+        assert "internal" in payload["automated_providers"]
+        assert "gusto" in payload["manual_alerted_providers"]
+        assert payload["automation_gaps"]["missing_adapter_modules"] == []
 
     def test_providers_overlay_live_health_for_stream_and_snapshot(self, client, headers) -> None:
         update_provider_health(

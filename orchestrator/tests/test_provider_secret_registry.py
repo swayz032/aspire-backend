@@ -27,6 +27,13 @@ def test_provider_secret_registry_automated_entries_have_adapter_names() -> None
         assert item["verification_source"] == "aws_step_functions"
 
 
+def test_provider_secret_registry_contains_internal_automation_group() -> None:
+    registry = {item["provider"]: item for item in get_provider_secret_registry()}
+    internal = registry["internal"]
+    assert internal["rotation_mode"] == "automated"
+    assert internal["adapter_name"] == "internal"
+
+
 def test_provider_secret_registry_configuration_groups_require_all_groups() -> None:
     registry = {item["provider"]: item for item in get_provider_secret_registry()}
     assert is_registry_provider_configured(

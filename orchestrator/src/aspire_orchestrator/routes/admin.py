@@ -48,6 +48,7 @@ from aspire_orchestrator.services.provider_secret_registry import (
     get_provider_secret_registry,
     is_registry_provider_configured,
 )
+from aspire_orchestrator.services.rotation_inventory import build_rotation_inventory_report
 
 logger = logging.getLogger(__name__)
 
@@ -1612,6 +1613,60 @@ async def list_providers(
             "count": len(items),
             "source": "supabase" if client is not None else "in_memory",
             "warnings": db_errors,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/providers/rotation-summary")
+async def provider_rotation_summary(request: Request) -> JSONResponse:
+    """Return rotation automation coverage summary for provider/admin operations."""
+    correlation_id = _get_correlation_id(request)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.providers.rotation_summary",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    report = build_rotation_inventory_report()
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.providers.rotation_summary",
+        outcome="success",
+        details={
+            "automated_count": int(report["counts"].get("automated", 0)),
+            "manual_alerted_count": int(report["counts"].get("manual_alerted", 0)),
+        },
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "summary": {
+                "automated_count": int(report["counts"].get("automated", 0)),
+                "manual_alerted_count": int(report["counts"].get("manual_alerted", 0)),
+                "infrastructure_count": int(report["counts"].get("infrastructure", 0)),
+                "automated_providers": report["automated_providers"],
+                "manual_alerted_providers": report["manual_alerted_providers"],
+                "automation_gaps": {
+                    "missing_adapter_modules": report["missing_adapter_modules"],
+                    "registry_automated_missing_from_terraform": report["registry_automated_missing_from_terraform"],
+                    "terraform_automated_missing_from_registry": report["terraform_automated_missing_from_registry"],
+                },
+            },
             "server_time": _now_iso(),
         },
     )
