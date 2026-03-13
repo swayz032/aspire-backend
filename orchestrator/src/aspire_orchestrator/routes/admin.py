@@ -1661,6 +1661,8 @@ async def provider_rotation_summary(request: Request) -> JSONResponse:
                 "infrastructure_count": int(report["counts"].get("infrastructure", 0)),
                 "automated_providers": report["automated_providers"],
                 "manual_alerted_providers": report["manual_alerted_providers"],
+                "manual_alerted_with_adapter_modules": report["manual_alerted_with_adapter_modules"],
+                "manual_alerted_without_adapter_modules": report["manual_alerted_without_adapter_modules"],
                 "automation_gaps": {
                     "missing_adapter_modules": report["missing_adapter_modules"],
                     "registry_automated_missing_from_terraform": report["registry_automated_missing_from_terraform"],

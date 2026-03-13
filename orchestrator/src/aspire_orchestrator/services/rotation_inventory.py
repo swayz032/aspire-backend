@@ -63,6 +63,7 @@ def build_rotation_inventory_report() -> dict[str, Any]:
     automated = [item for item in registry if item.get("rotation_mode") == "automated"]
     manual = [item for item in registry if item.get("rotation_mode") == "manual_alerted"]
     automated_ids = {item["provider"] for item in automated}
+    manual_ids = {item["provider"] for item in manual}
     automated_adapter_names = {
         item["provider"]: str(item.get("adapter_name") or "")
         for item in automated
@@ -72,6 +73,16 @@ def build_rotation_inventory_report() -> dict[str, Any]:
         for provider, adapter_name in automated_adapter_names.items()
         if adapter_name and adapter_name not in adapters
     )
+    manual_with_adapters = sorted(
+        provider
+        for provider in manual_ids
+        if provider in adapters
+    )
+    manual_without_adapters = sorted(
+        provider
+        for provider in manual_ids
+        if provider not in adapters
+    )
 
     return {
         "counts": dict(counts),
@@ -80,6 +91,8 @@ def build_rotation_inventory_report() -> dict[str, Any]:
         "aws_rotation_adapter_modules": sorted(adapters),
         "terraform_rotation_config": sorted(terraform),
         "missing_adapter_modules": missing_adapter_modules,
+        "manual_alerted_with_adapter_modules": manual_with_adapters,
+        "manual_alerted_without_adapter_modules": manual_without_adapters,
         "registry_automated_missing_from_terraform": sorted(automated_ids - terraform),
         "terraform_automated_missing_from_registry": sorted(terraform - automated_ids),
     }

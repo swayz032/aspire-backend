@@ -34,6 +34,8 @@ def main() -> int:
     print(f"Counts: {report['counts']}")
     print(f"Automated: {', '.join(report['automated_providers']) or 'none'}")
     print(f"Manual alerted: {', '.join(report['manual_alerted_providers']) or 'none'}")
+    print(f"Manual with adapters: {', '.join(report['manual_alerted_with_adapter_modules']) or 'none'}")
+    print(f"Manual without adapters: {', '.join(report['manual_alerted_without_adapter_modules']) or 'none'}")
     print(f"Missing adapter modules: {', '.join(report['missing_adapter_modules']) or 'none'}")
     print(f"Registry automated missing from Terraform: {', '.join(report['registry_automated_missing_from_terraform']) or 'none'}")
     print(f"Terraform automated missing from registry: {', '.join(report['terraform_automated_missing_from_registry']) or 'none'}")

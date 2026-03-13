@@ -311,6 +311,7 @@ class TestResponseShapes:
         assert payload["automated_count"] >= 5
         assert "internal" in payload["automated_providers"]
         assert "gusto" in payload["manual_alerted_providers"]
+        assert {"deepgram", "elevenlabs"}.issubset(set(payload["manual_alerted_with_adapter_modules"]))
         assert payload["automation_gaps"]["missing_adapter_modules"] == []
 
     def test_providers_overlay_live_health_for_stream_and_snapshot(self, client, headers) -> None:

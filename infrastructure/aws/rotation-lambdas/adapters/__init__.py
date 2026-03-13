@@ -28,5 +28,11 @@ def get_adapter(adapter_name: str) -> VendorAdapter:
     elif adapter_name == "supabase":
         from .supabase_adapter import SupabaseAdapter
         return SupabaseAdapter()
+    elif adapter_name == "deepgram":
+        from .deepgram_adapter import DeepgramAdapter
+        return DeepgramAdapter()
+    elif adapter_name == "elevenlabs":
+        from .elevenlabs_adapter import ElevenLabsAdapter
+        return ElevenLabsAdapter()
     else:
         raise ValueError(f"Unknown adapter: {adapter_name}")

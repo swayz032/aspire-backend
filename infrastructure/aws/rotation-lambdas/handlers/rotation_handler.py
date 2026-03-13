@@ -33,6 +33,18 @@ SNS_FAILURE_TOPIC = os.environ.get("SNS_FAILURE_TOPIC", "")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "prod")
 
 
+def _extract_old_key_id(adapter_name: str, current_secret: dict[str, Any]) -> str:
+    if adapter_name == "deepgram":
+        return str(
+            current_secret.get("_deepgram_key_id")
+            or current_secret.get("_deepgram_accessor")
+            or ""
+        )
+    if adapter_name == "elevenlabs":
+        return str(current_secret.get("_elevenlabs_key_id") or "")
+    return str(current_secret.get("_key_id") or current_secret.get("key_id") or "")
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Main Lambda entry point — dispatches based on 'step' field."""
     step = event.get("step", "")
@@ -92,8 +104,8 @@ def _handle_create_key(
         logger.error("Failed to fetch AWSCURRENT for %s", secret_id)
         raise RuntimeError(f"SM_FETCH_FAILED: Cannot fetch current secret for {secret_id}")
 
-    # Store the current key ID before rotation
-    old_key_id = current.get("_key_id", current.get("key_id", ""))
+    # Store the provider-specific current key ID before rotation
+    old_key_id = _extract_old_key_id(adapter.provider_name, current)
 
     result = adapter.create_key(current)
 
@@ -145,6 +157,20 @@ def _handle_write_pending(
         updated["_old_key_id"] = old_key_id
     elif adapter.provider_name == "supabase":
         updated["service_role_key"] = new_key_data["key_value"]
+    elif adapter.provider_name == "deepgram":
+        updated["deepgram_key"] = new_key_data["key_value"]
+        updated["_deepgram_key_id"] = new_key_data.get("key_id", "")
+        if new_key_data.get("metadata", {}).get("project_id"):
+            updated["_deepgram_project_id"] = new_key_data["metadata"]["project_id"]
+        if new_key_data.get("metadata", {}).get("current_accessor"):
+            updated["_deepgram_old_accessor"] = new_key_data["metadata"]["current_accessor"]
+    elif adapter.provider_name == "elevenlabs":
+        updated["elevenlabs_key"] = new_key_data["key_value"]
+        updated["_elevenlabs_key_id"] = new_key_data.get("key_id", "")
+        if new_key_data.get("metadata", {}).get("service_account_user_id"):
+            updated["_elevenlabs_service_account_user_id"] = new_key_data["metadata"]["service_account_user_id"]
+        if new_key_data.get("metadata", {}).get("permissions"):
+            updated["_elevenlabs_permissions"] = new_key_data["metadata"]["permissions"]
 
     # Track rotation metadata
     updated["_key_id"] = new_key_data.get("key_id", "")
@@ -242,6 +268,8 @@ def _handle_promote(
         "openai": 900,      # 15 min
         "internal": 300,    # 5 min (services cache TTL)
         "supabase": 1800,   # 30 min
+        "deepgram": 900,    # 15 min
+        "elevenlabs": 900,  # 15 min
     }
     overlap_seconds = overlap_map.get(adapter.provider_name, 600)
 
