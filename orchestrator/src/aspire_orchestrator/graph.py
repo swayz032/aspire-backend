@@ -861,9 +861,8 @@ async def close_checkpointer_runtime() -> None:
             await _CHECKPOINTER_CTX.__aexit__(None, None, None)
         else:
             _CHECKPOINTER_CTX.__exit__(None, None, None)
-    except Exception:
-        # Best-effort shutdown cleanup; service is terminating anyway.
-        pass
+    except Exception as e:
+        logger.warning("Checkpointer cleanup error: %s", e)
     finally:
         _CHECKPOINTER_CTX = None
 
@@ -935,9 +934,8 @@ async def probe_checkpointer_roundtrip() -> bool:
                 await saver.adelete_thread(thread_id)
             elif hasattr(saver, "delete_thread"):
                 await asyncio.to_thread(saver.delete_thread, thread_id)
-        except Exception:
-            # Best-effort cleanup; probe result already determined above.
-            pass
+        except Exception as e:
+            logger.warning("Checkpointer cleanup error: %s", e)
 
 
 async def _build_checkpointer() -> Any:
@@ -984,8 +982,8 @@ async def _build_checkpointer() -> Any:
             try:
                 if _CHECKPOINTER_CTX is not None and hasattr(_CHECKPOINTER_CTX, "__aexit__"):
                     await _CHECKPOINTER_CTX.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as e2:
+                logger.warning("Checkpointer cleanup error: %s", e2)
             _CHECKPOINTER_CTX = None
             logger.exception("Postgres checkpointer init failed, falling back to MemorySaver: %s", e)
             _CHECKPOINTER_RUNTIME["mode"] = "memory-fallback"

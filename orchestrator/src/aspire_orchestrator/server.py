@@ -519,8 +519,8 @@ async def stream_agent_activity(
         )
         try:
             store_receipts([deny_receipt])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("SSE receipt storage failed: %s", e)
         yield format_sse_event({
             "type": "error",
             "message": "Connection limit exceeded for tenant",
@@ -541,8 +541,8 @@ async def stream_agent_activity(
     receipt_id = initiation_receipt["id"]
     try:
         store_receipts([initiation_receipt])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("SSE receipt storage failed: %s", e)
 
     loop = asyncio.get_running_loop()
     event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=512)
@@ -636,8 +636,8 @@ async def stream_agent_activity(
         )
         try:
             store_receipts([completion_receipt])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("SSE receipt storage failed: %s", e)
 
     except asyncio.CancelledError:
         logger.info("SSE stream cancelled (client disconnect): %s", stream_id[:8])
@@ -652,8 +652,8 @@ async def stream_agent_activity(
                 stream_id=stream_id,
                 reason_code="CLIENT_DISCONNECT",
             )])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("SSE receipt storage failed: %s", e)
 
     except Exception as e:
         logger.exception("SSE stream error: %s", e)
@@ -675,8 +675,8 @@ async def stream_agent_activity(
                 reason_code="STREAM_ERROR",
                 details={"error_type": type(e).__name__},
             )])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("SSE receipt storage failed: %s", e)
 
     finally:
         if graph_task and not graph_task.done():

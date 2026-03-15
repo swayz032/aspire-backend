@@ -131,9 +131,9 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
             import sys
             import json as _json
             try:
-                print(_json.dumps({"fallback_receipt": receipt}), file=sys.stderr)
-            except Exception:
-                pass  # Truly catastrophic — nothing more we can do
+                logger.error("Fallback receipt (last resort): %s", _json.dumps(receipt))
+            except Exception as e:
+                logger.error("Catastrophic fallback failure: %s", e)
 
         # Return sanitized response (Law #9: never expose internals)
         return JSONResponse(
