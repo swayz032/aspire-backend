@@ -17,6 +17,11 @@ import {
 
 export const registryRouter = Router();
 
+function getSingleParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
+}
+
 /**
  * GET /v1/registry/capabilities — List all registered capabilities.
  *
@@ -86,7 +91,7 @@ registryRouter.get('/capabilities', async (req: Request, res: Response) => {
 registryRouter.get('/skill-packs/:packId', async (req: Request, res: Response) => {
   const correlationId = req.correlationId;
   const { suiteId, officeId, actorId } = req.auth;
-  const { packId } = req.params;
+  const packId = getSingleParam(req.params.packId);
 
   if (!packId || !/^[a-z][a-z0-9_]*$/.test(packId)) {
     res.status(400).json({
@@ -132,7 +137,7 @@ registryRouter.get('/skill-packs/:packId', async (req: Request, res: Response) =
 registryRouter.get('/route/:actionType(*)', async (req: Request, res: Response) => {
   const correlationId = req.correlationId;
   const { suiteId, officeId, actorId } = req.auth;
-  const actionType = req.params.actionType;
+  const actionType = getSingleParam(req.params.actionType);
 
   if (!actionType || !/^[a-z][a-z0-9.]*[a-z0-9]$/i.test(actionType)) {
     res.status(400).json({

@@ -21,15 +21,15 @@ class RetrievalVerificationReport:
 
 def _default_fallback(agent_id: str) -> str:
     fallback_map = {
-        "ava": "I can help with that, but I don't have enough grounded context yet. Give me the exact detail you want checked and I'll keep it precise.",
-        "finn": "I can work through it, but I don't have enough grounded finance context yet. Give me the exact number or scenario you want checked.",
-        "eli": "I can help, but I don't have enough grounded communication context yet. Tell me the exact message or thread you want handled.",
-        "nora": "I can help, but I don't have enough grounded scheduling context yet. Tell me the exact meeting detail you want checked.",
-        "clara": "I can help, but I don't have enough grounded legal context yet. Tell me the clause or contract point you want reviewed.",
+        "ava": "Here is the best grounded answer I can give right now. Which exact detail should I verify first?",
+        "finn": "I can give you a conservative read now. Which number or timeframe should I verify first?",
+        "eli": "I can draft a safe first pass now. Which exact thread or message should I verify first?",
+        "nora": "I can give you a safe scheduling direction now. Which meeting detail should I verify first?",
+        "clara": "I can give a cautious legal read now. Which clause or contract section should I verify first?",
     }
     return fallback_map.get(
         agent_id,
-        "I can help, but I don't have enough grounded context yet. Tell me the exact point you want checked.",
+        "I can give you a safe first pass now. Which exact point should I verify first?",
     )
 
 

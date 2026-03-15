@@ -13,17 +13,26 @@ test cases from AVA_USER_TEST_PLAN.md:
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 
 import pytest
 
+os.environ["ASPIRE_SUPABASE_URL"] = ""
+os.environ["ASPIRE_SUPABASE_SERVICE_ROLE_KEY"] = ""
+os.environ["AWS_ACCESS_KEY_ID"] = ""
+os.environ["AWS_SECRET_ACCESS_KEY"] = ""
+
 from aspire_orchestrator.graph import build_orchestrator_graph
+from aspire_orchestrator.services.a2a_service import get_a2a_service
 
 
 @pytest.fixture
 def graph():
     """Build the orchestrator graph for testing."""
+    a2a = get_a2a_service(reload=True)
+    a2a.backend = "memory"
     return build_orchestrator_graph()
 
 

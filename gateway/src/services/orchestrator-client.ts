@@ -11,8 +11,23 @@
  * - Structured error handling with fail-closed semantics (Law #3)
  */
 
-const ORCHESTRATOR_BASE_URL = process.env.ORCHESTRATOR_URL ?? 'http://localhost:8000';
-const ORCHESTRATOR_TIMEOUT_MS = parseInt(process.env.ORCHESTRATOR_TIMEOUT_MS ?? '30000', 10);
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL?.trim();
+
+if (!ORCHESTRATOR_URL && IS_PRODUCTION) {
+  throw new Error('ORCHESTRATOR_URL is required in production mode.');
+}
+
+const ORCHESTRATOR_BASE_URL = ORCHESTRATOR_URL || 'http://localhost:8000';
+
+function parseTimeoutMs(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? '30000', 10);
+  if (Number.isNaN(parsed)) return 30000;
+  // Keep timeout bounded so launch config mistakes fail safe.
+  return Math.max(1000, Math.min(parsed, 120000));
+}
+
+const ORCHESTRATOR_TIMEOUT_MS = parseTimeoutMs(process.env.ORCHESTRATOR_TIMEOUT_MS);
 
 export interface OrchestratorProxyOptions {
   path: string;
@@ -40,6 +55,14 @@ export class OrchestratorClientError extends Error {
     super(message);
     this.name = 'OrchestratorClientError';
   }
+}
+
+export interface OrchestratorReadiness {
+  reachable: boolean;
+  httpStatus: number | null;
+  status: 'ready' | 'degraded' | 'not_ready' | 'unavailable' | 'unknown';
+  dependency: 'healthy' | 'degraded' | 'unavailable';
+  details?: unknown;
 }
 
 /**
@@ -156,5 +179,70 @@ export async function checkOrchestratorHealth(): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Readiness check against orchestrator /readyz.
+ *
+ * This is stricter than liveness: orchestrator may be up but degraded/not_ready.
+ * Gateway should not advertise itself as ready when orchestrator isn't fully ready.
+ */
+export async function checkOrchestratorReadiness(): Promise<OrchestratorReadiness> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(`${ORCHESTRATOR_BASE_URL}/readyz`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    clearTimeout(timeoutId);
+
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    const status =
+      payload && typeof payload === 'object' && typeof (payload as Record<string, unknown>).status === 'string'
+        ? ((payload as Record<string, unknown>).status as OrchestratorReadiness['status'])
+        : 'unknown';
+
+    if (!response.ok) {
+      return {
+        reachable: true,
+        httpStatus: response.status,
+        status,
+        dependency: 'unavailable',
+        details: payload,
+      };
+    }
+
+    if (status !== 'ready') {
+      return {
+        reachable: true,
+        httpStatus: response.status,
+        status,
+        dependency: 'degraded',
+        details: payload,
+      };
+    }
+
+    return {
+      reachable: true,
+      httpStatus: response.status,
+      status: 'ready',
+      dependency: 'healthy',
+      details: payload,
+    };
+  } catch {
+    return {
+      reachable: false,
+      httpStatus: null,
+      status: 'unavailable',
+      dependency: 'unavailable',
+    };
   }
 }

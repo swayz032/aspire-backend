@@ -91,18 +91,35 @@ _SETTINGS_PREFIX_MAP: dict[str, str] = {
 }
 
 
-def _align_settings_prefix() -> None:
+def _align_settings_prefix(*, override: bool = False) -> None:
     """Copy raw env vars to ASPIRE_-prefixed names for Pydantic Settings.
 
     SM injects keys like OPENAI_API_KEY, but Settings reads ASPIRE_OPENAI_API_KEY.
     This bridges the gap without breaking existing os.environ.get() callers.
-    Only copies if the ASPIRE_ key is not already set (no overwrite).
+    By default, only copies if ASPIRE_ key is not already set.
+    When override=True, raw values are treated as authoritative and overwrite.
     """
     for aspire_key, raw_key in _SETTINGS_PREFIX_MAP.items():
         raw_val = os.environ.get(raw_key)
-        if raw_val and not os.environ.get(aspire_key):
+        if raw_val and (override or not os.environ.get(aspire_key)):
             os.environ[aspire_key] = raw_val
             logger.debug("Bridged %s -> %s", raw_key, aspire_key)
+
+
+def _validate_openai_key_consistency(*, fail_closed: bool) -> None:
+    """Ensure legacy and canonical OpenAI env keys do not diverge."""
+    canonical = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    legacy = (os.environ.get("ASPIRE_OPENAI_API_KEY") or "").strip()
+    if canonical and legacy and canonical != legacy:
+        msg = (
+            "OPENAI_API_KEY and ASPIRE_OPENAI_API_KEY differ. "
+            "OPENAI_API_KEY is authoritative."
+        )
+        if fail_closed:
+            raise RuntimeError(msg)
+        logger.warning(msg)
+        # Normalize to canonical key in non-production.
+        os.environ["ASPIRE_OPENAI_API_KEY"] = canonical
 
 
 def verify_settings_coverage() -> list[str]:
@@ -176,7 +193,8 @@ def load_secrets() -> None:
     if not is_production and not has_aws_creds:
         logger.info("Local dev mode — using .env file (no AWS creds)")
         # Still bridge raw env vars → ASPIRE_-prefixed for Pydantic Settings
-        _align_settings_prefix()
+        _align_settings_prefix(override=False)
+        _validate_openai_key_consistency(fail_closed=False)
         return
 
     # Production without AWS creds — fail closed (Law #3)
@@ -243,7 +261,8 @@ def load_secrets() -> None:
         logger.info("Loaded %d secrets from %d SM groups (%s)", loaded_count, len(groups), env)
 
     # Bridge raw env vars to ASPIRE_-prefixed for Pydantic Settings
-    _align_settings_prefix()
+    _align_settings_prefix(override=True)
+    _validate_openai_key_consistency(fail_closed=is_production)
 
 
 def invalidate_cache() -> None:

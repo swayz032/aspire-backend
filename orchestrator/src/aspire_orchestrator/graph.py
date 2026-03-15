@@ -74,6 +74,110 @@ _CHECKPOINTER_RUNTIME: dict[str, str] = {
 _CHECKPOINTER_CTX: Any | None = None
 _ACTIVE_CHECKPOINTER: Any | None = None
 
+_MONEY_ACTION_PREFIXES: tuple[str, ...] = (
+    "payment.",
+    "money.transfer",
+    "plaid.transfer",
+    "stripe.transfer",
+)
+_MONEY_TRANSFER_PHRASES: tuple[str, ...] = (
+    "wire transfer",
+    "send money",
+    "transfer money",
+    "move money",
+    "move funds",
+    "send funds",
+    "bank transfer",
+    "ach transfer",
+    "send payment",
+    "pay vendor",
+)
+_MONEY_CONTEXT_TOKENS: tuple[str, ...] = (
+    "money",
+    "fund",
+    "funds",
+    "cash",
+    "wire",
+    "ach",
+    "bank",
+    "payment",
+    "vendor",
+    "invoice",
+    "bill",
+    "dollar",
+    "usd",
+)
+_MONEY_ACTION_TOKENS: tuple[str, ...] = (
+    "send",
+    "transfer",
+    "wire",
+    "move",
+    "pay",
+    "payout",
+    "withdraw",
+    "deposit",
+)
+_NON_MONEY_TRANSFER_PHRASES: tuple[str, ...] = (
+    "call transfer",
+    "transfer call",
+    "transfer this call",
+    "domain transfer",
+    "transfer domain",
+    "file transfer",
+    "transfer file",
+)
+_ADVICE_MARKERS: tuple[str, ...] = (
+    "should i",
+    "what strategy",
+    "best strategy",
+    "best way",
+    "pros and cons",
+    "tradeoff",
+    "help me think",
+    "what would you do",
+    "how should i",
+)
+
+
+def _is_unsupported_money_movement_request(
+    *,
+    utterance: str,
+    explicit_task_type: str,
+    classified_action: str,
+) -> bool:
+    """Block discontinued money movement requests before routing/approval."""
+    explicit = (explicit_task_type or "").strip().lower()
+    classified = (classified_action or "").strip().lower()
+    if explicit.startswith(_MONEY_ACTION_PREFIXES) or classified.startswith(_MONEY_ACTION_PREFIXES):
+        return True
+
+    text = (utterance or "").strip().lower()
+    if not text:
+        return False
+    if any(phrase in text for phrase in _NON_MONEY_TRANSFER_PHRASES):
+        return False
+    if any(phrase in text for phrase in _MONEY_TRANSFER_PHRASES):
+        return True
+    has_money_context = any(token in text for token in _MONEY_CONTEXT_TOKENS)
+    has_transfer_action = any(token in text for token in _MONEY_ACTION_TOKENS)
+    return has_money_context and has_transfer_action
+
+
+def _should_force_conversational_reasoning(
+    *,
+    utterance: str,
+    intent_type: str,
+) -> bool:
+    """Prefer agent_reason for advanced/challenging advisory questions."""
+    normalized_intent = (intent_type or "").strip().lower()
+    if normalized_intent in ("knowledge", "advice"):
+        return True
+    text = (utterance or "").strip().lower()
+    if not text:
+        return False
+    has_question_signal = "?" in text or text.startswith(("how ", "why ", "what ", "when ", "should "))
+    return has_question_signal and any(marker in text for marker in _ADVICE_MARKERS)
+
 
 def _build_checkpointer_serde() -> JsonPlusSerializer:
     allowlist = [
@@ -321,6 +425,34 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
             result["intent_result"]["confidence"] = 0.9
             result["action_type"] = explicit_task_type
 
+    if _is_unsupported_money_movement_request(
+        utterance=utterance,
+        explicit_task_type=str(result.get("task_type") or explicit_task_type or ""),
+        classified_action=str(result.get("action_type") or ""),
+    ):
+        deny_text = (
+            "Aspire doesn't support wire transfers or sending money right now. "
+            "I can help with finance planning, invoice ops, or cash-flow analysis instead."
+        )
+        result.update(
+            {
+                "error_code": AspireErrorCode.POLICY_DENIED.value,
+                "error_message": deny_text,
+                "outcome": "denied",
+                "policy_allowed": False,
+                "task_type": result.get("task_type") or "payment.transfer",
+            }
+        )
+        result["intent_result"]["action_type"] = str(result["task_type"])
+        result["intent_result"]["intent_type"] = "action"
+        result["intent_result"]["requires_clarification"] = False
+        result["intent_result"]["confidence"] = max(
+            float(result["intent_result"].get("confidence") or 0.0),
+            0.95,
+        )
+        logger.info("Classify: unsupported money movement denied at classify gate")
+        return result
+
     logger.info(
         "Classify: action=%s, confidence=%.2f, clarify=%s, explicit_task=%s",
         intent_result.action_type,
@@ -504,6 +636,18 @@ def _route_after_classify(state: OrchestratorState) -> str:
     requires_clarification = intent_result.get("requires_clarification", False)
     action_type = intent_result.get("action_type", "unknown")
     intent_type = intent_result.get("intent_type", "")
+    utterance = state.get("utterance", "") or ""
+
+    # Short-circuit explicit deny set during classify.
+    if state.get("error_code"):
+        return "respond"
+
+    # Prefer conversational reasoning for advanced advisory prompts.
+    if _should_force_conversational_reasoning(
+        utterance=str(utterance),
+        intent_type=str(intent_type),
+    ):
+        return "agent_reason"
 
     # ACTION PATH: known action with sufficient confidence
     if action_type != "unknown" and confidence >= 0.5:

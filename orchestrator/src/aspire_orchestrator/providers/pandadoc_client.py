@@ -37,7 +37,7 @@ from typing import Any
 
 import httpx
 
-from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 from aspire_orchestrator.middleware.exception_handler import _sanitize_error_message
 from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.base_client import (
@@ -1527,11 +1527,11 @@ async def _llm_fill_missing_tokens(
     try:
         from openai import AsyncOpenAI
 
-        if not settings.openai_api_key:
+        if not resolve_openai_api_key():
             return {}, list(missing_tokens)
 
         client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
         )
 
@@ -1586,7 +1586,7 @@ async def _llm_fill_missing_tokens(
         content = await generate_text_async(
             model=create_kwargs["model"],
             messages=create_kwargs["messages"],
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
@@ -2251,11 +2251,11 @@ async def _llm_parse_pricing(
     try:
         from openai import AsyncOpenAI
 
-        if not settings.openai_api_key:
+        if not resolve_openai_api_key():
             return []
 
         client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
         )
 
@@ -2288,7 +2288,7 @@ async def _llm_parse_pricing(
                     ),
                 },
             ],
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
             max_output_tokens=400,
@@ -2384,11 +2384,11 @@ async def _build_content_placeholders(
     try:
         from openai import AsyncOpenAI
 
-        if not settings.openai_api_key:
+        if not resolve_openai_api_key():
             return []
 
         client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
         )
 
@@ -2445,7 +2445,7 @@ async def _build_content_placeholders(
         content = await generate_text_async(
             model=create_kwargs["model"],
             messages=create_kwargs["messages"],
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
@@ -3394,11 +3394,11 @@ async def _generate_smart_questions(
     try:
         from openai import AsyncOpenAI
 
-        if not settings.openai_api_key:
+        if not resolve_openai_api_key():
             return _build_missing_token_questions(missing_tokens)
 
         client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
         )
 
@@ -3470,7 +3470,7 @@ async def _generate_smart_questions(
         content = await generate_text_async(
             model=create_kwargs["model"],
             messages=create_kwargs["messages"],
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),

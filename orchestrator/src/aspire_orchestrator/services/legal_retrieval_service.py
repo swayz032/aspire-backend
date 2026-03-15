@@ -279,7 +279,7 @@ class LegalRetrievalService:
     ) -> list[dict[str, Any]]:
         """Execute hybrid search via Supabase RPC."""
         try:
-            from aspire_orchestrator.config.settings import settings
+            from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
             from aspire_orchestrator.services.supabase_client import supabase_rpc
 
             # Build RPC params — vector must be serialized as string for PostgREST
@@ -336,9 +336,9 @@ class LegalRetrievalService:
         top_n = chunks[:20]
 
         try:
-            from aspire_orchestrator.config.settings import settings
+            from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 
-            if not settings.openai_api_key:
+            if not resolve_openai_api_key():
                 return chunks[:10]
 
             # Build reranking prompt — sanitize query to prevent prompt injection (R-002)
@@ -371,7 +371,7 @@ class LegalRetrievalService:
                         ),
                     },
                 ],
-                api_key=settings.openai_api_key,
+                api_key=resolve_openai_api_key(),
                 base_url=settings.openai_base_url,
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=500,

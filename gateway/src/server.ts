@@ -36,7 +36,7 @@ import { receiptsRouter } from './routes/receipts.js';
 import { policyRouter } from './routes/policy.js';
 import { registryRouter } from './routes/registry.js';
 import { a2aRouter } from './routes/a2a.js';
-import { checkOrchestratorHealth } from './services/orchestrator-client.js';
+import { checkOrchestratorReadiness } from './services/orchestrator-client.js';
 
 const app = express();
 const PORT = process.env.GATEWAY_PORT ? parseInt(process.env.GATEWAY_PORT, 10) : 3100;
@@ -71,16 +71,17 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.get('/readyz', async (_req, res) => {
-  const orchestratorHealthy = await checkOrchestratorHealth();
-  const status = orchestratorHealthy ? 'ready' : 'degraded';
-  const statusCode = orchestratorHealthy ? 200 : 503;
+  const orchestrator = await checkOrchestratorReadiness();
+  const status = orchestrator.dependency === 'healthy' ? 'ready' : 'degraded';
+  const statusCode = orchestrator.dependency === 'healthy' ? 200 : 503;
 
   res.status(statusCode).json({
     status,
     service: 'aspire-gateway',
     dependencies: {
-      orchestrator: orchestratorHealthy ? 'healthy' : 'unavailable',
+      orchestrator: orchestrator.dependency,
     },
+    orchestrator_status: orchestrator.status,
   });
 });
 
@@ -148,10 +149,11 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
 // =============================================================================
 
 if (process.env.NODE_ENV !== 'test') {
+  const orchestratorTarget = process.env.ORCHESTRATOR_URL?.trim() || 'http://localhost:8000';
   app.listen(PORT, () => {
     console.log(`Aspire Gateway listening on port ${PORT}`);
     console.log(`  Auth mode: ${process.env.GATEWAY_AUTH_MODE ?? 'production'}`);
-    console.log(`  Orchestrator: ${process.env.ORCHESTRATOR_URL ?? 'http://localhost:8000'}`);
+    console.log(`  Orchestrator: ${orchestratorTarget}`);
   });
 }
 

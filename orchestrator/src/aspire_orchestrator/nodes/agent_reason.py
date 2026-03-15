@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.services.agent_identity import (
     resolve_assigned_agent as _resolve_assigned_agent_shared,
@@ -481,7 +481,7 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
                 {"role": msg_role, "content": system_message},
                 {"role": "user", "content": utterance},
             ],
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
             max_output_tokens=500,
@@ -498,12 +498,12 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
             "eli": "Hey, I'm Eli - I hit a snag processing that. Can you try that again?",
             "nora": "Hey, I'm Nora - I hit a snag with that request. Can you rephrase it?",
             "clara": "Hey, I'm Clara - I ran into an issue processing that. Can you rephrase?",
-            "quinn": "Hey, I'm Quinn - I couldn't process that cleanly. Can you rephrase?",
+            "quinn": "Hey, I'm Quinn - I hit an issue with that request. Can you rephrase it?",
             "sarah": "Hey, I'm Sarah - I hit an issue processing that. Can you try again?",
-            "adam": "Hey, I'm Adam - I couldn't process that request. Can you rephrase?",
+            "adam": "Hey, I'm Adam - I hit an issue with that request. Can you rephrase it?",
             "tec": "Hey, I'm Tec - I ran into an issue with that request. Can you try again?",
             "teressa": "Hey, I'm Teressa - I hit a snag processing that. Can you rephrase?",
-            "milo": "Hey, I'm Milo - I couldn't process that request. Can you rephrase?",
+            "milo": "Hey, I'm Milo - I hit an issue with that request. Can you rephrase it?",
             "mail_ops": "Hey, I'm Mail Ops - I ran into an issue processing that. Can you rephrase?",
         }
         response_text = fallback_map.get(agent_id, fallback_map["ava"])
@@ -525,18 +525,18 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
         channel = profile.get("channel", "voice")
 
     fallback_map = {
-        "ava": "I can help with that. Tell me the exact piece you want me to handle and I'll keep it grounded.",
-        "finn": "I'm Finn. Give me the finance question or number you want to work through and I'll keep it precise.",
-        "eli": "I'm Eli. Tell me the message or inbox situation and I'll keep the answer direct.",
-        "nora": "I'm Nora. Tell me the scheduling issue and I'll keep it tight.",
-        "clara": "I'm Clara. Tell me the contract or compliance point you want reviewed and I'll stay grounded.",
-        "quinn": "I'm Quinn. Tell me the invoice or payment issue and I'll keep it specific.",
-        "sarah": "I'm Sarah. Tell me the front-desk situation you want covered.",
-        "adam": "I'm Adam. Tell me what you want researched and I'll keep it evidence-based.",
-        "tec": "I'm Tec. Tell me the document task and I'll keep it structured.",
-        "teressa": "I'm Teressa. Tell me the books issue and I'll keep it clean.",
-        "milo": "I'm Milo. Tell me the payroll issue and I'll keep it exact.",
-        "mail_ops": "I'm Mail Ops. Tell me the mailbox or domain issue and I'll keep it specific.",
+        "ava": "I can give you a safe first pass now. Which exact detail should I verify first?",
+        "finn": "I can give you a conservative finance read now. Which number or timeframe should I verify first?",
+        "eli": "I can draft a safe first pass now. Which exact thread or message should I verify first?",
+        "nora": "I can give you a safe scheduling direction now. Which meeting detail should I verify first?",
+        "clara": "I can give a cautious legal read now. Which clause should I verify first?",
+        "quinn": "I can give you a safe invoicing direction now. Which invoice detail should I verify first?",
+        "sarah": "I can give you a safe front-desk direction now. Which caller or case should I verify first?",
+        "adam": "I can give you an evidence-first start now. Which source or claim should I verify first?",
+        "tec": "I can give you a safe document first pass now. Which field should I verify first?",
+        "teressa": "I can give you a cautious books read now. Which line item should I verify first?",
+        "milo": "I can give you a cautious payroll read now. Which pay period should I verify first?",
+        "mail_ops": "I can give you a safe mail-ops direction now. Which mailbox or domain detail should I verify first?",
     }
     response_text, quality_report = enforce_response_quality(
         text=response_text,

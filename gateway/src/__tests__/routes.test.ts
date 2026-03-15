@@ -28,17 +28,23 @@ vi.mock('../services/orchestrator-client.js', () => {
   return {
     proxyToOrchestrator: vi.fn(),
     checkOrchestratorHealth: vi.fn().mockResolvedValue(true),
+    checkOrchestratorReadiness: vi.fn().mockResolvedValue({
+      reachable: true,
+      httpStatus: 200,
+      status: 'ready',
+      dependency: 'healthy',
+    }),
     OrchestratorClientError: MockOrchestratorClientError,
   };
 });
 
 // Now import server and the mocked modules
 const { app } = await import('../server.js');
-const { proxyToOrchestrator, checkOrchestratorHealth, OrchestratorClientError } =
+const { proxyToOrchestrator, checkOrchestratorReadiness, OrchestratorClientError } =
   await import('../services/orchestrator-client.js');
 
 const mockProxy = vi.mocked(proxyToOrchestrator);
-const mockHealthCheck = vi.mocked(checkOrchestratorHealth);
+const mockReadinessCheck = vi.mocked(checkOrchestratorReadiness);
 
 // =============================================================================
 // Test helpers
@@ -90,7 +96,12 @@ const YELLOW_APPROVAL_RESPONSE = {
 beforeEach(() => {
   process.env.GATEWAY_AUTH_MODE = 'dev';
   vi.clearAllMocks();
-  mockHealthCheck.mockResolvedValue(true);
+  mockReadinessCheck.mockResolvedValue({
+    reachable: true,
+    httpStatus: 200,
+    status: 'ready',
+    dependency: 'healthy',
+  });
 });
 
 afterEach(() => {
@@ -110,19 +121,45 @@ describe('Health Endpoints', () => {
   });
 
   it('GET /readyz returns ready when orchestrator healthy', async () => {
-    mockHealthCheck.mockResolvedValue(true);
+    mockReadinessCheck.mockResolvedValue({
+      reachable: true,
+      httpStatus: 200,
+      status: 'ready',
+      dependency: 'healthy',
+    });
     const res = await request(app).get('/readyz');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ready');
     expect(res.body.dependencies.orchestrator).toBe('healthy');
+    expect(res.body.orchestrator_status).toBe('ready');
   });
 
-  it('GET /readyz returns degraded when orchestrator down', async () => {
-    mockHealthCheck.mockResolvedValue(false);
+  it('GET /readyz returns degraded when orchestrator not reachable', async () => {
+    mockReadinessCheck.mockResolvedValue({
+      reachable: false,
+      httpStatus: null,
+      status: 'unavailable',
+      dependency: 'unavailable',
+    });
     const res = await request(app).get('/readyz');
     expect(res.status).toBe(503);
     expect(res.body.status).toBe('degraded');
     expect(res.body.dependencies.orchestrator).toBe('unavailable');
+    expect(res.body.orchestrator_status).toBe('unavailable');
+  });
+
+  it('GET /readyz returns degraded when orchestrator is degraded', async () => {
+    mockReadinessCheck.mockResolvedValue({
+      reachable: true,
+      httpStatus: 200,
+      status: 'degraded',
+      dependency: 'degraded',
+    });
+    const res = await request(app).get('/readyz');
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.dependencies.orchestrator).toBe('degraded');
+    expect(res.body.orchestrator_status).toBe('degraded');
   });
 
   it('healthz includes correlation ID header', async () => {
@@ -192,6 +229,34 @@ describe('POST /v1/intents', () => {
     const body = proxyCall.body as Record<string, unknown>;
     expect(body.suite_id).toBe('suite-test-001');
     expect(body.office_id).toBe('office-test-001');
+  });
+
+  it('ignores forged tenant context in request body', async () => {
+    mockProxy.mockResolvedValue({
+      status: 200,
+      body: GREEN_AVA_RESULT,
+      headers: {},
+    });
+
+    await request(app)
+      .post('/v1/intents')
+      .set(DEV_HEADERS)
+      .send({
+        ...VALID_REQUEST,
+        suite_id: 'suite-forged-evil',
+        office_id: 'office-forged-evil',
+      });
+
+    expect(mockProxy).toHaveBeenCalledTimes(1);
+    const proxyCall = mockProxy.mock.calls[0][0];
+    expect(proxyCall.suiteId).toBe('suite-test-001');
+    expect(proxyCall.officeId).toBe('office-test-001');
+
+    const body = proxyCall.body as Record<string, unknown>;
+    expect(body.suite_id).toBe('suite-test-001');
+    expect(body.office_id).toBe('office-test-001');
+    expect(body.suite_id).not.toBe('suite-forged-evil');
+    expect(body.office_id).not.toBe('office-forged-evil');
   });
 
   it('propagates correlation ID to orchestrator', async () => {

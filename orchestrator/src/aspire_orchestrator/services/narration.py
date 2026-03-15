@@ -403,7 +403,7 @@ def compose_narration(
         if "meeting" in tt or "conference" in tt:
             return f"{header}Done — your meeting room is ready."
 
-        return f"{header}Done — your request has been completed."
+        return f"{header}Done — that request is complete."
 
     # FAILED outcome — never expose raw error details to user (enterprise security)
     if outcome == "failed":
@@ -444,4 +444,4 @@ def compose_narration(
         return f"{header}I can't perform that action — it was blocked by your security policy."
 
     # Fallback
-    return f"{header}I've processed your request."
+    return f"{header}I handled that request."

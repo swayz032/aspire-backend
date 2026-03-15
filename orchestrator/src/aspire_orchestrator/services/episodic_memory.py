@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.services.receipt_store import store_receipts
 
@@ -118,7 +118,7 @@ class EpisodicMemory:
                     },
                     {"role": "user", "content": conversation},
                 ],
-                api_key=settings.openai_api_key,
+                api_key=resolve_openai_api_key(),
                 base_url=settings.openai_base_url,
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=300,

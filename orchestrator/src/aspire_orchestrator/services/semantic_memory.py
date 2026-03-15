@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 from aspire_orchestrator.services.receipt_store import store_receipts
 
@@ -121,7 +121,7 @@ class SemanticMemory:
                     },
                     {"role": "user", "content": conversation},
                 ],
-                api_key=settings.openai_api_key,
+                api_key=resolve_openai_api_key(),
                 base_url=settings.openai_base_url,
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=400,

@@ -18,17 +18,6 @@ import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 
 /**
- * Provider-specific signature header mapping.
- */
-const PROVIDER_SIGNATURE_HEADERS: Record<string, string> = {
-  stripe: 'stripe-signature',
-  gusto: 'x-gusto-signature',
-  plaid: 'plaid-verification',
-  pandadoc: 'x-pandadoc-signature',
-  generic: 'x-webhook-signature',
-};
-
-/**
  * Configuration for webhook verification per provider.
  */
 interface WebhookProviderConfig {

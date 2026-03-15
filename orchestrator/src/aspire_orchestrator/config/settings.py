@@ -1,5 +1,7 @@
 """Environment-based configuration for the Aspire orchestrator."""
 
+import os
+
 from pydantic_settings import BaseSettings
 
 
@@ -123,7 +125,26 @@ class Settings(BaseSettings):
     ava_admin_prompt_version: str | None = None    # AVA_ADMIN_PROMPT_VERSION env var
     ava_safe_mode: bool = False                    # AVA_SAFE_MODE=1 for incident operation
 
-    model_config = {"env_prefix": "ASPIRE_", "env_file": ".env", "extra": "ignore"}
+    model_config = {"env_prefix": "ASPIRE_", "extra": "ignore"}
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-settings = Settings()
+_ENV_FILE = ".env" if _is_truthy(os.getenv("ASPIRE_ENABLE_LOCAL_DOTENV")) else None
+settings = Settings(_env_file=_ENV_FILE)
+
+
+def resolve_openai_api_key() -> str:
+    """Resolve OpenAI key from authoritative runtime sources.
+
+    Precedence:
+    1) OPENAI_API_KEY (server-side secret manager / platform env)
+    2) ASPIRE_OPENAI_API_KEY (legacy compatibility)
+    3) settings.openai_api_key (last-resort fallback)
+    """
+    return (
+        (os.getenv("OPENAI_API_KEY") or "").strip()
+        or (os.getenv("ASPIRE_OPENAI_API_KEY") or "").strip()
+        or (settings.openai_api_key or "").strip()
+    )

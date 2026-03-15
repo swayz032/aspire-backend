@@ -209,7 +209,7 @@ def _generate_response_text(state: OrchestratorState) -> str:
         return "I'm not able to perform that action. It was blocked by your security policy."
 
     # Fallback
-    return "I've processed your request."
+    return "I handled that request and can walk you through the result."
 
 
 _FORMAT_STRIP_PHRASES = [
@@ -784,7 +784,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         else:
             _error_messages: dict[str, str] = {
                 "POLICY_DENIED": "Your security policy doesn't allow this action.",
-                "SAFETY_BLOCKED": "I can't process that request for safety reasons.",
+                "SAFETY_BLOCKED": "I can't help with that request. I can offer a safer alternative if you want.",
                 "CAPABILITY_TOKEN_REQUIRED": "I need authorization to perform this action.",
                 "CAPABILITY_TOKEN_EXPIRED": "The authorization for this action has expired. Please try again.",
                 "SCHEMA_VALIDATION_FAILED": "I didn't understand that request. Could you try rephrasing it?",

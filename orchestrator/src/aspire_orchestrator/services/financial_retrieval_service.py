@@ -285,7 +285,7 @@ class FinancialRetrievalService:
     ) -> list[dict[str, Any]]:
         """Execute hybrid search via Supabase RPC."""
         try:
-            from aspire_orchestrator.config.settings import settings
+            from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
             from aspire_orchestrator.services.supabase_client import SupabaseClientError, supabase_rpc, supabase_select
 
             params: dict[str, Any] = {
@@ -372,9 +372,9 @@ class FinancialRetrievalService:
         top_n = chunks[:20]
 
         try:
-            from aspire_orchestrator.config.settings import settings
+            from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 
-            if not settings.openai_api_key:
+            if not resolve_openai_api_key():
                 return chunks[:10]
 
             sanitized_query = query.replace("\n", " ").replace("\r", " ")[:200].strip()
@@ -406,7 +406,7 @@ class FinancialRetrievalService:
                         ),
                     },
                 ],
-                api_key=settings.openai_api_key,
+                api_key=resolve_openai_api_key(),
                 base_url=settings.openai_base_url,
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=500,

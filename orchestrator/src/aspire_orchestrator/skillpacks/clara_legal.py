@@ -978,9 +978,9 @@ async def _intelligent_compliance_assessment(
 
     # Layer 2: LLM enhancement (optional — enriches, never replaces)
     try:
-        from aspire_orchestrator.config.settings import settings
+        from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 
-        if not settings.openai_api_key:
+        if not resolve_openai_api_key():
             return base
 
         # Parse expiration for risk scoring
@@ -1063,7 +1063,7 @@ async def _intelligent_compliance_assessment(
                 },
                 {"role": "user", "content": prompt},
             ],
-            api_key=settings.openai_api_key,
+            api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
             max_output_tokens=400,

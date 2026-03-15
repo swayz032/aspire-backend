@@ -18,6 +18,7 @@ import {
   proxyToOrchestrator,
   OrchestratorClientError,
 } from '../services/orchestrator-client.js';
+import { reportGatewayIncident } from '../services/incident-reporter.js';
 import { validateAvaResult } from '../middleware/schema-validation.js';
 
 export const intentsRouter = Router();
@@ -51,6 +52,22 @@ intentsRouter.post('/', async (req: Request, res: Response) => {
 
     // If orchestrator returned an error, pass it through
     if (orchestratorResponse.status >= 400) {
+      if (orchestratorResponse.status >= 500) {
+        void reportGatewayIncident({
+          title: 'Gateway observed upstream orchestrator failure',
+          severity: orchestratorResponse.status >= 503 ? 'sev1' : 'sev2',
+          correlationId,
+          suiteId,
+          component: '/v1/intents',
+          fingerprint: `gateway:intents:orchestrator:${suiteId}:${actorId}:http_${orchestratorResponse.status}`,
+          actorId,
+          errorCode: `ORCHESTRATOR_HTTP_${orchestratorResponse.status}`,
+          statusCode: orchestratorResponse.status,
+          message: typeof responseBody === 'object' && responseBody
+            ? JSON.stringify(responseBody).slice(0, 300)
+            : String(responseBody).slice(0, 300),
+        });
+      }
       res.status(orchestratorResponse.status).json(responseBody);
       return;
     }
@@ -79,14 +96,40 @@ intentsRouter.post('/', async (req: Request, res: Response) => {
         INVALID_RESPONSE: 502,
         UNKNOWN: 500,
       };
+      const mappedStatus = statusMap[err.code] ?? 500;
+      void reportGatewayIncident({
+        title: 'Gateway could not complete orchestrator request',
+        severity: mappedStatus >= 503 ? 'sev1' : 'sev2',
+        correlationId,
+        suiteId,
+        component: '/v1/intents',
+        fingerprint: `gateway:intents:orchestrator:${suiteId}:${actorId}:${err.code.toLowerCase()}`,
+        actorId,
+        errorCode: `ORCHESTRATOR_${err.code}`,
+        statusCode: mappedStatus,
+        message: err.message,
+      });
 
-      res.status(statusMap[err.code] ?? 500).json({
+      res.status(mappedStatus).json({
         error: err.code === 'TIMEOUT' ? 'INTERNAL_ERROR' : 'INTERNAL_ERROR',
         message: err.message,
         correlation_id: correlationId,
       });
       return;
     }
+
+    void reportGatewayIncident({
+      title: 'Gateway encountered unexpected intent route failure',
+      severity: 'sev2',
+      correlationId,
+      suiteId,
+      component: '/v1/intents',
+      fingerprint: `gateway:intents:unexpected:${suiteId}:${actorId}`,
+      actorId,
+      errorCode: 'INTERNAL_ERROR',
+      statusCode: 500,
+      message: err instanceof Error ? err.message : 'Unknown error',
+    });
 
     res.status(500).json({
       error: 'INTERNAL_ERROR',

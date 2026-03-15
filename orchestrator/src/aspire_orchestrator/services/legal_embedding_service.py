@@ -18,7 +18,7 @@ from typing import Any
 
 import openai
 
-from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def _get_client() -> openai.AsyncOpenAI:
     """Get or create the async OpenAI client."""
     global _client
     if _client is None:
-        api_key = settings.openai_api_key
+        api_key = resolve_openai_api_key()
         if not api_key:
             raise EmbeddingError(
                 "OpenAI API key not configured (ASPIRE_OPENAI_API_KEY)",

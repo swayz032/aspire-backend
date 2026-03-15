@@ -19,7 +19,7 @@ from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
 
-from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 from aspire_orchestrator.services.metrics import METRICS
 
 logger = logging.getLogger(__name__)
@@ -253,7 +253,7 @@ async def probe_models_startup() -> dict[str, Any]:
 
     Returns structured probe result for readiness diagnostics.
     """
-    api_key = settings.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
+    api_key = resolve_openai_api_key()
     if not api_key:
         return {
             "status": "no_api_key",

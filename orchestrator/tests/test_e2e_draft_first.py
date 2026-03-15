@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -28,12 +29,18 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
+os.environ["ASPIRE_SUPABASE_URL"] = ""
+os.environ["ASPIRE_SUPABASE_SERVICE_ROLE_KEY"] = ""
+os.environ["AWS_ACCESS_KEY_ID"] = ""
+os.environ["AWS_SECRET_ACCESS_KEY"] = ""
+
 from aspire_orchestrator.graph import build_orchestrator_graph
 from aspire_orchestrator.models import (
     ApprovalEvidence,
     ApprovalMethod,
     Outcome,
 )
+from aspire_orchestrator.services.a2a_service import get_a2a_service
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +81,8 @@ def _make_request(
 @pytest.fixture
 def graph():
     """Build the orchestrator graph for testing."""
+    a2a = get_a2a_service(reload=True)
+    a2a.backend = "memory"
     return build_orchestrator_graph()
 
 
@@ -86,8 +95,22 @@ class TestGreenAutoExecute:
     @pytest.mark.asyncio
     async def test_green_calendar_read_auto_execute(self, graph) -> None:
         """Calendar read (GREEN) -> auto-approve -> execute -> narration."""
+        from aspire_orchestrator.services.tool_types import ToolExecutionResult
+
+        mock_result = ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id="calendar.read",
+            data={"events": []},
+            receipt_data={},
+        )
+
         request = _make_request(task_type="calendar.read")
-        result = await graph.ainvoke({"request": request, "actor_id": ACTOR_ID})
+        with patch(
+            "aspire_orchestrator.nodes.execute._execute_tool_async",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ):
+            result = await graph.ainvoke({"request": request, "actor_id": ACTOR_ID})
 
         assert result["safety_passed"] is True
         assert result["policy_allowed"] is True
@@ -309,6 +332,118 @@ class TestResumeMechanism:
 
         assert result["success"] is False
         assert result["error_code"] == "RESUME_NOT_APPROVED"
+
+    @pytest.mark.asyncio
+    async def test_resume_langgraph_path_uses_runner_and_presence_token(self) -> None:
+        """Approved rows with thread metadata resume the paused LangGraph thread."""
+        from aspire_orchestrator.nodes.resume import resume_after_approval
+
+        approval_id = str(uuid.uuid4())
+        request_id = str(uuid.uuid4())
+        thread_id = f"thread:{uuid.uuid4()}"
+        payload = {"customer_email": "test@example.com", "amount_cents": 4900}
+        payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        mock_rows = [{
+            "approval_id": approval_id,
+            "status": "approved",
+            "tenant_id": SUITE_ID,
+            "thread_id": thread_id,
+            "request_id": request_id,
+            "run_id": str(uuid.uuid4()),
+            "tool": "stripe.invoice.create",
+            "operation": "invoice.create",
+            "risk_tier": "yellow",
+            "approval_hash": payload_hash,
+            "execution_payload": payload,
+            "execution_params_hash": payload_hash,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        }]
+        presence_token = {"token_id": "presence-123"}
+        resume_runner = AsyncMock(return_value={
+            "response": {
+                "text": "Invoice drafted and ready.",
+                "receipt_ids": ["receipt-123"],
+                "data": {"invoice_id": "inv_123"},
+            }
+        })
+
+        with patch("aspire_orchestrator.services.supabase_client.supabase_select", new_callable=AsyncMock, return_value=mock_rows), \
+             patch("aspire_orchestrator.services.supabase_client.supabase_update", new_callable=AsyncMock, return_value={}) as mock_update, \
+             patch("aspire_orchestrator.services.receipt_store.store_receipts"), \
+             patch("aspire_orchestrator.services.receipt_chain.assign_chain_metadata"):
+            result = await resume_after_approval(
+                approval_id,
+                SUITE_ID,
+                OFFICE_ID,
+                ACTOR_ID,
+                presence_token=presence_token,
+                resume_runner=resume_runner,
+            )
+
+        assert result["success"] is True
+        assert result["receipt_id"] == "receipt-123"
+        assert result["execution_result"] == {"invoice_id": "inv_123"}
+        resume_runner.assert_awaited_once()
+        runner_args = resume_runner.await_args.args
+        assert runner_args[0] == thread_id
+        resume_payload = runner_args[1]
+        assert resume_payload["presence_token"] == presence_token
+        assert resume_payload["approval_evidence"]["request_id"] == request_id
+        assert resume_payload["approval_evidence"]["payload_hash"] == payload_hash
+        mock_update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_resume_langgraph_path_maps_graph_error_response(self) -> None:
+        """Graph resume failures preserve the legacy error contract."""
+        from aspire_orchestrator.nodes.resume import resume_after_approval
+
+        approval_id = str(uuid.uuid4())
+        payload = {"customer_email": "test@example.com", "amount_cents": 4900}
+        payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        mock_rows = [{
+            "approval_id": approval_id,
+            "status": "approved",
+            "tenant_id": SUITE_ID,
+            "thread_id": f"thread:{uuid.uuid4()}",
+            "request_id": str(uuid.uuid4()),
+            "run_id": str(uuid.uuid4()),
+            "tool": "stripe.invoice.create",
+            "operation": "invoice.create",
+            "risk_tier": "red",
+            "approval_hash": payload_hash,
+            "execution_payload": payload,
+            "execution_params_hash": payload_hash,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        }]
+        resume_runner = AsyncMock(return_value={
+            "response": {
+                "error": "PRESENCE_REQUIRED",
+                "message": "Presence verification still required",
+                "receipt_ids": ["receipt-456"],
+            }
+        })
+
+        with patch("aspire_orchestrator.services.supabase_client.supabase_select", new_callable=AsyncMock, return_value=mock_rows), \
+             patch("aspire_orchestrator.services.supabase_client.supabase_update", new_callable=AsyncMock, return_value={}) as mock_update, \
+             patch("aspire_orchestrator.services.receipt_store.store_receipts"), \
+             patch("aspire_orchestrator.services.receipt_chain.assign_chain_metadata"):
+            result = await resume_after_approval(
+                approval_id,
+                SUITE_ID,
+                OFFICE_ID,
+                ACTOR_ID,
+                resume_runner=resume_runner,
+            )
+
+        assert result["success"] is False
+        assert result["error_code"] == "PRESENCE_REQUIRED"
+        assert result["error_message"] == "Presence verification still required"
+        assert result["receipt_id"] == "receipt-456"
+        mock_update.assert_not_awaited()
 
 
 # ===========================================================================
