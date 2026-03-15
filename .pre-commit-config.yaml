@@ -1,0 +1,72 @@
+# Aspire pre-commit hooks (GovGuard + detect-secrets)
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # detect-secrets — blocks commits containing API keys, passwords, etc.
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            package-lock\.json|
+            pnpm-lock\.yaml|
+            .*\.lock|
+            \.secrets\.baseline
+          )$
+
+  # ruff — Python lint + format (fast, replaces flake8/isort/black)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python]
+      - id: ruff-format
+        types_or: [python]
+
+  # bandit — Python SAST security scanning
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml', '--quiet']
+        additional_dependencies: ['bandit[toml]']
+        types_or: [python]
+        exclude: |
+          (?x)^(
+            .*/tests/.*|
+            .*/test_.*
+          )$
+
+  # GovGuard — Aspire governance hooks
+  - repo: local
+    hooks:
+      - id: receipt-check
+        name: 'GovGuard: Receipt Check (Law #2)'
+        entry: python tools/hooks/receipt_check.py
+        language: python
+        types_or: [python, ts, tsx]
+        pass_filenames: true
+
+      - id: rls-check
+        name: 'GovGuard: RLS Check (Law #6)'
+        entry: python tools/hooks/rls_check.py
+        language: python
+        files: '\.sql$'
+        pass_filenames: true
+
+      - id: no-any-check
+        name: 'GovGuard: No-Any Check (warning only)'
+        entry: python tools/hooks/no_any_check.py
+        language: python
+        types_or: [ts, tsx]
+        pass_filenames: true
+
+      - id: fail-closed-check
+        name: 'GovGuard: Fail-Closed Check (Law #3)'
+        entry: python tools/hooks/fail_closed_check.py
+        language: python
+        types_or: [python]
+        pass_filenames: true

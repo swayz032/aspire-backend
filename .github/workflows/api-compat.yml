@@ -1,0 +1,64 @@
+# ContractShield: API Breaking Change Detection
+# Compares OpenAPI spec on every backend PR to detect breaking changes.
+# Uses oasdiff to analyze API compatibility.
+
+name: ContractShield - API Compatibility
+
+on:
+  pull_request:
+    paths:
+      - 'backend/orchestrator/src/**/*.py'
+      - 'schemas/openapi.json'
+
+jobs:
+  api-compat-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Checkout base branch OpenAPI spec
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base-branch
+
+      - name: Install oasdiff
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/Tufin/oasdiff/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Check API compatibility
+        run: |
+          BASE_SPEC="base-branch/schemas/openapi.json"
+          HEAD_SPEC="schemas/openapi.json"
+
+          # Skip if no base spec exists yet (first time)
+          if [ ! -f "$BASE_SPEC" ]; then
+            echo "No base OpenAPI spec found — skipping compatibility check (first run)"
+            exit 0
+          fi
+
+          if [ ! -f "$HEAD_SPEC" ]; then
+            echo "No head OpenAPI spec found — run TypeForge first"
+            exit 1
+          fi
+
+          echo "ContractShield: Checking API compatibility..."
+          echo ""
+
+          # Check for breaking changes
+          if oasdiff breaking "$BASE_SPEC" "$HEAD_SPEC" --fail-on ERR; then
+            echo ""
+            echo "ContractShield: No breaking changes detected."
+          else
+            echo ""
+            echo "ContractShield: BREAKING CHANGES DETECTED!"
+            echo "Fix the breaking changes or bump the API version."
+            exit 1
+          fi
+
+          # Show changelog for review
+          echo ""
+          echo "ContractShield: API Changelog"
+          echo "=============================="
+          oasdiff changelog "$BASE_SPEC" "$HEAD_SPEC" || true

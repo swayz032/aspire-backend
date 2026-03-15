@@ -1,0 +1,49 @@
+# TypeForge: Type Drift Detection
+# Runs on backend changes to ensure generated types are up-to-date.
+
+name: TypeForge - Type Sync
+
+on:
+  pull_request:
+    paths:
+      - 'backend/orchestrator/src/**/*.py'
+      - 'schemas/**'
+
+jobs:
+  type-drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install openapi-typescript
+        run: npm install -g openapi-typescript
+
+      - name: Check for type drift
+        run: |
+          if [ ! -f "schemas/openapi.json" ]; then
+            echo "TypeForge: No OpenAPI spec committed yet — skipping"
+            exit 0
+          fi
+
+          echo "TypeForge: Checking for type drift..."
+
+          # Regenerate types from committed spec
+          if [ -f "schemas/api-types.generated.ts" ]; then
+            npx openapi-typescript schemas/openapi.json -o /tmp/api-types.generated.ts
+
+            if ! diff -q schemas/api-types.generated.ts /tmp/api-types.generated.ts > /dev/null 2>&1; then
+              echo "TypeForge: DRIFT DETECTED!"
+              echo "Generated types don't match committed spec."
+              echo "Run: bash tools/typegen/generate-types.sh"
+              diff schemas/api-types.generated.ts /tmp/api-types.generated.ts || true
+              exit 1
+            fi
+          fi
+
+          echo "TypeForge: Types are in sync."
