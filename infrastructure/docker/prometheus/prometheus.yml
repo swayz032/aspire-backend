@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# NOTE: The primary Prometheus configuration is at:
+#   backend/infrastructure/docker/otel/prometheus.yml
+# That file is used by docker-compose.observability.yml and scrapes the
+# OTel Collector exporter at otel-collector:8889.
+#
+# This file is the extended configuration that adds the full alert_rules.yml
+# set from Wave 8.4. To activate it, point docker-compose to use this file
+# instead of (or in addition to) the otel/ variant.
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # Configure alertmanager target when deploying to production.
+          # Example: targets: ['alertmanager:9093']
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ['otel-collector:8889']
+
+  - job_name: aspire-orchestrator
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['aspire-orchestrator:8000']
+
+  - job_name: aspire-desktop
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['aspire-desktop:5000']

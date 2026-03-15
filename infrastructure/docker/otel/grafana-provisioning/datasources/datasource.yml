@@ -1,0 +1,2 @@
+# NOTE: Use datasources.yml instead — this file is intentionally empty.
+# The existing datasources.yml handles Grafana datasource provisioning.

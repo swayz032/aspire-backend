@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+os.environ["ASPIRE_SUPABASE_URL"] = ""
+os.environ["ASPIRE_SUPABASE_SERVICE_ROLE_KEY"] = ""
+os.environ["AWS_ACCESS_KEY_ID"] = ""
+os.environ["AWS_SECRET_ACCESS_KEY"] = ""
+
 from aspire_orchestrator.server import app
+from aspire_orchestrator.services.a2a_service import get_a2a_service
 
 
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI server."""
+    a2a = get_a2a_service(reload=True)
+    a2a.backend = "memory"
     c = TestClient(app)
     c.headers.update({"x-actor-id": "test-actor-001", "x-suite-id": "STE-0001"})
     return c
@@ -53,14 +63,24 @@ class TestHealthEndpoints:
         # B-H10 enhanced checks
         assert "receipt_store" in data["checks"]
         assert "policy_engine" in data["checks"]
+        assert "langgraph_checkpointer" in data["checks"]
+        assert "langgraph_checkpoint_store" in data["checks"]
+        assert "langgraph_checkpoint_roundtrip" in data["checks"]
         # Compliance probe checks
         assert "model_probe_cache" in data["checks"]
         assert "model_probe_healthy" in data["checks"]
         assert "model_probe" in data
         # Tri-state status: ready / degraded / not_ready
-        # 200 if critical checks pass (signing_key, graph, receipt_store)
+        # 200 if critical checks pass.
         # 503 only if critical checks fail
-        critical_keys = {"signing_key_configured", "graph_built", "receipt_store"}
+        critical_keys = {
+            "signing_key_configured",
+            "graph_built",
+            "receipt_store",
+            "langgraph_checkpointer",
+            "langgraph_checkpoint_store",
+            "langgraph_checkpoint_roundtrip",
+        }
         critical_ok = all(
             data["checks"].get(k, False) for k in critical_keys
         )
@@ -149,3 +169,38 @@ class TestIntentsEndpoint:
         response = client.post("/v1/intents", json=request)
         data = response.json()
         assert data.get("correlation_id") == corr_id
+
+
+class TestResumeEndpoint:
+    def test_resume_success_preserves_contract(self, client) -> None:
+        approval_id = str(uuid.uuid4())
+        with patch(
+            "aspire_orchestrator.nodes.resume.resume_after_approval",
+            new_callable=AsyncMock,
+            return_value={
+                "success": True,
+                "narration_text": "Invoice drafted and ready.",
+                "receipt_id": "receipt-123",
+                "execution_result": {"invoice_id": "inv_123"},
+            },
+        ) as mock_resume:
+            response = client.post(
+                f"/v1/resume/{approval_id}",
+                json={"presence_token": {"token_id": "presence-123"}},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "narration": "Invoice drafted and ready.",
+            "receipt_id": "receipt-123",
+            "data": {"invoice_id": "inv_123"},
+        }
+        assert mock_resume.await_count == 1
+        assert mock_resume.await_args.args[:4] == (
+            approval_id,
+            "STE-0001",
+            "",
+            "test-actor-001",
+        )
+        assert mock_resume.await_args.kwargs["presence_token"] == {"token_id": "presence-123"}
+        assert callable(mock_resume.await_args.kwargs["resume_runner"])

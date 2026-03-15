@@ -1,0 +1,2 @@
+# NOTE: Use dashboards.yml instead — this file is intentionally empty.
+# The existing dashboards.yml handles Grafana provisioning for this directory.

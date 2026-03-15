@@ -638,6 +638,158 @@ async def admin_health(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# 1b. GET /admin/ops/health/deep — Deep Health Check (cascading dependency check)
+# =============================================================================
+
+
+async def _check_with_timeout(
+    name: str,
+    coro,  # noqa: ANN001
+    timeout_s: float = 3.0,
+) -> dict[str, Any]:
+    """Run a health check coroutine with a timeout. Returns status dict.
+
+    Never raises — returns degraded/down status on any failure.
+    """
+    start = time.monotonic()
+    try:
+        result = await asyncio.wait_for(coro, timeout=timeout_s)
+        latency_ms = round((time.monotonic() - start) * 1000, 1)
+        if isinstance(result, dict):
+            result["latency_ms"] = latency_ms
+            return result
+        return {"status": "up", "latency_ms": latency_ms}
+    except asyncio.TimeoutError:
+        return {"status": "timeout", "latency_ms": round(timeout_s * 1000, 1)}
+    except Exception as exc:
+        latency_ms = round((time.monotonic() - start) * 1000, 1)
+        return {
+            "status": "down",
+            "latency_ms": latency_ms,
+            "error": type(exc).__name__,
+        }
+
+
+async def _check_postgres() -> dict[str, Any]:
+    """Check PostgreSQL via Supabase PostgREST — SELECT 1."""
+    from aspire_orchestrator.config.settings import settings
+
+    url = settings.supabase_url
+    key = settings.supabase_service_role_key
+    if not url or not key:
+        return {"status": "not_configured"}
+
+    import httpx
+
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        resp = await client.get(
+            f"{url}/rest/v1/rpc/",
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+            },
+            params={"limit": "0"},
+        )
+        # PostgREST returns 200 for valid requests; any 2xx means Postgres is alive
+        if 200 <= resp.status_code < 300 or resp.status_code == 404:
+            return {"status": "up"}
+        return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
+
+
+async def _check_redis() -> dict[str, Any]:
+    """Check Redis via PING command."""
+    redis_url = os.environ.get("REDIS_URL") or os.environ.get("ASPIRE_REDIS_URL")
+    if not redis_url:
+        return {"status": "not_configured"}
+
+    import redis as redis_lib
+
+    r = redis_lib.from_url(redis_url, socket_timeout=2)
+    try:
+        if r.ping():
+            return {"status": "up"}
+        return {"status": "degraded"}
+    finally:
+        r.close()
+
+
+async def _check_openai() -> dict[str, Any]:
+    """Check if OpenAI API key is configured (no live API call — avoids cost)."""
+    api_key = (
+        os.environ.get("OPENAI_API_KEY", "").strip()
+        or os.environ.get("ASPIRE_OPENAI_API_KEY", "").strip()
+    )
+    if api_key:
+        return {"status": "configured"}
+    return {"status": "not_configured"}
+
+
+async def _check_n8n() -> dict[str, Any]:
+    """Check n8n health endpoint."""
+    n8n_url = os.environ.get("N8N_URL") or os.environ.get("ASPIRE_N8N_URL")
+    if not n8n_url:
+        return {"status": "not_configured"}
+
+    import httpx
+
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        resp = await client.get(f"{n8n_url.rstrip('/')}/healthz")
+        if resp.status_code == 200:
+            return {"status": "up"}
+        return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
+
+
+@router.get("/admin/ops/health/deep")
+async def admin_health_deep(request: Request) -> JSONResponse:
+    """Deep health check — cascading dependency probe. No auth required.
+
+    Checks each dependency with a 3s timeout. Individual dependency failures
+    do not fail the overall health; they are reported as degraded.
+
+    Law #3 compliance: the endpoint itself always responds (fail-open for
+    observability), but clearly reports which dependencies are down so
+    upstream consumers can fail-closed on specific subsystems.
+    """
+    check_timeout = 3.0
+
+    # Run all checks concurrently (none depend on each other)
+    postgres_task = _check_with_timeout("postgres", _check_postgres(), check_timeout)
+    redis_task = _check_with_timeout("redis", _check_redis(), check_timeout)
+    openai_task = _check_with_timeout("openai", _check_openai(), check_timeout)
+    n8n_task = _check_with_timeout("n8n", _check_n8n(), check_timeout)
+
+    postgres, redis_result, openai, n8n = await asyncio.gather(
+        postgres_task, redis_task, openai_task, n8n_task
+    )
+
+    checks = {
+        "postgres": postgres,
+        "redis": redis_result,
+        "openai": openai,
+        "n8n": n8n,
+    }
+
+    # Determine overall status
+    statuses = [c.get("status", "unknown") for c in checks.values()]
+    if all(s in ("up", "configured", "not_configured") for s in statuses):
+        overall = "healthy"
+    elif any(s in ("down", "timeout") for s in statuses):
+        overall = "degraded"
+    else:
+        overall = "degraded"
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": overall,
+            "checks": checks,
+            "server_time": _now_iso(),
+            "version": "3.0.0",
+        },
+    )
+
+
+# =============================================================================
 # 2. GET /admin/ops/incidents — List Incidents
 # =============================================================================
 

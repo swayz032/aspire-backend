@@ -1,0 +1,300 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Trace requests by correlation ID across the Aspire pipeline. View receipts, provider calls, and pipeline node timing for a specific request.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 2,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": ["aspire"],
+      "targetBlank": true,
+      "title": "Aspire Health",
+      "type": "dashboards"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "How to use this dashboard",
+      "type": "text",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Correlation ID Tracing\n\nThis dashboard traces a single request through the Aspire pipeline. Enter a **correlation_id** in the variable selector above.\n\n**Data sources:** Prometheus metrics are aggregate — for per-request tracing, query the receipts and provider_calls tables via the Admin Ops API:\n- `GET /admin/ops/receipts?correlation_id={id}` — linked receipts for this request\n- `GET /admin/ops/provider-calls?correlation_id={id}` — provider calls for this request\n- `GET /admin/ops/incidents?trace_id={id}` — incidents linked to this correlation ID\n\nThe panels below show aggregate pipeline performance to help correlate timing anomalies."
+      }
+    },
+    {
+      "title": "Pipeline Node Latency (all requests)",
+      "description": "p50/p95 latency per pipeline node. Use this to identify which node was slow when a specific request had high latency.",
+      "type": "timeseries",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 3 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "seconds",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "right" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(aspire_orchestrator_request_duration_seconds_bucket[5m])) by (le, node))",
+          "legendFormat": "{{node}} p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aspire_orchestrator_request_duration_seconds_bucket[5m])) by (le, node))",
+          "legendFormat": "{{node}} p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Receipt Writes by Type (timeline)",
+      "description": "Receipt write rate over time by receipt_type. Correlate spikes with the time window of a specific correlation ID.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "writes/s",
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aspire_receipt_write_total[1m])) by (receipt_type, status)",
+          "legendFormat": "{{receipt_type}} ({{status}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Provider Call Rate (timeline)",
+      "description": "Provider execution rate by tool. Useful to identify which provider was called during a specific time window.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "calls/s",
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aspire_tool_execution_total[1m])) by (tool, status)",
+          "legendFormat": "{{tool}} ({{status}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Request Outcome by Task Type",
+      "description": "See which task types succeeded or failed. Narrow time range to the window of a specific correlation ID.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "req/s",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aspire_orchestrator_requests_total[1m])) by (task_type, status)",
+          "legendFormat": "{{task_type}} ({{status}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "LLM Calls by Endpoint & Model",
+      "description": "LLM request rate segmented by endpoint and model. Correlate with pipeline node timing to identify slow LLM calls.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "req/s",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_request_total[1m])) by (endpoint, resolved_model, outcome)",
+          "legendFormat": "{{endpoint}} / {{resolved_model}} ({{outcome}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Retrieval Router Performance",
+      "description": "RAG retrieval operations by agent and cache hit status.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "ops/s",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aspire_retrieval_router_total[5m])) by (agent_id, cache_hit)",
+          "legendFormat": "{{agent_id}} (cache={{cache_hit}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Correlation Trace API Endpoints",
+      "type": "text",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Per-Request Trace Queries\n\nPrometheus stores aggregate metrics. For per-request trace data, use the Admin Ops API with a correlation ID.\n\n### Receipts for a correlation ID\n```\nGET /admin/ops/receipts?correlation_id=<UUID>\nHeader: X-Admin-Token: <jwt>\n```\n\n### Provider calls for a correlation ID\n```\nGET /admin/ops/provider-calls?correlation_id=<UUID>\nHeader: X-Admin-Token: <jwt>\n```\n\n### Incidents linked to a correlation ID\n```\nGET /admin/ops/incidents?trace_id=<UUID>\nHeader: X-Admin-Token: <jwt>\n```\n\n### Deep Health Check\n```\nGET /admin/ops/health/deep\n```\nReturns cascading dependency status: Postgres, Redis, OpenAI, n8n.\n\n---\n\n**Tip:** The X-Correlation-Id header is set on every response. Capture it from the client to trace end-to-end."
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["aspire", "tracing", "correlation"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "", "value": "" },
+        "description": "Enter a correlation ID to focus the time window. Use the Admin Ops API for per-request data.",
+        "hide": 0,
+        "label": "Correlation ID",
+        "name": "correlation_id",
+        "options": [],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Aspire Correlation Tracing",
+  "uid": "aspire-correlation-001",
+  "version": 1
+}

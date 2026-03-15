@@ -1,0 +1,196 @@
+groups:
+  - name: aspire_critical
+    rules:
+      # -------------------------------------------------------------------------
+      # SLO: Error rate < 1% of all requests over 5 minutes
+      # Source: backend/docs/observability/SLI_SLO.md
+      # -------------------------------------------------------------------------
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Error rate exceeds 1% SLO"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes. SLO target: < 1%. Check orchestrator logs and provider call health."
+
+      # -------------------------------------------------------------------------
+      # SLO: p95 latency < 2s for read operations, < 5s for action operations
+      # Source: backend/docs/observability/SLI_SLO.md
+      # -------------------------------------------------------------------------
+      - alert: SlowResponses
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: critical
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "p95 latency exceeds 2s SLO"
+          description: "p95 response latency is {{ $value | humanizeDuration }}. SLO target: < 2s. Check OpenAI latency, safety gateway health, and Supabase connection pool."
+
+      # -------------------------------------------------------------------------
+      # Law #2: Receipt write failures are ZERO-TOLERANCE.
+      # Any increase triggers immediate page — this is a governance law violation.
+      # -------------------------------------------------------------------------
+      - alert: ReceiptWriteFailures
+        expr: increase(receipt_write_failures_total[1m]) > 0
+        for: 1m
+        labels:
+          severity: page
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Receipt write failures detected — Aspire Law #2 violation risk"
+          description: "{{ $value }} receipt write failure(s) detected in the last minute. Law #2 requires 100% receipt coverage. Investigate Supabase connectivity and receipt_store health immediately."
+
+      # -------------------------------------------------------------------------
+      # Circuit breaker state monitoring (cockatiel, Desktop server)
+      # State: 0=closed, 1=half-open, 2=open
+      # -------------------------------------------------------------------------
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 2
+        for: 0s
+        labels:
+          severity: warning
+          service: aspire-desktop
+          runbook: Aspire-desktop/docs/operations/runbook.md
+        annotations:
+          summary: "Circuit breaker {{ $labels.service }} is OPEN"
+          description: "Circuit breaker for {{ $labels.service }} is open. All calls to this dependency are being rejected. Check provider health and logs."
+
+      # -------------------------------------------------------------------------
+      # Outbox queue depth — supplements OutboxQueueStuck from otel/alert_rules.yml
+      # -------------------------------------------------------------------------
+      - alert: QueueDepthHigh
+        expr: outbox_queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Outbox queue depth exceeds 100"
+          description: "Current outbox queue depth is {{ $value }}. This may indicate executor slowdown, provider outage, or backpressure from external APIs. Check outbox worker health."
+
+      # -------------------------------------------------------------------------
+      # Memory pressure — 512MB threshold matches Railway service limits
+      # -------------------------------------------------------------------------
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 512
+        for: 10m
+        labels:
+          severity: warning
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Process memory exceeds 512MB"
+          description: "Orchestrator memory usage is {{ $value | humanize }}MB, exceeding 512MB threshold. Monitor for continued growth — may indicate memory leak in LangGraph graph state or unclosed connections."
+
+  - name: aspire_slo_burn
+    rules:
+      # -------------------------------------------------------------------------
+      # Burn rate alerting — from backend/docs/observability/SLI_SLO.md
+      # 14.4x burn = 5-minute window consuming budget at critical rate (P0)
+      # 6x burn    = 30-minute window (P1)
+      # -------------------------------------------------------------------------
+      - alert: ErrorBudgetBurnCritical
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) /
+            sum(rate(http_requests_total[5m]))
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: page
+          service: aspire-orchestrator
+        annotations:
+          summary: "Error budget burning at 14.4x rate — P0 page immediately"
+          description: "Current error rate {{ $value | humanizePercentage }} is consuming error budget at 14.4x the allowed rate. At this rate the monthly budget will be exhausted in < 1 hour. Immediate response required."
+
+      - alert: ErrorBudgetBurnHigh
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[30m])) /
+            sum(rate(http_requests_total[30m]))
+          ) > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: critical
+          service: aspire-orchestrator
+        annotations:
+          summary: "Error budget burning at 6x rate — P1 page within 15 min"
+          description: "Error rate over 30 minutes is consuming error budget at 6x the allowed rate. Page within 15 minutes and investigate."
+
+  - name: aspire_availability
+    rules:
+      # -------------------------------------------------------------------------
+      # Health endpoint down — immediate page for all services
+      # -------------------------------------------------------------------------
+      - alert: OrchestratorDown
+        expr: up{job="aspire-orchestrator"} == 0
+        for: 1m
+        labels:
+          severity: page
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Aspire orchestrator is DOWN"
+          description: "The orchestrator health endpoint has been unreachable for > 1 minute. Port 8000, WSL2 process, or Railway service is down. All governance operations are blocked."
+
+      - alert: DesktopServerDown
+        expr: up{job="aspire-desktop"} == 0
+        for: 1m
+        labels:
+          severity: page
+          service: aspire-desktop
+          runbook: Aspire-desktop/docs/operations/runbook.md
+        annotations:
+          summary: "Aspire desktop server is DOWN"
+          description: "The desktop server health endpoint has been unreachable for > 1 minute. Port 5000 (local) or Railway service is down. All users are affected."
+
+      # -------------------------------------------------------------------------
+      # Orchestrator readiness degraded (DLP, signing key, etc.)
+      # -------------------------------------------------------------------------
+      - alert: OrchestratorNotReady
+        expr: aspire_orchestrator_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Orchestrator readiness check failing"
+          description: "GET /readyz is returning not-ready. Check DLP initialization, ASPIRE_TOKEN_SIGNING_KEY, and Supabase connectivity. Receipts may be unredacted."
+
+  - name: aspire_governance
+    rules:
+      # -------------------------------------------------------------------------
+      # Capability token minting failures — Law #5 violation risk
+      # -------------------------------------------------------------------------
+      - alert: TokenMintFailures
+        expr: increase(capability_token_mint_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Capability token minting failures — Law #5 risk"
+          description: "{{ $value }} token mint failure(s) in the last 5 minutes. Likely cause: missing ASPIRE_TOKEN_SIGNING_KEY or key rotation mid-flight. All tool executions requiring tokens will be denied."
+
+      # -------------------------------------------------------------------------
+      # Approval latency — supplements otel/alert_rules.yml ApprovalLatencyHigh
+      # -------------------------------------------------------------------------
+      - alert: ApprovalQueueStale
+        expr: outbox_oldest_pending_age_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+          service: aspire-orchestrator
+          runbook: backend/docs/operations/runbook.md
+        annotations:
+          summary: "Approval queue has jobs older than 10 minutes"
+          description: "Oldest pending approval is {{ $value | humanizeDuration }} old. Users may be waiting unacceptably long for YELLOW/RED tier confirmations. Check n8n webhook delivery and authority queue health."

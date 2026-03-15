@@ -58,7 +58,16 @@ from typing import Any
 # Pydantic BaseSettings reads .env for its own fields, but os.environ.get() calls
 # in intent_classifier, param_extract, respond etc. need dotenv to inject values.
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_ASPIRE_ENV = (os.getenv("ASPIRE_ENV") or "").strip().lower()
+_ALLOW_LOCAL_DOTENV = _is_truthy(os.getenv("ASPIRE_ENABLE_LOCAL_DOTENV"))
+if _ALLOW_LOCAL_DOTENV and _ASPIRE_ENV not in {"prod", "production"}:
+    load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -365,18 +374,39 @@ async def readyz() -> JSONResponse:
         checks["model_probe_cache"] = False
         checks["model_probe_healthy"] = False
 
+    require_model_probe_env = os.environ.get("ASPIRE_REQUIRE_MODEL_PROBE_HEALTH")
+    if require_model_probe_env is None:
+        env_label = (
+            os.environ.get("ASPIRE_ENV")
+            or os.environ.get("ENV")
+            or os.environ.get("NODE_ENV")
+            or ""
+        ).strip().lower()
+        require_model_probe_health = env_label in {"prod", "production"}
+    else:
+        require_model_probe_health = require_model_probe_env.strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     all_ready = all(checks.values())
     # Determine if partially ready (some non-critical deps down)
+    critical_names = {
+        "signing_key_configured",
+        "graph_built",
+        "receipt_store",
+        "langgraph_checkpointer",
+        "langgraph_checkpoint_store",
+        "langgraph_checkpoint_roundtrip",
+    }
+    if require_model_probe_health:
+        critical_names.add("model_probe_healthy")
+
     critical_checks = {
         k: v for k, v in checks.items()
-        if k in (
-            "signing_key_configured",
-            "graph_built",
-            "receipt_store",
-            "langgraph_checkpointer",
-            "langgraph_checkpoint_store",
-            "langgraph_checkpoint_roundtrip",
-        )
+        if k in critical_names
     }
     critical_ready = all(critical_checks.values())
 
@@ -387,6 +417,7 @@ async def readyz() -> JSONResponse:
             "status": status,
             "service": "aspire-orchestrator",
             "checks": checks,
+            "require_model_probe_health": require_model_probe_health,
             "checkpointer": get_checkpointer_runtime(),
             "model_probe": get_model_probe_status(),
         },
