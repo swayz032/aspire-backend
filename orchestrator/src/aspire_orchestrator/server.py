@@ -79,6 +79,12 @@ from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
 from aspire_orchestrator.middleware.correlation import CorrelationIdMiddleware
 from aspire_orchestrator.middleware.rate_limiter import RateLimitMiddleware
+from aspire_orchestrator.middleware.chaos import maybe_add_chaos
+from aspire_orchestrator.middleware.sentry_middleware import init_sentry
+
+# Initialize Sentry early — before app/middleware setup so it captures startup errors.
+# No-op if SENTRY_DSN is not set (Law #9: PII stripped in before_send hook).
+init_sentry()
 from aspire_orchestrator.graph import (
     build_orchestrator_graph,
     build_orchestrator_graph_async,
@@ -177,6 +183,11 @@ app.add_middleware(RateLimitMiddleware, limit=_rate_limit, window_seconds=_rate_
 # Correlation ID — extracts/generates X-Correlation-Id, propagates via contextvars (Wave 2A)
 # Added LAST so it runs FIRST (outermost): sets correlation ID before anything else
 app.add_middleware(CorrelationIdMiddleware)
+
+# ChaosMonkey — controlled failure injection for resilience testing (Wave 8.7)
+# ONLY active when CHAOS_ENABLED=true. Innermost middleware so correlation ID
+# and exception handler wrap it. Health/metrics endpoints always exempt.
+maybe_add_chaos(app)
 
 # Include Brain Layer routes
 app.include_router(intents_router)
