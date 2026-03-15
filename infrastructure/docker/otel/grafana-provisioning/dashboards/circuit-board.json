@@ -1,0 +1,367 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Circuit breaker states for all 6 Desktop services — real-time health at a glance",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Aspire Health",
+      "type": "link",
+      "url": "/d/aspire-health/aspire-health"
+    }
+  ],
+  "liveNow": true,
+  "panels": [
+    {
+      "title": "Circuit Breaker States — All Services",
+      "description": "0 = Closed (healthy), 1 = Half-Open (recovering), 2 = Open (tripped). Any non-green cell = investigate.",
+      "type": "gauge",
+      "id": 1,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "green", "text": "CLOSED" } }, "type": "value" },
+            { "options": { "1": { "color": "yellow", "text": "HALF-OPEN" } }, "type": "value" },
+            { "options": { "2": { "color": "red", "text": "OPEN" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          },
+          "min": 0,
+          "max": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "expr": "circuit_breaker_state{service=\"backend\"}",
+          "legendFormat": "Backend",
+          "refId": "A"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"supabase\"}",
+          "legendFormat": "Supabase",
+          "refId": "B"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"stripe\"}",
+          "legendFormat": "Stripe",
+          "refId": "C"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"plaid\"}",
+          "legendFormat": "Plaid",
+          "refId": "D"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"quickbooks\"}",
+          "legendFormat": "QuickBooks",
+          "refId": "E"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"gusto\"}",
+          "legendFormat": "Gusto",
+          "refId": "F"
+        }
+      ]
+    },
+    {
+      "title": "State History Timeline",
+      "description": "Circuit breaker state transitions over time. Green=closed, yellow=half-open, red=open.",
+      "type": "state-timeline",
+      "id": 2,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "green", "text": "CLOSED" } }, "type": "value" },
+            { "options": { "1": { "color": "yellow", "text": "HALF-OPEN" } }, "type": "value" },
+            { "options": { "2": { "color": "red", "text": "OPEN" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "alignValue": "left",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto",
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "expr": "circuit_breaker_state{service=\"backend\"}",
+          "legendFormat": "Backend",
+          "refId": "A"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"supabase\"}",
+          "legendFormat": "Supabase",
+          "refId": "B"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"stripe\"}",
+          "legendFormat": "Stripe",
+          "refId": "C"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"plaid\"}",
+          "legendFormat": "Plaid",
+          "refId": "D"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"quickbooks\"}",
+          "legendFormat": "QuickBooks",
+          "refId": "E"
+        },
+        {
+          "expr": "circuit_breaker_state{service=\"gusto\"}",
+          "legendFormat": "Gusto",
+          "refId": "F"
+        }
+      ]
+    },
+    {
+      "title": "Trip Count — Rate Over Time",
+      "description": "How frequently each service's circuit breaker is tripping. Sustained trips = systemic issue.",
+      "type": "timeseries",
+      "id": 3,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "trips/min",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "rate(circuit_breaker_trips_total{service=\"backend\"}[5m]) * 60",
+          "legendFormat": "Backend",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(circuit_breaker_trips_total{service=\"supabase\"}[5m]) * 60",
+          "legendFormat": "Supabase",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(circuit_breaker_trips_total{service=\"stripe\"}[5m]) * 60",
+          "legendFormat": "Stripe",
+          "refId": "C"
+        },
+        {
+          "expr": "rate(circuit_breaker_trips_total{service=\"plaid\"}[5m]) * 60",
+          "legendFormat": "Plaid",
+          "refId": "D"
+        },
+        {
+          "expr": "rate(circuit_breaker_trips_total{service=\"quickbooks\"}[5m]) * 60",
+          "legendFormat": "QuickBooks",
+          "refId": "E"
+        },
+        {
+          "expr": "rate(circuit_breaker_trips_total{service=\"gusto\"}[5m]) * 60",
+          "legendFormat": "Gusto",
+          "refId": "F"
+        }
+      ]
+    },
+    {
+      "title": "Total Trips — Cumulative by Service",
+      "description": "Cumulative trip count per service since last restart. Use for trend analysis and SLO tracking.",
+      "type": "barchart",
+      "id": 4,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "fillOpacity": 80,
+            "gradientMode": "scheme",
+            "lineWidth": 1
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "orientation": "horizontal",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "expr": "circuit_breaker_trips_total",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "title": "Recovery Time — Time from Open to Closed",
+      "description": "Histogram of how long circuit breakers take to recover after tripping. High values = service is chronically unhealthy.",
+      "type": "histogram",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "scheme",
+            "lineWidth": 1
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "bucketSize": 10,
+        "combine": false,
+        "fillOpacity": 80,
+        "gradientMode": "scheme",
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "rate(circuit_breaker_recovery_seconds_bucket[30m])",
+          "legendFormat": "{{service}} le={{le}}",
+          "refId": "A",
+          "format": "heatmap"
+        }
+      ]
+    },
+    {
+      "title": "Currently Tripped Services",
+      "description": "Count of services currently NOT in closed state. Alert threshold: >= 1.",
+      "type": "stat",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(circuit_breaker_state > 0) OR vector(0)",
+          "legendFormat": "Tripped Services",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["aspire", "circuit-breaker", "reliability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "CircuitBoard — Breaker States",
+  "uid": "aspire-circuit-board",
+  "version": 1
+}
