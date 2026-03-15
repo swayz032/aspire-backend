@@ -1,0 +1,99 @@
+name: EvilBot - Nightly Security Tests
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3 AM UTC daily
+  workflow_dispatch:
+
+jobs:
+  evil-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aspire_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: orchestrator
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run evil tests
+        working-directory: orchestrator
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aspire_test
+          REDIS_URL: redis://localhost:6379
+          ENVIRONMENT: test
+        run: |
+          echo "EvilBot: Running evil + RLS isolation tests..."
+          python -m pytest tests/ -k "evil or rls or isolation or tenant" -q --tb=short --timeout=60 2>&1
+          echo "Exit code: $?"
+
+      - name: Run security tests
+        working-directory: orchestrator
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aspire_test
+          REDIS_URL: redis://localhost:6379
+          ENVIRONMENT: test
+        run: |
+          echo "EvilBot: Running security tests..."
+          python -m pytest tests/ -k "security or auth or token or capability" -q --tb=short --timeout=60 2>&1
+          echo "Exit code: $?"
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `EvilBot: Nightly security tests failed (${new Date().toISOString().split('T')[0]})`;
+            const body = [
+              '## EvilBot Nightly Failure',
+              '',
+              `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `**Date:** ${new Date().toISOString()}`,
+              '',
+              'Evil or RLS isolation tests failed in the nightly run.',
+              'This indicates a potential security regression.',
+              '',
+              '### Action Required',
+              '- [ ] Review failed tests in the run log',
+              '- [ ] Fix the regression',
+              '- [ ] Verify fix with `pytest -k "evil or rls"`',
+              '- [ ] Close this issue',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['security', 'P0'],
+            });
