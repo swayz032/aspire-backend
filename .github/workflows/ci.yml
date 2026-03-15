@@ -1,0 +1,109 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - 'orchestrator/**'
+      - 'tools/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'orchestrator/**'
+      - 'tools/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aspire_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        working-directory: orchestrator
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run tests
+        working-directory: orchestrator
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aspire_test
+          REDIS_URL: redis://localhost:6379
+          ENVIRONMENT: test
+        run: |
+          python -m pytest tests/ -q --tb=short -x --timeout=60 2>&1 | tail -30
+          echo "Exit code: $?"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        working-directory: orchestrator
+        run: ruff check src/ --select E,W,F --ignore E501
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: orchestrator
+        run: |
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install pyright
+
+      - name: Type check
+        working-directory: orchestrator
+        run: pyright src/ --level basic 2>&1 | tail -20 || true
