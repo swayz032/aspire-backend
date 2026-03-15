@@ -531,6 +531,24 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
     }
     admin_token = pyjwt.encode(admin_payload, admin_secret, algorithm="HS256")
 
+    # Receipt for admin token exchange (Law #2)
+    try:
+        store_receipts([{
+            "trace_id": correlation_id,
+            "run_id": correlation_id,
+            "span_id": f"admin_auth_{correlation_id[:8]}",
+            "receipt_type": "admin_auth_exchange",
+            "status": "SUCCEEDED",
+            "actor_type": "USER",
+            "actor_id": actor_id,
+            "action": {"type": "admin_auth_exchange", "email_hash": email[:3] + "***"},
+            "result": {"expires_at": expires_at.isoformat()},
+            "risk_tier": "YELLOW",
+            "tool_used": "admin_auth",
+        }])
+    except Exception as e:
+        logger.warning("Failed to emit admin auth receipt: %s", e)
+
     return JSONResponse(
         status_code=200,
         content={
