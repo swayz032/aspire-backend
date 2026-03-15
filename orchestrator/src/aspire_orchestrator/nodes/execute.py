@@ -154,8 +154,14 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
                 "error_code": "SAFE_MODE",
                 "error_message": "Safe mode active — all tool execution disabled",
             }
-    except Exception:
-        pass  # Settings not available — proceed (non-critical)
+    except Exception as e:
+        logger.error("Settings unavailable in execute_node — failing closed: %s", e)
+        return {
+            "outcome": Outcome.DENIED,
+            "execution_result": {"status": "denied", "reason": "SETTINGS_UNAVAILABLE", "stub": False},
+            "error_code": "SETTINGS_UNAVAILABLE",
+            "error_message": "Cannot verify safe mode state — failing closed",
+        }
 
     correlation_id = state.get("correlation_id", str(uuid.uuid4()))
     suite_id = state.get("suite_id", "unknown")

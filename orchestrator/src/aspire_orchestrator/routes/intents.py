@@ -18,6 +18,8 @@ Law compliance:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -92,7 +94,7 @@ def _build_receipt(
 ) -> dict[str, Any]:
     """Build a classification receipt (Law #2)."""
     now = datetime.now(timezone.utc).isoformat()
-    return {
+    receipt = {
         "id": str(uuid.uuid4()),
         "correlation_id": correlation_id,
         "suite_id": suite_id,
@@ -106,10 +108,18 @@ def _build_receipt(
         "reason_code": reason_code,
         "created_at": now,
         "receipt_type": "classification",
-        "receipt_hash": str(uuid.uuid4()),  # placeholder for chain
+        "receipt_hash": "",
         "redacted_inputs": None,
         "redacted_outputs": details,
     }
+    # Deterministic hash — matches receipt_chain.py canonical format
+    canonical = json.dumps(
+        {k: str(v) for k, v in receipt.items() if k != "receipt_hash"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    receipt["receipt_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return receipt
 
 
 def _error_json(

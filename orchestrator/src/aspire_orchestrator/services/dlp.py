@@ -163,8 +163,8 @@ class DLPService:
             return text
 
         if not self._ensure_initialized():
-            logger.warning("DLP unavailable, returning unredacted text")
-            return text
+            logger.error("DLP unavailable — returning redacted placeholder (fail-closed)")
+            return "[DLP_UNAVAILABLE — content redacted for safety]"
 
         if self._regex_fallback:
             return self._regex_redact_text(text)

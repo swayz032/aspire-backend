@@ -48,8 +48,16 @@ const PORT = process.env.GATEWAY_PORT ? parseInt(process.env.GATEWAY_PORT, 10) :
 // Security headers
 app.use(helmet());
 
-// CORS (will be restricted to specific origins in production)
-app.use(cors());
+// CORS — restricted to production domain + local dev ports (Law #9)
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || [
+    'https://www.aspireos.app',
+    'http://localhost:8080',
+    'http://localhost:5000',
+    'http://localhost:19006',
+  ],
+  credentials: true,
+}));
 
 // Body parsing with size limit
 app.use(express.json({ limit: '1mb' }));
