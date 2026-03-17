@@ -133,10 +133,13 @@ async def _app_lifespan(_: FastAPI):
     start_receipt_writer()
     from aspire_orchestrator.services.task_queue import start_task_queue, stop_task_queue
     start_task_queue()
+    from aspire_orchestrator.services.sre_triage import start_sre_triage, stop_sre_triage
+    start_sre_triage()
 
     try:
         yield
     finally:
+        await stop_sre_triage()
         await stop_task_queue()
         await stop_receipt_writer()
         await close_checkpointer_runtime()
