@@ -23,6 +23,7 @@ class ScaffoldAgentScriptTests(unittest.TestCase):
         (root / "src" / "aspire_orchestrator" / "config" / "pack_policies").mkdir(parents=True)
         (root / "src" / "aspire_orchestrator" / "skillpacks").mkdir(parents=True)
         (root / "src" / "aspire_orchestrator" / "nodes").mkdir(parents=True)
+        (root / "src" / "aspire_orchestrator" / "services").mkdir(parents=True)
         (root / "tests").mkdir()
 
         (root / "src" / "aspire_orchestrator" / "config" / "skill_pack_manifests.yaml").write_text(
@@ -33,8 +34,8 @@ class ScaffoldAgentScriptTests(unittest.TestCase):
             'version: "1.0.0"\nupdated_at: "2026-03-11"\ndefaults:\n  deny_by_default: true\n\nactions:\n',
             encoding="utf-8",
         )
-        (root / "src" / "aspire_orchestrator" / "nodes" / "agent_reason.py").write_text(
-            '_PERSONA_MAP: dict[str, str] = {\n    "ava": "ava_user_system_prompt.md",\n}\n\n_PERSONAS_DIR = None\n',
+        (root / "src" / "aspire_orchestrator" / "services" / "agent_identity.py").write_text(
+            'AGENT_PERSONA_MAP: dict[str, str] = {\n    "ava": "ava_user_system_prompt.md",\n}\n\n# Agent display names\n_AGENT_DISPLAY_NAMES = {}\n',
             encoding="utf-8",
         )
 
@@ -110,8 +111,8 @@ class ScaffoldAgentScriptTests(unittest.TestCase):
             policy_text = (root / "src" / "aspire_orchestrator" / "config" / "policy_matrix.yaml").read_text(encoding="utf-8")
             self.assertIn("banking.read:", policy_text)
             self.assertIn("banking.write:", policy_text)
-            reason_text = (root / "src" / "aspire_orchestrator" / "nodes" / "agent_reason.py").read_text(encoding="utf-8")
-            self.assertIn('"blake": "blake_banking_system_prompt.md"', reason_text)
+            identity_text = (root / "src" / "aspire_orchestrator" / "services" / "agent_identity.py").read_text(encoding="utf-8")
+            self.assertIn('"blake": "blake_banking_system_prompt.md"', identity_text)
 
     def test_validate_succeeds_for_scaffolded_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

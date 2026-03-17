@@ -26,8 +26,8 @@ def em():
     return EpisodicMemory()
 
 
-SUITE_ID = "suite-aaa-111"
-USER_ID = "user-001"
+SUITE_ID = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+USER_ID = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
 AGENT_ID = "finn"
 SESSION_ID = "sess-001"
 
@@ -98,21 +98,18 @@ class TestSummarizeAndStore:
     async def test_successful_store(self, mock_embed, mock_insert, mock_receipts, em):
         mock_embed.return_value = [0.1] * 3072
 
-        # Mock OpenAI response
-        mock_choice = MagicMock()
-        mock_choice.message.content = (
+        llm_response = (
             "SUMMARY: Discussed tax strategies.\n"
             "TOPICS: taxes, strategy\n"
             "ENTITIES: {}"
         )
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create.return_value = mock_response
-
-        with patch("openai.AsyncOpenAI", return_value=mock_client):
-            with patch("aspire_orchestrator.config.settings.settings", MagicMock(openai_api_key="test")):
+        with patch(
+            "aspire_orchestrator.services.episodic_memory.generate_text_async",
+            new_callable=AsyncMock,
+            return_value=llm_response,
+        ):
+            with patch("aspire_orchestrator.services.episodic_memory.resolve_openai_api_key", return_value="test"):
                 result = await em.summarize_and_store(
                     turns=[
                         {"role": "user", "content": "What tax deductions can I take?"},
@@ -135,8 +132,12 @@ class TestSummarizeAndStore:
     @pytest.mark.asyncio
     async def test_llm_failure_returns_none(self, em):
         """Fail-closed: LLM failure → None, not crash (Law #3)."""
-        with patch("openai.AsyncOpenAI", side_effect=Exception("API down")):
-            with patch("aspire_orchestrator.config.settings.settings", MagicMock(openai_api_key="test")):
+        with patch(
+            "aspire_orchestrator.services.episodic_memory.generate_text_async",
+            new_callable=AsyncMock,
+            side_effect=Exception("API down"),
+        ):
+            with patch("aspire_orchestrator.services.episodic_memory.resolve_openai_api_key", return_value="test"):
                 result = await em.summarize_and_store(
                     turns=[
                         {"role": "user", "content": "hello"},

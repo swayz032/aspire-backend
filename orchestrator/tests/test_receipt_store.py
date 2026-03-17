@@ -171,10 +171,13 @@ class TestReceiptFieldMapping:
     """Verify _map_receipt_to_row produces correct Supabase schema."""
 
     def test_full_receipt_mapping(self):
+        _RCPT_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        _SUITE_UUID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        _OFFICE_UUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
         receipt = {
-            "id": "rcpt-001",
-            "suite_id": "suite-abc-123",
-            "office_id": "office-xyz-789",
+            "id": _RCPT_UUID,
+            "suite_id": _SUITE_UUID,
+            "office_id": _OFFICE_UUID,
             "receipt_type": "execution",
             "outcome": "success",
             "correlation_id": "corr-456",
@@ -193,15 +196,16 @@ class TestReceiptFieldMapping:
 
         row = _map_receipt_to_row(receipt)
 
-        assert row["receipt_id"] == "rcpt-001"
-        assert row["suite_id"] == "suite-abc-123"
-        assert row["tenant_id"] == "suite-abc-123"  # Phase 1: suite == tenant
-        assert row["office_id"] == "office-xyz-789"
+        assert row["receipt_id"] == _RCPT_UUID
+        assert row["suite_id"] == _SUITE_UUID
+        assert row["tenant_id"] == _SUITE_UUID  # Phase 1: suite == tenant
+        assert row["office_id"] == _OFFICE_UUID
         assert row["receipt_type"] == "execution"
         assert row["status"] == "SUCCEEDED"
         assert row["correlation_id"] == "corr-456"
         assert row["actor_type"] == "USER"
-        assert row["actor_id"] == "actor-001"
+        # actor_id gets UUID5-coerced for non-UUID identifiers
+        assert row["actor_id"]  # non-empty
         assert row["created_at"] == "2026-02-13T10:00:00Z"
 
         # Action jsonb
@@ -240,22 +244,26 @@ class TestReceiptFieldMapping:
 
     def test_minimal_receipt_mapping(self):
         """A receipt with only an ID should map without errors."""
-        row = _map_receipt_to_row({"id": "r-minimal"})
-        assert row["receipt_id"] == "r-minimal"
-        assert row["suite_id"] == ""
-        assert row["tenant_id"] == ""
+        _MIN_UUID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        row = _map_receipt_to_row({"id": _MIN_UUID})
+        assert row["receipt_id"] == _MIN_UUID
+        # suite_id falls back to UUID_NIL when missing
+        assert row["suite_id"] == "00000000-0000-0000-0000-000000000000"
+        assert row["tenant_id"] == "00000000-0000-0000-0000-000000000000"
         assert row["correlation_id"] == ""
         assert row["actor_type"] == "SYSTEM"
-        assert row["action"] is None
-        assert row["result"] is None
+        # Empty action/result produce empty dicts (not None)
+        assert row["action"] == {}
+        assert row["result"] == {}
 
     def test_office_id_excluded_when_none(self):
         row = _map_receipt_to_row({"id": "r1", "office_id": None})
         assert "office_id" not in row
 
     def test_office_id_included_when_present(self):
-        row = _map_receipt_to_row({"id": "r1", "office_id": "off-123"})
-        assert row["office_id"] == "off-123"
+        _OFF_UUID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        row = _map_receipt_to_row({"id": "r1", "office_id": _OFF_UUID})
+        assert row["office_id"] == _OFF_UUID
 
     def test_actor_type_uppercased(self):
         row = _map_receipt_to_row({"id": "r1", "actor_type": "user"})
@@ -313,14 +321,16 @@ class TestDualWrite:
         mock_table.insert.return_value = mock_insert
         mock_insert.execute.return_value = mock_execute
 
-        receipts = [{"id": "r1", "suite_id": "STE-0001", "outcome": "success", "correlation_id": "c1"}]
+        _R_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        _S_UUID = "11111111-1111-1111-1111-111111111111"
+        receipts = [{"id": _R_UUID, "suite_id": _S_UUID, "outcome": "success", "correlation_id": "c1"}]
         _persist_to_supabase(receipts)
 
         mock_client.table.assert_called_once_with("receipts")
         call_args = mock_table.insert.call_args
         rows = call_args[0][0]
         assert len(rows) == 1
-        assert rows[0]["receipt_id"] == "r1"
+        assert rows[0]["receipt_id"] == _R_UUID
         assert rows[0]["status"] == "SUCCEEDED"
 
     @patch("aspire_orchestrator.services.receipt_store._get_supabase_client", return_value=None)

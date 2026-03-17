@@ -55,8 +55,8 @@ class TestDetermineDomains:
         assert "finance" in domains
         assert "legal" in domains
 
-    def test_nora_has_no_domains(self, router):
-        assert router._determine_domains("nora", "anything") == []
+    def test_nora_has_conference_domain(self, router):
+        assert router._determine_domains("nora", "anything") == ["conference"]
 
     def test_sarah_has_no_domains(self, router):
         assert router._determine_domains("sarah", "anything") == []
@@ -129,7 +129,7 @@ class TestRetrieve:
 
     @pytest.mark.asyncio
     async def test_no_domains_returns_empty(self, router):
-        result = await router.retrieve("anything", "nora", SUITE_ID)
+        result = await router.retrieve("anything", "tec", SUITE_ID)
         assert result.context == ""
         assert result.domains_queried == []
         assert result.status == "not_applicable"

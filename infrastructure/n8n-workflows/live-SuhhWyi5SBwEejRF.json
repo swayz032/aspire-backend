@@ -1,0 +1,780 @@
+﻿{
+    "updatedAt":  "2026-03-05T02:02:30.833Z",
+    "createdAt":  "2026-02-16T13:48:31.254Z",
+    "id":  "SuhhWyi5SBwEejRF",
+    "name":  "Provider Health Check — Every 15min",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "minutes",
+                                                                           "minutesInterval":  15
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "interval-trigger",
+                      "name":  "Every 15 Minutes",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       220,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const enabled = $env.N8N_WORKFLOW_PROVIDER_HEALTH_ENABLED;\nif (enabled === \u0027false\u0027 || enabled === \u00270\u0027) {\n  return [{ json: { killed: true, reason: \u0027kill_switch_disabled\u0027 } }];\n}\nconst requestId = \u0027ops-provider-health-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8);\nconst correlationId = \u0027n8n-provider-health-\u0027 + new Date().toISOString().slice(0, 16);\nconst crypto = require(\u0027crypto\u0027);\nconst payloadHash = crypto.createHash(\u0027sha256\u0027).update(JSON.stringify({ action: \u0027ops.provider_health_check\u0027, ts: new Date().toISOString().slice(0, 16) })).digest(\u0027hex\u0027);\nconst idempotencyKey = crypto.createHash(\u0027sha256\u0027).update(requestId + \u0027ops.provider_health_check\u0027 + payloadHash).digest(\u0027hex\u0027);\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+                                     },
+                      "id":  "kill-switch-and-prep",
+                      "name":  "Kill Switch + Prep",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       440,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "string":  [
+                                                                           {
+                                                                               "value1":  "={{ $json.killed }}",
+                                                                               "operation":  "equals",
+                                                                               "value2":  "true"
+                                                                           }
+                                                                       ]
+                                                        }
+                                     },
+                      "id":  "check-killed",
+                      "name":  "Kill Switch Active?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       660,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "={{ $env.ASPIRE_GATEWAY_URL }}/internal/provider-health",
+                                         "authentication":  "genericCredentialType",
+                                         "genericAuthType":  "httpHeaderAuth",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-suite-id",
+                                                                                         "value":  "={{ $env.DEFAULT_SUITE_ID }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "x-office-id",
+                                                                                         "value":  "={{ $env.DEFAULT_OFFICE_ID }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "x-correlation-id",
+                                                                                         "value":  "={{ $(\u0027Kill Switch + Prep\u0027).item.json.correlationId }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "x-n8n-workflow-id",
+                                                                                         "value":  "provider-health"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "x-idempotency-key",
+                                                                                         "value":  "={{ $(\u0027Kill Switch + Prep\u0027).item.json.idempotencyKey }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "options":  {
+                                                         "timeout":  15000,
+                                                         "retry":  {
+                                                                       "maxRetries":  3,
+                                                                       "retryInterval":  1000,
+                                                                       "retryIntervalBackoff":  true
+                                                                   }
+                                                     }
+                                     },
+                      "id":  "check-providers",
+                      "name":  "Check Provider Health (via Gateway)",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       880,
+                                       400
+                                   ],
+                      "credentials":  {
+                                          "httpHeaderAuth":  {
+                                                                 "id":  "J84m12hyzSwSHo6S",
+                                                                 "name":  "Gateway Internal Key"
+                                                             }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+                                         "authentication":  "none",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "apikey",
+                                                                                         "value":  "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=minimal"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ receipt_id: \u0027n8n-provider-health-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), tenant_id: \u0027system\u0027, office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), receipt_type: \u0027n8n_ops\u0027, status: \u0027SUCCEEDED\u0027, correlation_id: $(\u0027Kill Switch + Prep\u0027).item.json.correlationId, actor_type: \u0027SYSTEM\u0027, actor_id: \u0027n8n-provider-health\u0027, action: { action_type: \u0027ops.provider_health_check\u0027, risk_tier: \u0027green\u0027, providers: $json.providers || $json }, created_at: new Date().toISOString() }) }}",
+                                         "options":  {
+                                                         "timeout":  5000
+                                                     }
+                                     },
+                      "id":  "emit-receipt",
+                      "name":  "Emit Health Receipt",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1100,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+                                         "authentication":  "none",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "apikey",
+                                                                                         "value":  "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=minimal"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ receipt_id: \u0027n8n-provider-health-killed-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), tenant_id: \u0027system\u0027, office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), receipt_type: \u0027n8n_ops\u0027, status: \u0027SKIPPED\u0027, correlation_id: \u0027n8n-provider-health-killed-\u0027 + new Date().toISOString().slice(0, 16), actor_type: \u0027SYSTEM\u0027, actor_id: \u0027n8n-provider-health\u0027, action: { action_type: \u0027ops.provider_health_check\u0027, reason: \u0027kill_switch_disabled\u0027 }, created_at: new Date().toISOString() }) }}",
+                                         "options":  {
+                                                         "timeout":  5000
+                                                     }
+                                     },
+                      "id":  "emit-receipt-killed",
+                      "name":  "Emit Kill Switch Receipt",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       880,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+
+                                     },
+                      "id":  "error-trigger",
+                      "name":  "Error Trigger",
+                      "type":  "n8n-nodes-base.errorTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       440,
+                                       560
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+                                         "authentication":  "none",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "apikey",
+                                                                                         "value":  "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Prefer",
+                                                                                         "value":  "return=minimal"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ receipt_id: \u0027n8n-provider-health-fail-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), tenant_id: \u0027system\u0027, office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), receipt_type: \u0027n8n_ops\u0027, status: \u0027FAILED\u0027, correlation_id: \u0027n8n-provider-health\u0027, actor_type: \u0027SYSTEM\u0027, actor_id: \u0027n8n-provider-health\u0027, action: { action_type: \u0027ops.provider_health_check\u0027 }, result: { error_message: $json.message || \u0027Health check failed\u0027 }, created_at: new Date().toISOString() }) }}",
+                                         "options":  {
+                                                         "timeout":  5000
+                                                     }
+                                     },
+                      "id":  "emit-failure-receipt",
+                      "name":  "Emit Failure Receipt",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       660,
+                                       560
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Every 15 Minutes":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Kill Switch + Prep",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Kill Switch + Prep":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Kill Switch Active?",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Kill Switch Active?":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Check Provider Health (via Gateway)",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ],
+                                                                 [
+                                                                     {
+                                                                         "node":  "Emit Kill Switch Receipt",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Check Provider Health (via Gateway)":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Emit Health Receipt",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                        "Error Trigger":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Emit Failure Receipt",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Every 15 Minutes":  {
+                                                     "recurrenceRules":  [
+
+                                                                         ]
+                                                 }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+    "activeVersionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+    "versionCounter":  80,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-02-16T13:48:31.254Z",
+                       "createdAt":  "2026-02-16T13:48:31.254Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "SuhhWyi5SBwEejRF",
+                       "projectId":  "l9zgLNMKv7CjloiW",
+                       "project":  {
+                                       "updatedAt":  "2026-02-19T03:51:50.171Z",
+                                       "createdAt":  "2026-02-12T09:44:05.561Z",
+                                       "id":  "l9zgLNMKv7CjloiW",
+                                       "name":  "Tonio tonioswayz32@gmail.com \u003ctonioswayz32@gmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938",
+                                       "projectRelations":  [
+                                                                {
+                                                                    "updatedAt":  "2026-02-12T09:44:05.561Z",
+                                                                    "createdAt":  "2026-02-12T09:44:05.561Z",
+                                                                    "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938",
+                                                                    "projectId":  "l9zgLNMKv7CjloiW",
+                                                                    "user":  {
+                                                                                 "updatedAt":  "2026-03-12T21:41:16.182Z",
+                                                                                 "createdAt":  "2026-02-12T09:44:05.126Z",
+                                                                                 "id":  "4fd79e89-3017-4dbe-8cec-676fcab6f938",
+                                                                                 "email":  "tonioswayz32@gmail.com",
+                                                                                 "firstName":  "Tonio",
+                                                                                 "lastName":  "tonioswayz32@gmail.com",
+                                                                                 "personalizationAnswers":  null,
+                                                                                 "settings":  {
+                                                                                                  "userActivated":  true,
+                                                                                                  "firstSuccessfulWorkflowId":  "aDeQEKoBawhGdUtE",
+                                                                                                  "userActivatedAt":  1771445749501,
+                                                                                                  "easyAIWorkflowOnboarded":  true
+                                                                                              },
+                                                                                 "disabled":  false,
+                                                                                 "mfaEnabled":  false,
+                                                                                 "lastActiveAt":  "2026-03-12",
+                                                                                 "isPending":  false
+                                                                             }
+                                                                }
+                                                            ]
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-02-19T03:48:00.505Z",
+                          "createdAt":  "2026-02-19T03:48:00.505Z",
+                          "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                          "workflowId":  "SuhhWyi5SBwEejRF",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "minutes",
+                                                                                                 "minutesInterval":  15
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "interval-trigger",
+                                            "name":  "Every 15 Minutes",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             220,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const enabled = $env.N8N_WORKFLOW_PROVIDER_HEALTH_ENABLED;\nif (enabled === \u0027false\u0027 || enabled === \u00270\u0027) {\n  return [{ json: { killed: true, reason: \u0027kill_switch_disabled\u0027 } }];\n}\nconst requestId = \u0027ops-provider-health-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8);\nconst correlationId = \u0027n8n-provider-health-\u0027 + new Date().toISOString().slice(0, 16);\nconst crypto = require(\u0027crypto\u0027);\nconst payloadHash = crypto.createHash(\u0027sha256\u0027).update(JSON.stringify({ action: \u0027ops.provider_health_check\u0027, ts: new Date().toISOString().slice(0, 16) })).digest(\u0027hex\u0027);\nconst idempotencyKey = crypto.createHash(\u0027sha256\u0027).update(requestId + \u0027ops.provider_health_check\u0027 + payloadHash).digest(\u0027hex\u0027);\nreturn [{ json: { killed: false, requestId, correlationId, idempotencyKey, timestamp: new Date().toISOString() } }];"
+                                                           },
+                                            "id":  "kill-switch-and-prep",
+                                            "name":  "Kill Switch + Prep",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             440,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "string":  [
+                                                                                                 {
+                                                                                                     "value1":  "={{ $json.killed }}",
+                                                                                                     "operation":  "equals",
+                                                                                                     "value2":  "true"
+                                                                                                 }
+                                                                                             ]
+                                                                              }
+                                                           },
+                                            "id":  "check-killed",
+                                            "name":  "Kill Switch Active?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             660,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "={{ $env.ASPIRE_GATEWAY_URL }}/internal/provider-health",
+                                                               "authentication":  "genericCredentialType",
+                                                               "genericAuthType":  "httpHeaderAuth",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "x-suite-id",
+                                                                                                               "value":  "={{ $env.DEFAULT_SUITE_ID }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "x-office-id",
+                                                                                                               "value":  "={{ $env.DEFAULT_OFFICE_ID }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "x-correlation-id",
+                                                                                                               "value":  "={{ $(\u0027Kill Switch + Prep\u0027).item.json.correlationId }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "x-n8n-workflow-id",
+                                                                                                               "value":  "provider-health"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "x-idempotency-key",
+                                                                                                               "value":  "={{ $(\u0027Kill Switch + Prep\u0027).item.json.idempotencyKey }}"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "options":  {
+                                                                               "timeout":  15000,
+                                                                               "retry":  {
+                                                                                             "maxRetries":  3,
+                                                                                             "retryInterval":  1000,
+                                                                                             "retryIntervalBackoff":  true
+                                                                                         }
+                                                                           }
+                                                           },
+                                            "id":  "check-providers",
+                                            "name":  "Check Provider Health (via Gateway)",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             880,
+                                                             400
+                                                         ],
+                                            "credentials":  {
+                                                                "httpHeaderAuth":  {
+                                                                                       "id":  "J84m12hyzSwSHo6S",
+                                                                                       "name":  "Gateway Internal Key"
+                                                                                   }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+                                                               "authentication":  "none",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "apikey",
+                                                                                                               "value":  "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Authorization",
+                                                                                                               "value":  "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Content-Type",
+                                                                                                               "value":  "application/json"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Prefer",
+                                                                                                               "value":  "return=minimal"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ receipt_id: \u0027n8n-provider-health-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), tenant_id: \u0027system\u0027, office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), receipt_type: \u0027n8n_ops\u0027, status: \u0027SUCCEEDED\u0027, correlation_id: $(\u0027Kill Switch + Prep\u0027).item.json.correlationId, actor_type: \u0027SYSTEM\u0027, actor_id: \u0027n8n-provider-health\u0027, action: { action_type: \u0027ops.provider_health_check\u0027, risk_tier: \u0027green\u0027, providers: $json.providers || $json }, created_at: new Date().toISOString() }) }}",
+                                                               "options":  {
+                                                                               "timeout":  5000
+                                                                           }
+                                                           },
+                                            "id":  "emit-receipt",
+                                            "name":  "Emit Health Receipt",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1100,
+                                                             400
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+                                                               "authentication":  "none",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "apikey",
+                                                                                                               "value":  "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Authorization",
+                                                                                                               "value":  "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Content-Type",
+                                                                                                               "value":  "application/json"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Prefer",
+                                                                                                               "value":  "return=minimal"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ receipt_id: \u0027n8n-provider-health-killed-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), tenant_id: \u0027system\u0027, office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), receipt_type: \u0027n8n_ops\u0027, status: \u0027SKIPPED\u0027, correlation_id: \u0027n8n-provider-health-killed-\u0027 + new Date().toISOString().slice(0, 16), actor_type: \u0027SYSTEM\u0027, actor_id: \u0027n8n-provider-health\u0027, action: { action_type: \u0027ops.provider_health_check\u0027, reason: \u0027kill_switch_disabled\u0027 }, created_at: new Date().toISOString() }) }}",
+                                                               "options":  {
+                                                                               "timeout":  5000
+                                                                           }
+                                                           },
+                                            "id":  "emit-receipt-killed",
+                                            "name":  "Emit Kill Switch Receipt",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             880,
+                                                             200
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+
+                                                           },
+                                            "id":  "error-trigger",
+                                            "name":  "Error Trigger",
+                                            "type":  "n8n-nodes-base.errorTrigger",
+                                            "typeVersion":  1,
+                                            "position":  [
+                                                             440,
+                                                             560
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.SUPABASE_URL }}/rest/v1/receipts",
+                                                               "authentication":  "none",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "apikey",
+                                                                                                               "value":  "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Authorization",
+                                                                                                               "value":  "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Content-Type",
+                                                                                                               "value":  "application/json"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "name":  "Prefer",
+                                                                                                               "value":  "return=minimal"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ receipt_id: \u0027n8n-provider-health-fail-\u0027 + Date.now() + \u0027-\u0027 + Math.random().toString(36).slice(2, 8), suite_id: ($env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), tenant_id: \u0027system\u0027, office_id: ($env.DEFAULT_OFFICE_ID || $env.DEFAULT_SUITE_ID || \u0027ffffffff-0000-0000-0000-system000000\u0027), receipt_type: \u0027n8n_ops\u0027, status: \u0027FAILED\u0027, correlation_id: \u0027n8n-provider-health\u0027, actor_type: \u0027SYSTEM\u0027, actor_id: \u0027n8n-provider-health\u0027, action: { action_type: \u0027ops.provider_health_check\u0027 }, result: { error_message: $json.message || \u0027Health check failed\u0027 }, created_at: new Date().toISOString() }) }}",
+                                                               "options":  {
+                                                                               "timeout":  5000
+                                                                           }
+                                                           },
+                                            "id":  "emit-failure-receipt",
+                                            "name":  "Emit Failure Receipt",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             660,
+                                                             560
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Every 15 Minutes":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Kill Switch + Prep",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Kill Switch + Prep":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Kill Switch Active?",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Kill Switch Active?":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Check Provider Health (via Gateway)",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ],
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Emit Kill Switch Receipt",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Check Provider Health (via Gateway)":  {
+                                                                                          "main":  [
+                                                                                                       [
+                                                                                                           {
+                                                                                                               "node":  "Emit Health Receipt",
+                                                                                                               "type":  "main",
+                                                                                                               "index":  0
+                                                                                                           }
+                                                                                                       ]
+                                                                                                   ]
+                                                                                      },
+                                              "Error Trigger":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Emit Failure Receipt",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                }
+                                          },
+                          "authors":  "Admin Aspire",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-03-04T22:31:14.264Z",
+                                                             "id":  536,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-03-05T00:34:30.536Z",
+                                                             "id":  592,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-03-05T00:34:31.939Z",
+                                                             "id":  610,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-03-05T01:47:05.408Z",
+                                                             "id":  628,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-03-05T01:47:06.709Z",
+                                                             "id":  646,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-02-19T03:48:00.552Z",
+                                                             "id":  417,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-03-05T02:02:30.853Z",
+                                                             "id":  664,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-03-05T02:02:32.334Z",
+                                                             "id":  682,
+                                                             "workflowId":  "SuhhWyi5SBwEejRF",
+                                                             "versionId":  "fbd6f66a-ea0f-4047-8e54-f3a9b0f1a26b",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         }
+                                                     ]
+                      }
+}

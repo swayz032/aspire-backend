@@ -27,8 +27,8 @@ def sm():
     return SemanticMemory()
 
 
-SUITE_ID = "suite-aaa-111"
-USER_ID = "user-001"
+SUITE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+USER_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 AGENT_ID = "finn"
 
 
@@ -59,27 +59,26 @@ class TestExtractAndStore:
     async def test_successful_extraction(self, mock_insert, mock_select, mock_receipts, sm):
         mock_select.return_value = []  # No existing facts (INSERT path)
 
-        # Mock OpenAI response with extracted facts
-        mock_choice = MagicMock()
-        mock_choice.message.content = (
+        # Mock generate_text_async to return extracted facts JSON
+        llm_response = (
             '{"facts": [{"fact_type": "industry", "fact_key": "industry", '
             '"fact_value": "wooden pallet manufacturing", "confidence": 0.95}]}'
         )
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create.return_value = mock_response
-
-        with patch("openai.AsyncOpenAI", return_value=mock_client):
-            with patch("aspire_orchestrator.config.settings.settings", MagicMock(openai_api_key="test")):
-                result = await sm.extract_and_store(
-                    turns=[
-                        {"role": "user", "content": "I run a wooden pallet business"},
-                        {"role": "agent", "content": "That's great! What can I help with?"},
-                    ],
-                    suite_id=SUITE_ID, user_id=USER_ID, agent_id=AGENT_ID,
-                )
+        with patch(
+            "aspire_orchestrator.services.semantic_memory.generate_text_async",
+            new_callable=AsyncMock,
+            return_value=llm_response,
+        ):
+            with patch("aspire_orchestrator.services.semantic_memory.resolve_openai_api_key", return_value="test"):
+                with patch.object(sm, "_embed_fact_text", new_callable=AsyncMock, return_value=None):
+                    result = await sm.extract_and_store(
+                        turns=[
+                            {"role": "user", "content": "I run a wooden pallet business"},
+                            {"role": "agent", "content": "That's great! What can I help with?"},
+                        ],
+                        suite_id=SUITE_ID, user_id=USER_ID, agent_id=AGENT_ID,
+                    )
 
         assert result == 1
         mock_insert.assert_called_once()
@@ -98,26 +97,25 @@ class TestExtractAndStore:
         """When fact already exists, it should UPDATE not INSERT."""
         mock_select.return_value = [{"id": "existing-fact-id", "fact_value": "old-value"}]
 
-        mock_choice = MagicMock()
-        mock_choice.message.content = (
+        llm_response = (
             '[{"fact_type": "industry", "fact_key": "industry", '
             '"fact_value": "updated pallet business", "confidence": 0.99}]'
         )
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create.return_value = mock_response
-
-        with patch("openai.AsyncOpenAI", return_value=mock_client):
-            with patch("aspire_orchestrator.config.settings.settings", MagicMock(openai_api_key="test")):
-                result = await sm.extract_and_store(
-                    turns=[
-                        {"role": "user", "content": "Actually we updated our business"},
-                        {"role": "agent", "content": "Good to know."},
-                    ],
-                    suite_id=SUITE_ID, user_id=USER_ID, agent_id=AGENT_ID,
-                )
+        with patch(
+            "aspire_orchestrator.services.semantic_memory.generate_text_async",
+            new_callable=AsyncMock,
+            return_value=llm_response,
+        ):
+            with patch("aspire_orchestrator.services.semantic_memory.resolve_openai_api_key", return_value="test"):
+                with patch.object(sm, "_embed_fact_text", new_callable=AsyncMock, return_value=None):
+                    result = await sm.extract_and_store(
+                        turns=[
+                            {"role": "user", "content": "Actually we updated our business"},
+                            {"role": "agent", "content": "Good to know."},
+                        ],
+                        suite_id=SUITE_ID, user_id=USER_ID, agent_id=AGENT_ID,
+                    )
 
         assert result == 1
         mock_update.assert_called_once()

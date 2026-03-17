@@ -36,7 +36,7 @@ import pytest
 
 WORKFLOWS_DIR = os.path.join(
     os.path.dirname(__file__),
-    "..", "..", "..",
+    "..", "..",
     "infrastructure", "n8n-workflows"
 )
 
@@ -921,7 +921,7 @@ class TestN10StructuralCorrectness:
         """sync_n8n_workflows.py EXISTING_MAP must contain all 11 workflow names."""
         sync_script_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "..",
+            "..", "..",
             "scripts", "sync_n8n_workflows.py"
         )
         with open(sync_script_path, "r", encoding="utf-8") as f:
@@ -935,7 +935,7 @@ class TestN10StructuralCorrectness:
         """docker-compose.n8n.yml must have enabled env vars for all 11 workflows."""
         compose_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "..",
+            "..", "..",
             "infrastructure", "docker", "docker-compose.n8n.yml"
         )
         with open(compose_path, "r", encoding="utf-8") as f:
@@ -962,7 +962,7 @@ class TestN10StructuralCorrectness:
         """docker-compose.n8n.yml must have all 4 webhook secret env vars."""
         compose_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "..",
+            "..", "..",
             "infrastructure", "docker", "docker-compose.n8n.yml"
         )
         with open(compose_path, "r", encoding="utf-8") as f:

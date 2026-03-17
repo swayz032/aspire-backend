@@ -102,8 +102,7 @@ class TestLLMFillMissingTokens:
     @pytest.mark.asyncio
     async def test_no_api_key_returns_graceful(self) -> None:
         """Without API key, return empty fill + all tokens still missing."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = ""
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value=""):
             filled, still_missing = await _llm_fill_missing_tokens(
                 missing_tokens=["Sender.Website"],
                 filled_tokens={},
@@ -117,21 +116,14 @@ class TestLLMFillMissingTokens:
     @pytest.mark.asyncio
     async def test_successful_llm_fill(self) -> None:
         """LLM returns valid values for missing tokens."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({
+        llm_json = json.dumps({
             "Sublessee.Company": "BlueWave Marketing",
             "Document.Value": "$2,500",
         })
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, return_value=llm_json):
                 filled, still_missing = await _llm_fill_missing_tokens(
                     missing_tokens=["Sublessee.Company", "Document.Value"],
                     filled_tokens={"Sender.Company": "Skytech"},
@@ -149,21 +141,14 @@ class TestLLMFillMissingTokens:
     @pytest.mark.asyncio
     async def test_llm_returns_invalid_values_filtered(self) -> None:
         """LLM returns values that fail validation — they become still_missing."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({
+        llm_json = json.dumps({
             "Client.Email": "not-an-email",  # fails validation
             "Client.Company": "ValidCo LLC",  # passes
         })
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, return_value=llm_json):
                 filled, still_missing = await _llm_fill_missing_tokens(
                     missing_tokens=["Client.Email", "Client.Company"],
                     filled_tokens={},
@@ -178,11 +163,9 @@ class TestLLMFillMissingTokens:
     @pytest.mark.asyncio
     async def test_llm_exception_graceful_degradation(self) -> None:
         """LLM call throws exception — graceful degradation."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", side_effect=Exception("API down")):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, side_effect=Exception("API down")):
                 filled, still_missing = await _llm_fill_missing_tokens(
                     missing_tokens=["Sender.Website"],
                     filled_tokens={},
@@ -197,18 +180,9 @@ class TestLLMFillMissingTokens:
     @pytest.mark.asyncio
     async def test_llm_returns_non_json_graceful(self) -> None:
         """LLM returns non-JSON response — graceful degradation."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "I cannot help with that."
-
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, return_value="I cannot help with that."):
                 filled, still_missing = await _llm_fill_missing_tokens(
                     missing_tokens=["Sender.Website"],
                     filled_tokens={},
@@ -250,7 +224,10 @@ class TestBuildPricingTables:
                 {"name": "Installation Labor", "price": "4000.00", "qty": "1", "description": "8 hrs"},
             ]
         }
-        result = await _build_pricing_tables(terms=terms, template_type="trades_hvac_proposal")
+        result = await _build_pricing_tables(
+            terms=terms, template_type="trades_hvac_proposal",
+            template_spec={"pricing_table_name": "Pricing Table 1"},
+        )
         assert len(result) == 1
         table = result[0]
         assert table["name"] == "Pricing Table 1"
@@ -264,11 +241,11 @@ class TestBuildPricingTables:
     @pytest.mark.asyncio
     async def test_budget_fallback_single_item(self) -> None:
         """Simple budget string → single line item (no LLM needed)."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = ""  # Force LLM skip
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value=""):
             result = await _build_pricing_tables(
                 terms={"budget": "$15,000", "scope": "Full HVAC replacement"},
                 template_type="trades_hvac_proposal",
+                template_spec={"pricing_table_name": "Pricing Table 1"},
             )
         assert len(result) == 1
         rows = result[0]["sections"][0]["rows"]
@@ -280,11 +257,11 @@ class TestBuildPricingTables:
     @pytest.mark.asyncio
     async def test_budget_numeric(self) -> None:
         """Numeric budget → single line item."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = ""
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value=""):
             result = await _build_pricing_tables(
                 terms={"budget": 25000},
                 template_type="trades_roofing_proposal",
+                template_spec={"pricing_table_name": "Pricing Table 1"},
             )
         assert len(result) == 1
         rows = result[0]["sections"][0]["rows"]
@@ -305,6 +282,7 @@ class TestBuildPricingTables:
         """Price values with $ and commas are cleaned."""
         result = await _build_pricing_tables(
             terms={"line_items": [{"name": "Work", "price": "$1,500.50"}]},
+            template_spec={"pricing_table_name": "Pricing Table 1"},
         )
         assert result[0]["sections"][0]["rows"][0]["data"]["price"] == "1500.50"
 
@@ -320,29 +298,21 @@ class TestLLMParsePricing:
     @pytest.mark.asyncio
     async def test_no_api_key_returns_empty(self) -> None:
         """Without API key, return empty list."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = ""
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value=""):
             result = await _llm_parse_pricing("$15,000 fixed fee")
         assert result == []
 
     @pytest.mark.asyncio
     async def test_successful_llm_parse(self) -> None:
         """LLM successfully parses free-text pricing."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps([
+        llm_json = json.dumps([
             {"name": "HVAC System", "description": "Full replacement", "price": "12000.00", "qty": "1"},
             {"name": "Ductwork", "description": "New duct installation", "price": "3000.00", "qty": "1"},
         ])
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_classifier = "gpt-5-mini"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, return_value=llm_json):
                 result = await _llm_parse_pricing("$15,000 total: HVAC system $12k, ductwork $3k")
 
         assert len(result) == 2
@@ -352,11 +322,9 @@ class TestLLMParsePricing:
     @pytest.mark.asyncio
     async def test_llm_failure_returns_empty(self) -> None:
         """LLM failure → graceful degradation to empty list."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_classifier = "gpt-5-mini"
-            with patch("openai.AsyncOpenAI", side_effect=Exception("API down")):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, side_effect=Exception("API down")):
                 result = await _llm_parse_pricing("$15,000")
         assert result == []
 
@@ -392,8 +360,7 @@ class TestBuildContentPlaceholders:
     @pytest.mark.asyncio
     async def test_no_api_key_returns_empty(self) -> None:
         """Without API key, return empty list."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = ""
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value=""):
             result = await _build_content_placeholders(
                 template_placeholders=[{"uuid": "ph-1", "name": "scope"}],
                 terms={"scope": "Full HVAC replacement"},
@@ -404,23 +371,16 @@ class TestBuildContentPlaceholders:
     @pytest.mark.asyncio
     async def test_successful_content_generation(self) -> None:
         """LLM generates content blocks for placeholders."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps([{
+        llm_json = json.dumps([{
             "uuid": "ph-scope-1",
             "blocks": [
                 {"type": "paragraph", "data": {"text": "This project covers full HVAC replacement."}},
             ],
         }])
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, return_value=llm_json):
                 result = await _build_content_placeholders(
                     template_placeholders=[{"uuid": "ph-scope-1", "name": "scope_of_work"}],
                     terms={"scope": "Full HVAC replacement"},
@@ -435,21 +395,14 @@ class TestBuildContentPlaceholders:
     @pytest.mark.asyncio
     async def test_invalid_uuid_filtered(self) -> None:
         """LLM returns content for unknown uuid → filtered out."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps([{
+        llm_json = json.dumps([{
             "uuid": "unknown-uuid",
             "blocks": [{"type": "paragraph", "data": {"text": "Injected content"}}],
         }])
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, return_value=llm_json):
                 result = await _build_content_placeholders(
                     template_placeholders=[{"uuid": "ph-real-1", "name": "scope"}],
                     terms={"scope": "test"},
@@ -461,11 +414,9 @@ class TestBuildContentPlaceholders:
     @pytest.mark.asyncio
     async def test_llm_failure_graceful(self) -> None:
         """LLM exception → return empty list."""
-        with patch("aspire_orchestrator.providers.pandadoc_client.settings") as mock_settings:
-            mock_settings.openai_api_key = "test-key"
-            mock_settings.openai_base_url = None
-            mock_settings.router_model_reasoner = "gpt-5.2"
-            with patch("openai.AsyncOpenAI", side_effect=Exception("API down")):
+        with patch("aspire_orchestrator.providers.pandadoc_client.resolve_openai_api_key", return_value="test-key"):
+            with patch("aspire_orchestrator.providers.pandadoc_client.generate_text_async",
+                       new_callable=AsyncMock, side_effect=Exception("API down")):
                 result = await _build_content_placeholders(
                     template_placeholders=[{"uuid": "ph-1", "name": "scope"}],
                     terms={"scope": "test"},

@@ -36,6 +36,7 @@ class A2AEventType(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
+    REQUEUED = "requeued"
 
 
 @dataclass
@@ -86,6 +87,14 @@ class A2ACompleteResult:
     receipt_data: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class A2AEvent:
+    event_type: A2AEventType
+    task_id: str
+    timestamp: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -127,6 +136,7 @@ class A2AService:
     def __init__(self, *, default_lease_seconds: int = 300, max_attempts: int = 3):
         self._lock = threading.Lock()
         self._tasks: dict[str, A2ATask] = {}
+        self._events: dict[str, list[A2AEvent]] = {}
         self._idempotency_keys: set[str] = set()
         self._default_lease_seconds = default_lease_seconds
         self._max_attempts = max_attempts
@@ -138,7 +148,36 @@ class A2AService:
         """Reset all in-memory state. Used by test teardown for isolation."""
         with self._lock:
             self._tasks.clear()
+            self._events.clear()
             self._idempotency_keys.clear()
+
+    def _emit_event(self, task_id: str, event_type: A2AEventType, details: dict[str, Any] | None = None) -> None:
+        """Record a lifecycle event for a task (in-memory backend only)."""
+        event = A2AEvent(event_type=event_type, task_id=task_id, timestamp=_now(), details=details or {})
+        self._events.setdefault(task_id, []).append(event)
+
+    def get_task(self, task_id: str, suite_id: str) -> A2ATask | None:
+        """Return task if it exists and belongs to the given suite (Law #6)."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task and task.suite_id == suite_id:
+                return task
+            return None
+
+    def get_events(self, task_id: str, suite_id: str) -> list[A2AEvent]:
+        """Return events for a task, scoped to suite (Law #6)."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.suite_id != suite_id:
+                return []
+            return list(self._events.get(task_id, []))
+
+    def get_task_count(self, suite_id: str | None = None) -> int:
+        """Count tasks, optionally filtered by suite."""
+        with self._lock:
+            if suite_id is None:
+                return len(self._tasks)
+            return sum(1 for t in self._tasks.values() if t.suite_id == suite_id)
 
     def _should_fallback_to_memory(self, exc: Exception) -> bool:
         msg = str(exc).lower()
@@ -211,6 +250,7 @@ class A2AService:
             self._tasks[task_id] = task
             if idempotency_key:
                 self._idempotency_keys.add(idempotency_key)
+            self._emit_event(task_id, A2AEventType.CREATED)
         return A2ADispatchResult(
             success=True,
             task_id=task_id,
@@ -253,7 +293,19 @@ class A2AService:
             ]
             candidates.sort(key=lambda t: (t.priority, t.created_at))
             if not candidates:
-                return A2AClaimResult(success=False, error="No tasks available for claiming")
+                return A2AClaimResult(
+                    success=False,
+                    error="No tasks available for claiming",
+                    receipt_data=_receipt(
+                        task_id="",
+                        suite_id=suite_id,
+                        office_id="",
+                        correlation_id="",
+                        action_type="a2a.claim",
+                        outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "NO_TASKS_AVAILABLE"}},
+                    ),
+                )
             task = candidates[0]
             task.status = A2ATaskStatus.CLAIMED
             task.claimed_by = agent_id
@@ -261,6 +313,7 @@ class A2AService:
             task.lease_expires_at = (now + timedelta(seconds=lease)).isoformat()
             task.attempt_count += 1
             task.updated_at = now.isoformat()
+            self._emit_event(task.task_id, A2AEventType.CLAIMED, {"agent_id": agent_id})
         return A2AClaimResult(
             success=True,
             task=task,
@@ -289,16 +342,52 @@ class A2AService:
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:
-                return A2ACompleteResult(success=False, error="TASK_NOT_FOUND")
+                return A2ACompleteResult(
+                    success=False,
+                    error="TASK_NOT_FOUND",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id="", correlation_id="",
+                        action_type="a2a.complete", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "TASK_NOT_FOUND"}},
+                    ),
+                )
             if task.suite_id != suite_id:
-                return A2ACompleteResult(success=False, error="TENANT_ISOLATION_VIOLATION")
+                return A2ACompleteResult(
+                    success=False,
+                    error="TENANT_ISOLATION_VIOLATION",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id=task.office_id,
+                        correlation_id=task.correlation_id,
+                        action_type="a2a.complete", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "TENANT_ISOLATION_VIOLATION"}},
+                    ),
+                )
             if task.claimed_by and task.claimed_by != agent_id:
-                return A2ACompleteResult(success=False, error="TASK_CLAIMED_BY_OTHER_AGENT")
+                return A2ACompleteResult(
+                    success=False,
+                    error=f"Task claimed by {task.claimed_by}, not {agent_id}",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id=task.office_id,
+                        correlation_id=task.correlation_id,
+                        action_type="a2a.complete", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "WRONG_CLAIMER"}},
+                    ),
+                )
             if task.status not in (A2ATaskStatus.CLAIMED, A2ATaskStatus.IN_PROGRESS):
-                return A2ACompleteResult(success=False, error=f"Invalid task status: {task.status.value}")
+                return A2ACompleteResult(
+                    success=False,
+                    error=f"Invalid task status: {task.status.value}",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id=task.office_id,
+                        correlation_id=task.correlation_id,
+                        action_type="a2a.complete", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "INVALID_STATUS"}},
+                    ),
+                )
             task.status = A2ATaskStatus.DONE
             task.updated_at = _now()
             task.result = result
+            self._emit_event(task_id, A2AEventType.COMPLETED, {"agent_id": agent_id})
         return A2ACompleteResult(
             success=True,
             task_id=task_id,
@@ -328,16 +417,61 @@ class A2AService:
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:
-                return A2ACompleteResult(success=False, error="TASK_NOT_FOUND")
+                return A2ACompleteResult(
+                    success=False,
+                    error="TASK_NOT_FOUND",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id="", correlation_id="",
+                        action_type="a2a.fail", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "TASK_NOT_FOUND"}},
+                    ),
+                )
             if task.suite_id != suite_id:
-                return A2ACompleteResult(success=False, error="TENANT_ISOLATION_VIOLATION")
+                return A2ACompleteResult(
+                    success=False,
+                    error="TENANT_ISOLATION_VIOLATION",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id=task.office_id,
+                        correlation_id=task.correlation_id,
+                        action_type="a2a.fail", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "TENANT_ISOLATION_VIOLATION"}},
+                    ),
+                )
             if task.claimed_by and task.claimed_by != agent_id:
-                return A2ACompleteResult(success=False, error="TASK_CLAIMED_BY_OTHER_AGENT")
-            task.status = A2ATaskStatus.FAILED
+                return A2ACompleteResult(
+                    success=False,
+                    error=f"Task claimed by {task.claimed_by}, not {agent_id}",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id=task.office_id,
+                        correlation_id=task.correlation_id,
+                        action_type="a2a.fail", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "WRONG_CLAIMER"}},
+                    ),
+                )
+            if task.status not in (A2ATaskStatus.CLAIMED, A2ATaskStatus.IN_PROGRESS):
+                return A2ACompleteResult(
+                    success=False,
+                    error=f"Invalid task status: {task.status.value}",
+                    receipt_data=_receipt(
+                        task_id=task_id, suite_id=suite_id, office_id=task.office_id,
+                        correlation_id=task.correlation_id,
+                        action_type="a2a.fail", outcome="denied",
+                        details={"agent_id": agent_id, "redacted_outputs": {"reason": "INVALID_STATUS"}},
+                    ),
+                )
             task.error = error
             task.updated_at = _now()
             if task.attempt_count >= task.max_attempts:
                 task.status = A2ATaskStatus.QUARANTINED
+                self._emit_event(task_id, A2AEventType.FAILED, {"agent_id": agent_id, "error": error})
+            else:
+                # Requeue: reset to CREATED for retry
+                task.status = A2ATaskStatus.CREATED
+                task.claimed_by = None
+                task.claimed_at = None
+                task.lease_expires_at = None
+                self._emit_event(task_id, A2AEventType.REQUEUED, {"agent_id": agent_id, "error": error})
+        action_type = "a2a.requeue" if task.status == A2ATaskStatus.CREATED else "a2a.fail"
         return A2ACompleteResult(
             success=True,
             task_id=task_id,
@@ -347,7 +481,7 @@ class A2AService:
                 suite_id=suite_id,
                 office_id=task.office_id,
                 correlation_id=task.correlation_id,
-                action_type="a2a.fail",
+                action_type=action_type,
                 outcome="success",
                 details={"agent_id": agent_id, "error": error},
             ),

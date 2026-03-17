@@ -125,6 +125,11 @@ _NON_MONEY_TRANSFER_PHRASES: tuple[str, ...] = (
     "transfer domain",
     "file transfer",
     "transfer file",
+    "send the invoice",
+    "send invoice",
+    "send an invoice",
+    "resend the invoice",
+    "resend invoice",
 )
 _ADVICE_MARKERS: tuple[str, ...] = (
     "should i",

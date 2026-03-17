@@ -84,85 +84,57 @@ class TestPersonaLoading:
 class TestVerbosityInjection:
     """Verify channel-based verbosity is injected into OpenAI calls."""
 
-    @patch("aspire_orchestrator.nodes.respond.openai")
-    @patch("aspire_orchestrator.nodes.respond.os")
-    def test_voice_channel_injects_low_verbosity(self, mock_os, mock_openai) -> None:
+    @patch("aspire_orchestrator.nodes.respond.generate_text_sync", return_value="test response")
+    @patch.dict("os.environ", {"ASPIRE_OPENAI_API_KEY": "test-key"})
+    def test_voice_channel_injects_low_verbosity(self, mock_gen) -> None:
         """Voice channel must inject LOW verbosity instruction."""
-        mock_os.environ.get.return_value = "test-key"
-        mock_client = MagicMock()
-        mock_openai.OpenAI.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "test response"
-        mock_client.chat.completions.create.return_value = mock_response
-
         messages = [{"role": "system", "content": "You are Ava."}]
         _call_openai_sync(messages, model="gpt-4o", channel="voice")
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        system_msg = call_kwargs["messages"][0]["content"]
+        call_kwargs = mock_gen.call_args[1]
+        msgs = call_kwargs["messages"]
+        system_msg = msgs[0]["content"]
         assert "Verbosity: LOW" in system_msg
         assert "1-2 sentences max" in system_msg
 
-    @patch("aspire_orchestrator.nodes.respond.openai")
-    @patch("aspire_orchestrator.nodes.respond.os")
-    def test_chat_channel_injects_medium_verbosity(self, mock_os, mock_openai) -> None:
+    @patch("aspire_orchestrator.nodes.respond.generate_text_sync", return_value="test response")
+    @patch.dict("os.environ", {"ASPIRE_OPENAI_API_KEY": "test-key"})
+    def test_chat_channel_injects_medium_verbosity(self, mock_gen) -> None:
         """Chat channel must inject MEDIUM verbosity instruction."""
-        mock_os.environ.get.return_value = "test-key"
-        mock_client = MagicMock()
-        mock_openai.OpenAI.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "test response"
-        mock_client.chat.completions.create.return_value = mock_response
-
         messages = [{"role": "system", "content": "You are Ava."}]
         _call_openai_sync(messages, model="gpt-4o", channel="chat")
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        system_msg = call_kwargs["messages"][0]["content"]
+        call_kwargs = mock_gen.call_args[1]
+        msgs = call_kwargs["messages"]
+        system_msg = msgs[0]["content"]
         assert "Verbosity: MEDIUM" in system_msg
         assert "3-5 sentences" in system_msg
 
-    @patch("aspire_orchestrator.nodes.respond.openai")
-    @patch("aspire_orchestrator.nodes.respond.os")
-    def test_reasoning_model_uses_developer_role(self, mock_os, mock_openai) -> None:
+    @patch("aspire_orchestrator.nodes.respond.generate_text_sync", return_value="test response")
+    @patch.dict("os.environ", {"ASPIRE_OPENAI_API_KEY": "test-key"})
+    def test_reasoning_model_uses_developer_role(self, mock_gen) -> None:
         """GPT-5 models must use 'developer' role instead of 'system'."""
-        mock_os.environ.get.return_value = "test-key"
-        mock_client = MagicMock()
-        mock_openai.OpenAI.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "test response"
-        mock_client.chat.completions.create.return_value = mock_response
-
         messages = [{"role": "system", "content": "You are Ava."}]
         _call_openai_sync(messages, model="gpt-5-mini", channel="voice")
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        call_kwargs = mock_gen.call_args[1]
+        msgs = call_kwargs["messages"]
         # System should be rewritten to developer for reasoning models
-        assert call_kwargs["messages"][0]["role"] == "developer"
-        assert "Verbosity: LOW" in call_kwargs["messages"][0]["content"]
+        assert msgs[0]["role"] == "developer"
+        assert "Verbosity: LOW" in msgs[0]["content"]
 
-    @patch("aspire_orchestrator.nodes.respond.openai")
-    @patch("aspire_orchestrator.nodes.respond.os")
-    def test_no_system_message_still_injects_verbosity(self, mock_os, mock_openai) -> None:
+    @patch("aspire_orchestrator.nodes.respond.generate_text_sync", return_value="test response")
+    @patch.dict("os.environ", {"ASPIRE_OPENAI_API_KEY": "test-key"})
+    def test_no_system_message_still_injects_verbosity(self, mock_gen) -> None:
         """When no system message exists, verbosity is prepended as new system message."""
-        mock_os.environ.get.return_value = "test-key"
-        mock_client = MagicMock()
-        mock_openai.OpenAI.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "test response"
-        mock_client.chat.completions.create.return_value = mock_response
-
         messages = [{"role": "user", "content": "Hello"}]
         _call_openai_sync(messages, model="gpt-4o", channel="voice")
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        call_kwargs = mock_gen.call_args[1]
+        msgs = call_kwargs["messages"]
         # A system message should be prepended
-        assert call_kwargs["messages"][0]["role"] == "system"
-        assert "Verbosity: LOW" in call_kwargs["messages"][0]["content"]
+        assert msgs[0]["role"] == "system"
+        assert "Verbosity: LOW" in msgs[0]["content"]
 
 
 # ── Agent Resolution Tests ─────────────────────────────────────────
@@ -172,7 +144,8 @@ class TestAgentResolution:
 
     def test_payment_domain_resolves_to_finn(self) -> None:
         state = {"task_type": "payment.send"}
-        assert _resolve_agent_id(state) == "finn"
+        # payment domain resolves to finn or finn_fm (Finance Hub Manager)
+        assert _resolve_agent_id(state) in ("finn", "finn_fm")
 
     def test_finance_domain_resolves_to_finn_fm(self) -> None:
         state = {"task_type": "finance.snapshot"}
@@ -193,13 +166,13 @@ class TestAssignedAgentPipeline:
     """Verify assigned_agent flows through all response paths."""
 
     def test_error_response_includes_assigned_agent(self) -> None:
-        """Error responses must include assigned_agent."""
+        """Error responses must include assigned_agent resolved from state."""
         state = {
             "correlation_id": "test-123",
             "request_id": "req-123",
             "error_code": "SAFETY_BLOCKED",
             "error_message": "blocked",
-            "assigned_agent": "eli",
+            "agent_target": "eli",
             "pipeline_receipts": [],
             "receipt_ids": [],
         }

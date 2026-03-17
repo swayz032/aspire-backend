@@ -1,0 +1,760 @@
+﻿{
+    "updatedAt":  "2026-03-10T05:22:15.936Z",
+    "createdAt":  "2026-03-10T04:27:54.534Z",
+    "id":  "m6aD7X4ioWfhWaS9",
+    "name":  "Monthly Robustness Check",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 6 1 * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "schedule-trigger",
+                      "name":  "Monthly 1st 6AM EST",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       0,
+                                       88
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "http://host.docker.internal:4000/api/strategies?status=deployed",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "fetch-deployed",
+                      "name":  "Fetch Deployed Strategies",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       224,
+                                       88
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000
+                  },
+                  {
+                      "parameters":  {
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "split-batches",
+                      "name":  "Loop Over Strategies",
+                      "type":  "n8n-nodes-base.splitInBatches",
+                      "typeVersion":  3,
+                      "position":  [
+                                       448,
+                                       88
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "http://host.docker.internal:4000/api/backtests",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={ \"strategyId\": \"{{ $json.id }}\", \"strategy\": {{ $json.config }}, \"start_date\": \"2024-01-01\", \"end_date\": \"2025-12-31\", \"mode\": \"walkforward\" }",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "run-backtest",
+                      "name":  "Run Backtest",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       672,
+                                       -128
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000
+                  },
+                  {
+                      "parameters":  {
+                                         "amount":  3,
+                                         "unit":  "minutes"
+                                     },
+                      "id":  "wait-backtest",
+                      "name":  "Wait 3 Min for Backtest",
+                      "type":  "n8n-nodes-base.wait",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       896,
+                                       -128
+                                   ],
+                      "webhookId":  "b48bc870-80bf-4086-a759-25bc3c16f607"
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "=http://host.docker.internal:4000/api/backtests/{{ $json.backtestId }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "fetch-results",
+                      "name":  "Fetch Backtest Results",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       1120,
+                                       -128
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const current = $input.first().json;\nconst original = $(\u0027Loop Over Strategies\u0027).first().json;\n\nconst sharpeDrop = original.sharpeRatio \u003e 0 \n  ? (Number(original.sharpeRatio) - Number(current.sharpeRatio)) / Number(original.sharpeRatio) \n  : 0;\nconst winRateDrop = Number(original.winRate) - Number(current.winRate);\n\nconst degraded = sharpeDrop \u003e 0.20 || winRateDrop \u003e 0.10;\n\nreturn [{\n  json: {\n    strategyId: current.strategyId,\n    strategyName: original.name,\n    degraded,\n    sharpeDrop: (sharpeDrop * 100).toFixed(1) + \u0027%\u0027,\n    winRateDrop: (winRateDrop * 100).toFixed(1) + \u0027%\u0027,\n    currentSharpe: current.sharpeRatio,\n    originalSharpe: original.sharpeRatio,\n    currentWinRate: current.winRate,\n    originalWinRate: original.winRate,\n  }\n}];"
+                                     },
+                      "id":  "compare-metrics",
+                      "name":  "Compare Metrics",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1344,
+                                       -128
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "version":  2,
+                                                                            "leftValue":  "",
+                                                                            "caseSensitive":  true,
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "condition-degraded",
+                                                                                   "leftValue":  "={{ $json.degraded }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "equals"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "check-degraded",
+                      "name":  "Degraded?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       1568,
+                                       -128
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "http://host.docker.internal:4000/api/journal",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"type\": \"robustness_alert\",\n  \"strategyId\": \"{{ $json.strategyId }}\",\n  \"strategyName\": \"{{ $json.strategyName }}\",\n  \"message\": \"Strategy degradation detected - flagged for review\",\n  \"sharpeDrop\": \"{{ $json.sharpeDrop }}\",\n  \"winRateDrop\": \"{{ $json.winRateDrop }}\",\n  \"currentSharpe\": {{ $json.currentSharpe }},\n  \"originalSharpe\": {{ $json.originalSharpe }},\n  \"currentWinRate\": {{ $json.currentWinRate }},\n  \"originalWinRate\": {{ $json.originalWinRate }},\n  \"flagForReview\": true,\n  \"timestamp\": \"{{ $now.toISO() }}\"\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "log-degraded",
+                      "name":  "Log Degradation to Journal",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       1792,
+                                       -56
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "http://host.docker.internal:4000/api/journal",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"type\": \"robustness_check\",\n  \"strategyId\": \"{{ $json.strategyId }}\",\n  \"strategyName\": \"{{ $json.strategyName }}\",\n  \"message\": \"Strategy still healthy\",\n  \"currentSharpe\": {{ $json.currentSharpe }},\n  \"originalSharpe\": {{ $json.originalSharpe }},\n  \"currentWinRate\": {{ $json.currentWinRate }},\n  \"originalWinRate\": {{ $json.originalWinRate }},\n  \"flagForReview\": false,\n  \"timestamp\": \"{{ $now.toISO() }}\"\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "log-healthy",
+                      "name":  "Log Healthy to Journal",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       1792,
+                                       136
+                                   ],
+                      "retryOnFail":  true,
+                      "maxTries":  3,
+                      "waitBetweenTries":  5000
+                  }
+              ],
+    "connections":  {
+                        "Monthly 1st 6AM EST":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Fetch Deployed Strategies",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Fetch Deployed Strategies":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Loop Over Strategies",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Loop Over Strategies":  {
+                                                     "main":  [
+                                                                  [
+
+                                                                  ],
+                                                                  [
+                                                                      {
+                                                                          "node":  "Run Backtest",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Run Backtest":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Wait 3 Min for Backtest",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Wait 3 Min for Backtest":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Fetch Backtest Results",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Fetch Backtest Results":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Compare Metrics",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Compare Metrics":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Degraded?",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Degraded?":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Log Degradation to Journal",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ],
+                                                       [
+                                                           {
+                                                               "node":  "Log Healthy to Journal",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Log Degradation to Journal":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Loop Over Strategies",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Log Healthy to Journal":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Loop Over Strategies",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "timezone":  "America/New_York",
+                     "saveDataErrorExecution":  "all",
+                     "saveDataSuccessExecution":  "all",
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Monthly 1st 6AM EST":  {
+                                                        "recurrenceRules":  [
+
+                                                                            ]
+                                                    }
+                   },
+    "meta":  null,
+    "pinData":  {
+
+                },
+    "versionId":  "8a74d455-9300-4813-a302-f7f0709beed7",
+    "activeVersionId":  "8a74d455-9300-4813-a302-f7f0709beed7",
+    "versionCounter":  15,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-03-10T04:27:54.534Z",
+                       "createdAt":  "2026-03-10T04:27:54.534Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "m6aD7X4ioWfhWaS9",
+                       "projectId":  "l9zgLNMKv7CjloiW",
+                       "project":  {
+                                       "updatedAt":  "2026-02-19T03:51:50.171Z",
+                                       "createdAt":  "2026-02-12T09:44:05.561Z",
+                                       "id":  "l9zgLNMKv7CjloiW",
+                                       "name":  "Tonio tonioswayz32@gmail.com \u003ctonioswayz32@gmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938",
+                                       "projectRelations":  [
+                                                                {
+                                                                    "updatedAt":  "2026-02-12T09:44:05.561Z",
+                                                                    "createdAt":  "2026-02-12T09:44:05.561Z",
+                                                                    "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938",
+                                                                    "projectId":  "l9zgLNMKv7CjloiW",
+                                                                    "user":  {
+                                                                                 "updatedAt":  "2026-03-12T21:41:16.182Z",
+                                                                                 "createdAt":  "2026-02-12T09:44:05.126Z",
+                                                                                 "id":  "4fd79e89-3017-4dbe-8cec-676fcab6f938",
+                                                                                 "email":  "tonioswayz32@gmail.com",
+                                                                                 "firstName":  "Tonio",
+                                                                                 "lastName":  "tonioswayz32@gmail.com",
+                                                                                 "personalizationAnswers":  null,
+                                                                                 "settings":  {
+                                                                                                  "userActivated":  true,
+                                                                                                  "firstSuccessfulWorkflowId":  "aDeQEKoBawhGdUtE",
+                                                                                                  "userActivatedAt":  1771445749501,
+                                                                                                  "easyAIWorkflowOnboarded":  true
+                                                                                              },
+                                                                                 "disabled":  false,
+                                                                                 "mfaEnabled":  false,
+                                                                                 "lastActiveAt":  "2026-03-12",
+                                                                                 "isPending":  false
+                                                                             }
+                                                                }
+                                                            ]
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-03-10T05:22:35.068Z",
+                          "createdAt":  "2026-03-10T05:22:15.937Z",
+                          "versionId":  "8a74d455-9300-4813-a302-f7f0709beed7",
+                          "workflowId":  "m6aD7X4ioWfhWaS9",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 6 1 * *"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "schedule-trigger",
+                                            "name":  "Monthly 1st 6AM EST",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.3,
+                                            "position":  [
+                                                             0,
+                                                             88
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "url":  "http://host.docker.internal:4000/api/strategies?status=deployed",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "fetch-deployed",
+                                            "name":  "Fetch Deployed Strategies",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             224,
+                                                             88
+                                                         ],
+                                            "retryOnFail":  true,
+                                            "maxTries":  3,
+                                            "waitBetweenTries":  5000
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "split-batches",
+                                            "name":  "Loop Over Strategies",
+                                            "type":  "n8n-nodes-base.splitInBatches",
+                                            "typeVersion":  3,
+                                            "position":  [
+                                                             448,
+                                                             88
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "http://host.docker.internal:4000/api/backtests",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={ \"strategyId\": \"{{ $json.id }}\", \"strategy\": {{ $json.config }}, \"start_date\": \"2024-01-01\", \"end_date\": \"2025-12-31\", \"mode\": \"walkforward\" }",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "run-backtest",
+                                            "name":  "Run Backtest",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             672,
+                                                             -128
+                                                         ],
+                                            "retryOnFail":  true,
+                                            "maxTries":  3,
+                                            "waitBetweenTries":  5000
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "amount":  3,
+                                                               "unit":  "minutes"
+                                                           },
+                                            "id":  "wait-backtest",
+                                            "name":  "Wait 3 Min for Backtest",
+                                            "type":  "n8n-nodes-base.wait",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             896,
+                                                             -128
+                                                         ],
+                                            "webhookId":  "b48bc870-80bf-4086-a759-25bc3c16f607"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "url":  "=http://host.docker.internal:4000/api/backtests/{{ $json.backtestId }}",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "fetch-results",
+                                            "name":  "Fetch Backtest Results",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             1120,
+                                                             -128
+                                                         ],
+                                            "retryOnFail":  true,
+                                            "maxTries":  3,
+                                            "waitBetweenTries":  5000
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const current = $input.first().json;\nconst original = $(\u0027Loop Over Strategies\u0027).first().json;\n\nconst sharpeDrop = original.sharpeRatio \u003e 0 \n  ? (Number(original.sharpeRatio) - Number(current.sharpeRatio)) / Number(original.sharpeRatio) \n  : 0;\nconst winRateDrop = Number(original.winRate) - Number(current.winRate);\n\nconst degraded = sharpeDrop \u003e 0.20 || winRateDrop \u003e 0.10;\n\nreturn [{\n  json: {\n    strategyId: current.strategyId,\n    strategyName: original.name,\n    degraded,\n    sharpeDrop: (sharpeDrop * 100).toFixed(1) + \u0027%\u0027,\n    winRateDrop: (winRateDrop * 100).toFixed(1) + \u0027%\u0027,\n    currentSharpe: current.sharpeRatio,\n    originalSharpe: original.sharpeRatio,\n    currentWinRate: current.winRate,\n    originalWinRate: original.winRate,\n  }\n}];"
+                                                           },
+                                            "id":  "compare-metrics",
+                                            "name":  "Compare Metrics",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1344,
+                                                             -128
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "version":  2,
+                                                                                                  "leftValue":  "",
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "condition-degraded",
+                                                                                                         "leftValue":  "={{ $json.degraded }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "equals"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "check-degraded",
+                                            "name":  "Degraded?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.3,
+                                            "position":  [
+                                                             1568,
+                                                             -128
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "http://host.docker.internal:4000/api/journal",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={\n  \"type\": \"robustness_alert\",\n  \"strategyId\": \"{{ $json.strategyId }}\",\n  \"strategyName\": \"{{ $json.strategyName }}\",\n  \"message\": \"Strategy degradation detected - flagged for review\",\n  \"sharpeDrop\": \"{{ $json.sharpeDrop }}\",\n  \"winRateDrop\": \"{{ $json.winRateDrop }}\",\n  \"currentSharpe\": {{ $json.currentSharpe }},\n  \"originalSharpe\": {{ $json.originalSharpe }},\n  \"currentWinRate\": {{ $json.currentWinRate }},\n  \"originalWinRate\": {{ $json.originalWinRate }},\n  \"flagForReview\": true,\n  \"timestamp\": \"{{ $now.toISO() }}\"\n}",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "log-degraded",
+                                            "name":  "Log Degradation to Journal",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             1792,
+                                                             -56
+                                                         ],
+                                            "retryOnFail":  true,
+                                            "maxTries":  3,
+                                            "waitBetweenTries":  5000
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "http://host.docker.internal:4000/api/journal",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={\n  \"type\": \"robustness_check\",\n  \"strategyId\": \"{{ $json.strategyId }}\",\n  \"strategyName\": \"{{ $json.strategyName }}\",\n  \"message\": \"Strategy still healthy\",\n  \"currentSharpe\": {{ $json.currentSharpe }},\n  \"originalSharpe\": {{ $json.originalSharpe }},\n  \"currentWinRate\": {{ $json.currentWinRate }},\n  \"originalWinRate\": {{ $json.originalWinRate }},\n  \"flagForReview\": false,\n  \"timestamp\": \"{{ $now.toISO() }}\"\n}",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "log-healthy",
+                                            "name":  "Log Healthy to Journal",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             1792,
+                                                             136
+                                                         ],
+                                            "retryOnFail":  true,
+                                            "maxTries":  3,
+                                            "waitBetweenTries":  5000
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Monthly 1st 6AM EST":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Fetch Deployed Strategies",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Fetch Deployed Strategies":  {
+                                                                                "main":  [
+                                                                                             [
+                                                                                                 {
+                                                                                                     "node":  "Loop Over Strategies",
+                                                                                                     "type":  "main",
+                                                                                                     "index":  0
+                                                                                                 }
+                                                                                             ]
+                                                                                         ]
+                                                                            },
+                                              "Loop Over Strategies":  {
+                                                                           "main":  [
+                                                                                        [
+
+                                                                                        ],
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Run Backtest",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Run Backtest":  {
+                                                                   "main":  [
+                                                                                [
+                                                                                    {
+                                                                                        "node":  "Wait 3 Min for Backtest",
+                                                                                        "type":  "main",
+                                                                                        "index":  0
+                                                                                    }
+                                                                                ]
+                                                                            ]
+                                                               },
+                                              "Wait 3 Min for Backtest":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Fetch Backtest Results",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          },
+                                              "Fetch Backtest Results":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Compare Metrics",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "Compare Metrics":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Degraded?",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Degraded?":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Log Degradation to Journal",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ],
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Log Healthy to Journal",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                                              "Log Degradation to Journal":  {
+                                                                                 "main":  [
+                                                                                              [
+                                                                                                  {
+                                                                                                      "node":  "Loop Over Strategies",
+                                                                                                      "type":  "main",
+                                                                                                      "index":  0
+                                                                                                  }
+                                                                                              ]
+                                                                                          ]
+                                                                             },
+                                              "Log Healthy to Journal":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Loop Over Strategies",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         }
+                                          },
+                          "authors":  "Tonio tonioswayz32@gmail.com",
+                          "name":  "Version 8a74d455",
+                          "description":  "",
+                          "autosaved":  true,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-03-10T05:22:35.066Z",
+                                                             "id":  752,
+                                                             "workflowId":  "m6aD7X4ioWfhWaS9",
+                                                             "versionId":  "8a74d455-9300-4813-a302-f7f0709beed7",
+                                                             "event":  "activated",
+                                                             "userId":  "4fd79e89-3017-4dbe-8cec-676fcab6f938"
+                                                         }
+                                                     ]
+                      }
+}

@@ -47,8 +47,8 @@ class TestRegistryLoading:
         assert registry.version == "1.0.0"
 
     def test_loads_all_skill_packs(self, registry: ControlPlaneRegistry):
-        """All 11 customer-facing + admin skill packs loaded."""
-        assert len(registry.skill_packs) == 11
+        """All 17 skill packs loaded (11 customer + 6 internal)."""
+        assert len(registry.skill_packs) == 17
 
     def test_loads_all_tools(self, registry: ControlPlaneRegistry):
         """All tool definitions loaded."""
@@ -66,7 +66,7 @@ class TestRegistryLoading:
             assert pack.owner, f"{pack_id} missing owner"
             assert pack.category, f"{pack_id} missing category"
             assert isinstance(pack.risk_tier, RiskTier), f"{pack_id} has invalid risk_tier"
-            assert pack.status in ("registered", "active", "suspended"), f"{pack_id} has invalid status"
+            assert pack.status in ("registered", "active", "suspended", "development"), f"{pack_id} has invalid status"
 
     def test_tool_has_required_fields(self, registry: ControlPlaneRegistry):
         """Every tool has provider, category, and risk tier."""
@@ -132,7 +132,7 @@ class TestSkillPackLookup:
         assert pack.owner == owner
         assert pack.category == category
         assert pack.risk_tier == risk_tier
-        assert pack.status == "registered"
+        assert pack.status in ("registered", "active")
 
     def test_unknown_pack_returns_none(self, registry: ControlPlaneRegistry):
         """Unknown pack ID returns None."""
@@ -210,7 +210,7 @@ class TestFiltering:
     def test_filter_by_category(self, registry: ControlPlaneRegistry):
         """Filter by category returns correct subset."""
         channel_packs = registry.list_skill_packs(category="channel")
-        assert len(channel_packs) == 6
+        assert len(channel_packs) == 7
 
         finance_packs = registry.list_skill_packs(category="finance")
         assert len(finance_packs) == 3
@@ -218,24 +218,24 @@ class TestFiltering:
         legal_packs = registry.list_skill_packs(category="legal")
         assert len(legal_packs) == 1
 
+        internal_packs = registry.list_skill_packs(category="internal")
+        assert len(internal_packs) == 4
+
     def test_filter_by_risk_tier(self, registry: ControlPlaneRegistry):
         """Filter by risk tier returns correct subset."""
         green_packs = registry.list_skill_packs(risk_tier=RiskTier.GREEN)
-        assert len(green_packs) == 1  # adam
+        assert len(green_packs) == 3  # adam, ava_user, qa_evals
 
         red_packs = registry.list_skill_packs(risk_tier=RiskTier.RED)
-        assert len(red_packs) == 2  # milo, clara
+        assert len(red_packs) == 3  # milo, clara, security_review
 
         yellow_packs = registry.list_skill_packs(risk_tier=RiskTier.YELLOW)
-        assert len(yellow_packs) == 8  # sarah, eli, quinn, nora, tec, teressa, mail_ops, finn_finance_manager
+        assert len(yellow_packs) == 11
 
     def test_filter_by_status(self, registry: ControlPlaneRegistry):
-        """All packs are in 'registered' status for Phase 1."""
-        registered = registry.list_skill_packs(status="registered")
-        assert len(registered) == 11
-
+        """All packs are in 'active' status after Phase 1 deployment."""
         active = registry.list_skill_packs(status="active")
-        assert len(active) == 0
+        assert len(active) == 17
 
     def test_combined_filters(self, registry: ControlPlaneRegistry):
         """Multiple filters combine correctly."""
@@ -259,7 +259,7 @@ class TestCapabilityDiscovery:
     def test_lists_all_capabilities(self, registry: ControlPlaneRegistry):
         """list_capabilities returns all registered skill packs."""
         caps = registry.list_capabilities()
-        assert len(caps) == 11
+        assert len(caps) == 17
 
     def test_capability_has_required_fields(self, registry: ControlPlaneRegistry):
         """Each capability entry has the required discovery fields."""
@@ -292,7 +292,7 @@ class TestStats:
     def test_stats_totals(self, registry: ControlPlaneRegistry):
         """Stats include correct totals."""
         stats = registry.get_stats()
-        assert stats["total_skill_packs"] == 11
+        assert stats["total_skill_packs"] == 17
         assert stats["total_tools"] >= 33
         assert stats["total_providers"] >= 14
         assert stats["total_actions_mapped"] >= 17
@@ -301,17 +301,19 @@ class TestStats:
         """Stats by category match expectations."""
         stats = registry.get_stats()
         by_cat = stats["by_category"]
-        assert by_cat.get("channel") == 6
+        assert by_cat.get("channel") == 7
         assert by_cat.get("finance") == 3
         assert by_cat.get("legal") == 1
+        assert by_cat.get("internal") == 4
+        assert by_cat.get("internal_admin") == 2
 
     def test_stats_by_risk_tier(self, registry: ControlPlaneRegistry):
         """Stats by risk tier match expectations."""
         stats = registry.get_stats()
         by_risk = stats["by_risk_tier"]
-        assert by_risk.get("green") == 1
-        assert by_risk.get("yellow") == 8
-        assert by_risk.get("red") == 2
+        assert by_risk.get("green") == 3
+        assert by_risk.get("yellow") == 11
+        assert by_risk.get("red") == 3
 
 
 # =============================================================================

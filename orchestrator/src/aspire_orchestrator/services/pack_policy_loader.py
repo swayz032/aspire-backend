@@ -73,6 +73,15 @@ def load_pack_policies(
         except Exception as e:
             logger.warning("Failed to load policy %s for pack %s: %s", filepath.name, pack_id, e)
 
+    # Load markdown files (e.g., prompt_contract.md) as raw text
+    for filepath in sorted(pack_dir.glob("*.md")):
+        try:
+            policy_name = filepath.stem
+            policies[policy_name] = filepath.read_text(encoding="utf-8").strip()
+            logger.debug("Loaded markdown policy %s for pack %s", policy_name, pack_id)
+        except Exception as e:
+            logger.warning("Failed to load policy %s for pack %s: %s", filepath.name, pack_id, e)
+
     logger.info("Loaded %d policies for pack %s", len(policies), pack_id)
     return policies
 

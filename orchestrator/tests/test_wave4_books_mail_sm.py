@@ -187,8 +187,12 @@ class TestQuickBooksOAuth2:
         assert isinstance(manager, OAuth2Manager)
 
     @pytest.mark.asyncio
-    async def test_oauth2_token_retrieval_success(self, suite_a):
+    @patch("aspire_orchestrator.providers.quickbooks_client.settings")
+    async def test_oauth2_token_retrieval_success(self, mock_settings, suite_a):
         """Successfully get an access token from OAuth2Manager."""
+        mock_settings.quickbooks_client_id = "test-id"
+        mock_settings.quickbooks_client_secret = "test-secret"
+        mock_settings.quickbooks_base_url = ""
         client = QuickBooksClient()
         manager = client.oauth2_manager
         # Seed a valid token
@@ -199,17 +203,18 @@ class TestQuickBooksOAuth2:
         )
         manager.set_token(suite_a, token)
 
-        with patch.object(
-            client, "_authenticate_headers", wraps=client._authenticate_headers
-        ):
-            headers = await client._authenticate_headers(
-                ProviderRequest(method="GET", path="/test", suite_id=suite_a)
-            )
-            assert headers["Authorization"] == "Bearer qbo-access-123"
+        headers = await client._authenticate_headers(
+            ProviderRequest(method="GET", path="/test", suite_id=suite_a)
+        )
+        assert headers["Authorization"] == "Bearer qbo-access-123"
 
     @pytest.mark.asyncio
-    async def test_oauth2_token_expired_triggers_refresh(self, suite_a):
+    @patch("aspire_orchestrator.providers.quickbooks_client.settings")
+    async def test_oauth2_token_expired_triggers_refresh(self, mock_settings, suite_a):
         """Expired token triggers refresh via OAuth2Manager."""
+        mock_settings.quickbooks_client_id = "test-id"
+        mock_settings.quickbooks_client_secret = "test-secret"
+        mock_settings.quickbooks_base_url = ""
         client = QuickBooksClient()
         manager = client.oauth2_manager
 
@@ -236,8 +241,12 @@ class TestQuickBooksOAuth2:
             mock_refresh.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_oauth2_no_token_raises_error(self, suite_a):
+    @patch("aspire_orchestrator.providers.quickbooks_client.settings")
+    async def test_oauth2_no_token_raises_error(self, mock_settings, suite_a):
         """No token for suite raises ProviderError (fail-closed, Law #3)."""
+        mock_settings.quickbooks_client_id = "test-id"
+        mock_settings.quickbooks_client_secret = "test-secret"
+        mock_settings.quickbooks_base_url = ""
         client = QuickBooksClient()
         # No token set for this suite
         with pytest.raises(ProviderError) as exc_info:

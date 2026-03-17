@@ -444,12 +444,14 @@ class TestE2EYellowTierFlow:
             "correlation_id": str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "task_type": task_type,
-            "payload": {"amount": 1500, "customer": "test-customer"},
+            "payload": {"amount": 1500, "customer": "test-customer", "customer_email": "test@example.com"},
         }
 
     def test_yellow_without_approval_returns_approval_required(self, client) -> None:
         """Yellow tier without approval → APPROVAL_REQUIRED error."""
-        req = self._make_request("suite-yellow-001")
+        # invoice.send is YELLOW (invoice.create is GREEN in draft-first model)
+        req = self._make_request("suite-yellow-001", task_type="invoice.send")
+        req["payload"]["invoice_id"] = "inv_test_123"
         response = client.post("/v1/intents", json=req)
 
         # Should return non-200 indicating approval needed

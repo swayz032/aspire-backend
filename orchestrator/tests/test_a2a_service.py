@@ -261,7 +261,7 @@ class TestClaim:
         assert not claim.success
         assert claim.receipt_data
         assert claim.receipt_data["outcome"] == "denied"
-        assert claim.receipt_data["redacted_outputs"]["reason"] == "NO_TASKS_AVAILABLE"
+        assert claim.receipt_data["details"]["redacted_outputs"]["reason"] == "NO_TASKS_AVAILABLE"
 
     def test_claim_already_claimed_task_skipped(self, a2a: A2AService):
         """Already-claimed tasks are not re-claimed."""
@@ -360,7 +360,7 @@ class TestComplete:
         assert not result.success
         assert result.receipt_data
         assert result.receipt_data["outcome"] == "denied"
-        assert result.receipt_data["redacted_outputs"]["reason"] == "TASK_NOT_FOUND"
+        assert result.receipt_data["details"]["redacted_outputs"]["reason"] == "TASK_NOT_FOUND"
 
     def test_complete_wrong_status_emits_receipt(self, a2a: A2AService):
         """Complete on unclaimed task emits receipt (Law #2)."""
@@ -375,7 +375,7 @@ class TestComplete:
         assert not result.success
         assert result.receipt_data
         assert result.receipt_data["outcome"] == "denied"
-        assert result.receipt_data["redacted_outputs"]["reason"] == "INVALID_STATUS"
+        assert result.receipt_data["details"]["redacted_outputs"]["reason"] == "INVALID_STATUS"
 
     def test_complete_wrong_agent_emits_receipt(self, a2a: A2AService):
         """Complete by wrong agent emits receipt (Law #2)."""
@@ -390,7 +390,7 @@ class TestComplete:
         assert not result.success
         assert result.receipt_data
         assert result.receipt_data["outcome"] == "denied"
-        assert result.receipt_data["redacted_outputs"]["reason"] == "WRONG_CLAIMER"
+        assert result.receipt_data["details"]["redacted_outputs"]["reason"] == "WRONG_CLAIMER"
 
 
 # =============================================================================
@@ -476,7 +476,7 @@ class TestFailRetryQuarantine:
         assert not result.success
         assert result.receipt_data
         assert result.receipt_data["outcome"] == "denied"
-        assert result.receipt_data["redacted_outputs"]["reason"] == "TASK_NOT_FOUND"
+        assert result.receipt_data["details"]["redacted_outputs"]["reason"] == "TASK_NOT_FOUND"
 
     def test_fail_wrong_status_emits_receipt(self, a2a: A2AService):
         """Fail on unclaimed task emits receipt (Law #2)."""
@@ -491,7 +491,7 @@ class TestFailRetryQuarantine:
         assert not result.success
         assert result.receipt_data
         assert result.receipt_data["outcome"] == "denied"
-        assert result.receipt_data["redacted_outputs"]["reason"] == "INVALID_STATUS"
+        assert result.receipt_data["details"]["redacted_outputs"]["reason"] == "INVALID_STATUS"
 
     def test_fail_wrong_agent_emits_receipt(self, a2a: A2AService):
         """Fail by wrong agent emits receipt (Law #2)."""
@@ -507,7 +507,7 @@ class TestFailRetryQuarantine:
         assert not result.success
         assert result.receipt_data
         assert result.receipt_data["outcome"] == "denied"
-        assert result.receipt_data["redacted_outputs"]["reason"] == "WRONG_CLAIMER"
+        assert result.receipt_data["details"]["redacted_outputs"]["reason"] == "WRONG_CLAIMER"
 
 
 # =============================================================================

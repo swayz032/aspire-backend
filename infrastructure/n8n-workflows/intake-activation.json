@@ -112,7 +112,12 @@
         880,
         400
       ],
-      "credentials": {},
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "J84m12hyzSwSHo6S",
+          "name": "Gateway Internal Key"
+        }
+      },
       "onError": "continueRegularOutput"
     },
     {

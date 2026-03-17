@@ -737,11 +737,15 @@ def insert_persona_map_entry(path: Path, spec: ScaffoldSpec, persona_filename: s
     text = path.read_text(encoding="utf-8")
     if f'"{spec.owner_key}": "{persona_filename}"' in text:
         return
-    marker = "}\n\n_PERSONAS_DIR"
+    # Try agent_identity.py AGENT_PERSONA_MAP format first
+    marker = "}\n\n# Agent display names"
     if marker not in text:
-        raise ValueError("Could not find _PERSONA_MAP terminator in agent_reason.py")
+        # Fallback: original agent_reason.py format
+        marker = "}\n\n_PERSONAS_DIR"
+    if marker not in text:
+        raise ValueError("Could not find AGENT_PERSONA_MAP terminator in agent_identity.py")
     insertion = f'    "{spec.owner_key}": "{persona_filename}",\n'
-    text = text.replace(marker, insertion + "}\n\n_PERSONAS_DIR", 1)
+    text = text.replace(marker, insertion + marker[0] + marker[1:], 1)
     path.write_text(text, encoding="utf-8")
 
 
@@ -878,7 +882,7 @@ def scaffold_agent(root: Path, spec: ScaffoldSpec) -> list[Path]:
     test_path = root / "tests" / f"test_{spec.registry_id}.py"
     registry_path = root / "src" / "aspire_orchestrator" / "config" / "skill_pack_manifests.yaml"
     policy_matrix_path = root / "src" / "aspire_orchestrator" / "config" / "policy_matrix.yaml"
-    agent_reason_path = root / "src" / "aspire_orchestrator" / "nodes" / "agent_reason.py"
+    agent_identity_path = root / "src" / "aspire_orchestrator" / "services" / "agent_identity.py"
 
     for path in (
         module_path,
@@ -906,7 +910,7 @@ def scaffold_agent(root: Path, spec: ScaffoldSpec) -> list[Path]:
 
     insert_registry_entry(registry_path, spec)
     append_policy_entries(policy_matrix_path, spec)
-    insert_persona_map_entry(agent_reason_path, spec, persona_filename)
+    insert_persona_map_entry(agent_identity_path, spec, persona_filename)
 
     created.extend(
         [
@@ -950,7 +954,7 @@ def validate_agent(root: Path, target: ValidationTarget) -> list[str]:
     policy_dir = config_root / "pack_policies" / target.registry_id
     registry_path = config_root / "skill_pack_manifests.yaml"
     policy_matrix_path = config_root / "policy_matrix.yaml"
-    agent_reason_path = root / "src" / "aspire_orchestrator" / "nodes" / "agent_reason.py"
+    agent_identity_path = root / "src" / "aspire_orchestrator" / "services" / "agent_identity.py"
     manifest_path = config_root / "pack_manifests" / f"{target.manifest_id}.json"
     test_path = root / "tests" / f"test_{target.registry_id}.py"
 
@@ -994,9 +998,9 @@ def validate_agent(root: Path, target: ValidationTarget) -> list[str]:
         if not re.search(rf"^\s+{re.escape(str(action))}:\s*$", policy_text, flags=re.MULTILINE):
             problems.append(f"policy matrix missing action: {action}")
 
-    persona_map_text = agent_reason_path.read_text(encoding="utf-8")
+    persona_map_text = agent_identity_path.read_text(encoding="utf-8")
     if f'"{target.owner_key}": "{target.persona_filename}"' not in persona_map_text:
-        problems.append("agent_reason persona map missing entry")
+        problems.append("agent_identity persona map missing entry")
 
     if module_path.exists():
         module_text = module_path.read_text(encoding="utf-8")

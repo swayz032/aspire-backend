@@ -214,8 +214,8 @@ class TestReceiptRedaction:
 class TestDLPFailSafe:
     """Test DLP behavior when Presidio is unavailable."""
 
-    def test_unavailable_returns_original_text(self) -> None:
-        """When Presidio fails to init, original text is returned."""
+    def test_unavailable_returns_placeholder(self) -> None:
+        """When DLP cannot initialize, fail-closed returns redacted placeholder."""
         dlp = DLPService()
 
         with patch(
@@ -225,8 +225,9 @@ class TestDLPFailSafe:
             dlp._initialized = True
             dlp._init_error = "Simulated failure"
             result = dlp.redact_text("My card is 4111111111111111")
-            # Text returned unredacted (fail-open for text, fail-closed for execution)
-            assert "4111111111111111" in result
+            # Fail-closed: returns placeholder, not original text
+            assert "DLP_UNAVAILABLE" in result
+            assert "4111111111111111" not in result
 
     def test_service_available_property(self) -> None:
         """DLP service reports availability correctly."""

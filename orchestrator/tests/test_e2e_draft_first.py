@@ -1288,4 +1288,4 @@ class TestNarrationExpanded:
             tool_used=None, execution_params=None,
             execution_result=None, draft_id=None, risk_tier="green",
         )
-        assert "processed" in text.lower()
+        assert "handled" in text.lower()

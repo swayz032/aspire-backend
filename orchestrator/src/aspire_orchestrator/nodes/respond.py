@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from pydantic import ValidationError
@@ -407,8 +408,6 @@ def _call_openai_sync(
     API parameter is Responses-API-only; Chat Completions uses system instructions).
     Returns content string or empty string on failure.
     """
-    import os
-
     api_key = os.environ.get("ASPIRE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return ""

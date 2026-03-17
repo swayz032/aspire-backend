@@ -65,6 +65,7 @@ def _make_pack(memory_enabled: bool = True) -> AgenticSkillPack:
     pack._agent_id = "test-agent"
     pack._agent_name = "Test Agent"
     pack._memory_enabled = memory_enabled
+    pack._policies = {}
     pack.__init_memory__()
     return pack
 
@@ -593,8 +594,13 @@ class TestAgenticLoopOutcomes:
             receipt={"receipt_id": "plan-1", "status": "ok"},
         )
 
+        _plan_done = False
+
         async def fake_wait_for(coro, timeout):
-            if timeout == min(5.0 / 3, 10.0):
+            nonlocal _plan_done
+            if not _plan_done:
+                # Allow the planning call through, then block all subsequent calls
+                _plan_done = True
                 return await coro
             raise TimeoutError()
 
