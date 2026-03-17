@@ -185,6 +185,33 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
     if office_id:
         row["office_id"] = office_id
 
+    # Trace context — populate from receipt fields or current request context
+    try:
+        from aspire_orchestrator.middleware.correlation import (
+            get_trace_id,
+            get_span_id,
+            get_parent_span_id,
+        )
+        trace_id = receipt.get("trace_id") or get_trace_id()
+        span_id = receipt.get("span_id") or get_span_id()
+        parent_span_id = receipt.get("parent_span_id") or get_parent_span_id()
+    except Exception:
+        trace_id = receipt.get("trace_id", "")
+        span_id = receipt.get("span_id", "")
+        parent_span_id = receipt.get("parent_span_id", "")
+
+    if trace_id:
+        row["trace_id"] = trace_id
+    if span_id:
+        row["span_id"] = span_id
+    if parent_span_id:
+        row["parent_span_id"] = parent_span_id
+
+    # run_id for grouping related receipts in a single orchestrator run
+    run_id = receipt.get("run_id", "")
+    if run_id:
+        row["run_id"] = run_id
+
     # receipt_hash as hex string (Supabase accepts hex for bytea via \\x prefix)
     receipt_hash = receipt.get("receipt_hash")
     if receipt_hash and isinstance(receipt_hash, str):
@@ -432,6 +459,13 @@ def store_receipts(receipts: list[dict[str, Any]]) -> None:
             _persist_to_supabase(receipts)
         except Exception as e:
             logger.error("Supabase dual-write failed (receipts safe in-memory): %s", e)
+
+    # Auto-create incidents for failed/blocked/denied receipts (background, non-blocking)
+    try:
+        from aspire_orchestrator.services.incident_writer import maybe_create_incident_async
+        maybe_create_incident_async(receipts)
+    except Exception as e:
+        logger.debug("Incident writer unavailable: %s", e)
 
 
 def store_receipts_strict(receipts: list[dict[str, Any]]) -> None:
