@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -25,6 +26,9 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
+
+# Paths to skip access logging (noisy health checks)
+_SKIP_ACCESS_LOG = {"/healthz", "/livez", "/readyz", "/metrics"}
 
 # ContextVar for correlation ID — accessible from any code path in the same request
 _correlation_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -63,11 +67,26 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
         # Store in contextvar for all downstream code
         token = _correlation_id_var.set(correlation_id)
+        start = time.monotonic()
 
         try:
             response = await call_next(request)
             # Always set correlation ID on response (even if it was provided)
             response.headers["X-Correlation-Id"] = correlation_id
+
+            # Access log (skip noisy health endpoints)
+            if request.url.path not in _SKIP_ACCESS_LOG:
+                duration_ms = round((time.monotonic() - start) * 1000, 1)
+                logger.info(
+                    "request completed",
+                    extra={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": response.status_code,
+                        "duration_ms": duration_ms,
+                    },
+                )
+
             return response
         finally:
             # Reset contextvar to prevent leakage between requests

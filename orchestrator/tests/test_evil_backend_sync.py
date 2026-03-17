@@ -70,11 +70,16 @@ def client():
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     monkeypatch.setenv("ASPIRE_ADMIN_JWT_SECRET", _TEST_JWT_SECRET)
+    # Force admin_store to use in-memory only (no real Supabase in tests)
+    import aspire_orchestrator.services.admin_store as _admin_store_mod
+    _admin_store_mod._supabase_client = None
+    _admin_store_mod._supabase_init_done = True
     clear_admin_stores()
     clear_store()
     yield
     clear_admin_stores()
     clear_store()
+    _admin_store_mod._supabase_init_done = False
 
 
 # =============================================================================
@@ -294,10 +299,11 @@ class TestCrossTenantIncidentIsolation:
             "last_seen": _now_iso(),
         })
 
-        # Verify the incident has suite_id
-        from aspire_orchestrator.routes.admin import _incidents
-        assert inc_id in _incidents
-        assert _incidents[inc_id]["suite_id"] == "tenant-X"
+        # Verify the incident has suite_id (stored in AdminStore)
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        found = get_admin_store().get_incident(inc_id)
+        assert found is not None
+        assert found["suite_id"] == "tenant-X"
 
     def test_receipts_admin_api_requires_suite_id(self, client) -> None:
         """Receipts admin endpoint enforces suite_id parameter (Law #6)."""

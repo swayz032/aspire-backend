@@ -48,11 +48,15 @@ def client():
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     monkeypatch.setenv("ASPIRE_ADMIN_JWT_SECRET", _TEST_JWT_SECRET)
+    import aspire_orchestrator.services.admin_store as _admin_store_mod
+    _admin_store_mod._supabase_client = None
+    _admin_store_mod._supabase_init_done = True
     clear_admin_stores()
     clear_store()
     yield
     clear_admin_stores()
     clear_store()
+    _admin_store_mod._supabase_init_done = False
 
 
 @pytest.fixture

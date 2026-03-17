@@ -56,7 +56,7 @@ router = APIRouter()
 
 
 # =============================================================================
-# In-Memory Stores (Phase 2 — will be replaced by Supabase in Phase 3)
+# In-Memory Stores (fallback — primary writes go to Supabase via admin_store)
 # =============================================================================
 
 _store_lock = threading.Lock()
@@ -75,13 +75,10 @@ _supabase_client: Any | None = None
 
 
 def register_incident(incident: dict[str, Any]) -> None:
-    """Register an incident into the in-memory store AND the admin_store singleton.
+    """Register an incident via Supabase (primary) with in-memory fallback.
 
     Called by other services (e.g., health monitors, circuit breakers)
     to publish incidents that the admin facade exposes.
-
-    Dual-writes to both _incidents (local) and admin_store (singleton)
-    to ensure ava_admin_desk and other consumers can always find incidents.
     """
     incident_id = incident.get("incident_id")
     if not incident_id:
@@ -90,16 +87,35 @@ def register_incident(incident: dict[str, Any]) -> None:
     if not incident.get("trace_id"):
         incident["trace_id"] = incident.get("correlation_id", "")
 
-    with _store_lock:
-        _incidents[incident_id] = incident
-
-    # Also write to admin_store singleton (ensures ava_admin_desk can find it)
+    # Write to Supabase via admin_store (primary path)
     try:
         from aspire_orchestrator.services.admin_store import get_admin_store
         store = get_admin_store()
-        store._incidents[incident_id] = incident
-    except Exception:
-        pass  # Non-blocking — in-memory store is the safety net
+        evidence = incident.get("evidence_pack", {})
+        store.store_incident(
+            incident_id=incident_id,
+            tenant_id=incident.get("suite_id") or "system",
+            title=incident.get("title", ""),
+            severity=incident.get("severity", "sev2"),
+            source=evidence.get("source", "backend"),
+            status=incident.get("state", "open"),
+            description=evidence.get("message") or evidence.get("description"),
+            stack_trace=evidence.get("stack_trace"),
+            component=evidence.get("component"),
+            provider=evidence.get("provider") or incident.get("provider"),
+            fingerprint=incident.get("fingerprint"),
+            correlation_id=incident.get("correlation_id"),
+            metadata={
+                "timeline": incident.get("timeline", []),
+                "evidence_pack": evidence,
+                "agent": incident.get("agent"),
+            },
+        )
+    except Exception as exc:
+        logger.warning("register_incident: admin_store.store_incident failed: %s", exc)
+        # Fallback: write to in-memory dict directly
+        with _store_lock:
+            _incidents[incident_id] = incident
 
 
 def register_provider_call(call: dict[str, Any]) -> None:
@@ -136,6 +152,14 @@ def clear_admin_stores() -> None:
         with _provider_health_lock:
             _provider_health.clear()
     except NameError:
+        pass
+    # Also clear the AdminSupabaseStore singleton's in-memory state
+    try:
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        store = get_admin_store()
+        store._incidents.clear()
+        store._provider_calls.clear()
+    except Exception:
         pass
 
 
@@ -326,87 +350,77 @@ def _upsert_reported_incident(
         "receipt_id": receipt_id,
     }
 
-    incident: dict[str, Any]
-    deduped = False
+    # Build metadata blob for the DB jsonb column
+    meta: dict[str, Any] = {
+        "timeline": [timeline_event],
+        "evidence_pack": {
+            **evidence_pack,
+            "source": source,
+            "component": component,
+            "last_reporter": reporter_id,
+            "report_count": 1,
+            **({"error_code": error_code} if error_code else {}),
+            **({"message": message} if message else {}),
+        },
+        "trace_id": trace_id or correlation_id,
+    }
+    if agent:
+        meta["agent"] = agent
 
-    with _store_lock:
-        existing: dict[str, Any] | None = None
-        requested_incident_id = str(payload.get("incident_id") or "").strip()
-        if requested_incident_id:
-            existing = _incidents.get(requested_incident_id)
-        if existing is None and fingerprint:
-            for candidate in _incidents.values():
-                if (
-                    candidate.get("fingerprint") == fingerprint
-                    and candidate.get("state") in {"open", "investigating", "mitigated"}
-                ):
-                    existing = candidate
-                    break
+    computed_fingerprint = fingerprint or f"{source}:{component}:{error_code or title.lower()}"
 
-        if existing is not None:
-            deduped = True
-            merged_timeline = list(existing.get("timeline") or [])
-            merged_timeline.append(timeline_event)
-            merged_evidence = dict(existing.get("evidence_pack") or {})
-            merged_evidence.update(evidence_pack)
-            merged_evidence["source"] = source
-            merged_evidence["component"] = component
-            merged_evidence["last_reporter"] = reporter_id
-            merged_evidence["report_count"] = int(merged_evidence.get("report_count", 1)) + 1
-            if error_code:
-                merged_evidence["error_code"] = error_code
-            if message:
-                merged_evidence["message"] = message
-
-            incident = dict(existing)
-            incident["title"] = title or incident.get("title", "Reported incident")
-            incident["severity"] = severity if _incident_rank(severity) < _incident_rank(str(existing.get("severity", "sev4"))) else existing.get("severity", severity)
-            incident["state"] = state if state != "closed" else existing.get("state", "open")
-            incident["last_seen"] = now_iso
-            incident["correlation_id"] = correlation_id
-            incident["trace_id"] = trace_id or correlation_id
-            incident["suite_id"] = suite_id or incident.get("suite_id")
-            incident["timeline"] = merged_timeline
-            incident["fingerprint"] = fingerprint or incident.get("fingerprint")
-            incident["evidence_pack"] = merged_evidence
-            if agent:
-                incident["agent"] = agent
-            _incidents[str(incident["incident_id"])] = incident
-        else:
-            incident_id = requested_incident_id or str(uuid.uuid4())
-            incident = {
-                "incident_id": incident_id,
-                "state": state,
-                "severity": severity,
-                "title": title,
-                "correlation_id": correlation_id,
-                "trace_id": trace_id or correlation_id,
-                "suite_id": suite_id,
-                "first_seen": now_iso,
-                "last_seen": now_iso,
-                "timeline": [timeline_event],
-                "fingerprint": fingerprint or f"{source}:{component}:{error_code or title.lower()}",
-                "agent": agent,
-                "evidence_pack": {
-                    **evidence_pack,
-                    "source": source,
-                    "component": component,
-                    "last_reporter": reporter_id,
-                    "report_count": 1,
-                    **({"error_code": error_code} if error_code else {}),
-                    **({"message": message} if message else {}),
-                },
-            }
-            _incidents[incident_id] = incident
-
+    # Use admin_store.upsert_incident (Supabase-first with in-memory fallback)
     try:
         from aspire_orchestrator.services.admin_store import get_admin_store
         store = get_admin_store()
-        store._incidents[str(incident["incident_id"])] = incident
-    except Exception:
-        pass
+        incident_row, deduped, _sb_ok = store.upsert_incident(
+            tenant_id=suite_id or "system",
+            title=title,
+            severity=severity,
+            source=source if source in ("backend", "desktop", "desktop_provider", "sre") else "backend",
+            description=message or evidence_pack.get("message"),
+            stack_trace=evidence_pack.get("stack_trace"),
+            component=component,
+            provider=evidence_pack.get("provider") or payload.get("provider"),
+            fingerprint=computed_fingerprint,
+            correlation_id=correlation_id,
+            metadata=meta,
+        )
+        # Ensure the returned dict has legacy fields the endpoint expects
+        if incident_row and "incident_id" not in incident_row:
+            # Raw DB row — convert
+            from aspire_orchestrator.services.admin_store import _db_row_to_incident
+            incident_row = _db_row_to_incident(incident_row)
 
-    return incident, deduped
+        if incident_row:
+            # Ensure trace_id is set for response compatibility
+            if not incident_row.get("trace_id"):
+                incident_row["trace_id"] = trace_id or correlation_id
+            return incident_row, deduped
+    except Exception as exc:
+        logger.warning("_upsert_reported_incident: admin_store failed: %s", exc)
+
+    # Hard fallback: in-memory only (if admin_store entirely fails)
+    incident_id = str(payload.get("incident_id") or "").strip() or str(uuid.uuid4())
+    incident: dict[str, Any] = {
+        "incident_id": incident_id,
+        "state": state,
+        "severity": severity,
+        "title": title,
+        "correlation_id": correlation_id,
+        "trace_id": trace_id or correlation_id,
+        "suite_id": suite_id,
+        "first_seen": now_iso,
+        "last_seen": now_iso,
+        "timeline": [timeline_event],
+        "fingerprint": computed_fingerprint,
+        "agent": agent,
+        "evidence_pack": meta.get("evidence_pack", {}),
+    }
+    with _store_lock:
+        _incidents[incident_id] = incident
+
+    return incident, False
 
 
 def _get_supabase_jwt_secret() -> str:
@@ -842,10 +856,7 @@ async def list_incidents(
             status_code=401,
         )
 
-    # Build filtered list
-    with _store_lock:
-        all_incidents = list(_incidents.values())
-
+    # Validate filters
     if state:
         valid_states = {"open", "investigating", "mitigated", "closed"}
         if state not in valid_states:
@@ -855,7 +866,6 @@ async def list_incidents(
                 correlation_id=correlation_id,
                 status_code=400,
             )
-        all_incidents = [i for i in all_incidents if i.get("state") == state]
 
     if severity:
         valid_severities = {"sev1", "sev2", "sev3", "sev4"}
@@ -866,14 +876,18 @@ async def list_incidents(
                 correlation_id=correlation_id,
                 status_code=400,
             )
-        all_incidents = [i for i in all_incidents if i.get("severity") == severity]
+
+    # Query via admin_store (Supabase-first, in-memory fallback)
+    from aspire_orchestrator.services.admin_store import get_admin_store
+    store = get_admin_store()
+    all_incidents, _page = store.query_incidents(state=state, severity=severity, limit=limit, cursor=cursor)
+
+    # Apply trace_id filter (not supported at DB level, filter in-memory)
     if trace_id:
         all_incidents = [i for i in all_incidents if i.get("trace_id") == trace_id]
 
-    # Sort by last_seen descending (newest first)
-    all_incidents.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
-
-    page_items, page_info = _paginate(all_incidents, cursor, limit, id_field="incident_id")
+    page_items = all_incidents
+    page_info = _page
 
     # Law #2: access receipt
     receipt = _build_access_receipt(
@@ -1027,8 +1041,10 @@ async def get_incident(request: Request, incident_id: str) -> JSONResponse:
             status_code=401,
         )
 
-    with _store_lock:
-        incident = _incidents.get(incident_id)
+    # Query via admin_store (Supabase-first, in-memory fallback)
+    from aspire_orchestrator.services.admin_store import get_admin_store
+    store = get_admin_store()
+    incident = store.get_incident(incident_id)
 
     if incident is None:
         receipt = _build_access_receipt(
@@ -1187,6 +1203,148 @@ async def list_admin_receipts(
         content={
             "items": page_items,
             "page": page_info,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# 4b. GET /admin/ops/trace/{correlation_id} — Full Request Journey (Phase 4A)
+# =============================================================================
+
+
+@router.get("/admin/ops/trace/{correlation_id}")
+async def get_trace(request: Request, correlation_id: str) -> JSONResponse:
+    """Get the full request journey for a correlation_id.
+
+    Aggregates: receipts + incidents + provider calls + client events
+    for a single correlation_id, ordered chronologically.
+    """
+    req_correlation_id = _get_correlation_id(request)
+
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=req_correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.trace.get",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=req_correlation_id,
+            status_code=401,
+        )
+
+    events: list[dict[str, Any]] = []
+
+    # 1. Receipts with this correlation_id (Supabase service-role query)
+    client = _get_supabase_client()
+    if client:
+        try:
+            result = (
+                client.table("receipts")
+                .select("*")
+                .eq("correlation_id", correlation_id)
+                .order("created_at", desc=False)
+                .limit(200)
+                .execute()
+            )
+            for row in (result.data or []):
+                events.append({
+                    "type": "receipt",
+                    "timestamp": row.get("created_at", ""),
+                    "data": row,
+                })
+        except Exception:
+            pass
+    else:
+        # Fallback: in-memory receipts (all suites — admin-only endpoint)
+        from aspire_orchestrator.services.receipt_store import _receipts, _lock
+        try:
+            with _lock:
+                for r in _receipts:
+                    if r.get("correlation_id") == correlation_id:
+                        events.append({
+                            "type": "receipt",
+                            "timestamp": r.get("created_at", ""),
+                            "data": r,
+                        })
+        except Exception:
+            pass
+
+    # 2. Incidents with this correlation_id
+    from aspire_orchestrator.services.admin_store import get_admin_store
+    store = get_admin_store()
+    try:
+        all_incidents, _ = store.query_incidents(limit=200)
+        for inc in all_incidents:
+            if inc.get("correlation_id") == correlation_id or inc.get("trace_id") == correlation_id:
+                events.append({
+                    "type": "incident",
+                    "timestamp": inc.get("first_seen", ""),
+                    "data": inc,
+                })
+    except Exception:
+        pass
+
+    # 3. Provider calls with this correlation_id
+    from aspire_orchestrator.services.provider_call_logger import get_provider_call_logger
+    try:
+        pcl = get_provider_call_logger()
+        calls = pcl.query_calls(correlation_id=correlation_id, limit=200)
+        for call in calls:
+            events.append({
+                "type": "provider_call",
+                "timestamp": call.get("started_at", ""),
+                "data": call,
+            })
+    except Exception:
+        pass
+
+    # 4. Client events with this correlation_id (Supabase query)
+    client = _get_supabase_client()
+    if client:
+        try:
+            result = (
+                client.table("client_events")
+                .select("*")
+                .eq("correlation_id", correlation_id)
+                .order("created_at", desc=False)
+                .limit(200)
+                .execute()
+            )
+            for row in (result.data or []):
+                events.append({
+                    "type": "client_event",
+                    "timestamp": row.get("created_at", ""),
+                    "data": row,
+                })
+        except Exception:
+            pass
+
+    # Sort all events chronologically
+    events.sort(key=lambda e: e.get("timestamp", ""))
+
+    # Access receipt
+    receipt = _build_access_receipt(
+        correlation_id=req_correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.trace.get",
+        outcome="success",
+        details={"trace_correlation_id": correlation_id, "event_count": len(events)},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "trace_id": correlation_id,
+            "event_count": len(events),
+            "events": events,
             "server_time": _now_iso(),
         },
     )
@@ -2681,6 +2839,258 @@ async def admin_provider_analysis(
 
 
 # =============================================================================
+# Workflow Executions (Phase 6 — Temporal Visibility)
+# =============================================================================
+
+
+@router.get("/admin/ops/workflows")
+async def list_workflows(
+    request: Request,
+    status: str | None = Query(None, description="Filter by status"),
+    limit: int = Query(50, ge=1, le=200),
+) -> JSONResponse:
+    """List workflow executions from Supabase (Temporal visibility proxy)."""
+    correlation_id = _get_correlation_id(request)
+
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.workflows.list",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    items: list[dict[str, Any]] = []
+    client = _get_supabase_client()
+    if client:
+        try:
+            query = (
+                client.table("workflow_executions")
+                .select("*")
+                .order("started_at", desc=True)
+                .limit(limit + 1)
+            )
+            if status:
+                query = query.eq("status", status)
+            result = query.execute()
+            rows = result.data or []
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            items = rows
+        except Exception as e:
+            logger.warning("list_workflows: Supabase query failed: %s", e)
+
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.workflows.list",
+        outcome="success",
+        details={"count": len(items), "status_filter": status},
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "items": items,
+            "page": {"has_more": len(items) == limit},
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# Dashboard Metrics (Phase 5 — Command Center)
+# =============================================================================
+
+
+@router.get("/admin/ops/dashboard/metrics")
+async def dashboard_metrics(request: Request) -> JSONResponse:
+    """Aggregated dashboard metrics for the Command Center.
+
+    Returns KPI data from Supabase tables:
+    - Receipt volume (total + 24h)
+    - Incident counts by severity/status
+    - Provider call stats (success rate, avg latency)
+    - Active sessions (from client_events)
+    - System status (from deep health check)
+    """
+    correlation_id = _get_correlation_id(request)
+
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.dashboard.metrics",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    metrics: dict[str, Any] = {}
+
+    client = _get_supabase_client()
+    if client:
+        # Receipt stats
+        try:
+            total_result = client.table("receipts").select("id", count="exact").execute()
+            metrics["receipts_total"] = total_result.count or 0
+
+            recent_result = (
+                client.table("receipts")
+                .select("id", count="exact")
+                .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+                .execute()
+            )
+            metrics["receipts_24h"] = recent_result.count or 0
+
+            failed_result = (
+                client.table("receipts")
+                .select("id", count="exact")
+                .eq("outcome", "failed")
+                .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+                .execute()
+            )
+            metrics["receipts_failed_24h"] = failed_result.count or 0
+        except Exception:
+            metrics["receipts_total"] = 0
+            metrics["receipts_24h"] = 0
+            metrics["receipts_failed_24h"] = 0
+
+        # Incident stats
+        try:
+            open_result = (
+                client.table("incidents")
+                .select("id, severity", count="exact")
+                .in_("status", ["open", "investigating"])
+                .execute()
+            )
+            metrics["incidents_open"] = open_result.count or 0
+            # Count by severity
+            severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            for row in (open_result.data or []):
+                sev = row.get("severity", "medium")
+                if sev in severity_counts:
+                    severity_counts[sev] += 1
+            metrics["incidents_by_severity"] = severity_counts
+        except Exception:
+            metrics["incidents_open"] = 0
+            metrics["incidents_by_severity"] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+        # Provider call stats (24h)
+        try:
+            provider_result = (
+                client.table("provider_call_log")
+                .select("provider, status, latency_ms")
+                .gte("started_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+                .limit(1000)
+                .execute()
+            )
+            rows = provider_result.data or []
+            total_calls = len(rows)
+            success_calls = sum(1 for r in rows if r.get("status") == "success")
+            latencies = [r.get("latency_ms", 0) for r in rows if r.get("latency_ms")]
+            metrics["provider_calls_24h"] = total_calls
+            metrics["provider_success_rate"] = round(success_calls / total_calls * 100, 1) if total_calls else 100.0
+            metrics["provider_avg_latency_ms"] = round(sum(latencies) / len(latencies), 1) if latencies else 0.0
+
+            # Per-provider breakdown
+            provider_stats: dict[str, dict[str, Any]] = {}
+            for r in rows:
+                p = r.get("provider", "unknown")
+                if p not in provider_stats:
+                    provider_stats[p] = {"total": 0, "success": 0, "latencies": []}
+                provider_stats[p]["total"] += 1
+                if r.get("status") == "success":
+                    provider_stats[p]["success"] += 1
+                if r.get("latency_ms"):
+                    provider_stats[p]["latencies"].append(r["latency_ms"])
+
+            metrics["provider_breakdown"] = {
+                p: {
+                    "total": s["total"],
+                    "success_rate": round(s["success"] / s["total"] * 100, 1) if s["total"] else 100.0,
+                    "avg_latency_ms": round(sum(s["latencies"]) / len(s["latencies"]), 1) if s["latencies"] else 0.0,
+                }
+                for p, s in provider_stats.items()
+            }
+        except Exception:
+            metrics["provider_calls_24h"] = 0
+            metrics["provider_success_rate"] = 100.0
+            metrics["provider_avg_latency_ms"] = 0.0
+            metrics["provider_breakdown"] = {}
+
+        # Approval request stats
+        try:
+            pending_result = (
+                client.table("approval_requests")
+                .select("id", count="exact")
+                .eq("status", "pending")
+                .execute()
+            )
+            metrics["approvals_pending"] = pending_result.count or 0
+        except Exception:
+            metrics["approvals_pending"] = 0
+    else:
+        # In-memory fallback — minimal data
+        from aspire_orchestrator.services.receipt_store import get_receipt_count
+        metrics["receipts_total"] = get_receipt_count()
+        metrics["receipts_24h"] = 0
+        metrics["receipts_failed_24h"] = 0
+        metrics["incidents_open"] = 0
+        metrics["incidents_by_severity"] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        metrics["provider_calls_24h"] = 0
+        metrics["provider_success_rate"] = 100.0
+        metrics["provider_avg_latency_ms"] = 0.0
+        metrics["provider_breakdown"] = {}
+        metrics["approvals_pending"] = 0
+
+    # Compute system status
+    critical = metrics.get("incidents_by_severity", {}).get("critical", 0)
+    high = metrics.get("incidents_by_severity", {}).get("high", 0)
+    if critical > 0:
+        metrics["system_status"] = "critical"
+    elif high > 0:
+        metrics["system_status"] = "degraded"
+    else:
+        metrics["system_status"] = "healthy"
+
+    # Access receipt
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.dashboard.metrics",
+        outcome="success",
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "metrics": metrics,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
 # SSE Streaming Endpoints (Wave 8 — Admin Portal Realtime)
 # =============================================================================
 #
@@ -2848,9 +3258,14 @@ async def stream_incidents(request: Request) -> StreamingResponse:
         seen_ids: set[str] = set()
 
         try:
-            # Initial snapshot of recent incidents
-            with _store_lock:
-                snapshot = list(_incidents.values())[-50:]
+            # Initial snapshot of recent incidents (Supabase-first)
+            try:
+                from aspire_orchestrator.services.admin_store import get_admin_store as _get_store
+                _stream_store = _get_store()
+                snapshot, _ = _stream_store.query_incidents(limit=50)
+            except Exception:
+                with _store_lock:
+                    snapshot = list(_incidents.values())[-50:]
             for inc in snapshot:
                 event = {
                     "id": inc.get("incident_id", ""),
@@ -2882,9 +3297,12 @@ async def stream_incidents(request: Request) -> StreamingResponse:
                     yield format_sse_event({"type": "heartbeat", "server_time": _now_iso()}, event_type="heartbeat")
                     last_heartbeat = now
 
-                # Check for new incidents
-                with _store_lock:
-                    current = list(_incidents.values())
+                # Check for new incidents (Supabase-first)
+                try:
+                    current, _ = _stream_store.query_incidents(limit=100)
+                except Exception:
+                    with _store_lock:
+                        current = list(_incidents.values())
 
                 for inc in current:
                     inc_id = inc.get("incident_id", "")
@@ -3144,10 +3562,17 @@ async def stream_health_pulse(request: Request) -> StreamingResponse:
                     )
                     break
 
-                # Build health pulse from in-memory stores
-                with _store_lock:
-                    open_incidents = sum(1 for i in _incidents.values() if i.get("state") != "closed")
-                    total_incidents = len(_incidents)
+                # Build health pulse (Supabase-first)
+                try:
+                    from aspire_orchestrator.services.admin_store import get_admin_store as _hp_store
+                    _hp = _hp_store()
+                    _all_inc, _ = _hp.query_incidents(limit=200)
+                    open_incidents = sum(1 for i in _all_inc if i.get("state") != "closed")
+                    total_incidents = len(_all_inc)
+                except Exception:
+                    with _store_lock:
+                        open_incidents = sum(1 for i in _incidents.values() if i.get("state") != "closed")
+                        total_incidents = len(_incidents)
 
                 provider_snapshot = _build_stream_provider_snapshot()
                 providers_up = sum(1 for p in provider_snapshot if p.get("status") == "connected")

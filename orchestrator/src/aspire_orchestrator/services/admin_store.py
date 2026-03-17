@@ -1,9 +1,10 @@
-"""Admin Supabase Store (Wave 2C — F2 fix).
+"""Admin Supabase Store — Supabase-first with in-memory fallback.
 
-Replaces empty in-memory dicts with real Supabase queries for admin ops.
+Writes incidents to the Supabase `incidents` table (migration 082).
+Writes client events to the Supabase `client_events` table (migration 082).
+Falls back to in-memory dicts when Supabase is unavailable.
+
 Conforms to OpenAPI ops_telemetry_facade schemas.
-
-Graceful degradation: try Supabase first, fall back to in-memory.
 """
 
 from __future__ import annotations
@@ -51,6 +52,87 @@ def _get_supabase() -> Any | None:
         return _supabase_client
 
 
+# ---------------------------------------------------------------------------
+# Severity mapping: legacy sev1-sev4 <-> new critical/high/medium/low
+# ---------------------------------------------------------------------------
+
+_LEGACY_TO_DB_SEVERITY: dict[str, str] = {
+    "sev1": "critical",
+    "sev2": "high",
+    "sev3": "medium",
+    "sev4": "low",
+}
+
+_DB_TO_LEGACY_SEVERITY: dict[str, str] = {v: k for k, v in _LEGACY_TO_DB_SEVERITY.items()}
+
+
+def _to_db_severity(legacy: str) -> str:
+    """Convert sev1/sev2/sev3/sev4 to critical/high/medium/low."""
+    return _LEGACY_TO_DB_SEVERITY.get(legacy, legacy)
+
+
+def _to_legacy_severity(db_val: str) -> str:
+    """Convert critical/high/medium/low to sev1/sev2/sev3/sev4."""
+    return _DB_TO_LEGACY_SEVERITY.get(db_val, db_val)
+
+
+# ---------------------------------------------------------------------------
+# Status mapping: legacy state <-> DB status
+# ---------------------------------------------------------------------------
+
+_LEGACY_STATE_TO_STATUS: dict[str, str] = {
+    "open": "open",
+    "investigating": "investigating",
+    "mitigated": "resolved",
+    "closed": "dismissed",
+}
+
+_STATUS_TO_LEGACY_STATE: dict[str, str] = {
+    "open": "open",
+    "investigating": "investigating",
+    "resolved": "mitigated",
+    "dismissed": "closed",
+}
+
+
+def _to_db_status(legacy_state: str) -> str:
+    return _LEGACY_STATE_TO_STATUS.get(legacy_state, legacy_state)
+
+
+def _to_legacy_state(db_status: str) -> str:
+    return _STATUS_TO_LEGACY_STATE.get(db_status, db_status)
+
+
+def _db_row_to_incident(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert a Supabase incidents row to the legacy in-memory incident format."""
+    return {
+        "incident_id": row.get("id", ""),
+        "state": _to_legacy_state(row.get("status", "open")),
+        "severity": _to_legacy_severity(row.get("severity", "medium")),
+        "title": row.get("title", ""),
+        "correlation_id": row.get("correlation_id", ""),
+        "trace_id": row.get("metadata", {}).get("trace_id") or row.get("correlation_id", ""),
+        "suite_id": row.get("tenant_id"),
+        "first_seen": row.get("created_at", ""),
+        "last_seen": row.get("updated_at", ""),
+        "fingerprint": row.get("fingerprint", ""),
+        "timeline": row.get("metadata", {}).get("timeline", []),
+        "evidence_pack": {
+            "source": row.get("source", ""),
+            "component": row.get("component", ""),
+            "description": row.get("description", ""),
+            "stack_trace": row.get("stack_trace", ""),
+            "provider": row.get("provider", ""),
+            **(row.get("metadata", {}).get("evidence_pack", {})),
+        },
+        "agent": row.get("metadata", {}).get("agent"),
+        # Preserve raw DB fields for callers that need them
+        "_db_id": row.get("id"),
+        "_db_status": row.get("status"),
+        "_db_severity": row.get("severity"),
+    }
+
+
 class AdminSupabaseStore:
     """Supabase-backed store for admin ops with in-memory fallback."""
 
@@ -63,35 +145,315 @@ class AdminSupabaseStore:
         self._incidents = incidents
         self._provider_calls = provider_calls
 
-    def store_incident(self, incident: dict) -> bool:
-        """Store incident to Supabase + in-memory. Returns True if Supabase succeeded."""
-        # Always store in-memory (fast, guaranteed)
-        incident_id = incident.get("incident_id", "")
-        self._incidents[incident_id] = incident
+    # ------------------------------------------------------------------
+    # Incident: store (new insert)
+    # ------------------------------------------------------------------
 
-        # Try Supabase
+    def store_incident(
+        self,
+        *,
+        incident_id: str | None = None,
+        tenant_id: str,
+        title: str,
+        severity: str,
+        source: str = "backend",
+        status: str = "open",
+        description: str | None = None,
+        stack_trace: str | None = None,
+        component: str | None = None,
+        provider: str | None = None,
+        fingerprint: str | None = None,
+        correlation_id: str | None = None,
+        tags: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Insert a new incident into Supabase `incidents` table.
+
+        Returns (row_dict, supabase_succeeded).
+        Always stores in-memory as fallback.
+        """
+        db_status = _to_db_status(status) if status else "open"
+        row = {
+            "tenant_id": tenant_id,
+            "title": title,
+            "severity": _to_db_severity(severity),
+            "source": source,
+            "status": db_status,
+        }
+        if description:
+            row["description"] = description
+        if stack_trace:
+            row["stack_trace"] = stack_trace
+        if component:
+            row["component"] = component
+        if provider:
+            row["provider"] = provider
+        if fingerprint:
+            row["fingerprint"] = fingerprint
+        if correlation_id:
+            row["correlation_id"] = correlation_id
+        if tags is not None:
+            row["tags"] = tags
+        if metadata is not None:
+            row["metadata"] = metadata
+
+        client = _get_supabase()
+        if client:
+            try:
+                result = client.table("incidents").insert(row).execute()
+                if result.data:
+                    db_row = result.data[0]
+                    # Sync to in-memory
+                    incident = _db_row_to_incident(db_row)
+                    self._incidents[incident["incident_id"]] = incident
+                    return db_row, True
+            except Exception as e:
+                logger.warning("AdminStore: Failed to store incident in Supabase: %s", e)
+
+        # Fallback: in-memory only
+        import uuid
+        fallback_id = incident_id or str(uuid.uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+        fallback_incident = {
+            "incident_id": fallback_id,
+            "state": status or "open",
+            "severity": severity,
+            "title": title,
+            "correlation_id": correlation_id or "",
+            "trace_id": (metadata or {}).get("trace_id") or correlation_id or "",
+            "suite_id": tenant_id,
+            "first_seen": now_iso,
+            "last_seen": now_iso,
+            "fingerprint": fingerprint or "",
+            "timeline": (metadata or {}).get("timeline", []),
+            "evidence_pack": {
+                "source": source,
+                "component": component or "",
+                "description": description or "",
+            },
+        }
+        self._incidents[fallback_id] = fallback_incident
+        return fallback_incident, False
+
+    # ------------------------------------------------------------------
+    # Incident: update status
+    # ------------------------------------------------------------------
+
+    def update_incident(
+        self,
+        incident_id: str,
+        *,
+        status: str | None = None,
+        resolved_by: str | None = None,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Update an incident's status/resolved_by in Supabase.
+
+        Returns (updated_row, supabase_succeeded).
+        """
+        updates: dict[str, Any] = {}
+        if status:
+            updates["status"] = _to_db_status(status)
+        if resolved_by:
+            updates["resolved_by"] = resolved_by
+
+        if not updates:
+            return None, False
+
+        client = _get_supabase()
+        if client:
+            try:
+                result = (
+                    client.table("incidents")
+                    .update(updates)
+                    .eq("id", incident_id)
+                    .execute()
+                )
+                if result.data:
+                    db_row = result.data[0]
+                    incident = _db_row_to_incident(db_row)
+                    self._incidents[incident["incident_id"]] = incident
+                    return db_row, True
+            except Exception as e:
+                logger.warning("AdminStore: Failed to update incident %s: %s", incident_id, e)
+
+        # Fallback: update in-memory
+        mem_incident = self._incidents.get(incident_id)
+        if mem_incident and status:
+            mem_incident["state"] = _to_legacy_state(_to_db_status(status))
+            if resolved_by:
+                mem_incident["resolved_by"] = resolved_by
+            return mem_incident, False
+
+        return None, False
+
+    # ------------------------------------------------------------------
+    # Incident: upsert by fingerprint
+    # ------------------------------------------------------------------
+
+    def upsert_incident(
+        self,
+        *,
+        tenant_id: str,
+        title: str,
+        severity: str,
+        source: str = "backend",
+        description: str | None = None,
+        stack_trace: str | None = None,
+        component: str | None = None,
+        provider: str | None = None,
+        fingerprint: str | None = None,
+        correlation_id: str | None = None,
+        tags: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool, bool]:
+        """Upsert an incident using fingerprint-based dedup.
+
+        If an open incident with the same fingerprint exists, updates it.
+        Otherwise inserts a new one.
+
+        Returns (incident_dict, deduped, supabase_succeeded).
+        """
+        client = _get_supabase()
+        if client and fingerprint:
+            try:
+                row = {
+                    "tenant_id": tenant_id,
+                    "title": title,
+                    "severity": _to_db_severity(severity),
+                    "source": source,
+                    "status": "open",
+                }
+                if description:
+                    row["description"] = description
+                if stack_trace:
+                    row["stack_trace"] = stack_trace
+                if component:
+                    row["component"] = component
+                if provider:
+                    row["provider"] = provider
+                if fingerprint:
+                    row["fingerprint"] = fingerprint
+                if correlation_id:
+                    row["correlation_id"] = correlation_id
+                if tags is not None:
+                    row["tags"] = tags
+                if metadata is not None:
+                    row["metadata"] = metadata
+
+                # Use the unique partial index on (fingerprint) WHERE status='open'
+                # ON CONFLICT → update the existing open incident
+                result = (
+                    client.table("incidents")
+                    .upsert(
+                        row,
+                        on_conflict="fingerprint",
+                        # Only conflict on the partial unique index for open incidents
+                    )
+                    .execute()
+                )
+                if result.data:
+                    db_row = result.data[0]
+                    incident = _db_row_to_incident(db_row)
+                    self._incidents[incident["incident_id"]] = incident
+                    # Detect dedup: if created_at != updated_at, it was an update
+                    deduped = db_row.get("created_at") != db_row.get("updated_at")
+                    return incident, deduped, True
+            except Exception as e:
+                logger.warning("AdminStore: Supabase upsert_incident failed: %s", e)
+
+        # Fallback: in-memory fingerprint dedup
+        if fingerprint:
+            for existing in self._incidents.values():
+                if (
+                    existing.get("fingerprint") == fingerprint
+                    and existing.get("state") in {"open", "investigating", "mitigated"}
+                ):
+                    # Update existing
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    existing["title"] = title or existing.get("title", "")
+                    existing["last_seen"] = now_iso
+                    existing["correlation_id"] = correlation_id or existing.get("correlation_id", "")
+                    # Update trace_id from metadata
+                    if metadata and metadata.get("trace_id"):
+                        existing["trace_id"] = metadata["trace_id"]
+                    # Merge timeline from metadata
+                    if metadata and "timeline" in metadata:
+                        existing_timeline = existing.get("timeline", [])
+                        existing_timeline.extend(metadata["timeline"])
+                        existing["timeline"] = existing_timeline
+                    return existing, True, False
+
+        # No dedup match — insert new
+        result_row, supabase_ok = self.store_incident(
+            tenant_id=tenant_id,
+            title=title,
+            severity=severity,
+            source=source,
+            description=description,
+            stack_trace=stack_trace,
+            component=component,
+            provider=provider,
+            fingerprint=fingerprint,
+            correlation_id=correlation_id,
+            tags=tags,
+            metadata=metadata,
+        )
+        return result_row or {}, False, supabase_ok
+
+    # ------------------------------------------------------------------
+    # Client events
+    # ------------------------------------------------------------------
+
+    def store_client_event(
+        self,
+        *,
+        tenant_id: str | None = None,
+        session_id: str | None = None,
+        correlation_id: str | None = None,
+        event_type: str,
+        source: str = "desktop",
+        severity: str = "info",
+        component: str | None = None,
+        page_route: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> bool:
+        """Write a client event to Supabase `client_events` table.
+
+        Returns True if Supabase write succeeded.
+        """
+        row: dict[str, Any] = {
+            "event_type": event_type,
+            "source": source,
+            "severity": severity,
+        }
+        if tenant_id:
+            row["tenant_id"] = tenant_id
+        if session_id:
+            row["session_id"] = session_id
+        if correlation_id:
+            row["correlation_id"] = correlation_id
+        if component:
+            row["component"] = component
+        if page_route:
+            row["page_route"] = page_route
+        if data is not None:
+            row["data"] = data
+
         client = _get_supabase()
         if not client:
+            logger.debug("AdminStore: No Supabase client — client_event dropped: %s", event_type)
             return False
 
         try:
-            row = {
-                "incident_id": incident_id,
-                "suite_id": incident.get("suite_id", "system"),
-                "state": incident.get("state", "open"),
-                "severity": incident.get("severity", "medium"),
-                "title": incident.get("title", ""),
-                "correlation_id": incident.get("correlation_id"),
-                "first_seen": incident.get("first_seen"),
-                "last_seen": incident.get("last_seen"),
-                "timeline": incident.get("timeline", []),
-                "evidence_pack": incident.get("evidence_pack", {}),
-            }
-            client.table("incidents").insert(row).execute()
+            client.table("client_events").insert(row).execute()
             return True
         except Exception as e:
-            logger.warning("AdminStore: Failed to store incident: %s", e)
+            logger.warning("AdminStore: Failed to store client_event: %s", e)
             return False
+
+    # ------------------------------------------------------------------
+    # Incident: query (Supabase-first, in-memory fallback)
+    # ------------------------------------------------------------------
 
     def query_incidents(
         self,
@@ -102,23 +464,23 @@ class AdminSupabaseStore:
         cursor: str | None = None,
     ) -> tuple[list[dict], dict]:
         """Query incidents. Returns (items, page_info)."""
-        # Try Supabase first
         client = _get_supabase()
         if client:
             try:
-                query = client.table("incidents").select("*").order("first_seen", desc=True)
+                query = client.table("incidents").select("*").order("created_at", desc=True)
                 if state:
-                    query = query.eq("state", state)
+                    query = query.eq("status", _to_db_status(state))
                 if severity:
-                    query = query.eq("severity", severity)
-                query = query.limit(limit + 1)  # +1 to check has_more
+                    query = query.eq("severity", _to_db_severity(severity))
+                query = query.limit(limit + 1)
 
                 result = query.execute()
-                items = result.data or []
-                has_more = len(items) > limit
+                rows = result.data or []
+                has_more = len(rows) > limit
                 if has_more:
-                    items = items[:limit]
+                    rows = rows[:limit]
 
+                items = [_db_row_to_incident(r) for r in rows]
                 page_info = {
                     "has_more": has_more,
                     "next_cursor": items[-1]["incident_id"] if has_more and items else None,
@@ -135,7 +497,6 @@ class AdminSupabaseStore:
             items = [i for i in items if i.get("severity") == severity]
         items.sort(key=lambda x: x.get("last_seen", x.get("first_seen", "")), reverse=True)
 
-        # Apply cursor-based pagination
         start = 0
         if cursor:
             for idx, item in enumerate(items):
@@ -154,8 +515,15 @@ class AdminSupabaseStore:
         client = _get_supabase()
         if client:
             try:
-                result = client.table("incidents").select("*").eq("incident_id", incident_id).single().execute()
-                return result.data
+                result = (
+                    client.table("incidents")
+                    .select("*")
+                    .eq("id", incident_id)
+                    .single()
+                    .execute()
+                )
+                if result.data:
+                    return _db_row_to_incident(result.data)
             except Exception:
                 pass
 

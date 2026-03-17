@@ -125,6 +125,10 @@ async def _app_lifespan(_: FastAPI):
     """Own startup and shutdown resources without deprecated FastAPI hooks."""
     global orchestrator_graph
 
+    # Configure structured logging FIRST (before any other initialization logs)
+    from aspire_orchestrator.config.logging_config import configure_logging
+    configure_logging()
+
     orchestrator_graph = await build_orchestrator_graph_async()
     start_receipt_writer()
     from aspire_orchestrator.services.task_queue import start_task_queue, stop_task_queue
@@ -910,6 +914,19 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
             },
         )
 
+    # Phase 6: Track workflow execution for admin portal visibility
+    workflow_id: str | None = None
+    try:
+        from aspire_orchestrator.services.workflow_tracker import get_workflow_tracker
+        workflow_id = get_workflow_tracker().start_workflow(
+            tenant_id=suite_id or "unknown",
+            workflow_type="intent",
+            correlation_id=correlation_id,
+            input_summary={"task_type": body.get("task_type") if isinstance(body, dict) else "unknown"},
+        )
+    except Exception:
+        pass  # Workflow tracking is best-effort
+
     start_time = time.monotonic()
     try:
         result = await _invoke_orchestrator_graph(
@@ -970,11 +987,27 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
             risk_tier=response.get("risk_tier", "unknown"),
             task_type=body.get("task_type", "unknown") if isinstance(body, dict) else "unknown",
         )
+        # Phase 6: Record workflow completion
+        if workflow_id:
+            try:
+                get_workflow_tracker().complete_workflow(
+                    workflow_id=workflow_id,
+                    output_summary={"status": "success", "risk_tier": response.get("risk_tier")},
+                )
+            except Exception:
+                pass
         return JSONResponse(status_code=200, content=response)
 
     except _GraphInvokeUnavailableError as e:
         logger.exception("Orchestrator checkpointer unavailable: %s", e)
         METRICS.record_request(status="failed", task_type=body.get("task_type", "unknown") if isinstance(body, dict) else "unknown")
+        if workflow_id:
+            try:
+                get_workflow_tracker().fail_workflow(
+                    workflow_id=workflow_id, error_type="CHECKPOINTER_UNAVAILABLE", error_message=str(e)[:500],
+                )
+            except Exception:
+                pass
         return JSONResponse(
             status_code=503,
             content={
@@ -986,6 +1019,13 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
     except Exception as e:
         logger.exception("Orchestrator error: %s", e)
         METRICS.record_request(status="failed", task_type=body.get("task_type", "unknown") if isinstance(body, dict) else "unknown")
+        if workflow_id:
+            try:
+                get_workflow_tracker().fail_workflow(
+                    workflow_id=workflow_id, error_type=type(e).__name__, error_message=str(e)[:500],
+                )
+            except Exception:
+                pass
         return JSONResponse(
             status_code=500,
             content={

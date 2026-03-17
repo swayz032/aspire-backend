@@ -307,6 +307,40 @@ def _reason_code_for_error(error: Exception | None) -> str:
     return "UPSTREAM_ERROR"
 
 
+def _log_openai_call(
+    *,
+    action: str,
+    model: str,
+    profile: str | None = None,
+    latency_ms: float = 0.0,
+    http_status: int = 0,
+    error_code: str = "",
+    error_message: str = "",
+) -> None:
+    """Best-effort log of an OpenAI call to provider_call_log (Phase 2B).
+
+    Makes LLM calls visible in the admin portal alongside other provider calls.
+    Never raises — failures are silently logged.
+    """
+    try:
+        from aspire_orchestrator.middleware.correlation import get_correlation_id
+        from aspire_orchestrator.services.provider_call_logger import get_provider_call_logger
+
+        get_provider_call_logger().log_call(
+            provider="openai",
+            action=action,
+            correlation_id=get_correlation_id(),
+            http_status=http_status,
+            success=not error_code,
+            error_code=error_code,
+            error_message=error_message,
+            latency_ms=latency_ms,
+            response_summary=f"model={model} profile={profile or 'unknown'}",
+        )
+    except Exception:
+        pass  # Best-effort — never block LLM calls
+
+
 async def probe_models_startup() -> dict[str, Any]:
     """Probe configured model profiles at startup and cache availability.
 
@@ -504,13 +538,23 @@ async def generate_text_async(
 
     last_error: Exception | None = None
     for call_model in _candidate_models(resolved_model):
+        call_start = time.monotonic()
         try:
             result, response = await _via_responses(call_model)
+            latency_ms = round((time.monotonic() - call_start) * 1000, 1)
             _openai_circuit_breaker.record_success()  # 5a
             METRICS.record_llm_request(
                 endpoint="responses",
                 resolved_model=call_model,
                 outcome="ok",
+            )
+            # Log to provider_call_log (Phase 2B — makes LLM calls visible in admin portal)
+            _log_openai_call(
+                action="chat.completion",
+                model=call_model,
+                profile=profile,
+                latency_ms=latency_ms,
+                http_status=200,
             )
             # Cache the response (Phase 5A)
             await cache.set(cache_key, result, profile=profile)
@@ -519,12 +563,22 @@ async def generate_text_async(
             _schedule_token_tracking(asyncio.create_task(_track_token_usage(response, call_model)))
             return result
         except Exception as e:
+            latency_ms = round((time.monotonic() - call_start) * 1000, 1)
             last_error = e
             _openai_circuit_breaker.record_failure()  # 5a
             METRICS.record_llm_request(
                 endpoint="responses",
                 resolved_model=call_model,
                 outcome="failed",
+            )
+            # Log failure to provider_call_log (Phase 2B)
+            _log_openai_call(
+                action="chat.completion",
+                model=call_model,
+                profile=profile,
+                latency_ms=latency_ms,
+                error_code=_reason_code_for_error(e),
+                error_message=str(e)[:500],
             )
             logger.warning(
                 "Responses API failed for model=%s (%s)",
@@ -641,13 +695,37 @@ async def generate_embeddings_async(
 ) -> list[list[float]]:
     """Generate embeddings for input texts."""
     client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
-    resp = await client.embeddings.create(model=model, input=input_texts)
-    METRICS.record_llm_request(
-        endpoint="embeddings",
-        resolved_model=model,
-        outcome="ok",
-    )
-    return [item.embedding for item in resp.data]
+    call_start = time.monotonic()
+    try:
+        resp = await client.embeddings.create(model=model, input=input_texts)
+        latency_ms = round((time.monotonic() - call_start) * 1000, 1)
+        METRICS.record_llm_request(
+            endpoint="embeddings",
+            resolved_model=model,
+            outcome="ok",
+        )
+        _log_openai_call(
+            action="embedding",
+            model=model,
+            latency_ms=latency_ms,
+            http_status=200,
+        )
+        return [item.embedding for item in resp.data]
+    except Exception as e:
+        latency_ms = round((time.monotonic() - call_start) * 1000, 1)
+        METRICS.record_llm_request(
+            endpoint="embeddings",
+            resolved_model=model,
+            outcome="failed",
+        )
+        _log_openai_call(
+            action="embedding",
+            model=model,
+            latency_ms=latency_ms,
+            error_code=_reason_code_for_error(e),
+            error_message=str(e)[:500],
+        )
+        raise
 
 
 def generate_embeddings_sync(

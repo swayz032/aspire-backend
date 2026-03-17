@@ -56,11 +56,17 @@ def client():
 def _clean_stores(monkeypatch):
     """Clean all stores between tests for isolation + set JWT secret."""
     monkeypatch.setenv("ASPIRE_ADMIN_JWT_SECRET", _TEST_JWT_SECRET)
+    # Force admin_store to use in-memory only (no real Supabase in tests)
+    import aspire_orchestrator.services.admin_store as _admin_store_mod
+    _admin_store_mod._supabase_client = None
+    _admin_store_mod._supabase_init_done = True
     clear_admin_stores()
     clear_store()
     yield
     clear_admin_stores()
     clear_store()
+    # Reset so next test can reinit if needed
+    _admin_store_mod._supabase_init_done = False
 
 
 @pytest.fixture

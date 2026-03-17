@@ -34,6 +34,16 @@ client = TestClient(app)
 ROBOT_S2S_SECRET = "test-robot-s2s-secret-key"
 
 
+@pytest.fixture(autouse=True)
+def _force_in_memory():
+    """Force admin_store to use in-memory only (no real Supabase in tests)."""
+    import aspire_orchestrator.services.admin_store as _admin_store_mod
+    _admin_store_mod._supabase_client = None
+    _admin_store_mod._supabase_init_done = True
+    yield
+    _admin_store_mod._supabase_init_done = False
+
+
 def _make_valid_robot_run(**overrides: Any) -> dict[str, Any]:
     """Build a valid RobotRun payload."""
     run = {
@@ -266,10 +276,11 @@ class TestRobotIngestPayload:
         data = resp.json()
         assert data["receipt_type"] == "incident.opened"
         assert data["status"] == "failed"
-        incident = admin_routes._incidents.get(f"robot-{payload['id']}")
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        incident = get_admin_store().get_incident(f"robot-{payload['id']}")
         assert incident is not None
         assert incident["correlation_id"] == payload["id"]
-        assert incident["severity"] == "sev2"
+        assert incident["severity"] in ("sev2", "high")
 
     @patch.dict(os.environ, {"ASPIRE_ROBOT_S2S_SECRET": ROBOT_S2S_SECRET})
     def test_invalid_payload_rejected_with_receipt(self) -> None:
@@ -281,9 +292,10 @@ class TestRobotIngestPayload:
         data = resp.json()
         assert data["error"] == "SCHEMA_VALIDATION_FAILED"
         assert data["receipt_id"] is not None
-        incident = admin_routes._incidents.get("robot-short")
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        incident = get_admin_store().get_incident("robot-short")
         assert incident is not None
-        assert incident["severity"] == "sev3"
+        assert incident["severity"] in ("sev3", "medium")
 
     @patch.dict(os.environ, {"ASPIRE_ROBOT_S2S_SECRET": ROBOT_S2S_SECRET})
     def test_invalid_json_returns_400(self) -> None:
