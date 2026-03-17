@@ -15,7 +15,87 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Discord incident alerting (best-effort, fire-and-forget)
+# ---------------------------------------------------------------------------
+
+_DISCORD_BOT_TOKEN = os.environ.get("ASPIRE_DISCORD_BOT_TOKEN", "")
+_DISCORD_CHANNEL_ID = os.environ.get("ASPIRE_DISCORD_CHANNEL_ID", "")
+
+_SEVERITY_COLORS: dict[str, int] = {
+    "critical": 0xED4245,  # red
+    "high": 0xFEE75C,      # yellow
+    "medium": 0x5865F2,    # blurple
+    "low": 0x57F287,       # green
+}
+
+_SEVERITY_EMOJI: dict[str, str] = {
+    "critical": "🔴",
+    "high": "🟡",
+    "medium": "🔵",
+    "low": "🟢",
+}
+
+
+def _send_discord_alert(incident_row: dict[str, Any]) -> None:
+    """Best-effort Discord alert for critical/high incidents. Non-blocking."""
+    if not _DISCORD_BOT_TOKEN or not _DISCORD_CHANNEL_ID:
+        return
+
+    severity = incident_row.get("severity", "medium")
+    if severity not in ("critical", "high"):
+        return
+
+    emoji = _SEVERITY_EMOJI.get(severity, "⚪")
+    color = _SEVERITY_COLORS.get(severity, 0x95A5A6)
+    title = incident_row.get("title", "Unknown incident")
+    source = incident_row.get("source", "unknown")
+    component = incident_row.get("component", "—")
+    provider = incident_row.get("provider", "—")
+    correlation_id = incident_row.get("correlation_id", "—")
+    description = (incident_row.get("description") or "")[:300]
+
+    fields = [
+        {"name": "Severity", "value": severity.upper(), "inline": True},
+        {"name": "Source", "value": source, "inline": True},
+        {"name": "Component", "value": component, "inline": True},
+    ]
+    if provider and provider != "—":
+        fields.append({"name": "Provider", "value": provider, "inline": True})
+    if correlation_id and correlation_id != "—":
+        fields.append({"name": "Correlation ID", "value": f"`{correlation_id[:36]}`", "inline": False})
+    if description:
+        fields.append({"name": "Details", "value": description, "inline": False})
+
+    embed = {
+        "title": f"{emoji} {severity.upper()}: {title[:200]}",
+        "color": color,
+        "fields": fields,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "footer": {"text": "Aspire Incident Alert"},
+    }
+
+    try:
+        resp = httpx.post(
+            f"https://discord.com/api/v10/channels/{_DISCORD_CHANNEL_ID}/messages",
+            headers={
+                "Authorization": f"Bot {_DISCORD_BOT_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"embeds": [embed]},
+            timeout=5.0,
+        )
+        if resp.status_code < 300:
+            logger.info("Discord alert sent for incident: %s", title[:60])
+        else:
+            logger.warning("Discord alert failed (%s): %s", resp.status_code, resp.text[:200])
+    except Exception as e:
+        logger.warning("Discord alert error: %s", e)
 
 _supabase_client: Any = None
 _supabase_init_done = False
@@ -206,6 +286,8 @@ class AdminSupabaseStore:
                     # Sync to in-memory
                     incident = _db_row_to_incident(db_row)
                     self._incidents[incident["incident_id"]] = incident
+                    # Fire-and-forget Discord alert for critical/high
+                    _send_discord_alert(db_row)
                     return db_row, True
             except Exception as e:
                 logger.warning("AdminStore: Failed to store incident in Supabase: %s", e)
@@ -357,6 +439,9 @@ class AdminSupabaseStore:
                     self._incidents[incident["incident_id"]] = incident
                     # Detect dedup: if created_at != updated_at, it was an update
                     deduped = db_row.get("created_at") != db_row.get("updated_at")
+                    # Alert on new critical/high incidents (not deduped updates)
+                    if not deduped:
+                        _send_discord_alert(db_row)
                     return incident, deduped, True
             except Exception as e:
                 logger.warning("AdminStore: Supabase upsert_incident failed: %s", e)
