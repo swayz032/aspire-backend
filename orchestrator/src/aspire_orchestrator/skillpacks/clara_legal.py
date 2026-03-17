@@ -1091,7 +1091,7 @@ async def _intelligent_compliance_assessment(
 # Phase 3 W5a: Enhanced Clara Legal with LLM reasoning + dual approval
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 from aspire_orchestrator.services.dual_approval_service import (
     get_dual_approval_service,
@@ -1100,7 +1100,7 @@ from aspire_orchestrator.services.dual_approval_service import (
 from aspire_orchestrator.services.idempotency_service import get_idempotency_service
 
 
-class EnhancedClaraLegal(EnhancedSkillPack):
+class EnhancedClaraLegal(AgenticSkillPack):
     """LLM-enhanced Clara Legal — RED-tier contract intelligence.
 
     Extends ClaraLegalSkillPack with:
@@ -1118,6 +1118,7 @@ class EnhancedClaraLegal(EnhancedSkillPack):
             agent_id="clara-legal",
             agent_name="Clara Legal",
             default_risk_tier="red",
+            memory_enabled=True,
         )
         self._rule_pack = ClaraLegalSkillPack()
 

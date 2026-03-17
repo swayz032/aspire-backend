@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import threading
+import time
 from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
@@ -45,8 +46,12 @@ def _get_or_create_async_client(
     base_url: str,
     timeout: float = 30.0,
 ) -> AsyncOpenAI:
-    """Return cached AsyncOpenAI client or create one."""
-    cache_key = (api_key, base_url)
+    """Return cached AsyncOpenAI client or create one.
+
+    5f: Cache key includes timeout so callers with different timeouts
+    get distinct clients instead of sharing one with the wrong timeout.
+    """
+    cache_key = (api_key, base_url, timeout)
     if cache_key not in _async_client_cache:
         with _client_cache_lock:
             if cache_key not in _async_client_cache:
@@ -63,8 +68,11 @@ def _get_or_create_sync_client(
     base_url: str,
     timeout: float = 30.0,
 ) -> OpenAI:
-    """Return cached sync OpenAI client or create one."""
-    cache_key = (api_key, base_url)
+    """Return cached sync OpenAI client or create one.
+
+    5f: Cache key includes timeout for correct client isolation.
+    """
+    cache_key = (api_key, base_url, timeout)
     if cache_key not in _sync_client_cache:
         with _client_cache_lock:
             if cache_key not in _sync_client_cache:
@@ -83,6 +91,52 @@ def clear_client_cache() -> None:
         _sync_client_cache.clear()
 
 
+# 5a: Circuit breaker — trip after consecutive failures, half-open after cooldown
+class _CircuitBreaker:
+    """Simple circuit breaker for OpenAI calls.
+
+    States: CLOSED (normal) → OPEN (tripped, reject fast) → HALF_OPEN (allow one probe).
+    """
+
+    def __init__(self, failure_threshold: int = 5, cooldown_seconds: float = 30.0) -> None:
+        self._failure_threshold = failure_threshold
+        self._cooldown_seconds = cooldown_seconds
+        self._consecutive_failures = 0
+        self._last_failure_time: float = 0.0
+        self._state = "CLOSED"
+        self._lock = threading.Lock()
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            if self._state == "OPEN" and time.monotonic() - self._last_failure_time >= self._cooldown_seconds:
+                self._state = "HALF_OPEN"
+            return self._state
+
+    def allow_request(self) -> bool:
+        current = self.state
+        return current in ("CLOSED", "HALF_OPEN")
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._consecutive_failures = 0
+            self._state = "CLOSED"
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._consecutive_failures += 1
+            self._last_failure_time = time.monotonic()
+            if self._consecutive_failures >= self._failure_threshold:
+                self._state = "OPEN"
+                logger.warning(
+                    "5a: OpenAI circuit breaker OPEN after %d consecutive failures",
+                    self._consecutive_failures,
+                )
+
+
+_openai_circuit_breaker = _CircuitBreaker(failure_threshold=5, cooldown_seconds=30.0)
+
+
 class OpenAIAdapterError(RuntimeError):
     """Normalized adapter error with reason code for upstream mapping."""
 
@@ -96,26 +150,31 @@ def _is_reasoning_model(model: str) -> bool:
     return model.startswith(("gpt-5", "o1", "o3"))
 
 
-def _should_allow_chat_fallback() -> bool:
-    raw = os.environ.get("ASPIRE_OPENAI_USE_CHAT_FALLBACK", "1").strip().lower()
-    return raw not in {"0", "false", "off", "no"}
+
+# M5: Consolidated fallback map — single parser for both model and profile fallbacks
+def _parse_fallback_env() -> dict[str, list[str]] | None:
+    """Parse ASPIRE_MODEL_FALLBACK_MAP env var (used by both model + profile paths)."""
+    raw = os.environ.get("ASPIRE_MODEL_FALLBACK_MAP", "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            result: dict[str, list[str]] = {}
+            for k, v in parsed.items():
+                if isinstance(k, str) and isinstance(v, list):
+                    normalized = [str(item).strip() for item in v if str(item).strip()]
+                    if normalized:
+                        result[k] = normalized
+            if result:
+                return result
+    except Exception:
+        logger.warning("Invalid ASPIRE_MODEL_FALLBACK_MAP JSON, using defaults")
+    return None
 
 
 def _model_fallback_map() -> dict[str, list[str]]:
-    raw = os.environ.get("ASPIRE_MODEL_FALLBACK_MAP", "").strip()
-    if raw:
-        try:
-            parsed = json.loads(raw)
-            normalized: dict[str, list[str]] = {}
-            if isinstance(parsed, dict):
-                for k, v in parsed.items():
-                    if isinstance(k, str) and isinstance(v, list):
-                        normalized[k] = [str(item) for item in v if str(item)]
-            if normalized:
-                return normalized
-        except Exception:
-            logger.warning("Invalid ASPIRE_MODEL_FALLBACK_MAP JSON, using defaults")
-    return {
+    return _parse_fallback_env() or {
         "gpt-5.2": ["gpt-5", "gpt-5-mini"],
         "gpt-5": ["gpt-5-mini"],
         "gpt-5-mini": ["gpt-5"],
@@ -123,22 +182,7 @@ def _model_fallback_map() -> dict[str, list[str]]:
 
 
 def _profile_fallback_map() -> dict[str, list[str]]:
-    raw = os.environ.get("ASPIRE_MODEL_FALLBACK_MAP", "").strip()
-    if raw:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                profile_map: dict[str, list[str]] = {}
-                for profile, chain in parsed.items():
-                    if isinstance(profile, str) and isinstance(chain, list):
-                        normalized = [str(m).strip() for m in chain if str(m).strip()]
-                        if normalized:
-                            profile_map[profile] = normalized
-                if profile_map:
-                    return profile_map
-        except Exception:
-            logger.warning("Invalid ASPIRE_MODEL_FALLBACK_MAP JSON, using profile defaults")
-    return dict(_DEFAULT_PROFILE_FALLBACKS)
+    return _parse_fallback_env() or dict(_DEFAULT_PROFILE_FALLBACKS)
 
 
 def _candidate_models(primary_model: str) -> list[str]:
@@ -174,8 +218,9 @@ def _preferred_model_for_profile(profile: str) -> str:
 
 
 def _is_model_available(model: str) -> bool:
-    # Unknown model in cache means "untested", allow path and let runtime decide.
-    return _MODEL_PROBE_CACHE.get(model, True)
+    # H7: Fail-closed — unknown/unprobed models default to UNAVAILABLE (Law #3).
+    # Only models explicitly probed as True at startup are considered available.
+    return _MODEL_PROBE_CACHE.get(model, False)
 
 
 def _resolve_model_for_profile(profile: str, preferred_model: str) -> tuple[str, bool]:
@@ -237,15 +282,29 @@ def _extract_output_text(response: Any) -> str:
 
 
 def _reason_code_for_error(error: Exception | None) -> str:
+    """H6: Distinguish error types for correct retry strategy.
+
+    - Endpoint 404 (wrong URL): ENDPOINT_NOT_FOUND — don't retry
+    - Model 404 (wrong model name): MODEL_UNAVAILABLE — try fallback model
+    - Timeout: UPSTREAM_TIMEOUT — retry with backoff
+    - Rate limit (429): RATE_LIMITED — retry with backoff
+    - Other: UPSTREAM_ERROR — generic upstream failure
+    """
     if error is None:
         return "MODEL_UNAVAILABLE"
     name = type(error).__name__.lower()
     msg = str(error).lower()
     if "timeout" in name or "timeout" in msg:
         return "UPSTREAM_TIMEOUT"
-    if "model" in msg and ("not found" in msg or "does not exist" in msg or "404" in msg):
-        return "MODEL_UNAVAILABLE"
-    return "MODEL_UNAVAILABLE"
+    if "ratelimit" in name or "429" in msg or "rate limit" in msg:
+        return "RATE_LIMITED"
+    if "404" in msg or "not found" in msg:
+        if "model" in msg or "does not exist" in msg:
+            return "MODEL_UNAVAILABLE"
+        return "ENDPOINT_NOT_FOUND"
+    if "auth" in msg or "401" in msg or "403" in msg:
+        return "AUTH_ERROR"
+    return "UPSTREAM_ERROR"
 
 
 async def probe_models_startup() -> dict[str, Any]:
@@ -359,6 +418,14 @@ async def generate_text_async(
     model_profile: str | None = None,
 ) -> str:
     """Generate text from a chat-style message list."""
+    # 5a: Circuit breaker — reject fast when OpenAI is down
+    if not _openai_circuit_breaker.allow_request():
+        raise OpenAIAdapterError(
+            "CIRCUIT_OPEN",
+            "OpenAI circuit breaker is OPEN — too many consecutive failures. "
+            "Will retry automatically after cooldown.",
+        )
+
     profile = model_profile or _profile_for_model(model)
     resolved_model, _ = _resolve_model_for_profile(profile, model)
     reasoning_model = _is_reasoning_model(resolved_model)
@@ -393,18 +460,26 @@ async def generate_text_async(
         response = await client.responses.create(**kwargs)
         return _extract_output_text(response), response
 
-    async def _via_chat(call_model: str) -> tuple[str, Any]:
-        client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
-        kwargs: dict[str, Any] = {
-            "model": call_model,
-            "messages": normalized,
-            "max_completion_tokens": max_output_tokens,
-        }
-        if effective_temp is not None:
-            kwargs["temperature"] = effective_temp
-        response = await client.chat.completions.create(**kwargs)
-        text = (response.choices[0].message.content or "").strip() if response.choices else ""
-        return text, response
+    # M4: Bounded task set for token tracking — prevents memory leak
+    import asyncio as _asyncio
+    _TOKEN_TASKS: set[_asyncio.Task[None]] = set()
+    _MAX_TOKEN_TASKS = 50
+
+    def _schedule_token_tracking(task: _asyncio.Task[None]) -> None:
+        """Add task to bounded set, cleanup completed tasks."""
+        _TOKEN_TASKS.discard(None)  # type: ignore[arg-type]
+        # Clean up done tasks
+        done = {t for t in _TOKEN_TASKS if t.done()}
+        for t in done:
+            _TOKEN_TASKS.discard(t)
+            if t.exception():
+                logger.warning("Token tracking task failed: %s", t.exception())
+        # Enforce max size — drop oldest if at capacity
+        if len(_TOKEN_TASKS) >= _MAX_TOKEN_TASKS:
+            logger.warning("M4: Token tracking tasks at capacity (%d), skipping", _MAX_TOKEN_TASKS)
+            return
+        _TOKEN_TASKS.add(task)
+        task.add_done_callback(_TOKEN_TASKS.discard)
 
     async def _track_token_usage(response: Any, call_model: str) -> None:
         """Token usage tracking (Phase 5E) — best-effort, non-blocking."""
@@ -429,80 +504,33 @@ async def generate_text_async(
 
     last_error: Exception | None = None
     for call_model in _candidate_models(resolved_model):
-        if prefer_responses_api:
-            try:
-                result, response = await _via_responses(call_model)
-                METRICS.record_llm_request(
-                    endpoint="responses",
-                    resolved_model=call_model,
-                    outcome="ok",
-                )
-                # Cache the response (Phase 5A)
-                await cache.set(cache_key, result, profile=profile)
-                # Token tracking (Phase 5E) — fire and forget
-                import asyncio
-                asyncio.create_task(_track_token_usage(response, call_model))
-                return result
-            except Exception as e:
-                last_error = e
-                if not _should_allow_chat_fallback():
-                    METRICS.record_llm_request(
-                        endpoint="responses",
-                        resolved_model=call_model,
-                        outcome="failed",
-                    )
-                    continue
-                logger.warning(
-                    "Responses API failed for model=%s; trying chat fallback (%s)",
-                    call_model, type(e).__name__,
-                )
-                try:
-                    result, response = await _via_chat(call_model)
-                    METRICS.record_llm_request(
-                        endpoint="chat_fallback",
-                        resolved_model=call_model,
-                        outcome="ok",
-                    )
-                    # Cache the response (Phase 5A)
-                    await cache.set(cache_key, result, profile=profile)
-                    # Token tracking (Phase 5E) — fire and forget
-                    import asyncio
-                    asyncio.create_task(_track_token_usage(response, call_model))
-                    return result
-                except Exception as chat_e:
-                    last_error = chat_e
-                    METRICS.record_llm_request(
-                        endpoint="chat_fallback",
-                        resolved_model=call_model,
-                        outcome="failed",
-                    )
-                    logger.warning(
-                        "Chat fallback failed for model=%s (%s)",
-                        call_model, type(chat_e).__name__,
-                    )
-                    continue
-        else:
-            try:
-                result, response = await _via_chat(call_model)
-                METRICS.record_llm_request(
-                    endpoint="chat",
-                    resolved_model=call_model,
-                    outcome="ok",
-                )
-                # Cache the response (Phase 5A)
-                await cache.set(cache_key, result, profile=profile)
-                # Token tracking (Phase 5E) — fire and forget
-                import asyncio
-                asyncio.create_task(_track_token_usage(response, call_model))
-                return result
-            except Exception as e:
-                last_error = e
-                METRICS.record_llm_request(
-                    endpoint="chat",
-                    resolved_model=call_model,
-                    outcome="failed",
-                )
-                continue
+        try:
+            result, response = await _via_responses(call_model)
+            _openai_circuit_breaker.record_success()  # 5a
+            METRICS.record_llm_request(
+                endpoint="responses",
+                resolved_model=call_model,
+                outcome="ok",
+            )
+            # Cache the response (Phase 5A)
+            await cache.set(cache_key, result, profile=profile)
+            # M4: Token tracking with bounded task set (prevents memory leak)
+            import asyncio
+            _schedule_token_tracking(asyncio.create_task(_track_token_usage(response, call_model)))
+            return result
+        except Exception as e:
+            last_error = e
+            _openai_circuit_breaker.record_failure()  # 5a
+            METRICS.record_llm_request(
+                endpoint="responses",
+                resolved_model=call_model,
+                outcome="failed",
+            )
+            logger.warning(
+                "Responses API failed for model=%s (%s)",
+                call_model, type(e).__name__,
+            )
+            continue
 
     if last_error:
         raise OpenAIAdapterError(
@@ -571,79 +599,28 @@ def generate_text_sync(
         response = client.responses.create(**kwargs)
         return _extract_output_text(response)
 
-    def _via_chat(call_model: str) -> str:
-        client = _get_or_create_sync_client(api_key, base_url, timeout_seconds)
-        kwargs: dict[str, Any] = {
-            "model": call_model,
-            "messages": normalized,
-            "max_completion_tokens": max_output_tokens,
-        }
-        if effective_temp is not None:
-            kwargs["temperature"] = effective_temp
-        response = client.chat.completions.create(**kwargs)
-        return (response.choices[0].message.content or "").strip() if response.choices else ""
-
     last_error: Exception | None = None
     for call_model in _candidate_models(resolved_model):
-        if prefer_responses_api:
-            try:
-                result = _via_responses(call_model)
-                METRICS.record_llm_request(
-                    endpoint="responses",
-                    resolved_model=call_model,
-                    outcome="ok",
-                )
-                return result
-            except Exception as e:
-                last_error = e
-                if not _should_allow_chat_fallback():
-                    METRICS.record_llm_request(
-                        endpoint="responses",
-                        resolved_model=call_model,
-                        outcome="failed",
-                    )
-                    continue
-                logger.warning(
-                    "Responses API failed for model=%s; trying chat fallback (%s)",
-                    call_model, type(e).__name__,
-                )
-                try:
-                    result = _via_chat(call_model)
-                    METRICS.record_llm_request(
-                        endpoint="chat_fallback",
-                        resolved_model=call_model,
-                        outcome="ok",
-                    )
-                    return result
-                except Exception as chat_e:
-                    last_error = chat_e
-                    METRICS.record_llm_request(
-                        endpoint="chat_fallback",
-                        resolved_model=call_model,
-                        outcome="failed",
-                    )
-                    logger.warning(
-                        "Chat fallback failed for model=%s (%s)",
-                        call_model, type(chat_e).__name__,
-                    )
-                    continue
-        else:
-            try:
-                result = _via_chat(call_model)
-                METRICS.record_llm_request(
-                    endpoint="chat",
-                    resolved_model=call_model,
-                    outcome="ok",
-                )
-                return result
-            except Exception as e:
-                last_error = e
-                METRICS.record_llm_request(
-                    endpoint="chat",
-                    resolved_model=call_model,
-                    outcome="failed",
-                )
-                continue
+        try:
+            result = _via_responses(call_model)
+            METRICS.record_llm_request(
+                endpoint="responses",
+                resolved_model=call_model,
+                outcome="ok",
+            )
+            return result
+        except Exception as e:
+            last_error = e
+            METRICS.record_llm_request(
+                endpoint="responses",
+                resolved_model=call_model,
+                outcome="failed",
+            )
+            logger.warning(
+                "Responses API failed for model=%s (%s)",
+                call_model, type(e).__name__,
+            )
+            continue
 
     if last_error:
         raise OpenAIAdapterError(

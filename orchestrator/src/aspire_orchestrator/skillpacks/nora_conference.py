@@ -75,6 +75,7 @@ def _make_receipt(
         "office_id": ctx.office_id,
         "actor": ACTOR_NORA,
         "correlation_id": ctx.correlation_id,
+        "risk_tier": risk_tier,  # S4-T7: Include risk_tier in receipt (Law #2)
         "status": "ok" if outcome == "success" else outcome,
         "inputs_hash": f"sha256:{uuid.uuid4().hex}",
         "policy": {
@@ -453,7 +454,7 @@ def _format_meeting_summary(
 # Phase 3 W3: Enhanced Nora Conference with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
@@ -493,7 +494,7 @@ RISK_TRIGGER_KEYWORDS: dict[str, dict[str, Any]] = {
 }
 
 
-class EnhancedNoraConference(EnhancedSkillPack):
+class EnhancedNoraConference(AgenticSkillPack):
     """LLM-enhanced Nora Conference — risk detection, smart summaries, specialist routing.
 
     Extends NoraConferenceSkillPack with:
@@ -510,6 +511,7 @@ class EnhancedNoraConference(EnhancedSkillPack):
             agent_id="nora-conference",
             agent_name="Nora Conference",
             default_risk_tier="green",
+            memory_enabled=True,
         )
         self._rule_pack = NoraConferenceSkillPack()
 

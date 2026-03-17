@@ -584,11 +584,11 @@ def get_tec_documents_skillpack() -> TecDocumentsSkillPack:
 # Phase 3 W3: Enhanced Tec Documents with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedTecDocuments(EnhancedSkillPack):
+class EnhancedTecDocuments(AgenticSkillPack):
     """LLM-enhanced Tec Documents — document planning, intelligent drafting.
 
     Extends TecDocumentsSkillPack with:
@@ -607,6 +607,7 @@ class EnhancedTecDocuments(EnhancedSkillPack):
             agent_id="tec-docs",
             agent_name="Tec Documents",
             default_risk_tier="green",
+            memory_enabled=True,
         )
         self._rule_pack = TecDocumentsSkillPack()
 

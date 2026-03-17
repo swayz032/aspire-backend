@@ -134,6 +134,12 @@ class A2AService:
         if settings.supabase_url and settings.supabase_service_role_key:
             self.backend = "supabase"
 
+    def clear(self) -> None:
+        """Reset all in-memory state. Used by test teardown for isolation."""
+        with self._lock:
+            self._tasks.clear()
+            self._idempotency_keys.clear()
+
     def _should_fallback_to_memory(self, exc: Exception) -> bool:
         msg = str(exc).lower()
         return (

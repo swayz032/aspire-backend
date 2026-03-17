@@ -4,10 +4,10 @@ from typing import Any
 
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 from aspire_orchestrator.skillpacks.ava_admin_desk import get_ava_admin_desk
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 
 
-class AvaAdminSkillPack(EnhancedSkillPack):
+class AvaAdminSkillPack(AgenticSkillPack):
     """Template-compliant wrapper over the existing Ava Admin desk implementation."""
 
     def __init__(self) -> None:
@@ -15,6 +15,7 @@ class AvaAdminSkillPack(EnhancedSkillPack):
             agent_id='ava_admin',
             agent_name='Ava Admin',
             default_risk_tier='green',
+            memory_enabled=True,
         )
         self._desk = get_ava_admin_desk()
 

@@ -159,6 +159,9 @@ async def _resolve_stripe_customer(
 
     Returns customer ID (cus_xxx) or None on failure.
     """
+    # S4-L2: Normalize email to lowercase to prevent duplicate customers
+    email = email.strip().lower()
+
     # Search by email first
     search_response = await client._request(
         ProviderRequest(
@@ -200,17 +203,18 @@ async def _resolve_stripe_customer(
     if create_response.success:
         return create_response.body.get("id")
 
-    logger.warning(
-        "Stripe customer create failed: status=%s body=%s",
-        create_response.status_code,
-        str(create_response.body)[:200],
-    )
-    logger.warning(
-        "Failed to resolve Stripe customer for email=%s suite=%s",
+    # S3-M4: Raise on failure instead of returning None (fail-closed)
+    error_detail = str(create_response.body)[:200]
+    logger.error(
+        "S3-M4: Stripe customer resolution FAILED for email=%s suite=%s status=%s",
         email[:3] + "***",
         suite_id[:8] if len(suite_id) > 8 else suite_id,
+        create_response.status_code,
     )
-    return None
+    raise RuntimeError(
+        f"customer_lookup_failed: Could not find or create Stripe customer "
+        f"(status={create_response.status_code})"
+    )
 
 
 async def execute_stripe_invoice_create(
@@ -301,6 +305,9 @@ async def execute_stripe_invoice_create(
     if payload.get("description"):
         body["description"] = payload["description"]
 
+    # 5e: Auto-generate idempotency key if not provided
+    import uuid as _uuid_create
+    create_idem_key = payload.get("idempotency_key") or f"inv_create_{correlation_id}_{_uuid_create.uuid4()}"
     response = await client._request(
         ProviderRequest(
             method="POST",
@@ -309,7 +316,7 @@ async def execute_stripe_invoice_create(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
-            idempotency_key=payload.get("idempotency_key"),
+            idempotency_key=create_idem_key,
         )
     )
 
@@ -346,7 +353,8 @@ async def execute_stripe_invoice_create(
             if payload.get("description"):
                 item_body["description"] = payload["description"]
 
-            await client._request(
+            # R-006: Idempotency key prevents duplicate line items on retry
+            item_response = await client._request(
                 ProviderRequest(
                     method="POST",
                     path="/invoiceitems",
@@ -354,8 +362,35 @@ async def execute_stripe_invoice_create(
                     correlation_id=correlation_id,
                     suite_id=suite_id,
                     office_id=office_id,
+                    idempotency_key=f"invoiceitem_{invoice_id}_{correlation_id}",
                 )
             )
+            if not item_response.success:
+                logger.error(
+                    "Stripe invoiceitem creation failed for invoice %s: %s",
+                    invoice_id, item_response.body,
+                )
+                return ToolExecutionResult(
+                    outcome=Outcome.FAILED,
+                    tool_id="stripe.invoice.create",
+                    data={
+                        "invoice_id": invoice_id,
+                        "error": "Line item creation failed after invoice was created",
+                        "status": "partial_failure",
+                    },
+                    receipt_data=client.make_receipt_data(
+                        correlation_id=correlation_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
+                        tool_id="stripe.invoice.create",
+                        risk_tier=risk_tier,
+                        outcome=Outcome.FAILED,
+                        reason_code="INVOICEITEM_CREATION_FAILED",
+                        capability_token_id=capability_token_id,
+                        capability_token_hash=capability_token_hash,
+                    ),
+                    is_stub=False,
+                )
 
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
@@ -417,7 +452,9 @@ async def execute_stripe_invoice_send(
             receipt_data=receipt,
         )
 
-    # Finalize the invoice first
+    # S3-H4: Finalize with idempotency key to prevent double-finalize on retry
+    import uuid as _uuid
+    finalize_nonce = payload.get("idempotency_key", str(_uuid.uuid4()))
     response = await client._request(
         ProviderRequest(
             method="POST",
@@ -426,6 +463,7 @@ async def execute_stripe_invoice_send(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
+            idempotency_key=f"finalize_{invoice_id}_{finalize_nonce}",
         )
     )
 
@@ -456,7 +494,7 @@ async def execute_stripe_invoice_send(
             )
         logger.info("Invoice %s already finalized — proceeding to send (resend)", invoice_id)
 
-    # Then send it
+    # 5e: Send with idempotency key to prevent double-send on retry
     send_response = await client._request(
         ProviderRequest(
             method="POST",
@@ -465,6 +503,7 @@ async def execute_stripe_invoice_send(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
+            idempotency_key=f"send_{invoice_id}_{finalize_nonce}",
         )
     )
 
@@ -544,6 +583,9 @@ async def execute_stripe_invoice_void(
             receipt_data=receipt,
         )
 
+    # 5e: Auto-generate idempotency key if not provided
+    import uuid as _uuid_void
+    void_idem_key = payload.get("idempotency_key") or f"void_{invoice_id}_{_uuid_void.uuid4()}"
     response = await client._request(
         ProviderRequest(
             method="POST",
@@ -552,7 +594,7 @@ async def execute_stripe_invoice_void(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
-            idempotency_key=payload.get("idempotency_key"),
+            idempotency_key=void_idem_key,
         )
     )
 
@@ -653,6 +695,9 @@ async def execute_stripe_quote_create(
     if payload.get("expires_at"):
         body["expires_at"] = payload["expires_at"]
 
+    # 5e: Auto-generate idempotency key if not provided
+    import uuid as _uuid_quote
+    quote_idem_key = payload.get("idempotency_key") or f"quote_create_{correlation_id}_{_uuid_quote.uuid4()}"
     response = await client._request(
         ProviderRequest(
             method="POST",
@@ -661,7 +706,7 @@ async def execute_stripe_quote_create(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
-            idempotency_key=payload.get("idempotency_key"),
+            idempotency_key=quote_idem_key,
         )
     )
 
@@ -746,7 +791,9 @@ async def execute_stripe_quote_send(
             receipt_data=receipt,
         )
 
-    # Step 1: Finalize the quote
+    # 5e: Step 1: Finalize the quote with idempotency key
+    import uuid as _uuid_qf
+    quote_nonce = payload.get("idempotency_key", str(_uuid_qf.uuid4()))
     finalize_response = await client._request(
         ProviderRequest(
             method="POST",
@@ -755,6 +802,7 @@ async def execute_stripe_quote_send(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
+            idempotency_key=f"quote_finalize_{quote_id}_{quote_nonce}",
         )
     )
 
@@ -778,7 +826,7 @@ async def execute_stripe_quote_send(
             receipt_data=receipt,
         )
 
-    # Step 2: Accept the quote
+    # 5e: Step 2: Accept the quote with idempotency key
     accept_response = await client._request(
         ProviderRequest(
             method="POST",
@@ -787,6 +835,7 @@ async def execute_stripe_quote_send(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
+            idempotency_key=f"quote_accept_{quote_id}_{quote_nonce}",
         )
     )
 

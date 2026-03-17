@@ -108,3 +108,50 @@ def resolve_persona_agent(state: dict[str, Any]) -> str:
     if assigned == "finn":
         return "finn_fm"
     return assigned
+
+
+# 3c: Canonical agent→persona file mapping (single source of truth)
+# Both agent_reason.py and respond.py import this instead of maintaining separate maps.
+AGENT_PERSONA_MAP: dict[str, str] = {
+    "ava": "ava_user_system_prompt.md",
+    "ava_user": "ava_user_system_prompt.md",
+    "ava_admin": "ava_admin_system_prompt.md",
+    "finn": "finn_finance_manager_system_prompt.md",
+    "finn_fm": "finn_finance_manager_system_prompt.md",
+    "eli": "eli_inbox_system_prompt.md",
+    "quinn": "quinn_invoicing_system_prompt.md",
+    "nora": "nora_conference_system_prompt.md",
+    "sarah": "sarah_front_desk_system_prompt.md",
+    "adam": "adam_research_system_prompt.md",
+    "tec": "tec_documents_system_prompt.md",
+    "teressa": "teressa_books_system_prompt.md",
+    "milo": "milo_payroll_system_prompt.md",
+    "clara": "clara_legal_system_prompt.md",
+    "mail_ops": "mail_ops_desk_system_prompt.md",
+    "qa": "qa_evals_system_prompt.md",
+    "security": "security_review_system_prompt.md",
+    "sre": "sre_triage_system_prompt.md",
+    "release": "release_manager_system_prompt.md",
+}
+
+# Agent display names for narration / user-facing text
+AGENT_DISPLAY_NAMES: dict[str, str] = {
+    "ava": "Ava",
+    "finn": "Finn",
+    "finn_fm": "Finn",
+    "eli": "Eli",
+    "quinn": "Quinn",
+    "nora": "Nora",
+    "sarah": "Sarah",
+    "adam": "Adam",
+    "tec": "Tec",
+    "teressa": "Teressa",
+    "milo": "Milo",
+    "clara": "Clara",
+    "mail_ops": "Mail Ops",
+}
+
+
+def resolve_persona_filename(agent_id: str) -> str:
+    """Resolve agent_id to canonical persona filename."""
+    return AGENT_PERSONA_MAP.get(agent_id, AGENT_PERSONA_MAP["ava"])

@@ -19,6 +19,7 @@
     "max_risk_tier": "red"
   },
   "tools": [
+    "gusto.read_company",
     "gusto.payroll.run",
     "gusto.read_payrolls"
   ],

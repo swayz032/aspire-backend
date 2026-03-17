@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ _HEALTH_PULSE_TEMPLATE = """## PLATFORM HEALTH PULSE
 """
 
 
-class AvaAdminDesk(EnhancedSkillPack):
+class AvaAdminDesk(AgenticSkillPack):
     """Admin Ava's skill pack — platform operator & incident commander.
 
     This is an internal_backend pack. It NEVER faces customers.
@@ -115,6 +115,7 @@ class AvaAdminDesk(EnhancedSkillPack):
             agent_id="ava_admin_desk",
             agent_name="Ava Admin (Ops Desk)",
             default_risk_tier="green",
+            memory_enabled=True,
         )
 
     # =========================================================================

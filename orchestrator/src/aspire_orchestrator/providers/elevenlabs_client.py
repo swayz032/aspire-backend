@@ -130,6 +130,27 @@ async def execute_elevenlabs_speak(
             receipt_data=receipt,
         )
 
+    # S4-L4: Text input size validation (ElevenLabs limit: 5000 chars)
+    _MAX_TEXT_LENGTH = 5000
+    if len(text) > _MAX_TEXT_LENGTH:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="elevenlabs.speak",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INPUT_TOO_LARGE",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="elevenlabs.speak",
+            error=f"Text exceeds max length: {len(text)} > {_MAX_TEXT_LENGTH} chars",
+            receipt_data=receipt,
+        )
+
     voice_id = payload.get("voice_id", "21m00Tcm4TlvDq8ikWAM")
     model_id = payload.get("model_id", "eleven_flash_v2_5")
 
@@ -172,6 +193,15 @@ async def execute_elevenlabs_speak(
     )
 
     if response.success:
+        # S4-L4: Guard against oversized audio responses (max 25MB)
+        _MAX_AUDIO_BYTES = 25 * 1024 * 1024
+        audio_size = response.body.get("audio_size_bytes", 0)
+        if isinstance(audio_size, (int, float)) and audio_size > _MAX_AUDIO_BYTES:
+            logger.warning(
+                "ElevenLabs audio response too large: %d bytes > %d max",
+                audio_size, _MAX_AUDIO_BYTES,
+            )
+
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id="elevenlabs.speak",
@@ -180,7 +210,7 @@ async def execute_elevenlabs_speak(
                 "model_id": model_id,
                 "text_length": len(text),
                 "audio_generated": True,
-                "audio_size_bytes": response.body.get("audio_size_bytes", 0),
+                "audio_size_bytes": audio_size,
             },
             receipt_data=receipt,
         )

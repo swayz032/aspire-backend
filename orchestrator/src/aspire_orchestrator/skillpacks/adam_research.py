@@ -518,11 +518,11 @@ def _build_rfq_document(
 # Phase 3 W3: Enhanced Adam Research with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedAdamResearch(EnhancedSkillPack):
+class EnhancedAdamResearch(AgenticSkillPack):
     """LLM-enhanced Adam Research — search planning, evidence verification, outreach.
 
     Extends the rule-based AdamResearchSkillPack with LLM reasoning:
@@ -539,6 +539,7 @@ class EnhancedAdamResearch(EnhancedSkillPack):
             agent_id="adam-research",
             agent_name="Adam Research",
             default_risk_tier="green",
+            memory_enabled=True,
         )
         self._rule_pack = AdamResearchSkillPack()
 

@@ -300,7 +300,20 @@ async def execute_qbo_read_transactions(
             receipt_data=receipt,
         )
 
-    limit = payload.get("limit", 100)
+    # S3-M6: Validate limit is integer (SQL injection prevention)
+    try:
+        limit = int(payload.get("limit", 100))
+    except (TypeError, ValueError):
+        raise ValueError("S3-M6: MAXRESULTS limit must be an integer")
+
+    # S4-L1: Validate date format (SQL injection prevention)
+    import re as _re
+    _iso_date_re = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    if not _iso_date_re.match(start_date):
+        raise ValueError(f"S4-L1: start_date must be YYYY-MM-DD format, got: {start_date!r}")
+    if not _iso_date_re.match(end_date):
+        raise ValueError(f"S4-L1: end_date must be YYYY-MM-DD format, got: {end_date!r}")
+
     query = (
         f"SELECT * FROM Transaction WHERE TxnDate >= '{start_date}' "
         f"AND TxnDate <= '{end_date}' MAXRESULTS {limit}"

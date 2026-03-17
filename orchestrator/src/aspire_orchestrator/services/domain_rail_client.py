@@ -178,69 +178,96 @@ async def _call_domain_rail(
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=DOMAIN_RAIL_TIMEOUT_SECONDS) as client:
-            if method.upper() == "GET":
-                response = await client.get(url, headers=headers)
-            elif method.upper() == "POST":
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    content=body_bytes,
-                )
-            elif method.upper() == "DELETE":
-                response = await client.delete(url, headers=headers)
-            else:
-                raise DomainRailClientError(
-                    "UNSUPPORTED_METHOD",
-                    f"HTTP method {method} not supported",
-                )
-
+    # H10: Single retry on timeout/connection errors
+    last_error: Exception | None = None
+    for attempt in range(2):
         try:
-            response_body = response.json()
-        except Exception:
-            response_body = {"raw": response.text[:500]}
+            async with httpx.AsyncClient(timeout=DOMAIN_RAIL_TIMEOUT_SECONDS) as client:
+                if method.upper() == "GET":
+                    response = await client.get(url, headers=headers)
+                elif method.upper() == "POST":
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        content=body_bytes,
+                    )
+                elif method.upper() == "DELETE":
+                    response = await client.delete(url, headers=headers)
+                else:
+                    raise DomainRailClientError(
+                        "UNSUPPORTED_METHOD",
+                        f"HTTP method {method} not supported",
+                    )
 
-        success = 200 <= response.status_code < 300
+            try:
+                response_body = response.json()
+            except Exception:
+                response_body = {"raw": response.text[:500]}
 
-        logger.info(
-            "Domain Rail response: %s %s → %d (success=%s)",
-            method, path, response.status_code, success,
-        )
+            success = 200 <= response.status_code < 300
 
-        return DomainRailResponse(
-            status_code=response.status_code,
-            body=response_body,
-            success=success,
-            error=response_body.get("error") if not success else None,
-        )
+            logger.info(
+                "Domain Rail response: %s %s → %d (success=%s, attempt=%d)",
+                method, path, response.status_code, success, attempt + 1,
+            )
 
-    except httpx.TimeoutException:
-        logger.error("Domain Rail timeout: %s %s", method, path)
+            return DomainRailResponse(
+                status_code=response.status_code,
+                body=response_body,
+                success=success,
+                error=response_body.get("error") if not success else None,
+            )
+
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_error = e
+            if attempt == 0:
+                import asyncio as _asyncio
+                logger.warning(
+                    "Domain Rail %s on attempt 1, retrying: %s %s",
+                    type(e).__name__, method, path,
+                )
+                await _asyncio.sleep(1.0)
+                continue
+            # Fall through to post-loop error handling on second failure
+
+        except DomainRailClientError:
+            raise
+
+        except Exception as e:
+            logger.error("Domain Rail unexpected error: %s %s — %s", method, path, e)
+            return DomainRailResponse(
+                status_code=500,
+                body={"error": "DOMAIN_RAIL_ERROR", "message": "Internal service error"},
+                success=False,
+                error="DOMAIN_RAIL_ERROR",
+            )
+
+    # Both retry attempts failed — return appropriate error response
+    if isinstance(last_error, httpx.TimeoutException):
+        logger.error("Domain Rail timeout after retry: %s %s", method, path)
         return DomainRailResponse(
             status_code=504,
             body={"error": "DOMAIN_RAIL_TIMEOUT"},
             success=False,
             error="DOMAIN_RAIL_TIMEOUT",
         )
-    except httpx.ConnectError:
-        logger.error("Domain Rail connection refused: %s %s", method, path)
+    if isinstance(last_error, httpx.ConnectError):
+        logger.error("Domain Rail connection refused after retry: %s %s", method, path)
         return DomainRailResponse(
             status_code=503,
             body={"error": "DOMAIN_RAIL_UNAVAILABLE"},
             success=False,
             error="DOMAIN_RAIL_UNAVAILABLE",
         )
-    except DomainRailClientError:
-        raise
-    except Exception as e:
-        logger.error("Domain Rail unexpected error: %s %s — %s", method, path, e)
-        return DomainRailResponse(
-            status_code=500,
-            body={"error": "DOMAIN_RAIL_ERROR", "message": str(e)},
-            success=False,
-            error="DOMAIN_RAIL_ERROR",
-        )
+
+    # Fallback — should not be reachable
+    logger.error("Domain Rail unexpected state after retry loop: %s %s", method, path)
+    return DomainRailResponse(
+        status_code=500,
+        body={"error": "DOMAIN_RAIL_ERROR"},
+        success=False,
+        error="DOMAIN_RAIL_ERROR",
+    )
 
 
 # =============================================================================

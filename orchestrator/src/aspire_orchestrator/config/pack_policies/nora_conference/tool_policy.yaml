@@ -14,6 +14,12 @@ tool_policy:
     allowed: true
     risk_tier: green
 
+  "meeting.list_rooms":
+    tool_id: livekit.room.list
+    allowed: true
+    risk_tier: green
+
 # tool: livekit.room.create
+# tool: livekit.room.list
 # tool: livekit.meeting.schedule
 # tool: deepgram.transcribe

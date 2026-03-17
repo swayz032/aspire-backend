@@ -384,11 +384,11 @@ class SarahFrontDeskSkillPack:
 # Phase 3 W4: Enhanced Sarah Front Desk with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedSarahFrontDesk(EnhancedSkillPack):
+class EnhancedSarahFrontDesk(AgenticSkillPack):
     """LLM-enhanced Sarah Front Desk — call routing, voicemail analysis, booking.
 
     Extends SarahFrontDeskSkillPack with:
@@ -404,6 +404,7 @@ class EnhancedSarahFrontDesk(EnhancedSkillPack):
             agent_id="sarah-front-desk",
             agent_name="Sarah Front Desk",
             default_risk_tier="yellow",
+            memory_enabled=True,
         )
         self._rule_pack = SarahFrontDeskSkillPack()
 

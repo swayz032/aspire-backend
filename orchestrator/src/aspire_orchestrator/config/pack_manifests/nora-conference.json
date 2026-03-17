@@ -19,6 +19,7 @@
   },
   "tools": [
     "livekit.room.create",
+    "livekit.room.list",
     "livekit.meeting.schedule",
     "deepgram.transcribe"
   ],

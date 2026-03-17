@@ -140,6 +140,8 @@ class TestAgentReasonNode:
             receipt_id="rcpt-1",
             status="not_applicable",
             degraded_reason="",
+            grounding_score=1.0,
+            conflict_flags=[],
         )
         mock_router_fn.return_value = mock_router
 
@@ -172,15 +174,26 @@ class TestAgentReasonNode:
 
     @pytest.mark.asyncio
     async def test_llm_failure_returns_persona_fallback(self):
-        with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr:
+        with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr, \
+             patch("aspire_orchestrator.services.working_memory.get_working_memory") as mock_wm_fn, \
+             patch("aspire_orchestrator.services.episodic_memory.get_episodic_memory") as mock_em_fn, \
+             patch("aspire_orchestrator.services.semantic_memory.get_semantic_memory") as mock_sm_fn:
             mock_router = AsyncMock()
             mock_router.retrieve.return_value = MagicMock(
                 context="",
                 receipt_id="",
                 status="not_applicable",
                 degraded_reason="",
+                grounding_score=1.0,
+                conflict_flags=[],
             )
             mock_rr.return_value = mock_router
+            mock_wm = AsyncMock()
+            mock_wm.get_recent_turns.return_value = []
+            mock_wm.add_turn.return_value = None
+            mock_wm_fn.return_value = mock_wm
+            mock_em_fn.return_value = AsyncMock(search_relevant_episodes=AsyncMock(return_value=[]))
+            mock_sm_fn.return_value = AsyncMock(get_user_facts=AsyncMock(return_value=[]))
 
             with patch(
                 "aspire_orchestrator.nodes.agent_reason.generate_text_async",
@@ -194,15 +207,26 @@ class TestAgentReasonNode:
 
     @pytest.mark.asyncio
     async def test_ava_fallback_for_unknown_agent(self):
-        with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr:
+        with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr, \
+             patch("aspire_orchestrator.services.working_memory.get_working_memory") as mock_wm_fn, \
+             patch("aspire_orchestrator.services.episodic_memory.get_episodic_memory") as mock_em_fn, \
+             patch("aspire_orchestrator.services.semantic_memory.get_semantic_memory") as mock_sm_fn:
             mock_router = AsyncMock()
             mock_router.retrieve.return_value = MagicMock(
                 context="",
                 receipt_id="",
                 status="not_applicable",
                 degraded_reason="",
+                grounding_score=1.0,
+                conflict_flags=[],
             )
             mock_rr.return_value = mock_router
+            mock_wm = AsyncMock()
+            mock_wm.get_recent_turns.return_value = []
+            mock_wm.add_turn.return_value = None
+            mock_wm_fn.return_value = mock_wm
+            mock_em_fn.return_value = AsyncMock(search_relevant_episodes=AsyncMock(return_value=[]))
+            mock_sm_fn.return_value = AsyncMock(get_user_facts=AsyncMock(return_value=[]))
 
             with patch(
                 "aspire_orchestrator.nodes.agent_reason.generate_text_async",
@@ -226,6 +250,8 @@ class TestAgentReasonNode:
             receipt_id="",
             status="not_applicable",
             degraded_reason="",
+            grounding_score=1.0,
+            conflict_flags=[],
         )
         mock_router_fn.return_value = mock_router
 
@@ -253,15 +279,26 @@ class TestAgentReasonNode:
 
     @pytest.mark.asyncio
     async def test_receipt_always_generated(self):
-        with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr:
+        with patch("aspire_orchestrator.services.retrieval_router.get_retrieval_router") as mock_rr, \
+             patch("aspire_orchestrator.services.working_memory.get_working_memory") as mock_wm_fn, \
+             patch("aspire_orchestrator.services.episodic_memory.get_episodic_memory") as mock_em_fn, \
+             patch("aspire_orchestrator.services.semantic_memory.get_semantic_memory") as mock_sm_fn:
             mock_router = AsyncMock()
             mock_router.retrieve.return_value = MagicMock(
                 context="",
                 receipt_id="",
                 status="not_applicable",
                 degraded_reason="",
+                grounding_score=1.0,
+                conflict_flags=[],
             )
             mock_rr.return_value = mock_router
+            mock_wm = AsyncMock()
+            mock_wm.get_recent_turns.return_value = []
+            mock_wm.add_turn.return_value = None
+            mock_wm_fn.return_value = mock_wm
+            mock_em_fn.return_value = AsyncMock(search_relevant_episodes=AsyncMock(return_value=[]))
+            mock_sm_fn.return_value = AsyncMock(get_user_facts=AsyncMock(return_value=[]))
 
             with patch(
                 "aspire_orchestrator.nodes.agent_reason.generate_text_async",
@@ -289,6 +326,8 @@ class TestAgentReasonNode:
             receipt_id="",
             status="not_applicable",
             degraded_reason="",
+            grounding_score=1.0,
+            conflict_flags=[],
         )
         mock_router_fn.return_value = mock_router
 
@@ -314,7 +353,8 @@ class TestAgentReasonNode:
             )
 
         assert "as an ai" not in result["conversation_response"].lower()
-        assert "I'm Eli" in result["conversation_response"]
+        # Quality guard replaces AI-style output with agent-specific fallback
+        assert "draft" in result["conversation_response"].lower() or "eli" in result["conversation_response"].lower()
         receipt = result["pipeline_receipts"][-1]
         assert receipt["quality_report"]["passed"] is False
         assert receipt["quality_report"]["violations"]
@@ -359,7 +399,7 @@ class TestAgentReasonNode:
                 _make_state(agent_target="clara", intent_type="knowledge", user_profile={"channel": "chat"})
             )
 
-        assert "grounded legal context" in result["conversation_response"].lower()
+        assert "cautious legal read" in result["conversation_response"].lower()
         receipt = result["pipeline_receipts"][-1]
         assert receipt["retrieval_verification"]["passed"] is False
         assert receipt["retrieval_verification"]["mode"] in {"degraded", "weak_grounding"}

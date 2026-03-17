@@ -95,11 +95,94 @@ def _make_receipt(
 
 
 # =============================================================================
+# Live Data Helpers (2a-2d: Wire Finn to real providers via finance_snapshots)
+# =============================================================================
+
+
+async def _fetch_live_snapshot(
+    suite_id: str,
+    office_id: str,
+    period: str,
+) -> dict[str, Any]:
+    """Fetch live financial snapshot from Supabase finance_snapshots table.
+
+    Mirrors financeRoutes.ts:104-125 — reads the latest snapshot row
+    which is populated by snapshotEngine.ts from Stripe/QBO/Plaid data.
+    Falls back to stub data if no snapshot exists or Supabase is unavailable.
+    """
+    try:
+        from aspire_orchestrator.services.supabase_client import supabase_select
+
+        rows = await supabase_select(
+            "finance_snapshots",
+            {"suite_id": suite_id, "office_id": office_id},
+            order_by="generated_at.desc",
+            limit=1,
+        )
+
+        if rows:
+            row = rows[0]
+            chapter_now = row.get("chapter_now") or {}
+            chapter_month = row.get("chapter_month") or {}
+            sources = row.get("sources") or []
+
+            # 2a: Stripe data from chapter_now (stripeAvailable, stripePending)
+            stripe_available = int(chapter_now.get("stripeAvailable", 0) * 100)  # dollars→cents
+            stripe_pending = int(chapter_now.get("stripePending", 0) * 100)
+
+            # 2b: QBO data from chapter_month (revenue, expenses, netIncome)
+            revenue_cents = int(chapter_month.get("revenue", 0) * 100)
+            expenses_cents = int(chapter_month.get("expenses", 0) * 100)
+            net_income_cents = int(chapter_month.get("netIncome", 0) * 100)
+
+            # 2c: Plaid/bank data from chapter_now (bankBalance, cashAvailable)
+            bank_balance_cents = int(chapter_now.get("bankBalance", 0) * 100)
+            cash_available_cents = int(chapter_now.get("cashAvailable", 0) * 100)
+
+            data_sources = [s for s in sources if isinstance(s, str)] or ["supabase"]
+
+            return {
+                "period": period,
+                "revenue_cents": revenue_cents,
+                "expenses_cents": expenses_cents,
+                "net_income_cents": net_income_cents,
+                "cash_position_cents": cash_available_cents,
+                "bank_balance_cents": bank_balance_cents,
+                "stripe_available_cents": stripe_available,
+                "stripe_pending_cents": stripe_pending,
+                "generated_at": row.get("generated_at", datetime.now(timezone.utc).isoformat()),
+                "staleness": row.get("staleness"),
+                "stub": False,
+                "data_source": ",".join(data_sources),
+            }
+
+        logger.info("No finance_snapshots row for suite=%s office=%s — returning stub", suite_id, office_id)
+    except Exception as e:
+        logger.warning("Failed to fetch live snapshot (falling back to stub): %s", e)
+
+    # Stub fallback — no providers connected yet
+    return {
+        "period": period,
+        "revenue_cents": 0,
+        "expenses_cents": 0,
+        "net_income_cents": 0,
+        "cash_position_cents": 0,
+        "bank_balance_cents": 0,
+        "stripe_available_cents": 0,
+        "stripe_pending_cents": 0,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stub": True,
+        "data_source": "stub",
+        "message": "No financial data yet. Connect your providers in the Connections page to see real numbers.",
+    }
+
+
+# =============================================================================
 # Skill Pack Methods
 # =============================================================================
 
 
-def read_finance_snapshot(
+async def read_finance_snapshot(
     ctx: FinnFMContext,
     *,
     period: str = "current_month",
@@ -120,18 +203,8 @@ def read_finance_snapshot(
         )
         return SkillPackResult(success=False, receipt=receipt, error="Missing suite_id or office_id")
 
-    # Build snapshot data (stub — real implementation queries Supabase)
-    snapshot = {
-        "period": period,
-        "revenue_cents": 0,
-        "expenses_cents": 0,
-        "net_income_cents": 0,
-        "cash_position_cents": 0,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "stub": True,
-        "data_source": "stub",
-        "message": "No financial data yet. Connect your providers in the Connections page to see real numbers.",
-    }
+    # Query Supabase finance_snapshots for real data (same pattern as financeRoutes.ts:104-125)
+    snapshot = await _fetch_live_snapshot(ctx.suite_id, ctx.office_id, period)
 
     if include_tax:
         try:
@@ -361,14 +434,57 @@ def dispatch_a2a_delegation(
 # Phase 3 W4: Enhanced Finn Finance Manager with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedFinnFinanceManager(EnhancedSkillPack):
+class EnhancedFinnFinanceManager(AgenticSkillPack):
+    def __init__(self) -> None:
+        super().__init__(
+            agent_id="finn-finance-manager",
+            agent_name="Finn",
+            default_risk_tier="yellow",
+            memory_enabled=True,
+        )
+
+    async def get_greeting(
+        self, ctx: AgentContext, *, user_name: str | None = None, time_of_day: str | None = None,
+    ) -> str:
+        """Finn's greeting — precise, data-aware finance personality (7b)."""
+        if time_of_day is None:
+            from datetime import datetime, timezone
+            hour = datetime.now(timezone.utc).hour
+            time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
+
+        name_part = f" {user_name}" if user_name else ""
+        is_returning = False
+        if self._memory_enabled:
+            try:
+                episodes = await self.recall_episodes(ctx, limit=1)
+                is_returning = bool(episodes)
+            except Exception:
+                pass
+
+        if is_returning:
+            return f"Good {time_of_day}{name_part}. Ready to look at the numbers?"
+        else:
+            return f"Good {time_of_day}{name_part}, I'm Finn — your finance intelligence manager. I track revenue, expenses, and help you understand your business health."
+
+    async def get_error_message(
+        self, missing_fields: list[str] | None = None, error_type: str = "generic",
+    ) -> str:
+        """Finn's error messages — precise with financial context (7c)."""
+        if error_type == "missing_fields" and missing_fields:
+            fields_str = " and ".join(missing_fields)
+            return f"I need the {fields_str} to pull accurate numbers. Can you provide {'those' if len(missing_fields) > 1 else 'that'}?"
+        elif error_type == "validation":
+            return "That value doesn't look right — double-check the format and try again."
+        else:
+            return "I couldn't complete that financial operation. Want to try a different approach?"
+
     async def finance_snapshot_read(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
-        result = read_finance_snapshot(
+        result = await read_finance_snapshot(
             fm_ctx,
             period=str(params.get("period", "current_month")),
             include_tax=bool(params.get("include_tax", False)),
@@ -437,6 +553,7 @@ class EnhancedFinnFinanceManager(EnhancedSkillPack):
             agent_id="finn-finance-manager",
             agent_name="Finn Finance Manager",
             default_risk_tier="yellow",
+            memory_enabled=True,
         )
         self._rule_pack_funcs = {
             "snapshot": read_finance_snapshot,

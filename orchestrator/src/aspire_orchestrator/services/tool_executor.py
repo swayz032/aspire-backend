@@ -101,7 +101,6 @@ from aspire_orchestrator.providers.quickbooks_client import (
 from aspire_orchestrator.providers.plaid_client import (
     execute_plaid_accounts_get,
     execute_plaid_transactions_get,
-    execute_plaid_transfer_create,
 )
 
 # Wave 5: Milo (Payroll) providers — Gusto (RED tier)
@@ -147,7 +146,17 @@ def _make_receipt_data(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Build receipt data for a tool execution."""
+    """Build receipt data for a tool execution.
+
+    H11: Validates suite_id and office_id are non-empty (fail-closed, Law #3).
+    Receipts with missing tenant scope are governance violations.
+    """
+    if not suite_id or suite_id == "unknown":
+        logger.error("H11: Receipt rejected — missing suite_id for tool=%s", tool_id)
+        raise ValueError(f"Cannot create receipt without valid suite_id for tool={tool_id}")
+    if not office_id or office_id == "unknown":
+        logger.error("H11: Receipt rejected — missing office_id for tool=%s", tool_id)
+        raise ValueError(f"Cannot create receipt without valid office_id for tool={tool_id}")
     return {
         "id": str(uuid.uuid4()),
         "correlation_id": correlation_id,
@@ -752,11 +761,11 @@ _BOOKS_EXECUTORS: dict[str, ToolExecutorFn] = {
     "qbo.journal_entry.create": execute_qbo_journal_entry_create,
 }
 
-# Phase 2 Wave 5: Payment tools (Moov discontinued, Plaid retained for reads)
+# Phase 2 Wave 5: Payment tools (Moov discontinued, Plaid retained for reads only)
+# M10/S3-L1: plaid.transfer.create REMOVED — money movement discontinued
 _PAYMENT_EXECUTORS: dict[str, ToolExecutorFn] = {
     "plaid.accounts.get": execute_plaid_accounts_get,
     "plaid.transactions.get": execute_plaid_transactions_get,
-    "plaid.transfer.create": execute_plaid_transfer_create,
 }
 
 # Phase 2 Wave 5: Payroll tools (RED — Milo Payroll pack)
@@ -803,6 +812,29 @@ _ALL_LIVE_EXECUTORS: dict[str, ToolExecutorFn] = {
 }
 
 
+# 5c: Per-tool authorization matrix — cached manifest lookup
+_AGENT_ALLOWED_TOOLS: dict[str, set[str]] | None = None
+
+
+def _get_agent_allowed_tools() -> dict[str, set[str]]:
+    """Load all manifests and build owner_key -> allowed tool_ids mapping."""
+    global _AGENT_ALLOWED_TOOLS
+    if _AGENT_ALLOWED_TOOLS is not None:
+        return _AGENT_ALLOWED_TOOLS
+
+    from aspire_orchestrator.services.manifest_loader import load_all_manifests
+
+    manifests = load_all_manifests()
+    result: dict[str, set[str]] = {}
+    for _pack_id, manifest in manifests.items():
+        owner = manifest.get("owner_key", "")
+        tools = manifest.get("tools", [])
+        if owner and isinstance(tools, list):
+            result.setdefault(owner, set()).update(tools)
+    _AGENT_ALLOWED_TOOLS = result
+    return _AGENT_ALLOWED_TOOLS
+
+
 async def execute_tool(
     *,
     tool_id: str,
@@ -813,12 +845,73 @@ async def execute_tool(
     risk_tier: str = "green",
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
+    agent_id: str | None = None,
 ) -> ToolExecutionResult:
     """Execute a tool by ID. Routes to live executors or stub.
 
     Live executors: Domain Rail (Phase 0C) + Provider clients (Phase 2).
     Stub fallback: Tools not yet wired return stub success.
+
+    5c: If agent_id is provided, checks manifest-based tool authorization.
     """
+    # 5c: Per-tool authorization — verify agent is allowed to use this tool
+    # R-002: YELLOW/RED tier ops MUST have an agent_id (fail-closed, Law #3)
+    if agent_id is None and risk_tier.lower() in ("yellow", "red"):
+        logger.warning(
+            "Tool authorization DENIED: no agent_id for %s-tier tool=%s",
+            risk_tier, tool_id,
+        )
+        receipt = _make_receipt_data(
+            correlation_id=correlation_id, suite_id=suite_id,
+            office_id=office_id, tool_id=tool_id,
+            risk_tier=risk_tier, outcome=Outcome.DENIED,
+            reason_code="AGENT_ID_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.DENIED,
+            tool_id=tool_id,
+            data={
+                "status": "denied",
+                "tool": tool_id,
+                "reason": f"agent_id required for {risk_tier.upper()}-tier tool '{tool_id}'",
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            receipt_data=receipt,
+            is_stub=False,
+        )
+
+    if agent_id is not None:
+        allowed = _get_agent_allowed_tools()
+        agent_tools = allowed.get(agent_id)
+        if agent_tools is not None and tool_id not in agent_tools:
+            logger.warning(
+                "Tool authorization DENIED: agent=%s tool=%s (not in manifest)",
+                agent_id, tool_id,
+            )
+            receipt = _make_receipt_data(
+                correlation_id=correlation_id, suite_id=suite_id,
+                office_id=office_id, tool_id=tool_id,
+                risk_tier=risk_tier, outcome=Outcome.DENIED,
+                reason_code="TOOL_NOT_AUTHORIZED_FOR_AGENT",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.DENIED,
+                tool_id=tool_id,
+                data={
+                    "status": "denied",
+                    "tool": tool_id,
+                    "agent": agent_id,
+                    "reason": f"Agent '{agent_id}' is not authorized to use tool '{tool_id}'",
+                    "executed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                receipt_data=receipt,
+                is_stub=False,
+            )
+
     executor = _ALL_LIVE_EXECUTORS.get(tool_id)
 
     if executor:
@@ -833,16 +926,27 @@ async def execute_tool(
             capability_token_hash=capability_token_hash,
         )
     else:
-        logger.info("Tool executor STUB: %s", tool_id)
-        return await execute_stub(
-            tool_id=tool_id,
-            payload=payload,
-            correlation_id=correlation_id,
-            suite_id=suite_id,
-            office_id=office_id,
-            risk_tier=risk_tier,
+        # C4: Unknown tools fail-closed (Law #3) — DENIED, not stub SUCCESS
+        logger.warning("Tool executor DENIED (unknown tool): %s", tool_id)
+        receipt = _make_receipt_data(
+            correlation_id=correlation_id, suite_id=suite_id,
+            office_id=office_id, tool_id=tool_id,
+            risk_tier=risk_tier, outcome=Outcome.DENIED,
+            reason_code="UNKNOWN_TOOL",
             capability_token_id=capability_token_id,
             capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.DENIED,
+            tool_id=tool_id,
+            data={
+                "status": "denied",
+                "tool": tool_id,
+                "reason": f"Tool '{tool_id}' has no registered executor",
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            receipt_data=receipt,
+            is_stub=False,
         )
 
 

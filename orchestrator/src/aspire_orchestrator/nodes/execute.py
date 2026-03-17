@@ -20,6 +20,8 @@ A2A Integration (Phase 3):
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -38,6 +40,7 @@ from aspire_orchestrator.services.outbox_client import OutboxJob, get_outbox_cli
 from aspire_orchestrator.services.token_service import validate_token
 from aspire_orchestrator.services.tool_executor import is_live_tool
 from aspire_orchestrator.services.tool_executor import execute_tool as _execute_tool_async
+from aspire_orchestrator.middleware.exception_handler import _sanitize_error_message
 from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -141,6 +144,8 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
         return {
             "outcome": Outcome.DENIED,
             "execution_result": None,
+            "error_code": state.get("error_code"),
+            "error_message": state.get("error_message", "Policy denied"),
         }
 
     # Defense-in-depth: check safe mode before any tool execution (Law #3)
@@ -499,16 +504,24 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     execution_error_code: str | None = None
     execution_reason_code = "EXECUTED"
 
+    # 5b: Risk-tier based timeouts for tool execution
+    _TOOL_TIMEOUTS = {"green": 15.0, "yellow": 30.0, "red": 60.0}
+    tool_timeout = _TOOL_TIMEOUTS.get(risk_tier_str.lower(), 30.0)
+
     if live and state.get("execution_params"):
         try:
-            tool_result = await _execute_tool_async(
-                tool_id=tool_used,
-                payload=state["execution_params"],
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-                risk_tier=risk_tier_str,
-                capability_token_id=capability_token_id,
+            tool_result = await asyncio.wait_for(
+                _execute_tool_async(
+                    tool_id=tool_used,
+                    payload=state["execution_params"],
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    risk_tier=risk_tier_str,
+                    capability_token_id=capability_token_id,
+                    agent_id=assigned_agent,
+                ),
+                timeout=tool_timeout,
             )
             # ToolExecutionResult uses .outcome (Outcome enum), not .success
             execution_success = (
@@ -539,15 +552,35 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
                     execution_error=str(execution_error or ""),
                     execution_data=execution_data if isinstance(execution_data, dict) else {},
                 )
-        except Exception as e:
-            logger.error("Live tool execution failed for %s: %s", tool_used, e)
+        except asyncio.TimeoutError:
+            # 5b: Tool execution timed out
+            logger.error(
+                "5b: Tool execution TIMEOUT for %s after %.0fs (tier=%s)",
+                tool_used, tool_timeout, risk_tier_str,
+            )
             execution_result = {
                 "status": "failed",
                 "tool": tool_used,
                 "task_type": task_type,
                 "assigned_agent": assigned_agent,
                 "a2a_task_id": a2a_task_id,
-                "error": str(e),
+                "error": f"Tool execution timed out after {tool_timeout}s",
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+                "stub": False,
+                "live": True,
+            }
+            execution_error_code = "TOOL_TIMEOUT"
+            execution_reason_code = "TOOL_TIMEOUT"
+        except Exception as e:
+            logger.error("Live tool execution failed for %s: %s", tool_used, e)
+            sanitized_error = _sanitize_error_message(str(e))
+            execution_result = {
+                "status": "failed",
+                "tool": tool_used,
+                "task_type": task_type,
+                "assigned_agent": assigned_agent,
+                "a2a_task_id": a2a_task_id,
+                "error": sanitized_error,
                 "executed_at": datetime.now(timezone.utc).isoformat(),
                 "stub": False,
                 "live": True,
@@ -555,7 +588,7 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
             execution_error_code, execution_reason_code = _classify_execution_failure(
                 task_type=task_type,
                 tool_used=tool_used,
-                execution_error=str(e),
+                execution_error=sanitized_error,
                 execution_data={},
             )
     else:
@@ -703,13 +736,11 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
                 },
             }
 
-            import asyncio
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None and loop.is_running():
-                import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     aq_result = pool.submit(
                         asyncio.run, supabase_insert("approval_requests", send_approval_data)
@@ -757,5 +788,6 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     }
     if outcome_val == Outcome.FAILED:
         result["error_code"] = execution_error_code or "EXECUTION_FAILED"
-        result["error_message"] = str(execution_result.get("error") or "Execution failed")
+        raw_err = execution_result.get("error") if isinstance(execution_result, dict) else None
+        result["error_message"] = _sanitize_error_message(str(raw_err).strip()) if raw_err else "An unexpected error occurred"
     return result

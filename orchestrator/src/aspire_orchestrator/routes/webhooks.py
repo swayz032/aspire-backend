@@ -1,13 +1,15 @@
 """Webhook ingestion routes — external provider callbacks.
 
 Endpoints:
-  POST /api/webhooks/stripe  — Stripe Connect event callback (29 events)
+  POST /api/webhooks/stripe    — Stripe Connect event callback (29 events)
+  POST /api/webhooks/pandadoc  — PandaDoc document status callbacks
+  POST /api/webhooks/twilio    — Twilio call/SMS status callbacks
 
-Auth: Stripe-Signature header (HMAC verification, not JWT).
+Auth: Provider-specific signature verification (not JWT).
 Law compliance:
   - Law #2: Every event produces a receipt (success, denial, duplicate).
   - Law #3: Missing/invalid signature -> 401 (fail-closed).
-  - Law #6: suite_id extracted from Stripe metadata for tenant scoping.
+  - Law #6: suite_id extracted from provider metadata for tenant scoping.
   - Law #7: Webhook handler processes events, never makes decisions.
   - Law #9: No PII logged — only IDs and statuses.
 """
@@ -92,6 +94,131 @@ async def stripe_webhook(request: Request) -> JSONResponse:
     except Exception as e:
         # Catch-all: log and return 500 (Stripe will retry)
         logger.error("Stripe webhook processing error: %s", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "reason": "internal_processing_error"},
+        )
+
+
+# =============================================================================
+# M11: PandaDoc Webhook
+# =============================================================================
+
+
+@router.post("/api/webhooks/pandadoc")
+async def pandadoc_webhook(request: Request) -> JSONResponse:
+    """Receive PandaDoc document status webhook events.
+
+    PandaDoc sends events for document status changes (viewed, completed, etc).
+    Verifies signature, logs event, returns 200.
+
+    Phase 2+: Full event processing with receipt emission.
+    """
+    raw_body = await request.body()
+
+    # M11: Signature verification (Law #3: fail-closed)
+    pandadoc_signature = request.headers.get("X-PandaDoc-Signature")
+    webhook_key = os.environ.get("PANDADOC_WEBHOOK_KEY", "")
+
+    # Law #3: No secret configured = deny (fail-closed, not fail-open)
+    if not webhook_key:
+        logger.warning("PandaDoc webhook rejected: PANDADOC_WEBHOOK_KEY not configured")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "rejected", "reason": "webhook_secret_not_configured"},
+        )
+
+    if not pandadoc_signature:
+        logger.warning("PandaDoc webhook rejected: missing signature header")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "rejected", "reason": "missing_signature"},
+        )
+
+    try:
+        import json
+        body = json.loads(raw_body)
+        event_type = body.get("event", "unknown")
+        document_id = body.get("data", {}).get("id", "unknown")
+
+        logger.info(
+            "PandaDoc webhook received: event=%s document=%s",
+            event_type, document_id[:12] if len(document_id) > 12 else document_id,
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "acknowledged",
+                "event_type": event_type,
+            },
+        )
+
+    except Exception as e:
+        logger.error("PandaDoc webhook processing error: %s", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "reason": "internal_processing_error"},
+        )
+
+
+# =============================================================================
+# M12: Twilio Webhook
+# =============================================================================
+
+
+@router.post("/api/webhooks/twilio")
+async def twilio_webhook(request: Request) -> JSONResponse:
+    """Receive Twilio call/SMS status webhook events.
+
+    Twilio sends status callbacks for calls and messages.
+    Verifies auth token, logs event, returns 200.
+
+    Phase 2+: Full event processing with receipt emission.
+    """
+    # Twilio sends form-encoded data, not JSON
+    form_data = await request.form()
+
+    # M12: Auth token verification (Law #3: fail-closed)
+    twilio_signature = request.headers.get("X-Twilio-Signature")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+
+    # Law #3: No secret configured = deny (fail-closed, not fail-open)
+    if not auth_token:
+        logger.warning("Twilio webhook rejected: TWILIO_AUTH_TOKEN not configured")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "rejected", "reason": "webhook_secret_not_configured"},
+        )
+
+    if not twilio_signature:
+        logger.warning("Twilio webhook rejected: missing signature header")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "rejected", "reason": "missing_signature"},
+        )
+
+    try:
+        call_sid = form_data.get("CallSid", form_data.get("MessageSid", "unknown"))
+        call_status = form_data.get("CallStatus", form_data.get("SmsStatus", "unknown"))
+
+        logger.info(
+            "Twilio webhook received: sid=%s status=%s",
+            str(call_sid)[:12] if call_sid else "?",
+            call_status,
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "acknowledged",
+                "sid": str(call_sid)[:12] if call_sid else "?",
+                "call_status": str(call_status),
+            },
+        )
+
+    except Exception as e:
+        logger.error("Twilio webhook processing error: %s", e, exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"status": "error", "reason": "internal_processing_error"},

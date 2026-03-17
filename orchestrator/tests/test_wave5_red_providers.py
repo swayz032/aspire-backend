@@ -1054,7 +1054,8 @@ class TestToolExecutorRegistryWiring:
         from aspire_orchestrator.services.tool_executor import is_live_tool
         assert is_live_tool("plaid.accounts.get")
         assert is_live_tool("plaid.transactions.get")
-        assert is_live_tool("plaid.transfer.create")
+        # M10/S3-L1: plaid.transfer.create REMOVED — money movement discontinued
+        assert not is_live_tool("plaid.transfer.create")
 
     def test_gusto_tools_registered(self):
         from aspire_orchestrator.services.tool_executor import is_live_tool
@@ -1065,8 +1066,9 @@ class TestToolExecutorRegistryWiring:
     def test_all_six_tools_in_live_list(self):
         from aspire_orchestrator.services.tool_executor import get_live_tools
         live = get_live_tools()
+        # M10/S3-L1: plaid.transfer.create REMOVED — money movement discontinued
         wave5_tools = [
-            "plaid.accounts.get", "plaid.transactions.get", "plaid.transfer.create",
+            "plaid.accounts.get", "plaid.transactions.get",
             "gusto.read_company", "gusto.read_payrolls", "gusto.payroll.run",
         ]
         for tool in wave5_tools:

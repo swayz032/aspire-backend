@@ -19,5 +19,11 @@ tool_policy:
     allowed: true
     risk_tier: green
 
+  "payroll.company_info":
+    tool_id: gusto.read_company
+    allowed: true
+    risk_tier: green
+
 # tool: gusto.payroll.run
 # tool: gusto.read_payrolls
+# tool: gusto.read_company

@@ -664,11 +664,11 @@ class MailOpsDeskSkillPack:
 # Phase 3 W4: Enhanced Mail Ops with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedMailOps(EnhancedSkillPack):
+class EnhancedMailOps(AgenticSkillPack):
     """LLM-enhanced Mail Ops — domain provisioning planning, mailbox management.
 
     Extends MailOpsDeskSkillPack with:
@@ -683,6 +683,7 @@ class EnhancedMailOps(EnhancedSkillPack):
             agent_id="mail-ops",
             agent_name="Mail Ops",
             default_risk_tier="yellow",
+            memory_enabled=True,
         )
         self._rule_pack = MailOpsDeskSkillPack()
 

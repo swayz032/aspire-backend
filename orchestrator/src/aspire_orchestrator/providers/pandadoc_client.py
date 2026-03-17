@@ -50,9 +50,19 @@ from aspire_orchestrator.services.openai_client import generate_text_async
 from aspire_orchestrator.services.receipt_store import store_receipts
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
-# Restrict module exports to prevent direct provider function imports (Law #5 enforcement)
-# Only PandaDocClient should be imported; execute_* functions are internal-only
-__all__ = ["PandaDocClient"]
+# S3-L2: __all__ only restricts `from module import *` — explicit imports bypass it.
+# execute_* functions are used by tool_executor.py via explicit import, which is correct.
+# Removing misleading restriction comment; __all__ retained for linting compatibility.
+__all__ = [
+    "PandaDocClient",
+    "execute_pandadoc_contract_generate",
+    "execute_pandadoc_contract_read",
+    "execute_pandadoc_contract_send",
+    "execute_pandadoc_contract_sign",
+    "execute_pandadoc_create_signing_session",
+    "execute_pandadoc_templates_list",
+    "execute_pandadoc_templates_details",
+]
 
 logger = logging.getLogger(__name__)
 

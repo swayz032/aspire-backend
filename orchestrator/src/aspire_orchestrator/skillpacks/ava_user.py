@@ -7,10 +7,10 @@ from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResul
 from aspire_orchestrator.services.intent_classifier import get_intent_classifier
 from aspire_orchestrator.services.policy_engine import get_policy_matrix
 from aspire_orchestrator.services.skill_router import get_skill_router
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 
 
-class AvaUserSkillPack(EnhancedSkillPack):
+class AvaUserSkillPack(AgenticSkillPack):
     """Template-compliant wrapper for the Ava User orchestration surface."""
 
     def __init__(self) -> None:
@@ -18,7 +18,45 @@ class AvaUserSkillPack(EnhancedSkillPack):
             agent_id='ava_user',
             agent_name='Ava User',
             default_risk_tier='green',
+            memory_enabled=True,
         )
+
+    async def get_greeting(
+        self, ctx: AgentContext, *, user_name: str | None = None, time_of_day: str | None = None,
+    ) -> str:
+        """Ava's greeting — warm orchestrator personality (7b)."""
+        if time_of_day is None:
+            from datetime import datetime, timezone
+            hour = datetime.now(timezone.utc).hour
+            time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
+
+        name_part = f" {user_name}" if user_name else ""
+        is_returning = False
+        if self._memory_enabled:
+            try:
+                episodes = await self.recall_episodes(ctx, limit=1)
+                is_returning = bool(episodes)
+            except Exception:
+                pass
+
+        if is_returning:
+            return f"Good {time_of_day}{name_part}. What can I help you with?"
+        else:
+            return f"Good {time_of_day}{name_part}, I'm Ava — your business operating system. How can I help you today?"
+
+    async def get_error_message(
+        self, missing_fields: list[str] | None = None, error_type: str = "generic",
+    ) -> str:
+        """Ava's error messages — warm with clear guidance (7c)."""
+        if error_type == "missing_fields" and missing_fields:
+            fields_str = " and ".join(missing_fields)
+            return f"I'd love to help with that — I just need the {fields_str} first. Could you share {'those' if len(missing_fields) > 1 else 'that'}?"
+        elif error_type == "validation":
+            return "That doesn't quite look right. Want to give it another try?"
+        elif error_type == "unauthorized":
+            return "I'll need your approval before I can proceed with that. Ready to authorize?"
+        else:
+            return "Something didn't work as expected. Let me know how you'd like to proceed."
 
     async def intent_classify(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         utterance = str(params.get('utterance', '')).strip()

@@ -159,8 +159,27 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     office_id = state.get("office_id", "unknown")
     utterance = state.get("utterance", "")
     task_type = state.get("task_type", "unknown")
-    tool_used = state.get("tool_used")
     routing_plan = state.get("routing_plan", {})
+
+    # H15: Validate routing_plan exists before proceeding
+    if not routing_plan:
+        logger.warning("param_extract: no routing_plan — cannot extract params")
+        return {
+            "error": True,
+            "error_code": "MISSING_ROUTING_PLAN",
+            "error_message": "No routing plan available for parameter extraction",
+            "execution_params": None,
+            "pipeline_receipts": list(state.get("pipeline_receipts", [])),
+        }
+
+    # H4: Set tool_used from routing_plan steps (not just state)
+    tool_used = state.get("tool_used")
+    if not tool_used:
+        steps = routing_plan.get("steps") if isinstance(routing_plan, dict) else getattr(routing_plan, "steps", None)
+        if steps and len(steps) > 0:
+            step = steps[0]
+            tool_used = step.get("tool_id") if isinstance(step, dict) else getattr(step, "tool_id", None)
+            logger.info("param_extract: resolved tool_used=%s from routing_plan", tool_used)
 
     existing_receipts = list(state.get("pipeline_receipts", []))
     eli_agentic_meta: dict[str, Any] = {}
@@ -194,6 +213,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             "execution_params": request_payload or None,
             "advisor_context": advisor_context,
             "pipeline_receipts": existing_receipts,
+            "tool_used": tool_used,
         }
 
     # For direct API calls (task_type + payload, no utterance), still validate required
@@ -585,7 +605,31 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
 
     # Fail-closed on missing required fields
     if missing_fields:
-        field_list = ", ".join(missing_fields)
+        # Human-friendly field name mapping (raw schema keys → user-facing)
+        _friendly_names: dict[str, str] = {
+            "customer_email": "customer email",
+            "customer_name": "customer name",
+            "amount_cents": "amount",
+            "amount": "amount",
+            "currency": "currency",
+            "due_date": "due date",
+            "invoice_number": "invoice number",
+            "to": "recipient email",
+            "from_address": "sender email",
+            "subject": "subject",
+            "body": "message body",
+            "recipient_office_id": "recipient",
+            "description": "description",
+            "payment_method": "payment method",
+            "account_id": "account",
+            "contact_name": "contact name",
+            "contact_email": "contact email",
+            "document_title": "document title",
+            "start_time": "start time",
+            "end_time": "end time",
+        }
+        friendly_fields = [_friendly_names.get(f, f.replace("_", " ")) for f in missing_fields]
+        field_list = ", ".join(friendly_fields)
         error_message = f"I need more details to proceed. Please provide: {field_list}"
         if (
             tool_used in ("polaris.email.draft", "polaris.email.send")
@@ -636,6 +680,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         "execution_params": extracted_params,
         "advisor_context": advisor_context,
         "pipeline_receipts": existing_receipts,
+        "tool_used": tool_used,
         "eli_rag_status": eli_agentic_meta.get("eli_rag_status"),
         "eli_fallback_mode": eli_agentic_meta.get("eli_fallback_mode"),
         "eli_rag_sources": eli_agentic_meta.get("eli_rag_sources"),

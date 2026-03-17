@@ -8,11 +8,11 @@ version = "0.1.0"
 description = "Aspire LangGraph Orchestrator - the Single Brain (Law #1)"
 requires-python = ">=3.11"
 dependencies = [
-    "langgraph>=1.0.10,<1.1",
+    "langgraph>=1.1.0,<1.2",
     "langgraph-checkpoint-postgres>=3.0.0,<4.0",
     "psycopg[binary]>=3.2.0,<4.0",
-    "langchain-core>=1.0.0,<1.1",
-    "openai>=1.60.0",
+    "langchain-core>=1.0.0,<2.0",
+    "openai>=2.28.0,<3.0",
     "presidio-analyzer>=2.2.0,<3.0",
     "presidio-anonymizer>=2.2.0,<3.0",
     "httpx>=0.28.0,<0.29",

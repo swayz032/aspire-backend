@@ -494,26 +494,26 @@ class TestExecuteToolRouting:
             assert result.is_stub is False
 
     @pytest.mark.asyncio
-    async def test_routes_to_stub_executor(self):
-        """Unimplemented tools route to stub."""
+    async def test_routes_to_denied_for_unregistered(self):
+        """Unimplemented tools are DENIED (Law #3 fail-closed)."""
         result = await execute_tool(
             tool_id="slack.message.send",
             payload={"channel": "general", "text": "hello"},
             **BASE_KWARGS,
         )
-        assert result.outcome == Outcome.SUCCESS
-        assert result.is_stub is True
+        assert result.outcome == Outcome.DENIED
+        assert result.is_stub is False
 
     @pytest.mark.asyncio
-    async def test_unknown_tool_uses_stub(self):
-        """Completely unknown tools get stub executor."""
+    async def test_unknown_tool_denied(self):
+        """Completely unknown tools are DENIED (Law #3 fail-closed)."""
         result = await execute_tool(
             tool_id="nonexistent.tool.action",
             payload={},
             **BASE_KWARGS,
         )
-        assert result.outcome == Outcome.SUCCESS
-        assert result.is_stub is True
+        assert result.outcome == Outcome.DENIED
+        assert result.is_stub is False
 
     @pytest.mark.asyncio
     async def test_all_live_tools_have_receipt(self):

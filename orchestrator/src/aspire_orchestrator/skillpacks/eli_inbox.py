@@ -546,11 +546,11 @@ class EliInboxSkillPack:
 # Phase 3 W4: Enhanced Eli Inbox with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedEliInbox(EnhancedSkillPack):
+class EnhancedEliInbox(AgenticSkillPack):
     """LLM-enhanced Eli Inbox — intelligent triage, draft generation, DLP-aware.
 
     Voice ID: c6kFzbpMaJ8UMD5P6l72 (ElevenLabs)
@@ -560,10 +560,48 @@ class EnhancedEliInbox(EnhancedSkillPack):
     def __init__(self) -> None:
         super().__init__(
             agent_id="eli-inbox",
-            agent_name="Eli Inbox",
+            agent_name="Eli",
             default_risk_tier="yellow",
+            memory_enabled=True,
         )
         self._rule_pack = EliInboxSkillPack()
+
+    async def get_greeting(
+        self, ctx: AgentContext, *, user_name: str | None = None, time_of_day: str | None = None,
+    ) -> str:
+        """Eli's greeting — efficient communication personality (7b)."""
+        if time_of_day is None:
+            from datetime import datetime, timezone
+            hour = datetime.now(timezone.utc).hour
+            time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
+
+        name_part = f" {user_name}" if user_name else ""
+        is_returning = False
+        if self._memory_enabled:
+            try:
+                episodes = await self.recall_episodes(ctx, limit=1)
+                is_returning = bool(episodes)
+            except Exception:
+                pass
+
+        if is_returning:
+            return f"Good {time_of_day}{name_part}. Let me check your inbox."
+        else:
+            return f"Good {time_of_day}{name_part}, I'm Eli — I manage your inbox. I triage, draft, and keep your communications organized."
+
+    async def get_error_message(
+        self, missing_fields: list[str] | None = None, error_type: str = "generic",
+    ) -> str:
+        """Eli's error messages — clear and action-oriented (7c)."""
+        if error_type == "missing_fields" and missing_fields:
+            fields_str = " and ".join(missing_fields)
+            return f"I need the {fields_str} to handle that email. Can you fill {'those' if len(missing_fields) > 1 else 'that'} in?"
+        elif error_type == "validation":
+            return "That email doesn't look right — check the recipient and subject, then try again."
+        elif error_type == "dlp":
+            return "I can't send that — it contains sensitive information that needs to be reviewed first."
+        else:
+            return "I couldn't process that communication. What would you like me to try instead?"
 
     async def triage_email(self, email_data: dict, ctx: AgentContext) -> AgentResult:
         """Classify and prioritize incoming email. GREEN within YELLOW pack."""

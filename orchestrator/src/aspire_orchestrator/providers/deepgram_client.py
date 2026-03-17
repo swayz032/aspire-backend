@@ -116,7 +116,27 @@ async def execute_deepgram_transcribe(
             receipt_data=receipt,
         )
 
+    # S4-L5: Whitelist allowed models — reject invalid before API call
+    _ALLOWED_MODELS = {"nova-3", "nova-2", "enhanced", "base"}
     model = payload.get("model", "nova-3")
+    if model not in _ALLOWED_MODELS:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="deepgram.transcribe",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INVALID_MODEL",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="deepgram.transcribe",
+            error=f"Invalid model '{model}'. Allowed: {', '.join(sorted(_ALLOWED_MODELS))}",
+            receipt_data=receipt,
+        )
     smart_format = "true" if payload.get("smart_format", True) else "false"
     language = payload.get("language", "en")
 

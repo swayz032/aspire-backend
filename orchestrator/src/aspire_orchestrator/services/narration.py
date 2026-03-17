@@ -403,6 +403,47 @@ def compose_narration(
         if "meeting" in tt or "conference" in tt:
             return f"{header}Done — your meeting room is ready."
 
+        # Finance-specific narration (2e) — rich templates instead of generic "Done"
+        if "finance" in tt or "snapshot" in tt:
+            er = execution_result or {}
+            data = er.get("data", {}) if isinstance(er, dict) else {}
+            if data and not data.get("stub"):
+                cash = data.get("cash_position_cents", 0)
+                revenue = data.get("revenue_cents", 0)
+                expenses = data.get("expenses_cents", 0)
+                net = data.get("net_income_cents", 0)
+                parts = [f"{header}Here's your financial snapshot:"]
+                if cash:
+                    parts.append(f"Cash available: ${cash / 100:,.2f}")
+                if revenue:
+                    parts.append(f"Revenue this period: ${revenue / 100:,.2f}")
+                if expenses:
+                    parts.append(f"Expenses: ${expenses / 100:,.2f}")
+                if net:
+                    sign = "+" if net > 0 else ""
+                    parts.append(f"Net income: {sign}${net / 100:,.2f}")
+                sources = data.get("data_source", "")
+                if sources and sources != "stub":
+                    parts.append(f"(Sources: {sources})")
+                return " | ".join(parts) if len(parts) > 1 else parts[0]
+            return f"{header}No financial data available yet. Connect your providers in Settings to see real numbers."
+        if "exception" in tt:
+            er = execution_result or {}
+            data = er.get("data", {}) if isinstance(er, dict) else {}
+            count = data.get("exception_count", len(data.get("exceptions", [])))
+            if count > 0:
+                return f"{header}I found {count} financial exception{'s' if count != 1 else ''} that need your attention."
+            return f"{header}No financial exceptions detected — everything looks good."
+        if "health" in tt or "report" in tt:
+            return f"{header}Here's my financial analysis — review the details in the Finance Hub."
+        if "budget" in tt:
+            return f"{header}I've drafted a budget adjustment proposal. Review it in your Authority Queue."
+        if "delegation" in tt or "a2a" in tt:
+            er = execution_result or {}
+            data = er.get("data", {}) if isinstance(er, dict) else {}
+            to_agent = data.get("to_agent", "a specialist")
+            return f"{header}I've delegated this task to {to_agent} for analysis."
+
         return f"{header}Done — that request is complete."
 
     # FAILED outcome — never expose raw error details to user (enterprise security)

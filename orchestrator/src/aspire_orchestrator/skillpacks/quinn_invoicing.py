@@ -629,11 +629,11 @@ def _extract_webhook_data(event_type: str, obj: dict[str, Any]) -> dict[str, Any
 # Phase 3 W4: Enhanced Quinn Invoicing with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedQuinnInvoicing(EnhancedSkillPack):
+class EnhancedQuinnInvoicing(AgenticSkillPack):
     """LLM-enhanced Quinn Invoicing — intelligent invoice parsing, customer matching.
 
     Extends QuinnInvoicingSkillPack with:
@@ -650,6 +650,7 @@ class EnhancedQuinnInvoicing(EnhancedSkillPack):
             agent_id="quinn-invoicing",
             agent_name="Quinn Invoicing",
             default_risk_tier="yellow",
+            memory_enabled=True,
         )
         self._rule_pack = QuinnInvoicingSkillPack()
 

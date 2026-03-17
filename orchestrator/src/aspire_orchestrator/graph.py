@@ -65,8 +65,8 @@ from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
-# Maximum QA retries before escalation (matches QALoop._DEFAULT_MAX_RETRIES)
-_QA_MAX_RETRIES = 1
+# Maximum QA retries before forced exit (C2: hard cap prevents infinite-loop)
+_QA_MAX_RETRIES = 3
 _CHECKPOINTER_RUNTIME: dict[str, str] = {
     "mode": "memory",
     "backend": "MemorySaver",
@@ -196,7 +196,8 @@ def _build_checkpointer_serde() -> JsonPlusSerializer:
 
     try:
         params = inspect.signature(JsonPlusSerializer).parameters
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        logger.warning("M1: Checkpointer serde signature introspection failed: %s", e)
         params = {}
 
     if "allowed_msgpack_modules" in params:
@@ -252,6 +253,12 @@ class _CompiledGraphCompat:
         normalized = dict(result)
 
         if isinstance(interrupt_value, dict):
+            # M2: Validate interrupt payload — reject unexpected keys
+            _allowed_interrupt_keys = {"state_update", "response", "approval_id", "action", "metadata"}
+            unexpected = set(interrupt_value.keys()) - _allowed_interrupt_keys
+            if unexpected:
+                logger.warning("M2: Interrupt payload has unexpected keys: %s", unexpected)
+
             state_update = interrupt_value.get("state_update")
             response = interrupt_value.get("response")
             if isinstance(state_update, dict):
@@ -526,7 +533,7 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
     # Set state fields used by downstream nodes
     result["risk_tier"] = routing_plan.estimated_risk_tier
     if routing_plan.steps:
-        result["tool_used"] = routing_plan.steps[0].tools[0] if routing_plan.steps[0].tools else None
+        result["tool_used"] = routing_plan.steps[0].tools[0] if routing_plan.steps[0].tools else "unknown"
 
         # Lifecycle reroute may have changed the action (e.g. contract.send → contract.generate).
         # Propagate the ACTUAL routed action to task_type so policy_eval evaluates the
@@ -541,6 +548,13 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
             )
             result["task_type"] = routed_action
             result["action_type"] = routed_action
+    else:
+        # H14+S4-P1: Empty steps without deny_reason — set error state
+        logger.warning("Route: routing_plan has zero steps (no deny_reason)")
+        result["tool_used"] = "unknown"
+        result["error"] = True
+        result["error_code"] = "EMPTY_ROUTING_STEPS"
+        result["error_message"] = "Routing produced no execution steps"
 
     logger.info(
         "Route: steps=%d, risk=%s, strategy=%s",
@@ -579,6 +593,11 @@ def qa_node(state: OrchestratorState) -> dict[str, Any]:
         "qa_result": qa_result.model_dump(),
         "qa_meta_receipt": meta_receipt,
     }
+
+    # M3: Log individual QA violations for debugging
+    if qa_result.violations:
+        for violation in qa_result.violations:
+            logger.info("QA violation: %s", violation)
 
     if qa_result.escalation_required:
         logger.warning(
@@ -725,9 +744,12 @@ def _route_after_qa(state: OrchestratorState) -> str:
     retry_suggested = qa_result.get("retry_suggested", False)
     retry_count = state.get("qa_retry_count", 0)
 
-    if retry_suggested and retry_count <= _QA_MAX_RETRIES:
-        logger.info("QA routing to execute for retry (attempt %d)", retry_count)
+    if retry_suggested and retry_count < _QA_MAX_RETRIES:
+        logger.info("QA routing to execute for retry (attempt %d/%d)", retry_count, _QA_MAX_RETRIES)
         return "execute"
+
+    if retry_count >= _QA_MAX_RETRIES:
+        logger.warning("QA retry hard cap reached (%d/%d) — forcing respond", retry_count, _QA_MAX_RETRIES)
 
     return "respond"
 

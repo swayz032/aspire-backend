@@ -58,6 +58,77 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
         self._memory_enabled = memory_enabled
         self.__init_memory__()
 
+    async def get_greeting(
+        self,
+        ctx: AgentContext,
+        *,
+        user_name: str | None = None,
+        time_of_day: str | None = None,
+    ) -> str:
+        """Generate context-aware greeting (7a).
+
+        Uses semantic memory to determine if this is a first-time or returning
+        interaction. Subclasses can override for custom personality.
+
+        Args:
+            ctx: Agent context with suite_id for memory lookup
+            user_name: User's display name (e.g., "Mr. Scott")
+            time_of_day: "morning", "afternoon", or "evening" (auto-detected if None)
+
+        Returns:
+            Personalized greeting string
+        """
+        if time_of_day is None:
+            from datetime import datetime, timezone
+            hour = datetime.now(timezone.utc).hour
+            if hour < 12:
+                time_of_day = "morning"
+            elif hour < 17:
+                time_of_day = "afternoon"
+            else:
+                time_of_day = "evening"
+
+        name_part = f" {user_name}" if user_name else ""
+        time_part = f"Good {time_of_day}"
+
+        # Check memory for prior interactions
+        is_returning = False
+        if self._memory_enabled:
+            try:
+                episodes = await self.recall_episodes(ctx, limit=1)
+                is_returning = bool(episodes)
+            except Exception:
+                pass  # Memory failure is non-critical for greetings
+
+        if is_returning:
+            return f"{time_part}{name_part}, how can I help?"
+        else:
+            return f"{time_part}{name_part}, I'm {self._agent_name}. How can I help you today?"
+
+    async def get_error_message(
+        self,
+        missing_fields: list[str] | None = None,
+        error_type: str = "generic",
+    ) -> str:
+        """Generate warm, actionable error message (7c).
+
+        Subclasses can override for custom personality.
+
+        Args:
+            missing_fields: List of missing required field names
+            error_type: Type of error ("missing_fields", "validation", "generic")
+
+        Returns:
+            Friendly error message with guidance
+        """
+        if error_type == "missing_fields" and missing_fields:
+            fields_str = " and ".join(missing_fields)
+            return f"I need the {fields_str} — can you provide {'those' if len(missing_fields) > 1 else 'that'}?"
+        elif error_type == "validation":
+            return "Something doesn't look right with that input. Could you double-check and try again?"
+        else:
+            return "I ran into an issue. Let me know what you'd like to try next."
+
     async def run_agentic_loop(
         self,
         task: str,

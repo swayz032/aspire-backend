@@ -39,28 +39,8 @@ from aspire_orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
-# Agent persona files (same map as respond.py)
-_PERSONA_MAP: dict[str, str] = {
-    "ava": "ava_user_system_prompt.md",
-    "ava_user": "ava_user_system_prompt.md",
-    "ava_admin": "ava_admin_system_prompt.md",
-    "finn": "finn_finance_manager_system_prompt.md",
-    "finn_fm": "finn_finance_manager_system_prompt.md",
-    "eli": "eli_inbox_system_prompt.md",
-    "quinn": "quinn_invoicing_system_prompt.md",
-    "nora": "nora_conference_system_prompt.md",
-    "sarah": "sarah_front_desk_system_prompt.md",
-    "adam": "adam_research_system_prompt.md",
-    "tec": "tec_documents_system_prompt.md",
-    "teressa": "teressa_books_system_prompt.md",
-    "milo": "milo_payroll_system_prompt.md",
-    "clara": "clara_legal_system_prompt.md",
-    "mail_ops": "mail_ops_desk_system_prompt.md",
-    "qa": "qa_evals_system_prompt.md",
-    "security": "security_review_system_prompt.md",
-    "sre": "sre_triage_system_prompt.md",
-    "release": "release_manager_system_prompt.md",
-}
+# 3c: Import canonical persona map from single source of truth
+from aspire_orchestrator.services.agent_identity import AGENT_PERSONA_MAP as _PERSONA_MAP  # noqa: E402
 
 _PERSONAS_DIR = Path(__file__).parent.parent / "config" / "pack_personas"
 
@@ -122,7 +102,7 @@ async def _persist_memory_layers(
         turn_count = len(turns_payload)
         key = f"{suite_id}:{session_id}:{agent_id}"
         last_snapshot = _LAST_EPISODE_TURN_SNAPSHOT.get(key, 0)
-        if turn_count >= 12 and (turn_count - last_snapshot) >= 10:
+        if turn_count >= 4 and (turn_count - last_snapshot) >= 4:
             episode_id = await em.summarize_and_store(
                 turns=turns_payload,
                 session_id=session_id,
@@ -265,7 +245,10 @@ def _guard_output(text: str, agent_id: str) -> str:
 
 def _is_identity_query(utterance: str) -> bool:
     """Detect direct identity/capability introductions."""
-    normalized = utterance.lower().strip().rstrip("!?.,")
+    import re
+    # S3-L3: Normalize inner punctuation ("Who...are...you" → "who are you")
+    normalized = re.sub(r"[^a-z0-9\s']", " ", utterance.lower().strip())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
     if not normalized:
         return False
     direct = {
@@ -350,6 +333,48 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     agent_id = _resolve_assigned_agent_shared(state)
     intent_type = state.get("intent_type", "conversation")
 
+    try:
+        return await _agent_reason_inner(state, utterance, agent_id, intent_type)
+    except Exception as exc:
+        logger.error(
+            "agent_reason CRASHED: agent=%s error=%s",
+            agent_id, str(exc), exc_info=True,
+        )
+        # Emit FAILED receipt (Law #2 — failures get receipts too)
+        error_receipt = {
+            "id": str(uuid.uuid4()),
+            "correlation_id": state.get("correlation_id", str(uuid.uuid4())),
+            "action_type": "agent.conversation",
+            "risk_tier": "green",
+            "actor_id": state.get("actor_id", "unknown"),
+            "suite_id": state.get("suite_id", "unknown"),
+            "agent_id": agent_id,
+            "intent_type": intent_type,
+            "outcome": "failed",
+            "error": type(exc).__name__,
+            "error_message": str(exc)[:500],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        existing_receipts = list(state.get("pipeline_receipts", []))
+        existing_receipts.append(error_receipt)
+        return {
+            "conversation_response": "I'm sorry, I encountered an issue processing your request. Please try again.",
+            "pipeline_receipts": existing_receipts,
+            "agent_target": state.get("agent_target"),
+            "error": True,
+            "error_code": "AGENT_REASON_CRASH",
+            "error_message": f"Agent reason failed: {type(exc).__name__}",
+        }
+
+
+async def _agent_reason_inner(
+    state: OrchestratorState,
+    utterance: str,
+    agent_id: str,
+    intent_type: str,
+) -> dict[str, Any]:
+    """Inner logic for agent_reason_node — separated for crash isolation."""
+
     logger.info(
         "agent_reason: agent=%s intent=%s utterance='%s'",
         agent_id, intent_type, utterance[:80],
@@ -364,6 +389,7 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
         return {
             "conversation_response": response_text,
             "pipeline_receipts": existing_receipts,
+            "agent_target": state.get("agent_target"),
         }
 
     # 1. Load agent persona
@@ -376,36 +402,45 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     prompt_contract = _load_prompt_contract(agent_id)
 
     # 3. Agentic RAG retrieval (cross-domain if needed)
+    #    Skip for greetings — RAG adds noise ("Here is the best grounded answer...")
+    _skip_rag = intent_type in ("greeting", "__greeting__") or _is_identity_query(utterance)
     rag_context = ""
     retrieval_status = "not_applicable"
     retrieval_grounding_score = 0.0
     retrieval_conflicts: list[str] = []
-    try:
-        from aspire_orchestrator.services.retrieval_router import get_retrieval_router
-        router = get_retrieval_router()
-        suite_id = state.get("suite_id")
-        retrieval_result = await router.retrieve(
-            query=utterance,
-            agent_id=agent_id,
-            suite_id=suite_id,
-        )
-        rag_context = retrieval_result.context
-        retrieval_status = retrieval_result.status
-        retrieval_grounding_score = retrieval_result.grounding_score
-        retrieval_conflicts = list(retrieval_result.conflict_flags or [])
-        if retrieval_result.status in {"offline", "degraded"} and retrieval_result.degraded_reason:
-            rag_context = (
-                f"{rag_context}\n\n## Retrieval Status\n"
-                f"Grounding status: {retrieval_result.status} ({retrieval_result.degraded_reason})"
-            ).strip()
-        if retrieval_result.receipt_id:
-            existing_receipts = list(state.get("pipeline_receipts", []))
-            # Retrieval receipt added to pipeline
-    except Exception as e:
-        logger.warning("RAG retrieval failed (non-fatal, continuing without): %s", e)
+    if _skip_rag:
+        logger.debug("agent_reason: skipping RAG for intent_type=%s", intent_type)
+    else:
+        try:
+            from aspire_orchestrator.services.retrieval_router import get_retrieval_router
+            router = get_retrieval_router()
+            suite_id = state.get("suite_id")
+            retrieval_result = await router.retrieve(
+                query=utterance,
+                agent_id=agent_id,
+                suite_id=suite_id,
+            )
+            rag_context = retrieval_result.context
+            retrieval_status = retrieval_result.status
+            retrieval_grounding_score = retrieval_result.grounding_score
+            retrieval_conflicts = list(retrieval_result.conflict_flags or [])
+            if retrieval_result.status in {"offline", "degraded"} and retrieval_result.degraded_reason:
+                rag_context = (
+                    f"{rag_context}\n\n## Retrieval Status\n"
+                    f"Grounding status: {retrieval_result.status} ({retrieval_result.degraded_reason})"
+                ).strip()
+            if retrieval_result.receipt_id:
+                existing_receipts = list(state.get("pipeline_receipts", []))
+                existing_receipts.append({"retrieval_receipt_id": retrieval_result.receipt_id})
+        except Exception as e:
+            logger.warning("RAG retrieval failed (non-fatal, continuing without): %s", e)
+            METRICS.record_retrieval_router(
+                agent_id=agent_id, status="error", cache_hit=False, grounding_score=0.0,
+            )
 
     # 4. Load memory layers in parallel (independent queries)
     memory_ctx = ""
+    _conversation_history: list[dict[str, str]] = []
     suite_id = state.get("suite_id") or "unknown"
     session_id = state.get("session_id") or ""
     actor_id = state.get("actor_id") or "unknown"
@@ -437,12 +472,14 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
             for ep in past_episodes:
                 mem_parts.append(f"- [{ep.created_at[:10]}] {ep.summary}")
 
+        # 3a: Convert working memory to proper message history (not flat text)
+        # recent_turns are stored separately and injected as structured messages
+        # in the LLM call below — NOT as system message text
+        _conversation_history: list[dict[str, str]] = []
         if recent_turns:
-            mem_parts.append("\n## Current Conversation")
             for turn in recent_turns[-6:]:
-                role_label = "You" if turn.role == "agent" else "User"
-                content_preview = turn.content[:200]
-                mem_parts.append(f"{role_label}: {content_preview}")
+                msg_role_turn = "assistant" if turn.role == "agent" else "user"
+                _conversation_history.append({"role": msg_role_turn, "content": turn.content[:500]})
 
         if mem_parts:
             memory_ctx = "\n".join(mem_parts)
@@ -475,12 +512,14 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
 
         # Reasoning models need "developer" role and no temperature
         msg_role = "developer" if _is_reasoning else "system"
+        # 3a: Build messages with proper conversation history
+        llm_messages: list[dict[str, str]] = [{"role": msg_role, "content": system_message}]
+        if _conversation_history:
+            llm_messages.extend(_conversation_history)
+        llm_messages.append({"role": "user", "content": utterance})
         response_text = await generate_text_async(
             model=model,
-            messages=[
-                {"role": msg_role, "content": system_message},
-                {"role": "user", "content": utterance},
-            ],
+            messages=llm_messages,
             api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
@@ -491,6 +530,23 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
 
     except Exception as e:
         logger.error("agent_reason LLM call failed: %s", e)
+        # H3: Emit FAILED receipt for LLM exception (Law #2)
+        llm_fail_receipt = {
+            "id": str(uuid.uuid4()),
+            "correlation_id": state.get("correlation_id", str(uuid.uuid4())),
+            "action_type": "agent.conversation.llm_call",
+            "risk_tier": "green",
+            "actor_id": state.get("actor_id", "unknown"),
+            "suite_id": state.get("suite_id", "unknown"),
+            "agent_id": agent_id,
+            "outcome": "failed",
+            "error": type(e).__name__,
+            "error_message": str(e)[:500],
+            "quality_report": "DEGRADED_FALLBACK",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        existing_receipts = list(state.get("pipeline_receipts", []))
+        existing_receipts.append(llm_fail_receipt)
         # Persona-specific fallback (NOT generic "I wasn't sure")
         fallback_map = {
             "ava": "I apologize - I had trouble with that. Could you rephrase your question?",
@@ -619,4 +675,5 @@ async def agent_reason_node(state: OrchestratorState) -> dict[str, Any]:
     return {
         "conversation_response": response_text,
         "pipeline_receipts": existing_receipts,
+        "agent_target": state.get("agent_target"),
     }

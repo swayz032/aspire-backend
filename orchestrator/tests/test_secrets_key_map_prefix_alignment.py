@@ -183,6 +183,8 @@ class TestSettingsPrefixMapCompleteness:
             "ASPIRE_LIVEKIT_API_SECRET",
             "ASPIRE_PANDADOC_API_KEY",
             "ASPIRE_ANAM_API_KEY",
+            "ASPIRE_TOKEN_SIGNING_KEY",
+            "ASPIRE_STRIPE_WEBHOOK_SECRET",
         }
         actual_keys = set(_SETTINGS_PREFIX_MAP.keys())
         assert expected_aspire_keys == actual_keys, (

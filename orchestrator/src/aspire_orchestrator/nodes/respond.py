@@ -484,25 +484,10 @@ def _load_agent_persona(agent_id: str) -> str:
 
     config_dir = Path(__file__).parent.parent / "config" / "pack_personas"
 
-    # Map agent_id to persona filename — ALL agents have personas
-    _persona_map: dict[str, str] = {
-        "ava": "ava_user_system_prompt.md",
-        "ava_admin": "ava_admin_system_prompt.md",
-        "finn": "finn_fm_system_prompt.md",
-        "finn_fm": "finn_fm_system_prompt.md",
-        "eli": "eli_system_prompt.md",
-        "quinn": "quinn_system_prompt.md",
-        "nora": "nora_system_prompt.md",
-        "sarah": "sarah_system_prompt.md",
-        "adam": "adam_system_prompt.md",
-        "tec": "tec_system_prompt.md",
-        "teressa": "teressa_system_prompt.md",
-        "milo": "milo_system_prompt.md",
-        "clara": "clara_system_prompt.md",
-        "mail_ops": "mail_ops_system_prompt.md",
-    }
+    # 3c: Use canonical persona map from single source of truth
+    from aspire_orchestrator.services.agent_identity import AGENT_PERSONA_MAP
 
-    filename = _persona_map.get(agent_id, f"{agent_id}_system_prompt.md")
+    filename = AGENT_PERSONA_MAP.get(agent_id, f"{agent_id}_system_prompt.md")
     persona_file = config_dir / filename
 
     if persona_file.exists():
@@ -797,14 +782,16 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 "ROUTING_DENIED": "This request could not be routed to a valid skill path. Please rephrase the task.",
                 "EXECUTION_FAILED": "I ran into an execution error while handling that task. Please try again.",
             }
-            text = _error_messages.get(
-                error_code,
-                state.get("error_message", "Something went wrong. Please try again."),
-            )
+            raw_fallback = state.get("error_message", "Something went wrong. Please try again.")
+            # Strip correlation IDs and raw field names from user-facing text
+            import re
+            sanitized_fallback = re.sub(r"\(ref\s+corr_[a-zA-Z0-9_-]+\)", "", raw_fallback).strip()
+            sanitized_fallback = re.sub(r"\b[a-z]+_[a-z]+(?:_[a-z]+)*\b", lambda m: m.group().replace("_", " "), sanitized_fallback)
+            text = _error_messages.get(error_code, sanitized_fallback or "Something went wrong. Please try again.")
 
         response: dict[str, Any] = {
             "error": error_code,
-            "message": state.get("error_message", "Unknown error"),
+            "message": state.get("error_message", "Unknown error"),  # internal, not shown to user
             "text": text,
             "correlation_id": correlation_id,
             "request_id": request_id,

@@ -705,11 +705,11 @@ def _build_report(
 # Phase 3 W4: Enhanced Teressa Books with LLM reasoning
 # =============================================================================
 
-from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
+from aspire_orchestrator.config.templates.skillpack_template import AgenticSkillPack
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 
 
-class EnhancedTeressaBooks(EnhancedSkillPack):
+class EnhancedTeressaBooks(AgenticSkillPack):
     """LLM-enhanced Teressa Books — intelligent categorization, reconciliation planning.
 
     Extends TeressaBooksSkillPack with:
@@ -726,6 +726,7 @@ class EnhancedTeressaBooks(EnhancedSkillPack):
             agent_id="teressa-books",
             agent_name="Teressa Books",
             default_risk_tier="yellow",
+            memory_enabled=True,
         )
         self._rule_pack = TeressaBooksSkillPack()
 
