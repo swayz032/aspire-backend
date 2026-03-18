@@ -998,6 +998,39 @@ async def report_incident(request: Request) -> JSONResponse:
     }
     store_receipts([receipt])
 
+    # ── Dual-write: also populate client_events for Frontend Telemetry page ──
+    try:
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        ce_store = get_admin_store()
+        ce_source = str(payload.get("source") or "external").strip()
+        ce_component = str(payload.get("component") or "unknown").strip()
+        ce_message = str(payload.get("message") or payload.get("title") or "").strip()
+        ce_severity = str(payload.get("severity") or "sev3").strip()
+        ce_error_code = str(payload.get("error_code") or "").strip() or None
+        ce_evidence = payload.get("evidence_pack") if isinstance(payload.get("evidence_pack"), dict) else {}
+        ce_store.write_client_event(
+            event_type=ce_error_code or "incident_report",
+            source=ce_source,
+            severity=ce_severity,
+            correlation_id=incident.get("correlation_id", correlation_id),
+            session_id=str(payload.get("session_id") or "").strip() or None,
+            tenant_id=str(payload.get("suite_id") or "").strip() or None,
+            component=ce_component,
+            page_route=str(ce_evidence.get("page_route") or "").strip() or None,
+            data={
+                "message": ce_message,
+                "incident_id": incident.get("incident_id"),
+                "error_code": ce_error_code,
+                "stack_trace": ce_evidence.get("stack_trace"),
+                "user_agent": str(ce_evidence.get("user_agent") or payload.get("user_agent") or "").strip() or None,
+                "fingerprint": str(payload.get("fingerprint") or "").strip() or None,
+                "reporter": actor_id,
+                "deduped": deduped,
+            },
+        )
+    except Exception as ce_err:
+        logger.debug("report_incident: client_events dual-write failed (non-critical): %s", ce_err)
+
     return JSONResponse(
         status_code=202,
         content={
@@ -1009,6 +1042,120 @@ async def report_incident(request: Request) -> JSONResponse:
             "correlation_id": incident.get("correlation_id", correlation_id),
             "trace_id": incident.get("trace_id", trace_id),
             "receipt_id": receipt_id,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+# =============================================================================
+# 3b. POST /admin/ops/client-events — Client Event Ingest (Frontend Telemetry)
+# =============================================================================
+
+
+@router.post("/admin/ops/client-events")
+async def ingest_client_event(request: Request) -> JSONResponse:
+    """Ingest frontend telemetry events from desktop/mobile clients.
+
+    Writes directly to the `client_events` table for the Frontend Telemetry page.
+    Accepts general telemetry (page views, performance, errors, user actions).
+    """
+    correlation_id = _get_correlation_id(request)
+
+    # Auth: accept incident reporters OR admin tokens
+    actor_id, actor_type = _require_incident_reporter(request)
+    if actor_id is None:
+        actor_id = _require_admin(request)
+        actor_type = "admin"
+    if actor_id is None:
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid credentials for client event ingest",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="Invalid JSON body",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    if not isinstance(payload, dict):
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="Client event body must be an object",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    event_type = str(payload.get("event_type") or "").strip()
+    if not event_type:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message="event_type is required",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
+    source = str(payload.get("source") or "desktop").strip()
+    severity = str(payload.get("severity") or "info").strip()
+    message = str(payload.get("message") or "").strip()
+    component = str(payload.get("component") or "").strip() or None
+    page_route = str(payload.get("page_route") or "").strip() or None
+    session_id = str(payload.get("session_id") or "").strip() or None
+    tenant_id = str(payload.get("tenant_id") or payload.get("suite_id") or "").strip() or None
+    event_correlation = str(payload.get("correlation_id") or correlation_id).strip()
+
+    # Build data blob from remaining fields
+    data: dict[str, Any] = {}
+    if message:
+        data["message"] = message
+    for key in ("user_agent", "error_code", "stack_trace", "fingerprint", "metadata", "duration_ms", "url", "referrer"):
+        val = payload.get(key)
+        if val is not None:
+            data[key] = val
+    data["reporter"] = actor_id
+
+    try:
+        from aspire_orchestrator.services.admin_store import get_admin_store
+        store = get_admin_store()
+        ok = store.write_client_event(
+            event_type=event_type,
+            source=source,
+            severity=severity,
+            correlation_id=event_correlation,
+            session_id=session_id,
+            tenant_id=tenant_id,
+            component=component,
+            page_route=page_route,
+            data=data,
+        )
+        if not ok:
+            return _ops_error(
+                code="STORE_FAILED",
+                message="Failed to write client event to store",
+                correlation_id=correlation_id,
+                status_code=500,
+            )
+    except Exception as exc:
+        logger.warning("ingest_client_event: write failed: %s", exc)
+        return _ops_error(
+            code="STORE_ERROR",
+            message=f"Client event store error: {exc}",
+            correlation_id=correlation_id,
+            status_code=500,
+        )
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "accepted": True,
+            "event_type": event_type,
+            "correlation_id": event_correlation,
             "server_time": _now_iso(),
         },
     )
