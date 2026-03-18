@@ -153,18 +153,24 @@ app = FastAPI(
     lifespan=_app_lifespan,
 )
 
-# CORS — restricted to Gateway only (security reviewer P1 fix)
-# In production, only the Gateway (localhost:3100) talks to the orchestrator.
-# External clients go through Gateway, never directly to orchestrator.
-_CORS_ORIGINS = os.environ.get(
-    "ASPIRE_CORS_ORIGINS",
-    "http://localhost:3100,http://127.0.0.1:3100",
-).split(",")
+# CORS — Gateway + Admin Portal origins
+# Gateway (localhost:3100) for local dev, production admin portal for direct access.
+# Override with ASPIRE_CORS_ORIGINS env var if needed.
+_CORS_DEFAULTS = [
+    "http://localhost:3100",
+    "http://127.0.0.1:3100",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://admin.aspireos.app",
+    "https://www.aspireos.app",
+]
+_cors_env = os.environ.get("ASPIRE_CORS_ORIGINS", "").strip()
+_CORS_ORIGINS = _cors_env.split(",") if _cors_env else _CORS_DEFAULTS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_methods=["POST", "GET", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "Authorization",
