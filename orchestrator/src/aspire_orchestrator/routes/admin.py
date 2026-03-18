@@ -33,7 +33,8 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, AsyncGenerator
 
 import asyncio
 
@@ -4049,4 +4050,276 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
         audio_generator(),
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-cache"},
+    )
+
+
+# =============================================================================
+# Ava Admin Chat — Streaming LLM Endpoint (Law #1: Brain decides, Law #2: Receipts)
+# =============================================================================
+
+_AVA_ADMIN_SYSTEM_PROMPT: str | None = None
+_MAX_HISTORY_ENTRIES = 40
+_MAX_MESSAGE_LENGTH = 4000
+_MAX_HISTORY_CONTENT_LENGTH = 8000
+
+
+def _load_ava_system_prompt() -> str:
+    """Load Ava admin system prompt from config file (cached after first read)."""
+    global _AVA_ADMIN_SYSTEM_PROMPT
+    if _AVA_ADMIN_SYSTEM_PROMPT is not None:
+        return _AVA_ADMIN_SYSTEM_PROMPT
+
+    prompt_path = (
+        Path(__file__).parent.parent / "config" / "pack_personas" / "ava_admin_system_prompt.md"
+    )
+    try:
+        _AVA_ADMIN_SYSTEM_PROMPT = prompt_path.read_text(encoding="utf-8").strip()
+        logger.info("Loaded Ava admin system prompt from %s (%d chars)", prompt_path.name, len(_AVA_ADMIN_SYSTEM_PROMPT))
+    except Exception as exc:
+        logger.warning("Failed to load Ava admin system prompt: %s — using fallback", exc)
+        _AVA_ADMIN_SYSTEM_PROMPT = (
+            "You are Ava, an administrative AI for the Aspire platform. "
+            "You help operators monitor system health, diagnose incidents, and manage operations. "
+            "Be concise, precise, and authoritative."
+        )
+    return _AVA_ADMIN_SYSTEM_PROMPT
+
+
+def _validate_chat_history(raw: list[Any]) -> list[dict[str, str]]:
+    """Validate and sanitize chat history entries. Drops invalid entries silently."""
+    if not isinstance(raw, list):
+        return []
+
+    validated: list[dict[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        role = entry.get("role")
+        content = entry.get("content")
+        if role not in ("user", "assistant"):
+            continue
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if len(content) > _MAX_HISTORY_CONTENT_LENGTH:
+            continue
+        validated.append({"role": role, "content": content})
+
+    # Cap at max entries, keeping most recent
+    return validated[-_MAX_HISTORY_ENTRIES:]
+
+
+async def _stream_ava_chat(
+    *,
+    actor_id: str,
+    correlation_id: str,
+    message: str,
+    history: list[dict[str, str]],
+) -> AsyncGenerator[str, None]:
+    """Stream Ava admin chat response via SSE.
+
+    Law #2: Initiation + completion receipts for every request.
+    Law #3: Fail closed on missing API key or circuit breaker open.
+    Law #9: PII redacted on all streamed content.
+    """
+    from aspire_orchestrator.services.sse_manager import (
+        StreamRateLimiter,
+        format_sse_event,
+        redact_pii,
+    )
+    from aspire_orchestrator.services.openai_client import (
+        _get_or_create_async_client,
+        _openai_circuit_breaker,
+        _is_reasoning_model,
+    )
+    from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    receipt_id = str(uuid.uuid4())
+
+    # --- Initiation receipt (Law #2) ---
+    try:
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "correlation_id": correlation_id,
+            "suite_id": actor_id,
+            "office_id": "admin_portal",
+            "actor_type": "human",
+            "actor_id": actor_id,
+            "action_type": "admin.chat.request",
+            "risk_tier": "green",
+            "tool_used": "ava_admin_chat",
+            "outcome": "PENDING",
+            "created_at": now_iso,
+            "receipt_type": "admin_chat",
+            "receipt_hash": "",
+            "redacted_inputs": None,
+            "redacted_outputs": {"message_length": len(message)},
+        }])
+    except Exception:
+        pass  # Receipt failure never blocks the request
+
+    # --- Pre-flight checks (Law #3: fail closed) ---
+    api_key = resolve_openai_api_key()
+    if not api_key:
+        logger.error("admin.chat: OpenAI API key not configured — denying")
+        yield format_sse_event({"type": "error", "code": "LLM_NOT_CONFIGURED", "message": "AI service not configured"})
+        yield "data: [DONE]\n\n"
+        return
+
+    if not _openai_circuit_breaker.allow_request():
+        logger.warning("admin.chat: OpenAI circuit breaker OPEN — denying")
+        yield format_sse_event({"type": "error", "code": "CIRCUIT_OPEN", "message": "AI service temporarily unavailable"})
+        yield "data: [DONE]\n\n"
+        return
+
+    # --- Build OpenAI messages ---
+    system_prompt = _load_ava_system_prompt()
+    model = settings.ava_llm_model
+    reasoning_model = _is_reasoning_model(model)
+    system_role = "developer" if reasoning_model else "system"
+
+    openai_messages: list[dict[str, str]] = [
+        {"role": system_role, "content": system_prompt},
+    ]
+    openai_messages.extend(history)
+    openai_messages.append({"role": "user", "content": message})
+
+    # --- Stream from OpenAI ---
+    rate_limiter = StreamRateLimiter()
+    full_content = ""
+    outcome = "SUCCEEDED"
+    error_reason = None
+
+    try:
+        client = _get_or_create_async_client(
+            api_key=api_key,
+            base_url=settings.openai_base_url,
+            timeout=float(settings.openai_timeout_seconds) if hasattr(settings, "openai_timeout_seconds") else 30.0,
+        )
+
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=openai_messages,
+            stream=True,
+            max_tokens=settings.ava_llm_max_tokens,
+            **({"temperature": settings.ava_llm_temperature} if not reasoning_model else {}),
+        )
+
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            content = getattr(delta, "content", None)
+            if content:
+                full_content += content
+                if rate_limiter.check():
+                    redacted = redact_pii(content)
+                    yield format_sse_event({"type": "delta", "content": redacted})
+
+        _openai_circuit_breaker.record_success()
+
+    except Exception as exc:
+        _openai_circuit_breaker.record_failure()
+        outcome = "FAILED"
+        error_reason = type(exc).__name__
+        logger.error("admin.chat streaming error: %s", exc)
+        yield format_sse_event({
+            "type": "error",
+            "code": "STREAM_ERROR",
+            "message": "An error occurred while generating the response",
+        })
+
+    # --- Completion receipt (Law #2) ---
+    try:
+        store_receipts([{
+            "id": receipt_id,
+            "correlation_id": correlation_id,
+            "suite_id": actor_id,
+            "office_id": "admin_portal",
+            "actor_type": "system",
+            "actor_id": "ava_admin",
+            "action_type": "admin.chat.response",
+            "risk_tier": "green",
+            "tool_used": "ava_admin_chat",
+            "outcome": outcome,
+            "reason_code": error_reason,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "receipt_type": "admin_chat",
+            "receipt_hash": "",
+            "redacted_inputs": None,
+            "redacted_outputs": {"response_length": len(full_content)},
+        }])
+    except Exception:
+        pass
+
+    # --- Done event ---
+    yield format_sse_event({"type": "done", "receipt_id": receipt_id})
+    yield "data: [DONE]\n\n"
+
+
+@router.post("/admin/ops/chat", response_model=None)
+async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
+    """Ava Admin Chat — streaming LLM endpoint.
+
+    Streams Ava admin responses via SSE. Requires admin JWT.
+    Law #1: Brain decides (LLM generates response).
+    Law #2: Receipts emitted for initiation and completion.
+    Law #3: Fail closed on missing auth, API key, or circuit breaker.
+    Law #9: PII redacted on all streamed content.
+    """
+    correlation_id = _get_correlation_id(request)
+
+    # Auth (Law #3: fail closed)
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        return _ops_error(
+            code="AUTH_REQUIRED",
+            message="Valid admin token required",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    # Parse and validate request body
+    try:
+        body = await request.json()
+    except Exception:
+        return _ops_error(
+            code="INVALID_REQUEST",
+            message="Invalid JSON body",
+            correlation_id=correlation_id,
+            status_code=422,
+        )
+
+    message = body.get("message", "")
+    if not isinstance(message, str) or not message.strip():
+        return _ops_error(
+            code="INVALID_REQUEST",
+            message="'message' field is required and must be a non-empty string",
+            correlation_id=correlation_id,
+            status_code=422,
+        )
+    if len(message) > _MAX_MESSAGE_LENGTH:
+        return _ops_error(
+            code="INVALID_REQUEST",
+            message=f"'message' exceeds maximum length of {_MAX_MESSAGE_LENGTH} characters",
+            correlation_id=correlation_id,
+            status_code=422,
+        )
+
+    message = message.strip()
+    history = _validate_chat_history(body.get("history", []))
+
+    return StreamingResponse(
+        _stream_ava_chat(
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            message=message,
+            history=history,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Correlation-Id": correlation_id,
+        },
     )
