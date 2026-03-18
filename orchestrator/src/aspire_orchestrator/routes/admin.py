@@ -4201,7 +4201,7 @@ async def _stream_ava_chat(
             model=model,
             messages=openai_messages,
             stream=True,
-            max_tokens=settings.ava_llm_max_tokens,
+            max_completion_tokens=settings.ava_llm_max_tokens,
             **({"temperature": settings.ava_llm_temperature} if not reasoning_model else {}),
         )
 
@@ -4222,11 +4222,12 @@ async def _stream_ava_chat(
         _openai_circuit_breaker.record_failure()
         outcome = "FAILED"
         error_reason = type(exc).__name__
-        logger.error("admin.chat streaming error: %s", exc)
+        error_detail = str(exc)[:200]  # Cap length for safety
+        logger.error("admin.chat streaming error: %s: %s", error_reason, exc)
         yield format_sse_event({
             "type": "error",
             "code": "STREAM_ERROR",
-            "message": "An error occurred while generating the response",
+            "message": f"{error_reason}: {error_detail}",
         })
 
     # --- Completion receipt (Law #2) ---
