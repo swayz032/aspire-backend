@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     ava_llm_model: str = "gpt-5-mini"  # "gpt-5-mini" (dev) | "gpt-5.2" (prod)
     openai_api_key: str = ""  # Required for production
     openai_base_url: str = "https://api.openai.com/v1"
-    ava_llm_temperature: float = 0.0  # Deterministic for intent classification
-    ava_llm_max_tokens: int = 1024
+    ava_llm_temperature: float = 0.4  # Slightly creative for natural conversation
+    ava_llm_max_tokens: int = 4096
 
     # --- Phase 3: LLM Router (3-tier model routing) ---
     router_model_classifier: str = "gpt-5-mini"     # CHEAP_CLASSIFIER profile
