@@ -4187,6 +4187,7 @@ async def _stream_ava_chat(
     # --- Stream from OpenAI ---
     rate_limiter = StreamRateLimiter()
     full_content = ""
+    pending_content = ""  # Buffer for tokens not yet sent due to rate limiting
     outcome = "SUCCEEDED"
     error_reason = None
 
@@ -4212,9 +4213,16 @@ async def _stream_ava_chat(
             content = getattr(delta, "content", None)
             if content:
                 full_content += content
+                pending_content += content
                 if rate_limiter.check():
-                    redacted = redact_pii(content)
+                    redacted = redact_pii(pending_content)
                     yield format_sse_event({"type": "delta", "content": redacted})
+                    pending_content = ""
+
+        # Flush any remaining buffered content
+        if pending_content:
+            redacted = redact_pii(pending_content)
+            yield format_sse_event({"type": "delta", "content": redacted})
 
         _openai_circuit_breaker.record_success()
 
