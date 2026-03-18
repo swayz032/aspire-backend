@@ -153,9 +153,26 @@ app = FastAPI(
     lifespan=_app_lifespan,
 )
 
-# CORS — Gateway + Admin Portal origins
-# Gateway (localhost:3100) for local dev, production admin portal for direct access.
-# Override with ASPIRE_CORS_ORIGINS env var if needed.
+# ── Middleware Stack ──────────────────────────────────────────────────────
+# Starlette: last added = outermost. Order matters!
+# Request flow: CORS → CorrelationId → RateLimit → GlobalException → ChaosMonkey → Route
+# CORS MUST be outermost so preflight responses always have CORS headers.
+
+# ChaosMonkey — controlled failure injection (innermost, only when CHAOS_ENABLED=true)
+maybe_add_chaos(app)
+
+# Global Exception Handler — catches unhandled exceptions, creates incident + receipt
+app.add_middleware(GlobalExceptionMiddleware)
+
+# Rate Limiting — per-tenant sliding window (B-H7, Enterprise Remediation Wave 4)
+_rate_limit = int(os.environ.get("ASPIRE_RATE_LIMIT", "100"))
+_rate_window = int(os.environ.get("ASPIRE_RATE_WINDOW_SECONDS", "60"))
+app.add_middleware(RateLimitMiddleware, limit=_rate_limit, window_seconds=_rate_window)
+
+# Correlation ID — extracts/generates X-Correlation-Id, propagates via contextvars
+app.add_middleware(CorrelationIdMiddleware)
+
+# CORS — OUTERMOST so every response (including 429, 500, etc.) gets CORS headers
 _CORS_DEFAULTS = [
     "http://localhost:3100",
     "http://127.0.0.1:3100",
@@ -182,25 +199,6 @@ app.add_middleware(
         "X-Trace-Id",
     ],
 )
-
-# Global Exception Handler — catches unhandled exceptions, creates incident + receipt (Wave 1B)
-# Added AFTER CORS so it wraps all routes (Starlette: last added = outermost)
-app.add_middleware(GlobalExceptionMiddleware)
-
-# Rate Limiting — per-tenant sliding window (B-H7, Enterprise Remediation Wave 4)
-# 100 req/60s per tenant, health/metrics endpoints exempt
-_rate_limit = int(os.environ.get("ASPIRE_RATE_LIMIT", "100"))
-_rate_window = int(os.environ.get("ASPIRE_RATE_WINDOW_SECONDS", "60"))
-app.add_middleware(RateLimitMiddleware, limit=_rate_limit, window_seconds=_rate_window)
-
-# Correlation ID — extracts/generates X-Correlation-Id, propagates via contextvars (Wave 2A)
-# Added LAST so it runs FIRST (outermost): sets correlation ID before anything else
-app.add_middleware(CorrelationIdMiddleware)
-
-# ChaosMonkey — controlled failure injection for resilience testing (Wave 8.7)
-# ONLY active when CHAOS_ENABLED=true. Innermost middleware so correlation ID
-# and exception handler wrap it. Health/metrics endpoints always exempt.
-maybe_add_chaos(app)
 
 # Include Brain Layer routes
 app.include_router(intents_router)

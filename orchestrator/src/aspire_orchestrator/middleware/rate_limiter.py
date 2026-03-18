@@ -152,8 +152,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Any) -> Any:
         global _last_cleanup
 
-        # Skip rate limiting for health/metrics endpoints
-        if request.url.path in _EXEMPT_PATHS:
+        # Skip rate limiting for health/metrics endpoints and CORS preflights
+        if request.url.path in _EXEMPT_PATHS or request.method == "OPTIONS":
             return await call_next(request)
 
         # Determine limit for this path (per-endpoint override or default)
