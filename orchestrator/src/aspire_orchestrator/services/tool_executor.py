@@ -14,6 +14,7 @@ Each executor returns a ToolExecutionResult with the tool response + receipt dat
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -127,6 +128,9 @@ from aspire_orchestrator.providers.calendar_client import (
     execute_calendar_event_list,
     execute_calendar_event_complete,
 )
+
+# Observability: provider call logging (best-effort, Law #2)
+from aspire_orchestrator.services.provider_call_logger import get_provider_call_logger
 
 logger = logging.getLogger(__name__)
 
@@ -869,6 +873,21 @@ async def execute_tool(
             capability_token_id=capability_token_id,
             capability_token_hash=capability_token_hash,
         )
+        # Log denial to provider call log
+        try:
+            pcl = get_provider_call_logger()
+            pcl.log_call(
+                provider=tool_id.split(".")[0],
+                action=tool_id,
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                success=False,
+                error_code="AGENT_ID_REQUIRED",
+                error_message=f"agent_id required for {risk_tier.upper()}-tier tool",
+                latency_ms=0.0,
+            )
+        except Exception:
+            pass  # Best-effort PCL logging
         return ToolExecutionResult(
             outcome=Outcome.DENIED,
             tool_id=tool_id,
@@ -898,6 +917,21 @@ async def execute_tool(
                 capability_token_id=capability_token_id,
                 capability_token_hash=capability_token_hash,
             )
+            # Log denial to provider call log
+            try:
+                pcl = get_provider_call_logger()
+                pcl.log_call(
+                    provider=tool_id.split(".")[0],
+                    action=tool_id,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    success=False,
+                    error_code="TOOL_NOT_AUTHORIZED_FOR_AGENT",
+                    error_message=f"Agent '{agent_id}' not authorized for tool",
+                    latency_ms=0.0,
+                )
+            except Exception:
+                pass  # Best-effort PCL logging
             return ToolExecutionResult(
                 outcome=Outcome.DENIED,
                 tool_id=tool_id,
@@ -916,18 +950,82 @@ async def execute_tool(
 
     if executor:
         logger.info("Tool executor LIVE: %s", tool_id)
-        return await executor(
-            payload=payload,
-            correlation_id=correlation_id,
-            suite_id=suite_id,
-            office_id=office_id,
-            risk_tier=risk_tier,
-            capability_token_id=capability_token_id,
-            capability_token_hash=capability_token_hash,
-        )
+        start_time = time.monotonic()
+        try:
+            result = await executor(
+                payload=payload,
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                risk_tier=risk_tier,
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+        except Exception as exc:
+            elapsed_ms: float = (time.monotonic() - start_time) * 1000
+            # Best-effort provider call log for failed execution
+            try:
+                pcl = get_provider_call_logger()
+                pcl.log_call(
+                    provider=tool_id.split(".")[0],
+                    action=tool_id,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    success=False,
+                    error_code="EXECUTOR_EXCEPTION",
+                    error_message=str(exc)[:500],
+                    latency_ms=elapsed_ms,
+                )
+            except Exception:
+                logger.warning("provider_call_logger failed for tool=%s", tool_id)
+            raise
+
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        # Best-effort provider call log for completed execution
+        try:
+            pcl = get_provider_call_logger()
+            pcl.log_call(
+                provider=tool_id.split(".")[0],
+                action=tool_id,
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                success=result.outcome == Outcome.SUCCESS,
+                error_code=(
+                    result.receipt_data.get("reason_code", "")
+                    if result.outcome != Outcome.SUCCESS
+                    else ""
+                ),
+                error_message=(
+                    (result.error or "")[:500]
+                    if result.outcome != Outcome.SUCCESS
+                    else ""
+                ),
+                latency_ms=elapsed_ms,
+            )
+        except Exception:
+            logger.warning("provider_call_logger failed for tool=%s", tool_id)
+
+        return result
     else:
         # C4: Unknown tools fail-closed (Law #3) — DENIED, not stub SUCCESS
         logger.warning("Tool executor DENIED (unknown tool): %s", tool_id)
+
+        # Best-effort provider call log for denied (unknown) tools
+        try:
+            pcl = get_provider_call_logger()
+            pcl.log_call(
+                provider=tool_id.split(".")[0],
+                action=tool_id,
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                success=False,
+                error_code="UNKNOWN_TOOL",
+                error_message=f"Tool '{tool_id}' has no registered executor",
+                latency_ms=0.0,
+            )
+        except Exception:
+            logger.warning("provider_call_logger failed for tool=%s", tool_id)
+
         receipt = _make_receipt_data(
             correlation_id=correlation_id, suite_id=suite_id,
             office_id=office_id, tool_id=tool_id,

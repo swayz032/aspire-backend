@@ -236,8 +236,8 @@ class OutboxClient:
                     oldest_age = max(oldest_age, age)
                     if status in {"QUEUED", "RUNNING"} and age > 300:
                         stuck_jobs += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Outbox health: timestamp parse failed: %s", e)
             return {
                 "queue_depth": queue_depth,
                 "oldest_age_seconds": oldest_age,
@@ -258,8 +258,8 @@ class OutboxClient:
                 oldest_age = max(oldest_age, age)
                 if age > 300:
                     stuck_jobs += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Outbox health: timestamp parse failed: %s", e)
         return {
             "queue_depth": len(pending_jobs),
             "oldest_age_seconds": oldest_age,

@@ -187,8 +187,8 @@ class WorkingMemory:
         if r is not None:
             try:
                 await r.delete(key)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Redis delete failed for session key %s: %s", key, e)
 
         self._store.pop(key, None)
         self._expiry.pop(key, None)

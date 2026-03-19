@@ -78,10 +78,18 @@ def _redact_payload(payload: Any, max_length: int = 200) -> str:
     except (TypeError, ValueError):
         text = str(payload)
 
-    # Redact obvious secrets
+    # Redact obvious secrets and PII (Law #9)
     import re
     text = re.sub(r'(sk[-_](?:test|live|prod)[-_])\w+', r'\1***', text)
-    text = re.sub(r'"(?:password|secret|token|key|auth)":\s*"[^"]*"', '"***":"***REDACTED***"', text, flags=re.IGNORECASE)
+    text = re.sub(r'"(?:password|secret|token|key|auth|api_key|apikey|access_token|refresh_token)":\s*"[^"]*"', '"***":"***REDACTED***"', text, flags=re.IGNORECASE)
+    # PII: email addresses
+    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '***EMAIL***', text)
+    # PII: phone numbers (US/international)
+    text = re.sub(r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', '***PHONE***', text)
+    # PII: SSN
+    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '***SSN***', text)
+    # PII: credit card numbers (13-19 digits, optionally grouped)
+    text = re.sub(r'\b(?:\d[-\s]?){13,19}\b', '***CC***', text)
 
     if len(text) > max_length:
         text = text[:max_length] + "...(truncated)"
@@ -124,7 +132,7 @@ class ProviderCallLogger:
             "status": "success" if success else "error",
             "http_status": http_status,
             "error_code": error_code,
-            "error_message": (error_message or "")[:500],
+            "error_message": _redact_payload((error_message or "")[:500], max_length=500),
             "retry_count": retry_count,
             "latency_ms": round(latency_ms, 1),
             "redacted_payload_preview": _redact_payload(request_payload),

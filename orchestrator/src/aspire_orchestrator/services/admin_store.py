@@ -609,8 +609,8 @@ class AdminSupabaseStore:
                 )
                 if result.data:
                     return _db_row_to_incident(result.data)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Supabase incident lookup failed for %s: %s", incident_id, e)
 
         return self._incidents.get(incident_id)
 
