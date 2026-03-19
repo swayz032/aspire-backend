@@ -28,6 +28,7 @@ services:
     restart: unless-stopped
     environment:
       ASPIRE_ENV: ${ASPIRE_ENV:?required}
+      NODE_ENV: ${NODE_ENV:-production}
       ASPIRE_SAFETY_GATEWAY_MODE: remote
       ASPIRE_SAFETY_GATEWAY_URL: http://aspire-safety-gateway:8787/v1/safety/check
       ASPIRE_SAFETY_GATEWAY_SHARED_SECRET: ${ASPIRE_SAFETY_GATEWAY_SHARED_SECRET:?required}
@@ -41,9 +42,12 @@ services:
       ASPIRE_OPENAI_BASE_URL: ${ASPIRE_OPENAI_BASE_URL:-https://api.openai.com/v1}
       ASPIRE_SUPABASE_URL: ${ASPIRE_SUPABASE_URL:?required}
       ASPIRE_SUPABASE_SERVICE_ROLE_KEY: ${ASPIRE_SUPABASE_SERVICE_ROLE_KEY:?required}
+      ASPIRE_REDIS_URL: ${ASPIRE_REDIS_URL:?required}
       ASPIRE_GATEWAY_URL: ${ASPIRE_GATEWAY_URL:-}
       ASPIRE_POLICY_EVAL_URL: ${ASPIRE_POLICY_EVAL_URL:-}
       ASPIRE_CREDENTIAL_STRICT_MODE: ${ASPIRE_CREDENTIAL_STRICT_MODE:-true}
+      ASPIRE_METRICS_TOKEN: ${ASPIRE_METRICS_TOKEN:?required}
+      SENTRY_DSN: ${SENTRY_DSN:?required}
     depends_on:
       aspire-safety-gateway:
         condition: service_healthy

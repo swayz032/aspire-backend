@@ -23,3 +23,33 @@ groups:
         annotations:
           summary: "Approval latency elevated"
           description: "P95 approval latency > 15 minutes. Investigate UX friction and notification delivery."
+
+      - alert: OrchestratorFailedRequests
+        expr: sum(increase(aspire_orchestrator_requests_total{status="failed"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: page
+          runbook: RUNBOOK_ORCHESTRATOR_ERRORS
+        annotations:
+          summary: "Orchestrator failures elevated"
+          description: "More than 5 failed orchestrator requests were observed in the last 5 minutes."
+
+      - alert: ReceiptWriteFailures
+        expr: sum(increase(aspire_receipt_write_total{status!="success"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          runbook: RUNBOOK_RECEIPT_PERSISTENCE
+        annotations:
+          summary: "Receipt persistence failures detected"
+          description: "One or more receipt writes failed in the last 10 minutes. Investigate Supabase and receipt writer health."
+
+      - alert: A2ATaskFailures
+        expr: sum(increase(aspire_a2a_tasks_total{status="failed"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          runbook: RUNBOOK_A2A_FAILURES
+        annotations:
+          summary: "A2A task failures detected"
+          description: "One or more A2A task operations reported failed status in the last 10 minutes."

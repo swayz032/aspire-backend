@@ -22,12 +22,15 @@ services:
     ports:
       - "5678:5678"
     environment:
-      N8N_HOST: localhost
-      N8N_PORT: "5678"
-      N8N_PROTOCOL: http
+      N8N_HOST: "${N8N_HOST:-localhost}"
+      N8N_PORT: "${N8N_PORT:-5678}"
+      N8N_PROTOCOL: "${N8N_PROTOCOL:-http}"
+      N8N_EDITOR_BASE_URL: "${N8N_EDITOR_BASE_URL:-}"
+      WEBHOOK_URL: "${WEBHOOK_URL:-}"
       N8N_BASIC_AUTH_ACTIVE: "true"
       N8N_BASIC_AUTH_USER: admin
       N8N_BASIC_AUTH_PASSWORD: "${N8N_BASIC_AUTH_PASSWORD:?Set N8N_BASIC_AUTH_PASSWORD in .env}"
+      N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}"
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: n8n-db
       DB_POSTGRESDB_PORT: "5432"
@@ -37,7 +40,7 @@ services:
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
       # Allow Code nodes to access $env variables and crypto module
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "${N8N_BLOCK_ENV_ACCESS_IN_NODE:-false}"
       NODE_FUNCTION_ALLOW_BUILTIN: "crypto"
       # --- Aspire workflow environment ---
       SUPABASE_URL: "${SUPABASE_URL:?Set SUPABASE_URL in .env}"

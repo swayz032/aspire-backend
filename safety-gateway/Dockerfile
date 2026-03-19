@@ -16,6 +16,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 ENV ASPIRE_SAFETY_GATEWAY_MODE=local
 ENV ASPIRE_SAFETY_GATEWAY_PORT=8787
 
+RUN useradd --system --create-home --uid 10001 aspire && \
+    chown -R aspire:aspire /app
+
 EXPOSE 8787
 
-CMD ["uvicorn", "aspire_safety_gateway.app:app", "--host", "0.0.0.0", "--port", "8787"]
+USER aspire
+
+CMD ["python", "-m", "aspire_safety_gateway.launch"]
