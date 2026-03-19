@@ -910,7 +910,7 @@ async def _probe_checkpointer_connectivity() -> bool:
         async with await AsyncConnection.connect(
             dsn,
             autocommit=True,
-            prepare_threshold=0,
+            prepare_threshold=None,
         ) as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT 1")
@@ -1017,14 +1017,20 @@ async def _build_checkpointer() -> Any:
             )
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from psycopg import AsyncConnection
+            from psycopg.rows import dict_row
 
-            # AsyncPostgresSaver is async-context-manager based.
-            # Initialize it once at startup and keep it open for process lifetime.
-            _CHECKPOINTER_CTX = AsyncPostgresSaver.from_conn_string(
+            # Disable psycopg prepared statements for PgBouncer-compatible Postgres endpoints.
+            _CHECKPOINTER_CTX = await AsyncConnection.connect(
                 dsn,
+                autocommit=True,
+                prepare_threshold=None,
+                row_factory=dict_row,
+            )
+            saver = AsyncPostgresSaver(
+                conn=_CHECKPOINTER_CTX,
                 serde=_CHECKPOINTER_SERDE,
             )
-            saver = await _CHECKPOINTER_CTX.__aenter__()
             try:
                 await saver.setup()
             except Exception as setup_err:
