@@ -185,7 +185,7 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
     if office_id:
         row["office_id"] = office_id
 
-    # Trace context — populate from receipt fields or current request context
+    # Trace context — thread through receipt dict or derive from correlation_id
     try:
         from aspire_orchestrator.middleware.correlation import (
             get_trace_id,
@@ -200,12 +200,14 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
         span_id = receipt.get("span_id", "")
         parent_span_id = receipt.get("parent_span_id", "")
 
-    if trace_id:
-        row["trace_id"] = trace_id
-    if span_id:
-        row["span_id"] = span_id
-    if parent_span_id:
-        row["parent_span_id"] = parent_span_id
+    # Fallback: derive trace_id from correlation_id (which is always present)
+    if not trace_id and row.get("correlation_id"):
+        trace_id = row["correlation_id"]
+
+    # Always include trace columns (even if empty) for schema consistency
+    row["trace_id"] = trace_id or None
+    row["span_id"] = span_id or None
+    row["parent_span_id"] = parent_span_id or None
 
     # run_id for grouping related receipts in a single orchestrator run
     run_id = receipt.get("run_id", "")

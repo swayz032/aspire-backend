@@ -1,12 +1,14 @@
 name: Backend CI
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'orchestrator/**'
       - 'tools/**'
       - 'pyproject.toml'
       - 'poetry.lock'
+      - '.github/workflows/ci.yml'
   push:
     branches: [main]
     paths:

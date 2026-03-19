@@ -29,5 +29,5 @@ env_defaults:
   production:
     base_url: https://aspireos.app
 ingest:
-  enabled: false
+  enabled: true
   url: http://localhost:8000/robots/ingest
