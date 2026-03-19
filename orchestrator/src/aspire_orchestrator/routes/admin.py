@@ -1008,7 +1008,7 @@ async def report_incident(request: Request) -> JSONResponse:
         ce_severity = str(payload.get("severity") or "sev3").strip()
         ce_error_code = str(payload.get("error_code") or "").strip() or None
         ce_evidence = payload.get("evidence_pack") if isinstance(payload.get("evidence_pack"), dict) else {}
-        ce_store.write_client_event(
+        ce_store.store_client_event(
             event_type=ce_error_code or "incident_report",
             source=ce_source,
             severity=ce_severity,
@@ -1123,7 +1123,7 @@ async def ingest_client_event(request: Request) -> JSONResponse:
     try:
         from aspire_orchestrator.services.admin_store import get_admin_store
         store = get_admin_store()
-        ok = store.write_client_event(
+        ok = store.store_client_event(
             event_type=event_type,
             source=source,
             severity=severity,
