@@ -894,6 +894,33 @@ async def close_checkpointer_runtime() -> None:
         _CHECKPOINTER_CTX = None
 
 
+def _is_prepared_statement_conflict(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "prepared statement" in text and ("already exists" in text or "does not exist" in text)
+
+
+async def _probe_checkpointer_connectivity() -> bool:
+    """Fallback readiness probe for PgBouncer-style prepared statement conflicts."""
+    dsn = (settings.langgraph_postgres_dsn or "").strip()
+    if not dsn:
+        return False
+    try:
+        from psycopg import AsyncConnection
+
+        async with await AsyncConnection.connect(
+            dsn,
+            autocommit=True,
+            prepare_threshold=0,
+        ) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                row = await cur.fetchone()
+        return bool(row and row[0] == 1)
+    except Exception as probe_err:
+        logger.warning("LangGraph connectivity fallback probe failed: %s", probe_err)
+        return False
+
+
 async def probe_checkpointer_roundtrip() -> bool:
     """Persist and reload a synthetic checkpoint against the active saver."""
     saver = _ACTIVE_CHECKPOINTER
@@ -953,6 +980,13 @@ async def probe_checkpointer_roundtrip() -> bool:
             return checkpoint.get("id") == expected_checkpoint_id
         return True
     except Exception as exc:
+        if _is_prepared_statement_conflict(exc):
+            logger.warning(
+                "LangGraph checkpointer round-trip probe hit prepared statement conflict; "
+                "falling back to connectivity probe: %s",
+                exc,
+            )
+            return await _probe_checkpointer_connectivity()
         logger.warning("LangGraph checkpointer round-trip probe failed: %s", exc)
         return False
     finally:
