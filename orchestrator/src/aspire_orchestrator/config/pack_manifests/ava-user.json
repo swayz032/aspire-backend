@@ -5,7 +5,7 @@
   "registry_id": "ava_user",
   "owner_key": "ava",
   "persona_filename": "ava_user_system_prompt.md",
-  "channel": "frontend_orchestrator",
+  "channel": "external",
   "version": "1.0.0",
   "description": "User-facing Ava orchestrator for intent classification, routing plans, and governance previews.",
   "capabilities": [

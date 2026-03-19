@@ -16,6 +16,7 @@ module = importlib.util.module_from_spec(spec)
 assert spec is not None and spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+MANIFEST_PATH = ROOT / 'src' / 'aspire_orchestrator' / 'config' / 'pack_manifests' / 'ava-user.json'
 
 
 def test_ava_user_validates() -> None:
@@ -34,6 +35,10 @@ def test_ava_user_certifies() -> None:
     )
     problems = module.certify_agent(ROOT, target)
     assert problems == []
+
+
+def test_ava_user_manifest_channel_is_external() -> None:
+    assert '"channel": "external"' in MANIFEST_PATH.read_text(encoding='utf-8')
 
 
 @pytest.mark.asyncio
