@@ -1891,6 +1891,61 @@ def _make_provider_snapshot_item(
     }
 
 
+def _provider_call_latency_ms(row: dict[str, Any]) -> float:
+    raw_latency = row.get("latency_ms")
+    if raw_latency is None:
+        raw_latency = row.get("duration_ms")
+    if raw_latency not in (None, ""):
+        try:
+            return float(raw_latency)
+        except (TypeError, ValueError):
+            return 0.0
+
+    started_at = row.get("started_at")
+    completed_at = row.get("completed_at")
+    if not started_at or not completed_at:
+        return 0.0
+
+    try:
+        start_dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+
+    return max((end_dt - start_dt).total_seconds() * 1000, 0.0)
+
+
+def _provider_call_name(row: dict[str, Any]) -> str:
+    return str(
+        row.get("provider")
+        or row.get("external_provider")
+        or row.get("provider_name")
+        or ""
+    ).strip()
+
+
+def _provider_call_event_type(row: dict[str, Any]) -> str:
+    tool = str(row.get("tool") or "").strip()
+    operation = str(row.get("operation") or row.get("action") or "").strip()
+    if tool and operation:
+        return f"{tool}.{operation}"
+    if operation:
+        return operation
+    if tool:
+        return tool
+    return "webhook"
+
+
+def _is_webhook_provider_call(row: dict[str, Any]) -> bool:
+    fields = (
+        row.get("tool"),
+        row.get("operation"),
+        row.get("action"),
+        row.get("resource_type"),
+    )
+    return any("webhook" in str(value or "").strip().lower() for value in fields)
+
+
 def _build_runtime_provider_items() -> dict[str, dict[str, Any]]:
     now_iso = _now_iso()
     items: dict[str, dict[str, Any]] = {}
@@ -1999,7 +2054,7 @@ async def list_providers(
         try:
             call_rows = (
                 client.table("provider_call_log")
-                .select("provider,status,duration_ms,started_at")
+                .select("external_provider,status,started_at,completed_at")
                 .gte("started_at", since_iso)
                 .limit(5000)
                 .execute()
@@ -2024,7 +2079,7 @@ async def list_providers(
 
     stats_by_provider: dict[str, dict[str, float]] = {}
     for call in call_rows:
-        key = str(call.get("provider") or "").strip().lower()
+        key = _normalize_provider_key(_provider_call_name(call))
         if not key:
             continue
         stats = stats_by_provider.setdefault(
@@ -2034,7 +2089,7 @@ async def list_providers(
         call_status = str(call.get("status") or "").strip().lower()
         if call_status not in {"success", "ok", "completed"}:
             stats["failures"] += 1
-        duration_ms = float(call.get("duration_ms") or 0)
+        duration_ms = _provider_call_latency_ms(call)
         stats["sum_ms"] += duration_ms
         stats["max_ms"] = max(stats["max_ms"], duration_ms)
 
@@ -2077,6 +2132,17 @@ async def list_providers(
         existing["secret_id"] = item.get("secret_id", existing.get("secret_id", ""))
         existing["secret_source"] = item.get("secret_source", existing.get("secret_source", "unknown"))
         existing["production_verified"] = bool(existing.get("production_verified")) or bool(item.get("production_verified"))
+
+    for key in set(stats_by_provider) | set(webhook_by_provider):
+        items_map.setdefault(
+            key,
+            _make_provider_snapshot_item(
+                provider=key,
+                lane="unknown",
+                status="connected",
+                connection_status="recent_activity",
+            ),
+        )
 
     for key, item in items_map.items():
         call_stats = stats_by_provider.get(key)
@@ -2251,26 +2317,25 @@ async def list_webhooks(
             # Fallback: infer webhook status from provider call logs
             query = (
                 client.table("provider_call_log")
-                .select("call_id,provider,action,status,http_status,retry_count,duration_ms,started_at")
-                .ilike("action", "%webhook%")
+                .select("call_id,external_provider,tool,operation,resource_type,status,http_status,started_at,completed_at")
                 .order("started_at", desc=True)
                 .limit(limit)
             )
             if provider:
-                query = query.eq("provider", provider)
+                query = query.eq("external_provider", provider)
             if status:
                 query = query.eq("status", status)
-            rows = query.execute().data or []
+            rows = [row for row in (query.execute().data or []) if _is_webhook_provider_call(row)]
             source = "supabase:provider_call_log"
             items = [
                 {
                     "webhook_id": r.get("call_id"),
-                    "provider": r.get("provider", ""),
-                    "event_type": r.get("action", "webhook"),
+                    "provider": _provider_call_name(r),
+                    "event_type": _provider_call_event_type(r),
                     "status": r.get("status", "unknown"),
                     "http_status": r.get("http_status"),
-                    "attempt": (r.get("retry_count") or 0) + 1,
-                    "latency_ms": r.get("duration_ms") or 0,
+                    "attempt": 1,
+                    "latency_ms": _provider_call_latency_ms(r),
                     "delivered_at": r.get("started_at"),
                 }
                 for r in rows
@@ -3098,12 +3163,12 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
     if client:
         # Receipt stats
         try:
-            total_result = client.table("receipts").select("id", count="exact").execute()
+            total_result = client.table("receipts").select("receipt_id", count="exact").execute()
             metrics["receipts_total"] = total_result.count or 0
 
             recent_result = (
                 client.table("receipts")
-                .select("id", count="exact")
+                .select("receipt_id", count="exact")
                 .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
                 .execute()
             )
@@ -3111,8 +3176,8 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
 
             failed_result = (
                 client.table("receipts")
-                .select("id", count="exact")
-                .eq("outcome", "failed")
+                .select("receipt_id", count="exact")
+                .eq("status", "FAILED")
                 .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
                 .execute()
             )
@@ -3146,7 +3211,7 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
         try:
             provider_result = (
                 client.table("provider_call_log")
-                .select("provider, status, latency_ms")
+                .select("external_provider, status, started_at, completed_at")
                 .gte("started_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
                 .limit(1000)
                 .execute()
@@ -3154,7 +3219,11 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
             rows = provider_result.data or []
             total_calls = len(rows)
             success_calls = sum(1 for r in rows if r.get("status") == "success")
-            latencies = [r.get("latency_ms", 0) for r in rows if r.get("latency_ms")]
+            latencies = [
+                latency
+                for latency in (_provider_call_latency_ms(r) for r in rows)
+                if latency > 0
+            ]
             metrics["provider_calls_24h"] = total_calls
             metrics["provider_success_rate"] = round(success_calls / total_calls * 100, 1) if total_calls else 100.0
             metrics["provider_avg_latency_ms"] = round(sum(latencies) / len(latencies), 1) if latencies else 0.0
@@ -3162,14 +3231,15 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
             # Per-provider breakdown
             provider_stats: dict[str, dict[str, Any]] = {}
             for r in rows:
-                p = r.get("provider", "unknown")
+                p = _provider_call_name(r) or "unknown"
                 if p not in provider_stats:
                     provider_stats[p] = {"total": 0, "success": 0, "latencies": []}
                 provider_stats[p]["total"] += 1
                 if r.get("status") == "success":
                     provider_stats[p]["success"] += 1
-                if r.get("latency_ms"):
-                    provider_stats[p]["latencies"].append(r["latency_ms"])
+                latency = _provider_call_latency_ms(r)
+                if latency > 0:
+                    provider_stats[p]["latencies"].append(latency)
 
             metrics["provider_breakdown"] = {
                 p: {

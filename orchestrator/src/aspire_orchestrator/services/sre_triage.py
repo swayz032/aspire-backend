@@ -59,7 +59,7 @@ def _query_receipt_failures(client: Any, since_iso: str) -> int:
     try:
         result = (
             client.table("receipts")
-            .select("id", count="exact")
+            .select("receipt_id", count="exact")
             .eq("status", "FAILED")
             .gte("created_at", since_iso)
             .execute()
@@ -75,7 +75,7 @@ def _query_provider_failures(client: Any, since_iso: str) -> dict[str, int]:
     try:
         result = (
             client.table("provider_call_log")
-            .select("provider")
+            .select("external_provider")
             .eq("status", "failed")
             .gte("started_at", since_iso)
             .execute()
@@ -83,7 +83,7 @@ def _query_provider_failures(client: Any, since_iso: str) -> dict[str, int]:
         rows = result.data or []
         counts: dict[str, int] = {}
         for row in rows:
-            prov = row.get("provider", "unknown")
+            prov = row.get("external_provider", "unknown")
             counts[prov] = counts.get(prov, 0) + 1
         return counts
     except Exception as e:
