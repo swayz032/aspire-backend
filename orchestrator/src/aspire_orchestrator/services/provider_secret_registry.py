@@ -8,7 +8,15 @@ from typing import Any
 
 
 def _registry_path() -> Path:
-    return Path(__file__).resolve().parents[4] / "config" / "provider_secret_registry.json"
+    package_path = Path(__file__).resolve().parents[1] / "config" / "provider_secret_registry.json"
+    repo_path = Path(__file__).resolve().parents[4] / "config" / "provider_secret_registry.json"
+    for candidate in (package_path, repo_path):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "provider_secret_registry.json not found. "
+        f"Tried {package_path} and {repo_path}."
+    )
 
 
 @lru_cache(maxsize=1)

@@ -1936,6 +1936,23 @@ def _provider_call_event_type(row: dict[str, Any]) -> str:
     return "webhook"
 
 
+def _is_missing_supabase_relation(exc: Exception, relation: str) -> bool:
+    message = str(exc).strip().lower()
+    if not message:
+        return False
+    relation = relation.strip().lower()
+    relation_patterns = (
+        f"relation \"public.{relation}\"",
+        f"relation \"{relation}\"",
+        f"table 'public.{relation}'",
+        f"table '{relation}'",
+    )
+    return (
+        any(pattern in message for pattern in relation_patterns)
+        and ("does not exist" in message or "schema cache" in message or "could not find" in message)
+    ) or ("42p01" in message and relation in message)
+
+
 def _is_webhook_provider_call(row: dict[str, Any]) -> bool:
     fields = (
         row.get("tool"),
@@ -2310,7 +2327,8 @@ async def list_webhooks(
                 for r in rows
             ]
         except Exception as exc:
-            warnings.append(f"webhook_deliveries query failed: {exc}")
+            if not _is_missing_supabase_relation(exc, "webhook_deliveries"):
+                warnings.append(f"webhook_deliveries query failed: {exc}")
 
     if not items and client is not None:
         try:
@@ -3259,7 +3277,7 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
         try:
             pending_result = (
                 client.table("approval_requests")
-                .select("id", count="exact")
+                .select("approval_id", count="exact")
                 .eq("status", "pending")
                 .execute()
             )

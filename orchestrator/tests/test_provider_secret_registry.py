@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from aspire_orchestrator.services.provider_secret_registry import (
+    _registry_path,
     get_provider_secret_alias_map,
     get_provider_secret_registry,
     is_registry_provider_configured,
@@ -50,5 +51,11 @@ def test_provider_secret_registry_configuration_groups_require_all_groups() -> N
 
 
 def test_provider_secret_registry_file_exists() -> None:
-    registry_path = Path(__file__).resolve().parents[2] / "config" / "provider_secret_registry.json"
+    registry_path = _registry_path()
     assert registry_path.exists()
+
+
+def test_provider_secret_registry_packaged_copy_matches_repo_source() -> None:
+    repo_path = Path(__file__).resolve().parents[2] / "config" / "provider_secret_registry.json"
+    package_path = Path(__file__).resolve().parents[1] / "src" / "aspire_orchestrator" / "config" / "provider_secret_registry.json"
+    assert package_path.read_text(encoding="utf-8") == repo_path.read_text(encoding="utf-8")

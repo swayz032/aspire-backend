@@ -256,6 +256,40 @@ def test_admin_webhooks_fallback_reads_provider_call_log_schema(client, admin_he
     assert item["latency_ms"] == 250.0
 
 
+def test_admin_webhooks_missing_relation_warning_is_suppressed(client, admin_headers, monkeypatch):
+    fake = _FakeSupabaseClient(
+        tables={
+            "provider_call_log": [
+                {
+                    "call_id": "call-1",
+                    "external_provider": "stripe",
+                    "tool": "provider",
+                    "operation": "webhook.dispatch",
+                    "resource_type": "webhook",
+                    "status": "failed",
+                    "http_status": 500,
+                    "started_at": "2026-03-19T12:00:00+00:00",
+                    "completed_at": "2026-03-19T12:00:00.250000+00:00",
+                }
+            ],
+        },
+        errors={
+            "webhook_deliveries": Exception(
+                "Could not find the table 'public.webhook_deliveries' in the schema cache"
+            )
+        },
+    )
+    monkeypatch.setattr(admin_routes, "_get_supabase_client", lambda: fake)
+
+    response = client.get("/admin/ops/webhooks", headers=admin_headers)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["warnings"] == []
+    assert data["source"] == "supabase:provider_call_log"
+    assert data["count"] == 1
+
+
 def test_dashboard_metrics_reads_receipts_and_provider_call_log_schema(client, admin_headers, monkeypatch):
     now = datetime.now(timezone.utc)
     fake = _FakeSupabaseClient(
@@ -282,7 +316,7 @@ def test_dashboard_metrics_reads_receipts_and_provider_call_log_schema(client, a
                 },
             ],
             "approval_requests": [
-                {"id": "apr-1", "status": "pending"},
+                {"approval_id": "apr-1", "status": "pending"},
             ],
         }
     )
@@ -301,5 +335,6 @@ def test_dashboard_metrics_reads_receipts_and_provider_call_log_schema(client, a
     assert metrics["provider_success_rate"] == 50.0
     assert metrics["provider_avg_latency_ms"] == 800.0
     assert metrics["provider_breakdown"]["stripe"]["avg_latency_ms"] == 800.0
+    assert fake.selected_columns["approval_requests"][-1] == "approval_id"
     assert metrics["approvals_pending"] == 1
     assert metrics["system_status"] == "degraded"
