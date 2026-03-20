@@ -206,11 +206,12 @@ async def classify_intent(request: Request) -> JSONResponse:
     correlation_id = req.correlation_id
 
     # -- Extract utterance from payload --------------------------------------
-    utterance = req.payload.get("utterance", "")
+    # Support both 'utterance' and 'text' keys (Desktop sends 'text')
+    utterance = req.payload.get("utterance") or req.payload.get("text") or ""
     if not utterance:
         return _error_json(
             error="SCHEMA_VALIDATION_FAILED",
-            message="payload.utterance is required",
+            message="payload.utterance or payload.text is required",
             correlation_id=correlation_id,
         )
 

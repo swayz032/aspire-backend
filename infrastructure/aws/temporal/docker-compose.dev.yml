@@ -1,0 +1,103 @@
+# Temporal local development environment
+# Usage: docker-compose -f docker-compose.dev.yml up
+#
+# Temporal Server: localhost:7233
+# Temporal Web UI: localhost:8233
+# Postgres (Temporal): localhost:5434
+#
+# NOTE: Port 5434 to avoid conflict with main Postgres (5432) and n8n Postgres (5433)
+
+version: "3.8"
+
+services:
+  temporal-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal_dev
+      POSTGRES_DB: temporal
+    ports:
+      - "5434:5432"
+    volumes:
+      - temporal-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - temporal-net
+
+  temporal-server:
+    image: temporalio/auto-setup:1.25
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal_dev
+      - POSTGRES_SEEDS=temporal-postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      # Search attributes (Enhancement #9)
+      - TEMPORAL_CLI_SHOW_STACKS=1
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal-server:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - temporal-net
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on:
+      temporal-server:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal-server:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8233
+    ports:
+      - "8233:8080"
+    networks:
+      - temporal-net
+
+  # Register custom search attributes after server is ready
+  temporal-admin-tools:
+    image: temporalio/admin-tools:1.25
+    depends_on:
+      temporal-server:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal-server:7233
+    # Enhancement #9: Register custom search attributes
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        echo "Registering custom search attributes..."
+        tctl --address temporal-server:7233 search-attribute create \
+          --name suite_id --type Keyword \
+          --name risk_tier --type Keyword \
+          --name agent_id --type Keyword \
+          --name workflow_kind --type Keyword \
+          --name office_id --type Keyword \
+          --name correlation_id --type Keyword \
+          || echo "Search attributes may already exist"
+        echo "Custom search attributes registered."
+    networks:
+      - temporal-net
+    restart: "no"
+
+volumes:
+  temporal-pg-data:
+
+networks:
+  temporal-net:
+    driver: bridge

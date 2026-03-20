@@ -24,6 +24,7 @@
  * - GET /readyz — Readiness probe (includes orchestrator check)
  */
 
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -36,7 +37,11 @@ import { receiptsRouter } from './routes/receipts.js';
 import { policyRouter } from './routes/policy.js';
 import { registryRouter } from './routes/registry.js';
 import { a2aRouter } from './routes/a2a.js';
-import { checkOrchestratorReadiness } from './services/orchestrator-client.js';
+import { 
+  checkOrchestratorReadiness,
+  proxyToOrchestrator 
+} from './services/orchestrator-client.js';
+import { logger } from './services/logger.js';
 
 const app = express();
 const PORT = process.env.GATEWAY_PORT ? parseInt(process.env.GATEWAY_PORT, 10) : 3100;
@@ -94,15 +99,65 @@ app.get('/readyz', async (_req, res) => {
 });
 
 // =============================================================================
+// Webhooks (NO JWT auth — use provider signatures)
+// =============================================================================
+
+// POST /api/webhooks/* — Direct proxy to orchestrator
+app.post('/api/webhooks/*', standardRateLimiter, async (req, res) => {
+  const correlationId = req.correlationId;
+  try {
+    const orchestratorResponse = await proxyToOrchestrator({
+      path: req.path,
+      method: 'POST',
+      body: req.body,
+      correlationId,
+      suiteId: 'system', // Webhooks are system-level ingress
+      officeId: 'system',
+      actorId: 'webhook_ingress',
+    });
+    res.status(orchestratorResponse.status).json(orchestratorResponse.body);
+  } catch (err) {
+    logger.error('Gateway webhook proxy error', { 
+      correlation_id: correlationId, 
+      error: err instanceof Error ? err.message : String(err) 
+    });
+    res.status(502).json({ error: 'INTERNAL_ERROR', message: 'Failed to proxy webhook' });
+  }
+});
+
+// =============================================================================
 // Authenticated Routes (auth middleware applied)
 // =============================================================================
 
-// Auth middleware for all /v1/* routes
-app.use('/v1', authMiddleware);
+// Auth middleware for all /v1/* and /admin/* routes
+app.use(['/v1', '/admin'], authMiddleware);
+
+// Admin routes — Direct proxy to orchestrator
+app.all('/admin/*', elevatedRateLimiter, async (req, res) => {
+  const correlationId = req.correlationId;
+  const { suiteId, officeId, actorId } = req.auth;
+  
+  try {
+    const orchestratorResponse = await proxyToOrchestrator({
+      path: req.path,
+      method: req.method as any,
+      body: req.method !== 'GET' ? req.body : undefined,
+      correlationId,
+      suiteId,
+      officeId,
+      actorId,
+    });
+    res.status(orchestratorResponse.status).json(orchestratorResponse.body);
+  } catch (err) {
+    logger.error('Gateway admin proxy error', { 
+      correlation_id: correlationId, 
+      error: err instanceof Error ? err.message : String(err) 
+    });
+    res.status(502).json({ error: 'INTERNAL_ERROR', message: 'Failed to proxy admin request' });
+  }
+});
 
 // POST /v1/intents — Main endpoint
-// Schema validation middleware applied only to intents (strict body validation)
-// Standard rate limit (100/min per suite)
 app.use('/v1/intents', standardRateLimiter, schemaValidationMiddleware, intentsRouter);
 
 // GET /v1/receipts + POST /v1/receipts/verify-run

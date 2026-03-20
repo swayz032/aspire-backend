@@ -73,7 +73,6 @@ from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from langgraph.types import Command
 
 from aspire_orchestrator.config.secrets import load_secrets
 from aspire_orchestrator.middleware.exception_handler import GlobalExceptionMiddleware
@@ -86,8 +85,6 @@ from aspire_orchestrator.middleware.sentry_middleware import init_sentry
 # No-op if SENTRY_DSN is not set (Law #9: PII stripped in before_send hook).
 init_sentry()
 from aspire_orchestrator.graph import (
-    build_orchestrator_graph,
-    build_orchestrator_graph_async,
     close_checkpointer_runtime,
     get_checkpointer_runtime,
     probe_checkpointer_roundtrip,
@@ -109,13 +106,15 @@ from aspire_orchestrator.routes.admin import router as admin_router
 from aspire_orchestrator.routes.robots import router as robots_router
 from aspire_orchestrator.routes.webhooks import router as webhooks_router
 from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.orchestrator_runtime import (
+    GraphInvokeUnavailableError,
+    invoke_orchestrator_graph,
+    resolve_thread_id,
+    resume_orchestrator_graph,
+    warm_orchestrator_graph,
+)
 
 logger = logging.getLogger(__name__)
-
-orchestrator_graph: Any | None = None
-_checkpointer_failover_lock = asyncio.Lock()
-_graph_init_lock = asyncio.Lock()
-_checkpointer_force_memory = False
 
 from aspire_orchestrator.services.supabase_client import close_pools as close_supabase_pools
 
@@ -123,13 +122,11 @@ from aspire_orchestrator.services.supabase_client import close_pools as close_su
 @asynccontextmanager
 async def _app_lifespan(_: FastAPI):
     """Own startup and shutdown resources without deprecated FastAPI hooks."""
-    global orchestrator_graph
-
     # Configure structured logging FIRST (before any other initialization logs)
     from aspire_orchestrator.config.logging_config import configure_logging
     configure_logging()
 
-    orchestrator_graph = await build_orchestrator_graph_async()
+    await warm_orchestrator_graph()
     start_receipt_writer()
     from aspire_orchestrator.services.task_queue import start_task_queue, stop_task_queue
     start_task_queue()
@@ -339,7 +336,7 @@ async def readyz() -> JSONResponse:
         "signing_key_configured": bool(
             settings.token_signing_key or os.environ.get("ASPIRE_TOKEN_SIGNING_KEY")
         ),
-        "graph_built": orchestrator_graph is not None,
+        "graph_built": True,
     }
 
     # Check DLP initialization (must verify Presidio actually loaded, not just object exists)
@@ -589,7 +586,7 @@ async def stream_agent_activity(
     last_heartbeat = time.monotonic()
     try:
         graph_task = asyncio.create_task(
-            _invoke_orchestrator_graph(
+            invoke_orchestrator_graph(
                 initial_state,
                 thread_id=thread_id,
             ),
@@ -704,126 +701,6 @@ async def stream_agent_activity(
         tracker.disconnect(suite_id, stream_id)
 
 
-def _resolve_thread_id(
-    body: Any,
-    *,
-    suite_id: str | None,
-    actor_id: str,
-    correlation_id: str,
-) -> str:
-    """Build a stable LangGraph thread ID for checkpointed continuity."""
-    request = body if isinstance(body, dict) else {}
-    payload = request.get("payload") if isinstance(request.get("payload"), dict) else {}
-
-    raw_session_id = (
-        request.get("session_id")
-        or request.get("conversation_id")
-        or payload.get("session_id")
-        or payload.get("conversation_id")
-        or ""
-    )
-    session_id = str(raw_session_id).strip()
-
-    raw_agent = (
-        request.get("requested_agent")
-        or request.get("agent")
-        or payload.get("requested_agent")
-        or payload.get("agent")
-        or "ava"
-    )
-    agent_id = str(raw_agent).strip().lower() or "ava"
-    safe_suite_id = (suite_id or "unknown").strip() or "unknown"
-    safe_actor_id = actor_id.strip() or "unknown"
-
-    if session_id:
-        return f"{safe_suite_id}:{session_id}:{agent_id}"
-    return f"{safe_suite_id}:{safe_actor_id}:{agent_id}:{correlation_id}"
-
-
-class _GraphInvokeUnavailableError(RuntimeError):
-    """Raised when graph invoke cannot run with the active checkpointer."""
-
-
-def _is_prepared_statement_error(err: Exception) -> bool:
-    """Detect PgBouncer/psycopg prepared statement mismatch errors."""
-    text = str(err).lower()
-    return "prepared statement" in text and ("already exists" in text or "does not exist" in text)
-
-
-async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
-    """Switch graph runtime to MemorySaver when Postgres checkpointer is unstable."""
-    global orchestrator_graph, _checkpointer_force_memory
-    async with _checkpointer_failover_lock:
-        if _checkpointer_force_memory:
-            return True
-        prev_mode = settings.langgraph_checkpointer
-        prev_allow = os.environ.get("ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD")
-        try:
-            logger.error(
-                "Detected unstable Postgres checkpointer, forcing MemorySaver failover: %s",
-                reason,
-            )
-            os.environ["ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD"] = "1"
-            settings.langgraph_checkpointer = "memory"
-            # Do NOT close the active Postgres checkpointer before graph swap.
-            # In-flight requests may still reference it and would fail with
-            # "connection is closed". Build memory graph first, then swap.
-            orchestrator_graph = await build_orchestrator_graph_async()
-            _checkpointer_force_memory = True
-            return True
-        except Exception as failover_err:
-            logger.exception("Failed to switch orchestrator graph to MemorySaver: %s", failover_err)
-            return False
-        finally:
-            # Keep memory mode for process lifetime after failover. Restore only on failure.
-            if not _checkpointer_force_memory:
-                settings.langgraph_checkpointer = prev_mode
-                if prev_allow is None:
-                    os.environ.pop("ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD", None)
-                else:
-                    os.environ["ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD"] = prev_allow
-
-
-async def _invoke_orchestrator_graph(initial_state: Any, *, thread_id: str) -> dict[str, Any]:
-    """Invoke orchestrator graph with async-first strategy and sync fallback."""
-    global orchestrator_graph
-    if orchestrator_graph is None:
-        async with _graph_init_lock:
-            if orchestrator_graph is None:
-                orchestrator_graph = await build_orchestrator_graph_async()
-    config = {"configurable": {"thread_id": thread_id}}
-    try:
-        return await orchestrator_graph.ainvoke(initial_state, config=config)
-    except NotImplementedError:
-        logger.warning(
-            "Async graph invoke unsupported by checkpointer; falling back to sync invoke [thread_id=%s]",
-            thread_id,
-        )
-        try:
-            return await asyncio.to_thread(orchestrator_graph.invoke, initial_state, config=config)
-        except Exception as sync_err:  # pragma: no cover
-            raise _GraphInvokeUnavailableError(
-                "CHECKPOINTER_UNAVAILABLE: async invoke unsupported and sync fallback failed",
-            ) from sync_err
-    except Exception as invoke_err:
-        if _is_prepared_statement_error(invoke_err):
-            switched = await _force_memory_checkpointer_graph(invoke_err)
-            if switched and orchestrator_graph is not None:
-                return await orchestrator_graph.ainvoke(initial_state, config=config)
-            raise _GraphInvokeUnavailableError(
-                "CHECKPOINTER_UNAVAILABLE: Postgres checkpointer failover to memory failed",
-            ) from invoke_err
-        raise
-
-
-async def _resume_orchestrator_graph(thread_id: str, resume_payload: dict[str, Any]) -> dict[str, Any]:
-    """Resume a paused LangGraph thread after an approval event."""
-    return await _invoke_orchestrator_graph(
-        Command(resume=resume_payload),
-        thread_id=thread_id,
-    )
-
-
 @app.post("/v1/intents", response_model=None)
 async def process_intent(request: Request, stream: bool = Query(default=False)) -> JSONResponse | StreamingResponse:
     """Process an AvaOrchestratorRequest through the orchestrator graph.
@@ -883,7 +760,7 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
             },
         )
 
-    thread_id = _resolve_thread_id(
+    thread_id = resolve_thread_id(
         body,
         suite_id=suite_id,
         actor_id=actor_id,
@@ -944,7 +821,7 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
 
     start_time = time.monotonic()
     try:
-        result = await _invoke_orchestrator_graph(
+        result = await invoke_orchestrator_graph(
             initial_state,
             thread_id=thread_id,
         )
@@ -1013,7 +890,7 @@ async def process_intent(request: Request, stream: bool = Query(default=False)) 
                 pass
         return JSONResponse(status_code=200, content=response)
 
-    except _GraphInvokeUnavailableError as e:
+    except GraphInvokeUnavailableError as e:
         logger.exception("Orchestrator checkpointer unavailable: %s", e)
         METRICS.record_request(status="failed", task_type=body.get("task_type", "unknown") if isinstance(body, dict) else "unknown")
         if workflow_id:
@@ -1689,7 +1566,7 @@ async def resume_execution(approval_id: str, request: Request) -> JSONResponse:
             office_id,
             actor_id,
             presence_token=body.get("presence_token"),
-            resume_runner=_resume_orchestrator_graph,
+            resume_runner=resume_orchestrator_graph,
         )
 
         if result.get("success"):
