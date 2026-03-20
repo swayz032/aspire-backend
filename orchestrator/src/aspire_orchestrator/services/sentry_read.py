@@ -116,6 +116,17 @@ class SentryReadService:
     def _is_fresh(self, expires_at: float) -> bool:
         return expires_at > time.monotonic()
 
+    def _fresh_issue_payload(self, minimum_limit: int) -> dict[str, Any] | None:
+        fresh_payloads = [
+            payload
+            for cached_limit, (expires_at, payload) in self._issues_cache.items()
+            if cached_limit >= minimum_limit and self._is_fresh(expires_at)
+        ]
+        if not fresh_payloads:
+            return None
+        fresh_payloads.sort(key=lambda item: len(item.get("items", [])), reverse=True)
+        return fresh_payloads[0]
+
     def _issues_query(self) -> str:
         return "is:unresolved"
 
@@ -269,6 +280,43 @@ class SentryReadService:
             "warnings": [warning],
         }
 
+    def _issues_payload(self, *, issues: list[dict[str, Any]], total_hits: int) -> dict[str, Any]:
+        return {
+            "items": issues,
+            "count": total_hits,
+            "configured": True,
+            "source": "sentry",
+            "warnings": [],
+        }
+
+    def _summary_from_issues_payload(self, *, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        issues = payload.get("items", [])
+        total_hits = _parse_int(str(payload.get("count") or "0"), 0)
+        critical_count = sum(1 for issue in issues if issue["level"] in {"fatal", "error"})
+        regression_count = sum(1 for issue in issues if issue["is_regression"])
+        project_count = len({issue["project_slug"] for issue in issues if issue["project_slug"]})
+        last_seen = next((issue["last_seen"] for issue in issues if issue["last_seen"]), None)
+
+        status = "healthy"
+        if critical_count > 0 or regression_count > 0:
+            status = "critical"
+        elif total_hits > 0:
+            status = "degraded"
+
+        return {
+            "configured": True,
+            "source": "sentry",
+            "status": status,
+            "open_issue_count": total_hits,
+            "critical_count": critical_count,
+            "regression_count": regression_count,
+            "project_count": project_count,
+            "last_seen": last_seen,
+            "issues_url": self._issues_url(config),
+            "alerts_url": self._alerts_url(config),
+            "warnings": [],
+        }
+
     async def get_summary(self) -> dict[str, Any]:
         config = self._config()
         if not config["enabled"]:
@@ -277,6 +325,12 @@ class SentryReadService:
         async with self._lock:
             if self._summary_cache and self._is_fresh(self._summary_cache[0]):
                 return self._summary_cache[1]
+
+            cached_issues = self._fresh_issue_payload(1)
+            if cached_issues is not None:
+                summary = self._summary_from_issues_payload(config=config, payload=cached_issues)
+                self._summary_cache = (time.monotonic() + config["cache_ttl_seconds"], summary)
+                return summary
 
             try:
                 issues, total_hits = await self._fetch_unresolved_issues(limit=config["summary_limit"], config=config)
@@ -287,30 +341,12 @@ class SentryReadService:
                 self._summary_cache = (time.monotonic() + config["cache_ttl_seconds"], summary)
                 return summary
 
-            critical_count = sum(1 for issue in issues if issue["level"] in {"fatal", "error"})
-            regression_count = sum(1 for issue in issues if issue["is_regression"])
-            project_count = len({issue["project_slug"] for issue in issues if issue["project_slug"]})
-            last_seen = next((issue["last_seen"] for issue in issues if issue["last_seen"]), None)
-
-            status = "healthy"
-            if critical_count > 0 or regression_count > 0:
-                status = "critical"
-            elif total_hits > 0:
-                status = "degraded"
-
-            summary = {
-                "configured": True,
-                "source": "sentry",
-                "status": status,
-                "open_issue_count": total_hits,
-                "critical_count": critical_count,
-                "regression_count": regression_count,
-                "project_count": project_count,
-                "last_seen": last_seen,
-                "issues_url": self._issues_url(config),
-                "alerts_url": self._alerts_url(config),
-                "warnings": [],
-            }
+            issues_payload = self._issues_payload(issues=issues, total_hits=total_hits)
+            self._issues_cache[config["summary_limit"]] = (
+                time.monotonic() + config["cache_ttl_seconds"],
+                issues_payload,
+            )
+            summary = self._summary_from_issues_payload(config=config, payload=issues_payload)
             self._summary_cache = (time.monotonic() + config["cache_ttl_seconds"], summary)
             return summary
 
@@ -326,6 +362,13 @@ class SentryReadService:
             if cached and self._is_fresh(cached[0]):
                 return cached[1]
 
+            cached = self._fresh_issue_payload(safe_limit)
+            if cached is not None:
+                return {
+                    **cached,
+                    "items": cached.get("items", [])[:safe_limit],
+                }
+
             try:
                 issues, total_hits = await self._fetch_unresolved_issues(limit=safe_limit, config=config)
             except Exception as exc:
@@ -335,13 +378,7 @@ class SentryReadService:
                 self._issues_cache[safe_limit] = (time.monotonic() + config["cache_ttl_seconds"], payload)
                 return payload
 
-            payload = {
-                "items": issues,
-                "count": total_hits,
-                "configured": True,
-                "source": "sentry",
-                "warnings": [],
-            }
+            payload = self._issues_payload(issues=issues, total_hits=total_hits)
             self._issues_cache[safe_limit] = (time.monotonic() + config["cache_ttl_seconds"], payload)
             return payload
 

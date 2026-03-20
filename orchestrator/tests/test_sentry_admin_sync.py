@@ -33,6 +33,7 @@ def _clean(monkeypatch):
     monkeypatch.delenv("SENTRY_ORG_SLUG", raising=False)
     monkeypatch.delenv("SENTRY_PROJECT_SLUGS", raising=False)
     monkeypatch.delenv("SENTRY_API_BASE_URL", raising=False)
+    _SuccessAsyncClient.call_count = 0
     clear_admin_stores()
     clear_store()
     reset_sentry_read_service()
@@ -51,6 +52,8 @@ def headers() -> dict[str, str]:
 
 
 class _SuccessAsyncClient:
+    call_count = 0
+
     def __init__(self, *args, **kwargs):
         self.calls: list[tuple[str, dict[str, str] | None, dict[str, str] | None]] = []
 
@@ -61,6 +64,7 @@ class _SuccessAsyncClient:
         return False
 
     async def get(self, url: str, *, headers=None, params=None):
+        type(self).call_count += 1
         self.calls.append((url, headers, params))
         request = httpx.Request("GET", url, headers=headers, params=params)
         if "ava-brain-backend" in url:
@@ -143,6 +147,20 @@ def test_sentry_summary_and_issues_map_success(client, headers, monkeypatch) -> 
     assert issues_payload["items"][0]["id"] == "101"
     assert issues_payload["items"][0]["project_slug"] == "ava-brain-backend"
     assert issues_payload["items"][0]["permalink"].startswith("https://sentry.io/organizations/aspire/issues/")
+
+
+def test_sentry_summary_primes_issue_cache(client, headers, monkeypatch) -> None:
+    monkeypatch.setenv("SENTRY_AUTH_TOKEN", "token-123")
+    monkeypatch.setenv("SENTRY_ORG_SLUG", "aspire")
+    monkeypatch.setenv("SENTRY_PROJECT_SLUGS", "ava-brain-backend,admin-portal-web")
+    monkeypatch.setattr("aspire_orchestrator.services.sentry_read.httpx.AsyncClient", _SuccessAsyncClient)
+
+    summary_response = client.get("/admin/ops/sentry/summary", headers=headers)
+    issues_response = client.get("/admin/ops/sentry/issues?limit=2", headers=headers)
+
+    assert summary_response.status_code == 200
+    assert issues_response.status_code == 200
+    assert _SuccessAsyncClient.call_count == 2
 
 
 @pytest.mark.parametrize(
