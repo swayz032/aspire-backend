@@ -1,0 +1,206 @@
+{
+  "name": "Frontend Incident Triage — Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "frontend-incident-triage",
+        "options": {
+          "rawBody": true
+        },
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Frontend Incident Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "webhookId": "frontend-incident-triage"
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabled = $env.N8N_WORKFLOW_FRONTEND_INCIDENT_TRIAGE_ENABLED;\nif (enabled === 'false' || enabled === '0') {\n  return [{ json: { killed: true, shouldSendSlack: false, responseCode: 503, responseBody: { ok: false, code: 'WORKFLOW_DISABLED', message: 'Frontend incident triage disabled' } } }];\n}\n\nconst crypto = require('crypto');\nconst secret = $env.N8N_FRONTEND_INCIDENT_WEBHOOK_SECRET;\nif (!secret) {\n  return [{ json: { killed: true, shouldSendSlack: false, responseCode: 503, responseBody: { ok: false, code: 'CONFIG_MISSING_SECRET', message: 'Missing frontend incident webhook secret' } } }];\n}\n\nfunction sortKeys(obj) {\n  if (Array.isArray(obj)) return obj.map(sortKeys);\n  if (obj !== null && typeof obj === 'object') {\n    return Object.keys(obj).sort().reduce((acc, key) => {\n      acc[key] = sortKeys(obj[key]);\n      return acc;\n    }, {});\n  }\n  return obj;\n}\n\nconst envelope = $input.first().json;\nconst headers = envelope.headers || {};\nconst body = envelope.body || {};\nconst signature = headers['x-webhook-signature'] || '';\nconst canonicalBody = JSON.stringify(sortKeys(body));\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(canonicalBody).digest('hex');\nconst sigBuf = Buffer.from(signature);\nconst expBuf = Buffer.from(expected);\nif (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {\n  return [{ json: { killed: true, shouldSendSlack: false, responseCode: 401, responseBody: { ok: false, code: 'AUTH_INVALID_SIGNATURE', message: 'Invalid webhook signature' } } }];\n}\n\nconst incidents = Array.isArray(body.incidents) ? body.incidents : [];\nconst summary = body.summary || {};\nconst mode = body.mode || 'unknown';\nconst failed = Number(summary.failed || incidents.length || 0);\nconst passed = Number(summary.passed || 0);\nconst total = Number(summary.total || incidents.length || 0);\nconst runUrl = body.run_url || null;\nconst repo = body.repo || 'unknown';\nconst sha = body.sha ? String(body.sha).slice(0, 7) : 'unknown';\nconst titleLines = incidents.slice(0, 5).map((incident, index) => `${index + 1}. ${incident.contract_id || 'unknown'} — ${incident.error_summary || incident.title || 'failure'}`);\nconst digestLines = [\n  `Aspire desktop frontend synthetics`,\n  `mode: ${mode}`,\n  `repo: ${repo}`,\n  `sha: ${sha}`,\n  `summary: ${passed}/${total} passed, ${failed} failed`,\n  runUrl ? `run: ${runUrl}` : null,\n  incidents.length > 0 ? 'top incidents:' : 'no incidents detected',\n  ...titleLines,\n].filter(Boolean);\nconst requestId = 'frontend-incident-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);\nconst correlationId = headers['x-correlation-id'] || requestId;\nreturn [{ json: {\n  killed: false,\n  requestId,\n  correlationId,\n  incidentCount: incidents.length,\n  shouldSendSlack: incidents.length > 0 && !!$env.N8N_FRONTEND_INCIDENT_SLACK_WEBHOOK,\n  incidents,\n  summary: { total, passed, failed, skipped: Number(summary.skipped || 0) },\n  slackText: digestLines.join('\\n'),\n  responseCode: 202,\n  responseBody: {\n    ok: true,\n    status: 'accepted',\n    mode,\n    incidentCount: incidents.length,\n    failed,\n    runUrl,\n    requestId,\n    correlationId\n  }\n} }];"
+      },
+      "id": "prep-digest",
+      "name": "Kill Switch + HMAC + Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.killed }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "killed-check",
+      "name": "Killed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.responseBody }}",
+        "options": {
+          "responseCode": "={{ $json.responseCode }}"
+        }
+      },
+      "id": "respond-rejected",
+      "name": "Respond Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.3,
+      "position": [
+        920,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.shouldSendSlack }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "send-slack-check",
+      "name": "Send Slack?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        920,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_FRONTEND_INCIDENT_SLACK_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.slackText }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "slack-webhook",
+      "name": "Send Slack Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        320
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.responseBody }}",
+        "options": {
+          "responseCode": "={{ $json.responseCode }}"
+        }
+      },
+      "id": "respond-accepted",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.3,
+      "position": [
+        1400,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Frontend Incident Webhook": {
+      "main": [
+        [
+          {
+            "node": "Kill Switch + HMAC + Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kill Switch + HMAC + Digest": {
+      "main": [
+        [
+          {
+            "node": "Killed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Killed?": {
+      "main": [
+        [
+          {
+            "node": "Respond Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Slack?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack?": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Digest": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "frontend-incident-triage-v1"
+}
