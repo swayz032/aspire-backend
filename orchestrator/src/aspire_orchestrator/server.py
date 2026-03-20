@@ -197,6 +197,11 @@ app.add_middleware(
         "X-Office-Id",
         "X-Actor-Id",
         "X-Trace-Id",
+        # Browser tracing integrations add these during cross-origin fetches.
+        "sentry-trace",
+        "baggage",
+        "traceparent",
+        "tracestate",
     ],
 )
 

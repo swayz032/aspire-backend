@@ -114,6 +114,28 @@ class TestHealthEndpoints:
         assert response.status_code == 403
 
 
+class TestCorsPreflight:
+    def test_ops_preflight_allows_browser_tracing_headers(self, client) -> None:
+        """Preflight must allow Sentry/browser tracing headers for admin portal fetches."""
+        response = client.options(
+            "/admin/ops/providers",
+            headers={
+                "Origin": "https://admin.aspireos.app",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": (
+                    "content-type,x-admin-token,x-correlation-id,x-trace-id,"
+                    "sentry-trace,baggage"
+                ),
+            },
+        )
+
+        assert response.status_code == 200
+        allow_headers = response.headers.get("Access-Control-Allow-Headers", "").lower()
+        assert "sentry-trace" in allow_headers
+        assert "baggage" in allow_headers
+        assert response.headers.get("Access-Control-Allow-Origin") == "https://admin.aspireos.app"
+
+
 class TestIntentsEndpoint:
     def test_green_tier_success(self, client) -> None:
         """POST /v1/intents with GREEN tier returns 200 + AvaResult."""
