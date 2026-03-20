@@ -63,22 +63,27 @@ class _SuccessAsyncClient:
     async def get(self, url: str, *, headers=None, params=None):
         self.calls.append((url, headers, params))
         request = httpx.Request("GET", url, headers=headers, params=params)
+        if "ava-brain-backend" in url:
+            payload = [
+                {
+                    "id": "101",
+                    "shortId": "AVA-BRAIN-101",
+                    "title": "Provider timeout spike",
+                    "level": "error",
+                    "status": "unresolved",
+                    "count": "18",
+                    "userCount": "3",
+                    "firstSeen": "2026-03-19T18:00:00Z",
+                    "lastSeen": "2026-03-19T19:00:00Z",
+                    "project": {"slug": "ava-brain-backend"},
+                    "culprit": "provider_call_log",
+                    "permalink": "https://sentry.io/organizations/aspire/issues/101/",
+                    "isRegression": True,
+                },
+            ]
+            return httpx.Response(200, request=request, headers={"X-Hits": "1"}, json=payload)
+
         payload = [
-            {
-                "id": "101",
-                "shortId": "AVA-BRAIN-101",
-                "title": "Provider timeout spike",
-                "level": "error",
-                "status": "unresolved",
-                "count": "18",
-                "userCount": "3",
-                "firstSeen": "2026-03-19T18:00:00Z",
-                "lastSeen": "2026-03-19T19:00:00Z",
-                "project": {"slug": "ava-brain-backend"},
-                "culprit": "provider_call_log",
-                "permalink": "https://sentry.io/organizations/aspire/issues/101/",
-                "isRegression": True,
-            },
             {
                 "id": "102",
                 "shortId": "ADMIN-42",
@@ -95,7 +100,7 @@ class _SuccessAsyncClient:
                 "isRegression": False,
             },
         ]
-        return httpx.Response(200, request=request, headers={"X-Hits": "2"}, json=payload)
+        return httpx.Response(200, request=request, headers={"X-Hits": "1"}, json=payload)
 
 
 class _TimeoutAsyncClient:

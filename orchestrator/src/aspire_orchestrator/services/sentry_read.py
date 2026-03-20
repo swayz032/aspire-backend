@@ -116,10 +116,8 @@ class SentryReadService:
     def _is_fresh(self, expires_at: float) -> bool:
         return expires_at > time.monotonic()
 
-    def _issues_query(self, projects: list[str]) -> str:
-        parts = ["is:unresolved"]
-        parts.extend(f"project:{project}" for project in projects)
-        return " ".join(parts)
+    def _issues_query(self) -> str:
+        return "is:unresolved"
 
     def _issues_url(self, config: dict[str, Any]) -> str | None:
         organization = config.get("organization")
@@ -184,25 +182,31 @@ class SentryReadService:
             "is_unhandled": bool(raw.get("isUnhandled")),
         }
 
-    async def _fetch_unresolved_issues(self, *, limit: int, config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    async def _fetch_project_issues(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        project: str,
+        limit: int,
+        config: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], int]:
         headers = {
             "Authorization": f"Bearer {config['token']}",
             "Accept": "application/json",
         }
         params = {
-            "query": self._issues_query(config.get("projects", [])),
+            "query": self._issues_query(),
             "sort": "date",
             "limit": str(limit),
         }
 
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
-            response = await client.get(
-                f"{config['api_base_url']}/organizations/{config['organization']}/issues/",
-                headers=headers,
-                params=params,
-            )
-            response.raise_for_status()
-            payload = response.json()
+        response = await client.get(
+            f"{config['api_base_url']}/projects/{config['organization']}/{project}/issues/",
+            headers=headers,
+            params=params,
+        )
+        response.raise_for_status()
+        payload = response.json()
 
         if not isinstance(payload, list):
             raise ValueError("Unexpected Sentry issues payload")
@@ -210,6 +214,36 @@ class SentryReadService:
         total_hits = _parse_int(response.headers.get("X-Hits"), len(payload))
         issues = [self._normalize_issue(item, config) for item in payload if isinstance(item, dict)]
         return issues, total_hits
+
+    async def _fetch_unresolved_issues(self, *, limit: int, config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+        projects = config.get("projects", [])
+        if not projects:
+            return [], 0
+
+        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+            results = await asyncio.gather(
+                *[
+                    self._fetch_project_issues(
+                        client=client,
+                        project=project,
+                        limit=limit,
+                        config=config,
+                    )
+                    for project in projects
+                ]
+            )
+
+        issues: list[dict[str, Any]] = []
+        total_hits = 0
+        for project_issues, project_hits in results:
+            total_hits += project_hits
+            issues.extend(project_issues)
+
+        issues.sort(
+            key=lambda issue: issue.get("last_seen") or issue.get("first_seen") or "",
+            reverse=True,
+        )
+        return issues[:limit], total_hits
 
     def _unavailable_summary(self, config: dict[str, Any], warning: str) -> dict[str, Any]:
         return {
