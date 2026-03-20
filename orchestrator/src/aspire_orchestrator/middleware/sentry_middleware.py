@@ -165,6 +165,17 @@ def _resolve_release() -> str:
     return "aspire-orchestrator@0.1.0"
 
 
+def _resolve_dsn() -> str:
+    candidates = [
+        os.getenv("SENTRY_DSN"),
+        os.getenv("SENTRY_BACKEND_DSN"),
+    ]
+    for candidate in candidates:
+        if candidate and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
 def init_sentry() -> None:
     """Initialize Sentry SDK if SENTRY_DSN is set. No-op otherwise."""
     global _initialized
@@ -172,9 +183,11 @@ def init_sentry() -> None:
     if _initialized:
         return
 
-    dsn = os.getenv("SENTRY_DSN", "").strip()
+    dsn = _resolve_dsn()
     if not dsn:
-        logger.info("SENTRY_DSN not set - Sentry error tracking disabled (no-op)")
+        logger.info(
+            "SENTRY_DSN/SENTRY_BACKEND_DSN not set - Sentry error tracking disabled (no-op)"
+        )
         return
 
     try:
