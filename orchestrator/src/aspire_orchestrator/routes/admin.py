@@ -478,6 +478,7 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
     role = "authenticated"
 
     supabase_secret = _get_supabase_jwt_secret()
+    local_decode_error: Exception | None = None
     if supabase_secret:
         try:
             payload = pyjwt.decode(
@@ -489,17 +490,14 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
             actor_id = str(payload.get("sub") or "").strip()
             email = str(payload.get("email") or "").strip().lower()
             role = str(payload.get("role") or "authenticated")
-        except Exception:
-            return _ops_error(
-                code="AUTHZ_DENIED",
-                message="Invalid session token",
-                correlation_id=correlation_id,
-                status_code=401,
-            )
-    else:
-        # Production fallback: verify Supabase token against Auth API with service-role client.
+        except Exception as exc:
+            # Fall back to Supabase Auth API verification if local secret validation
+            # is stale or misconfigured in production.
+            local_decode_error = exc
+
+    if not actor_id:
         supabase = _get_supabase_client()
-        if supabase is None:
+        if supabase is None and not supabase_secret:
             return _ops_error(
                 code="AUTH_CONFIG_MISSING",
                 message="Supabase auth verifier is not configured",
@@ -507,34 +505,31 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
                 status_code=503,
                 retryable=False,
             )
-        try:
-            user_response = supabase.auth.get_user(access_token)
-            user = getattr(user_response, "user", None)
-            if user is None:
-                return _ops_error(
-                    code="AUTHZ_DENIED",
-                    message="Invalid session token",
-                    correlation_id=correlation_id,
-                    status_code=401,
-                )
-            actor_id = str(getattr(user, "id", "") or "").strip()
-            email = str(getattr(user, "email", "") or "").strip().lower()
-            role = "authenticated"
-        except Exception:
-            return _ops_error(
-                code="AUTHZ_DENIED",
-                message="Invalid session token",
-                correlation_id=correlation_id,
-                status_code=401,
-            )
+
+        if supabase is not None:
+            try:
+                user_response = supabase.auth.get_user(access_token)
+                user = getattr(user_response, "user", None)
+                if user is not None:
+                    actor_id = str(getattr(user, "id", "") or "").strip()
+                    email = str(getattr(user, "email", "") or "").strip().lower()
+                    role = "authenticated"
+            except Exception:
+                pass
 
     if not actor_id:
+        if local_decode_error is not None:
+            logger.warning(
+                "Supabase local JWT validation failed and Auth API fallback did not recover the session: %s",
+                local_decode_error,
+            )
         return _ops_error(
             code="AUTHZ_DENIED",
-            message="Session token missing subject",
+            message="Invalid session token",
             correlation_id=correlation_id,
             status_code=401,
         )
+
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=1)
     admin_payload = {

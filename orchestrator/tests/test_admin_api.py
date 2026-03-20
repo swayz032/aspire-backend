@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import jwt as pyjwt
 import pytest
@@ -213,6 +214,49 @@ class TestAdminAuth:
         assert response.status_code == 401
         data = response.json()
         assert data["code"] == "AUTHZ_DENIED"
+
+    def test_exchange_falls_back_to_supabase_auth_when_local_decode_fails(
+        self, client, monkeypatch
+    ) -> None:
+        """Admin token exchange should recover when local JWT decode config is stale."""
+        import aspire_orchestrator.routes.admin as admin_module
+
+        seen_tokens: list[str] = []
+
+        def _get_user(access_token: str):
+            seen_tokens.append(access_token)
+            return SimpleNamespace(
+                user=SimpleNamespace(
+                    id="supabase-user-123",
+                    email="admin@example.com",
+                )
+            )
+
+        fake_supabase = SimpleNamespace(auth=SimpleNamespace(get_user=_get_user))
+
+        monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+        monkeypatch.setenv("JWT_SECRET", "stale-local-secret")
+        monkeypatch.setattr(admin_module, "_get_supabase_client", lambda: fake_supabase)
+
+        response = client.post(
+            "/admin/auth/exchange",
+            headers={
+                "authorization": "Bearer not-a-locally-decodable-token",
+                "x-correlation-id": "corr-exchange-fallback",
+            },
+        )
+
+        assert response.status_code == 200
+        assert seen_tokens == ["not-a-locally-decodable-token"]
+
+        data = response.json()
+        decoded = pyjwt.decode(
+            data["admin_token"],
+            _TEST_JWT_SECRET,
+            algorithms=["HS256"],
+        )
+        assert decoded["sub"] == "supabase-user-123"
+        assert decoded["email"] == "admin@example.com"
 
 
 # =============================================================================
