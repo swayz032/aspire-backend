@@ -998,7 +998,8 @@ async def report_incident(request: Request) -> JSONResponse:
     try:
         from aspire_orchestrator.services.admin_store import get_admin_store
         ce_store = get_admin_store()
-        ce_source = str(payload.get("source") or "external").strip()
+        raw_ce_source = str(payload.get("source") or "external").strip()
+        ce_source = raw_ce_source if raw_ce_source in {"desktop", "admin", "mobile"} else "admin"
         ce_component = str(payload.get("component") or "unknown").strip()
         ce_message = str(payload.get("message") or payload.get("title") or "").strip()
         ce_severity = str(payload.get("severity") or "sev3").strip()

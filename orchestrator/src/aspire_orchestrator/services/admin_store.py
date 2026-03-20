@@ -100,6 +100,11 @@ def _send_discord_alert(incident_row: dict[str, Any]) -> None:
 _supabase_client: Any = None
 _supabase_init_done = False
 _supabase_init_lock = threading.Lock()
+_ensured_tenants: set[str] = set()
+_ensured_tenants_lock = threading.Lock()
+
+_SYSTEM_TENANT_ID = "system"
+_SYSTEM_TENANT_NAME = "Aspire Internal"
 
 
 def _get_supabase() -> Any | None:
@@ -130,6 +135,37 @@ def _get_supabase() -> Any | None:
 
         _supabase_init_done = True
         return _supabase_client
+
+
+def _normalize_incident_tenant_id(tenant_id: str | None) -> str:
+    """Incidents require a tenant id even for internal/system traffic."""
+    value = str(tenant_id or "").strip()
+    return value or _SYSTEM_TENANT_ID
+
+
+def _ensure_reserved_tenant(client: Any, tenant_id: str) -> None:
+    """Ensure reserved/system tenant rows exist before FK-backed inserts."""
+    if tenant_id != _SYSTEM_TENANT_ID:
+        return
+
+    with _ensured_tenants_lock:
+        if tenant_id in _ensured_tenants:
+            return
+
+    (
+        client.table("tenants")
+        .upsert(
+            {
+                "tenant_id": tenant_id,
+                "name": _SYSTEM_TENANT_NAME,
+            },
+            on_conflict="tenant_id",
+        )
+        .execute()
+    )
+
+    with _ensured_tenants_lock:
+        _ensured_tenants.add(tenant_id)
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +217,49 @@ def _to_db_status(legacy_state: str) -> str:
 
 def _to_legacy_state(db_status: str) -> str:
     return _STATUS_TO_LEGACY_STATE.get(db_status, db_status)
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _json_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _merge_incident_tags(
+    existing_tags: dict[str, Any] | None,
+    incoming_tags: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = dict(_json_dict(existing_tags))
+    merged.update(_json_dict(incoming_tags))
+    return merged
+
+
+def _merge_incident_metadata(
+    existing_meta: dict[str, Any] | None,
+    incoming_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    base = dict(_json_dict(existing_meta))
+    incoming = _json_dict(incoming_meta)
+    merged = {**base, **incoming}
+
+    timeline = _json_list(base.get("timeline")) + _json_list(incoming.get("timeline"))
+    if timeline:
+        merged["timeline"] = timeline
+
+    base_evidence = _json_dict(base.get("evidence_pack"))
+    incoming_evidence = _json_dict(incoming.get("evidence_pack"))
+    if base_evidence or incoming_evidence:
+        merged_evidence = {**base_evidence, **incoming_evidence}
+        report_count = int(base_evidence.get("report_count") or 0) + int(
+            incoming_evidence.get("report_count") or 0
+        )
+        if report_count:
+            merged_evidence["report_count"] = report_count
+        merged["evidence_pack"] = merged_evidence
+
+    return merged
 
 
 def _db_row_to_incident(row: dict[str, Any]) -> dict[str, Any]:
@@ -252,9 +331,10 @@ class AdminSupabaseStore:
         Returns (row_dict, supabase_succeeded).
         Always stores in-memory as fallback.
         """
+        normalized_tenant_id = _normalize_incident_tenant_id(tenant_id)
         db_status = _to_db_status(status) if status else "open"
         row = {
-            "tenant_id": tenant_id,
+            "tenant_id": normalized_tenant_id,
             "title": title,
             "severity": _to_db_severity(severity),
             "source": source,
@@ -280,6 +360,7 @@ class AdminSupabaseStore:
         client = _get_supabase()
         if client:
             try:
+                _ensure_reserved_tenant(client, normalized_tenant_id)
                 result = client.table("incidents").insert(row).execute()
                 if result.data:
                     db_row = result.data[0]
@@ -303,7 +384,7 @@ class AdminSupabaseStore:
             "title": title,
             "correlation_id": correlation_id or "",
             "trace_id": (metadata or {}).get("trace_id") or correlation_id or "",
-            "suite_id": tenant_id,
+            "suite_id": normalized_tenant_id,
             "first_seen": now_iso,
             "last_seen": now_iso,
             "fingerprint": fingerprint or "",
@@ -395,54 +476,50 @@ class AdminSupabaseStore:
 
         Returns (incident_dict, deduped, supabase_succeeded).
         """
+        normalized_tenant_id = _normalize_incident_tenant_id(tenant_id)
         client = _get_supabase()
         if client and fingerprint:
             try:
-                row = {
-                    "tenant_id": tenant_id,
-                    "title": title,
-                    "severity": _to_db_severity(severity),
-                    "source": source,
-                    "status": "open",
-                }
-                if description:
-                    row["description"] = description
-                if stack_trace:
-                    row["stack_trace"] = stack_trace
-                if component:
-                    row["component"] = component
-                if provider:
-                    row["provider"] = provider
-                if fingerprint:
-                    row["fingerprint"] = fingerprint
-                if correlation_id:
-                    row["correlation_id"] = correlation_id
-                if tags is not None:
-                    row["tags"] = tags
-                if metadata is not None:
-                    row["metadata"] = metadata
-
-                # Use the unique partial index on (fingerprint) WHERE status='open'
-                # ON CONFLICT → update the existing open incident
-                result = (
+                _ensure_reserved_tenant(client, normalized_tenant_id)
+                existing_result = (
                     client.table("incidents")
-                    .upsert(
-                        row,
-                        on_conflict="fingerprint",
-                        # Only conflict on the partial unique index for open incidents
-                    )
+                    .select("*")
+                    .eq("fingerprint", fingerprint)
+                    .in_("status", ["open", "investigating"])
+                    .order("created_at", desc=True)
+                    .limit(1)
                     .execute()
                 )
-                if result.data:
-                    db_row = result.data[0]
+                if existing_result.data:
+                    existing_row = existing_result.data[0]
+                    updates: dict[str, Any] = {
+                        "tenant_id": existing_row.get("tenant_id") or normalized_tenant_id,
+                        "title": title or existing_row.get("title", ""),
+                        "severity": _to_db_severity(severity or existing_row.get("severity", "medium")),
+                        "source": source or existing_row.get("source", "backend"),
+                        "fingerprint": fingerprint,
+                        "description": (
+                            description if description is not None else existing_row.get("description")
+                        ),
+                        "stack_trace": (
+                            stack_trace if stack_trace is not None else existing_row.get("stack_trace")
+                        ),
+                        "component": component if component is not None else existing_row.get("component"),
+                        "provider": provider if provider is not None else existing_row.get("provider"),
+                        "correlation_id": correlation_id or existing_row.get("correlation_id"),
+                        "tags": _merge_incident_tags(existing_row.get("tags"), tags),
+                        "metadata": _merge_incident_metadata(existing_row.get("metadata"), metadata),
+                    }
+                    result = (
+                        client.table("incidents")
+                        .update(updates)
+                        .eq("id", existing_row.get("id"))
+                        .execute()
+                    )
+                    db_row = result.data[0] if result.data else {**existing_row, **updates}
                     incident = _db_row_to_incident(db_row)
                     self._incidents[incident["incident_id"]] = incident
-                    # Detect dedup: if created_at != updated_at, it was an update
-                    deduped = db_row.get("created_at") != db_row.get("updated_at")
-                    # Alert on new critical/high incidents (not deduped updates)
-                    if not deduped:
-                        _send_discord_alert(db_row)
-                    return incident, deduped, True
+                    return incident, True, True
             except Exception as e:
                 logger.warning("AdminStore: Supabase upsert_incident failed: %s", e)
 
@@ -468,9 +545,9 @@ class AdminSupabaseStore:
                         existing["timeline"] = existing_timeline
                     return existing, True, False
 
-        # No dedup match — insert new
+        # No dedup match - insert new
         result_row, supabase_ok = self.store_incident(
-            tenant_id=tenant_id,
+            tenant_id=normalized_tenant_id,
             title=title,
             severity=severity,
             source=source,
@@ -483,6 +560,8 @@ class AdminSupabaseStore:
             tags=tags,
             metadata=metadata,
         )
+        if supabase_ok and result_row and "incident_id" not in result_row:
+            result_row = _db_row_to_incident(result_row)
         return result_row or {}, False, supabase_ok
 
     # ------------------------------------------------------------------
@@ -506,13 +585,14 @@ class AdminSupabaseStore:
 
         Returns True if Supabase write succeeded.
         """
+        normalized_tenant_id = str(tenant_id or "").strip() or None
         row: dict[str, Any] = {
             "event_type": event_type,
             "source": source,
             "severity": severity,
         }
-        if tenant_id:
-            row["tenant_id"] = tenant_id
+        if normalized_tenant_id:
+            row["tenant_id"] = normalized_tenant_id
         if session_id:
             row["session_id"] = session_id
         if correlation_id:
@@ -526,10 +606,12 @@ class AdminSupabaseStore:
 
         client = _get_supabase()
         if not client:
-            logger.debug("AdminStore: No Supabase client — client_event dropped: %s", event_type)
+            logger.debug("AdminStore: No Supabase client - client_event dropped: %s", event_type)
             return False
 
         try:
+            if normalized_tenant_id:
+                _ensure_reserved_tenant(client, normalized_tenant_id)
             client.table("client_events").insert(row).execute()
             return True
         except Exception as e:

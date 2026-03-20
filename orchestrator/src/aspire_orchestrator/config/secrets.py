@@ -39,12 +39,14 @@ KEY_MAP: dict[str, str] = {
     # Internal
     "token_signing_secret": "TOKEN_SIGNING_SECRET",
     "token_encryption_key": "TOKEN_ENCRYPTION_KEY",
+    "n8n_api_key": "N8N_API_KEY",
     "n8n_hmac_secret": "N8N_WEBHOOK_SECRET",
     "n8n_eli_webhook_secret": "N8N_ELI_WEBHOOK_SECRET",
     "n8n_sarah_webhook_secret": "N8N_SARAH_WEBHOOK_SECRET",
     "n8n_nora_webhook_secret": "N8N_NORA_WEBHOOK_SECRET",
     "domain_rail_hmac_secret": "DOMAIN_RAIL_HMAC_SECRET",
     "gateway_internal_key": "GATEWAY_INTERNAL_KEY",
+    "admin_incident_s2s_secret": "ASPIRE_ADMIN_INCIDENT_S2S_SECRET",
     # Providers
     "elevenlabs_key": "ELEVENLABS_API_KEY",
     "deepgram_key": "DEEPGRAM_API_KEY",

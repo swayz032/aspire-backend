@@ -23,7 +23,9 @@ def _force_in_memory():
     """Force admin_store to use in-memory only (no real Supabase in tests)."""
     _admin_store_mod._supabase_client = None
     _admin_store_mod._supabase_init_done = True
+    _admin_store_mod._ensured_tenants.clear()
     yield
+    _admin_store_mod._ensured_tenants.clear()
     _admin_store_mod._supabase_init_done = False
 
 
@@ -108,6 +110,143 @@ class TestAdminSupabaseStore:
         """Should return None for missing incident."""
         result = self.store.get_incident("nonexistent-id")
         assert result is None
+
+    def test_store_incident_ensures_reserved_system_tenant_before_insert(self):
+        """System incidents should create/ensure the reserved tenant row before insert."""
+        tenants_table = MagicMock()
+        incidents_table = MagicMock()
+        fake_client = MagicMock()
+
+        def _table(name: str):
+            return {
+                "tenants": tenants_table,
+                "incidents": incidents_table,
+            }[name]
+
+        fake_client.table.side_effect = _table
+        tenants_table.upsert.return_value.execute.return_value = MagicMock(
+            data=[{"tenant_id": "system", "name": "Aspire Internal"}]
+        )
+        incidents_table.insert.return_value.execute.return_value = MagicMock(
+            data=[
+                {
+                    "id": "inc-system",
+                    "tenant_id": "system",
+                    "title": "System incident",
+                    "severity": "high",
+                    "source": "backend",
+                    "status": "open",
+                    "metadata": {},
+                    "created_at": "2026-03-20T00:00:00+00:00",
+                    "updated_at": "2026-03-20T00:00:00+00:00",
+                }
+            ]
+        )
+
+        with patch.object(_admin_store_mod, "_get_supabase", return_value=fake_client):
+            row, ok = self.store.store_incident(
+                tenant_id="system",
+                title="System incident",
+                severity="high",
+            )
+
+        assert ok is True
+        tenants_table.upsert.assert_called_once_with(
+            {"tenant_id": "system", "name": "Aspire Internal"},
+            on_conflict="tenant_id",
+        )
+        incidents_table.insert.assert_called_once()
+        assert row["tenant_id"] == "system"
+
+    def test_upsert_incident_updates_existing_open_incident_without_postgrest_upsert(self):
+        """Open fingerprint matches should use select+update, not broken partial-index upsert."""
+        tenants_table = MagicMock()
+        incidents_table = MagicMock()
+        fake_client = MagicMock()
+
+        def _table(name: str):
+            return {
+                "tenants": tenants_table,
+                "incidents": incidents_table,
+            }[name]
+
+        fake_client.table.side_effect = _table
+        tenants_table.upsert.return_value.execute.return_value = MagicMock(
+            data=[{"tenant_id": "system", "name": "Aspire Internal"}]
+        )
+
+        existing_row = {
+            "id": "inc-existing",
+            "tenant_id": "system",
+            "title": "Existing incident",
+            "severity": "medium",
+            "source": "desktop",
+            "status": "open",
+            "fingerprint": "desktop:auth:blank",
+            "description": "old",
+            "component": "auth",
+            "provider": None,
+            "correlation_id": "corr-old",
+            "tags": {"existing": True},
+            "metadata": {
+                "timeline": [{"event": "reported"}],
+                "evidence_pack": {"report_count": 1},
+            },
+            "created_at": "2026-03-20T00:00:00+00:00",
+            "updated_at": "2026-03-20T00:00:00+00:00",
+        }
+        updated_row = {
+            **existing_row,
+            "title": "Updated incident",
+            "severity": "high",
+            "correlation_id": "corr-new",
+            "metadata": {
+                "timeline": [{"event": "reported"}, {"event": "reported_again"}],
+                "evidence_pack": {"report_count": 2},
+            },
+            "updated_at": "2026-03-20T00:10:00+00:00",
+        }
+
+        select_query = MagicMock()
+        select_query.eq.return_value = select_query
+        select_query.in_.return_value = select_query
+        select_query.order.return_value = select_query
+        select_query.limit.return_value = select_query
+        select_query.execute.return_value = MagicMock(data=[existing_row])
+        incidents_table.select.return_value = select_query
+
+        update_query = MagicMock()
+        update_eq_query = MagicMock()
+        update_query.eq.return_value = update_eq_query
+        update_eq_query.execute.return_value = MagicMock(data=[updated_row])
+        incidents_table.update.return_value = update_query
+
+        with patch.object(_admin_store_mod, "_get_supabase", return_value=fake_client):
+            incident, deduped, ok = self.store.upsert_incident(
+                tenant_id="system",
+                title="Updated incident",
+                severity="high",
+                source="desktop",
+                component="auth",
+                fingerprint="desktop:auth:blank",
+                correlation_id="corr-new",
+                metadata={
+                    "timeline": [{"event": "reported_again"}],
+                    "evidence_pack": {"report_count": 1},
+                },
+                tags={"new": True},
+            )
+
+        assert ok is True
+        assert deduped is True
+        incidents_table.upsert.assert_not_called()
+        incidents_table.update.assert_called_once()
+        update_payload = incidents_table.update.call_args.args[0]
+        assert update_payload["tenant_id"] == "system"
+        assert update_payload["tags"] == {"existing": True, "new": True}
+        assert update_payload["metadata"]["evidence_pack"]["report_count"] == 2
+        assert incident["incident_id"] == "inc-existing"
+        assert incident["title"] == "Updated incident"
 
 
 class TestAdminStoreProviderCalls:
