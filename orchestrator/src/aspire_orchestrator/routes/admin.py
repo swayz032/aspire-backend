@@ -50,6 +50,7 @@ from aspire_orchestrator.services.provider_secret_registry import (
     is_registry_provider_configured,
 )
 from aspire_orchestrator.services.rotation_inventory import build_rotation_inventory_report
+from aspire_orchestrator.services.sentry_read import get_sentry_read_service
 
 logger = logging.getLogger(__name__)
 
@@ -3327,6 +3328,99 @@ async def dashboard_metrics(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+@router.get("/admin/ops/sentry/summary")
+async def sentry_summary(request: Request) -> JSONResponse:
+    """Read-only Sentry summary for the admin portal."""
+    correlation_id = _get_correlation_id(request)
+
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.sentry.summary",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    summary = await get_sentry_read_service().get_summary()
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.sentry.summary",
+        outcome="success",
+        details={
+            "source": summary.get("source", "unknown"),
+            "status": summary.get("status", "unknown"),
+            "open_issue_count": summary.get("open_issue_count", 0),
+        },
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "summary": summary,
+            "server_time": _now_iso(),
+        },
+    )
+
+
+@router.get("/admin/ops/sentry/issues")
+async def sentry_issues(
+    request: Request,
+    limit: int = Query(default=10, ge=1, le=50),
+) -> JSONResponse:
+    """Read-only Sentry issue summaries with deep links."""
+    correlation_id = _get_correlation_id(request)
+
+    actor_id = _require_admin(request)
+    if actor_id is None:
+        receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.ops.sentry.issues",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([receipt])
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Missing or invalid admin token",
+            correlation_id=correlation_id,
+            status_code=401,
+        )
+
+    payload = await get_sentry_read_service().get_issues(limit=limit)
+    receipt = _build_access_receipt(
+        correlation_id=correlation_id,
+        actor_id=actor_id,
+        action_type="admin.ops.sentry.issues",
+        outcome="success",
+        details={
+            "source": payload.get("source", "unknown"),
+            "count": payload.get("count", 0),
+            "limit": limit,
+        },
+    )
+    store_receipts([receipt])
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            **payload,
+            "server_time": _now_iso(),
+        },
+    )
+
+
 # SSE Streaming Endpoints (Wave 8 — Admin Portal Realtime)
 # =============================================================================
 #

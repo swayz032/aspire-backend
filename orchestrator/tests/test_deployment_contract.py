@@ -20,6 +20,9 @@ def test_prod_compose_declares_required_runtime_env() -> None:
         "ASPIRE_REDIS_URL",
         "ASPIRE_METRICS_TOKEN",
         "SENTRY_DSN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECTS",
+        "SENTRY_AUTH_TOKEN",
     ):
         assert key in env
 

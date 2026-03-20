@@ -216,6 +216,9 @@ app.include_router(webhooks_router)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
 load_secrets()
 
+# Retry Sentry init after secrets load so DSNs sourced from AWS are honored.
+init_sentry()
+
 def _verify_environment_parity() -> None:
     """Fail closed on contradictory production environment markers."""
     aspire_env = os.getenv("ASPIRE_ENV", "").strip().lower()
