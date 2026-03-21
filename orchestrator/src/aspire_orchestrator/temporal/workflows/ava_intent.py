@@ -16,7 +16,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy, SearchAttributeKey, SearchAttributePair
+from temporalio.common import RetryPolicy, SearchAttributeKey
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
@@ -31,6 +31,7 @@ with workflow.unsafe.imports_passed_through():
         SEARCH_ATTR_RISK_TIER,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
+        safe_upsert_search_attributes,
     )
     from aspire_orchestrator.temporal.models import (
         ApprovalEvidence,
@@ -39,8 +40,10 @@ with workflow.unsafe.imports_passed_through():
         AvaIntentOutput,
         EmitClientEventInput,
         PersistReceiptsInput,
+        PersistReceiptsOutput,
         PresenceEvidence,
         RunLangGraphInput,
+        RunLangGraphOutput,
         SyncWorkflowInput,
     )
 
@@ -73,12 +76,12 @@ class AvaIntentWorkflow:
         self._office_id = input.office_id
 
         # Enhancement #9: Set search attributes for admin visibility
-        workflow.upsert_search_attributes([
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID), [input.suite_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER), [input.risk_tier]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND), ["intent"]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID), [input.office_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID), [input.correlation_id]),
+        safe_upsert_search_attributes([
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER).value_set(input.risk_tier),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("intent"),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),
         ])
 
         # Step 1: Run LangGraph as an activity (non-deterministic, external I/O)
@@ -93,6 +96,7 @@ class AvaIntentWorkflow:
                 initial_state=input.initial_state,
                 requested_agent=input.requested_agent,
             ),
+            result_type=RunLangGraphOutput,
             start_to_close_timeout=timedelta(seconds=ACTIVITY_START_TO_CLOSE_DEFAULT),
             heartbeat_timeout=timedelta(seconds=ACTIVITY_HEARTBEAT_DEFAULT),
             retry_policy=RetryPolicy(
@@ -106,8 +110,8 @@ class AvaIntentWorkflow:
         # Update agent tracking
         self._current_agent = graph_result.current_agent
         if self._current_agent:
-            workflow.upsert_search_attributes([
-                SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_AGENT_ID), [self._current_agent]),
+            safe_upsert_search_attributes([
+                SearchAttributeKey.for_keyword(SEARCH_ATTR_AGENT_ID).value_set(self._current_agent),
             ])
 
         # Step 2: If approval required, wait for update (Enhancement #1)
@@ -174,6 +178,7 @@ class AvaIntentWorkflow:
                         suite_id=input.suite_id,
                         correlation_id=input.correlation_id,
                     ),
+                    result_type=PersistReceiptsOutput,
                     start_to_close_timeout=timedelta(seconds=5),
                 )
                 return AvaIntentOutput(
@@ -198,6 +203,7 @@ class AvaIntentWorkflow:
                         suite_id=input.suite_id,
                         correlation_id=input.correlation_id,
                     ),
+                    result_type=PersistReceiptsOutput,
                     start_to_close_timeout=timedelta(seconds=5),
                 )
                 return AvaIntentOutput(
@@ -219,6 +225,7 @@ class AvaIntentWorkflow:
                     approval_evidence=self._approval_result.evidence,
                     requested_agent=input.requested_agent,
                 ),
+                result_type=RunLangGraphOutput,
                 start_to_close_timeout=timedelta(seconds=ACTIVITY_START_TO_CLOSE_DEFAULT),
                 heartbeat_timeout=timedelta(seconds=ACTIVITY_HEARTBEAT_DEFAULT),
                 retry_policy=RetryPolicy(maximum_attempts=3),
@@ -263,6 +270,7 @@ class AvaIntentWorkflow:
                 suite_id=input.suite_id,
                 correlation_id=input.correlation_id,
             ),
+            result_type=PersistReceiptsOutput,
             start_to_close_timeout=timedelta(seconds=5),
         )
 

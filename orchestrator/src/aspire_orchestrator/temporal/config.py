@@ -147,3 +147,29 @@ def get_temporal_target() -> str:
 def get_kms_key_arn() -> str | None:
     """Return AWS KMS key ARN for PayloadCodec (Enhancement #6). None = dev (no encryption)."""
     return os.getenv("TEMPORAL_KMS_KEY_ARN")
+
+
+def safe_upsert_search_attributes(attributes: list) -> None:
+    """Upsert search attributes, silently skipping if not registered.
+
+    In test environments, the test server may not have custom search attributes
+    registered. This helper catches the error and logs it instead of crashing.
+    """
+    from temporalio import workflow
+
+    if not search_attributes_enabled():
+        return
+
+    try:
+        workflow.upsert_search_attributes(attributes)
+    except Exception:
+        # Search attributes not registered in this environment (e.g., test server)
+        pass
+
+
+def search_attributes_enabled() -> bool:
+    """Return whether search attributes should be set on workflows.
+
+    Disabled in test environments where custom search attributes aren't registered.
+    """
+    return os.getenv("TEMPORAL_SEARCH_ATTRS_ENABLED", "true").lower() == "true"

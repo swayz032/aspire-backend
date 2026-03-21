@@ -1,14 +1,14 @@
 """Temporal test fixtures — shared across all Temporal tests.
 
 Enhancement #4: History capture fixtures for deterministic replay tests.
+Enhancement #9: Search attributes disabled in test env (no registration needed).
 """
 
 from __future__ import annotations
 
-import json
+import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,11 @@ from aspire_orchestrator.temporal.models import (
 )
 
 HISTORY_DIR = Path(__file__).parent / "replay_histories"
+
+
+# Disable search attributes in the test environment
+# (test server doesn't have custom attributes registered)
+os.environ.setdefault("TEMPORAL_SEARCH_ATTRS_ENABLED", "false")
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy, SearchAttributeKey, SearchAttributePair
+from temporalio.common import RetryPolicy, SearchAttributeKey
 
 with workflow.unsafe.imports_passed_through():
     from aspire_orchestrator.temporal.config import (
@@ -23,10 +23,13 @@ with workflow.unsafe.imports_passed_through():
         SEARCH_ATTR_OFFICE_ID,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
+        safe_upsert_search_attributes,
     )
     from aspire_orchestrator.temporal.models import (
         PersistReceiptsInput,
+        PersistReceiptsOutput,
         RunLangGraphInput,
+        RunLangGraphOutput,
         SpecialistInput,
         SpecialistOutput,
     )
@@ -43,12 +46,12 @@ class SpecialistAgentWorkflow:
     @workflow.run
     async def run(self, input: SpecialistInput) -> SpecialistOutput:
         # Enhancement #9: Search attributes for admin visibility
-        workflow.upsert_search_attributes([
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID), [input.suite_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_AGENT_ID), [input.agent_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND), ["specialist_agent"]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID), [input.office_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID), [input.correlation_id]),
+        safe_upsert_search_attributes([
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_AGENT_ID).value_set(input.agent_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("specialist_agent"),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),
         ])
 
         try:
@@ -64,6 +67,7 @@ class SpecialistAgentWorkflow:
                     initial_state=input.input,
                     requested_agent=input.agent_id,
                 ),
+                result_type=RunLangGraphOutput,
                 start_to_close_timeout=timedelta(seconds=ACTIVITY_START_TO_CLOSE_DEFAULT),
                 heartbeat_timeout=timedelta(seconds=ACTIVITY_HEARTBEAT_DEFAULT),
                 retry_policy=RetryPolicy(
@@ -87,6 +91,7 @@ class SpecialistAgentWorkflow:
                     suite_id=input.suite_id,
                     correlation_id=input.correlation_id,
                 ),
+                result_type=PersistReceiptsOutput,
                 start_to_close_timeout=timedelta(seconds=5),
             )
 

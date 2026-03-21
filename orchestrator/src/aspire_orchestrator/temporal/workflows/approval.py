@@ -14,7 +14,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import SearchAttributeKey, SearchAttributePair
+from temporalio.common import SearchAttributeKey
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
@@ -25,6 +25,7 @@ with workflow.unsafe.imports_passed_through():
         SEARCH_ATTR_RISK_TIER,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
+        safe_upsert_search_attributes,
     )
     from aspire_orchestrator.temporal.models import (
         ApprovalEvidence,
@@ -64,12 +65,12 @@ class ApprovalWorkflow:
         self._reminders_sent = input.reminders_sent  # Restore from continue-as-new
 
         # Enhancement #9: Search attributes
-        workflow.upsert_search_attributes([
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID), [input.suite_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER), [input.risk_tier]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND), ["approval"]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID), [input.office_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID), [input.correlation_id]),
+        safe_upsert_search_attributes([
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER).value_set(input.risk_tier),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("approval"),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),
         ])
 
         # Send initial notification

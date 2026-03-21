@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy, SearchAttributeKey, SearchAttributePair
+from temporalio.common import RetryPolicy, SearchAttributeKey
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
@@ -23,6 +23,7 @@ with workflow.unsafe.imports_passed_through():
         SEARCH_ATTR_RISK_TIER,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
+        safe_upsert_search_attributes,
     )
     from aspire_orchestrator.temporal.models import (
         ClaimJobInput,
@@ -35,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
         OutboxJobOutput,
         PersistReceiptsInput,
         ProviderCallInput,
+        ProviderCallOutput,
         SyncWorkflowInput,
     )
     from aspire_orchestrator.temporal.retry_policies import (
@@ -59,12 +61,12 @@ class OutboxExecutionWorkflow:
     @workflow.run
     async def run(self, input: OutboxJobInput) -> OutboxJobOutput:
         # Enhancement #9: Search attributes
-        workflow.upsert_search_attributes([
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID), [input.suite_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER), [input.risk_tier]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND), ["outbox_execution"]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID), [input.office_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID), [input.correlation_id]),
+        safe_upsert_search_attributes([
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER).value_set(input.risk_tier),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("outbox_execution"),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),
         ])
 
         # Step 1: Claim the job (idempotent)
@@ -116,6 +118,7 @@ class OutboxExecutionWorkflow:
                     idempotency_key=input.idempotency_key,
                     capability_token_id=input.capability_token_id,
                 ),
+                result_type=ProviderCallOutput,
                 start_to_close_timeout=timedelta(seconds=30),
                 heartbeat_timeout=timedelta(seconds=ACTIVITY_HEARTBEAT_DEFAULT),
                 retry_policy=retry_policy,

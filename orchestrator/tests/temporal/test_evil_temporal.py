@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from temporalio.client import WorkflowUpdateFailedError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -81,10 +82,10 @@ class TestCrossTenantAttacks:
                     nonce="evil_nonce",
                 )
 
-                with pytest.raises(ApplicationError) as exc_info:
+                with pytest.raises(WorkflowUpdateFailedError) as exc_info:
                     await handle.execute_update(AvaIntentWorkflow.approve, evil_evidence)
 
-                assert "SUITE_MISMATCH" in str(exc_info.value)
+                assert "SUITE_MISMATCH" in str(exc_info.value.__cause__)
 
     async def test_cross_tenant_approval_workflow_rejected(self) -> None:
         """Tenant B cannot decide on Tenant A's approval workflow."""
@@ -129,10 +130,10 @@ class TestCrossTenantAttacks:
                     nonce="evil_nonce_2",
                 )
 
-                with pytest.raises(ApplicationError) as exc_info:
+                with pytest.raises(WorkflowUpdateFailedError) as exc_info:
                     await handle.execute_update(ApprovalWorkflow.decide, evil_evidence)
 
-                assert "SUITE_MISMATCH" in str(exc_info.value)
+                assert "SUITE_MISMATCH" in str(exc_info.value.__cause__)
 
     def test_workflow_id_not_predictable(self) -> None:
         """Enhancement #5: Workflow IDs contain random suffix."""

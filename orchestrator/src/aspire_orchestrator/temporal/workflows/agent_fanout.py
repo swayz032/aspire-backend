@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy, SearchAttributeKey, SearchAttributePair
+from temporalio.common import RetryPolicy, SearchAttributeKey
 
 with workflow.unsafe.imports_passed_through():
     from aspire_orchestrator.temporal.config import (
@@ -22,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
         SEARCH_ATTR_OFFICE_ID,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
+        safe_upsert_search_attributes,
         workflow_id_agent,
     )
     from aspire_orchestrator.temporal.models import (
@@ -53,11 +54,11 @@ class AgentFanOutWorkflow:
     @workflow.run
     async def run(self, input: FanOutInput) -> FanOutOutput:
         # Enhancement #9: Search attributes
-        workflow.upsert_search_attributes([
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID), [input.suite_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND), ["agent_fanout"]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID), [input.office_id]),
-            SearchAttributePair(SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID), [input.correlation_id]),
+        safe_upsert_search_attributes([
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("agent_fanout"),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),
         ])
 
         if not input.agent_tasks:
