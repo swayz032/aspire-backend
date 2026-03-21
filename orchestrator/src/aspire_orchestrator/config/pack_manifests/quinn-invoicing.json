@@ -23,6 +23,7 @@
     "stripe.invoice.create",
     "stripe.invoice.send",
     "stripe.invoice.void",
+    "stripe.invoice.read",
     "stripe.quote.create",
     "stripe.quote.send"
   ],

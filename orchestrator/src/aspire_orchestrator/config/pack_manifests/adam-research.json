@@ -21,6 +21,7 @@
   "tools": [
     "brave.search",
     "tavily.search",
+    "search.web",
     "google_places.search",
     "tomtom.search",
     "here.search",

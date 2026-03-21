@@ -20,7 +20,9 @@
   "tools": [
     "internal.intent_classifier",
     "internal.skill_router",
-    "internal.policy_preview"
+    "internal.policy_preview",
+    "internal.email.digest",
+    "internal.onboarding.bootstrap"
   ],
   "providers": [
     "internal"
