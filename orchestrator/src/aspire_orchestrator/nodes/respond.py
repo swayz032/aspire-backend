@@ -297,6 +297,21 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
     if persona:
         persona = _strip_format_instructions(persona)
 
+    # Channel-specific formatting instructions
+    if channel in ("voice", "avatar"):
+        format_instruction = (
+            "- Sounds natural when spoken aloud (this will be text-to-speech)\n"
+            "- Use brief verbal fillers or character cues (e.g., 'Sure thing', 'I've handled that')\n"
+            "- Does NOT use markdown, bullet points, or special symbols ($)\n"
+            "- Write out numbers and symbols (e.g., 'twenty dollars' instead of '$20')"
+        )
+    else:
+        format_instruction = (
+            "- Use Markdown and bullet points to structure data and lists clearly\n"
+            "- Keep the tone natural but data-rich\n"
+            "- Address the user as the Founder when appropriate"
+        )
+
     # Build the summarization prompt
     prompt = (
         f"The user said: \"{utterance}\"\n\n"
@@ -304,13 +319,11 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
         f"Tool used: {tool_used}\n"
         f"Outcome: {outcome_val}\n"
         f"Execution details: {json.dumps(execution_result, default=str)}\n\n"
-        "Generate a brief, natural voice response (1-2 sentences max) that:\n"
+        "Generate a brief, natural response (1-3 sentences max) that:\n"
         "- Directly addresses what the user asked\n"
         "- Confirms what was done or explains what happened\n"
-        "- Sounds natural when spoken aloud (this will be text-to-speech)\n"
-        "- Uses brief verbal fillers or character cues (e.g., 'Sure thing', 'I've handled that', 'All set')\n"
-        "- Does NOT use markdown, bullet points, or formatting\n"
-        "Respond with ONLY the spoken text, nothing else."
+        f"{format_instruction}\n"
+        "Respond with ONLY the text, nothing else."
     )
 
     try:
