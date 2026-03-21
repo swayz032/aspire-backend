@@ -297,19 +297,24 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
     if persona:
         persona = _strip_format_instructions(persona)
 
-    # Channel-specific formatting instructions
-    if channel in ("voice", "avatar"):
-        format_instruction = (
-            "- Sounds natural when spoken aloud (this will be text-to-speech)\n"
-            "- Use brief verbal fillers or character cues (e.g., 'Sure thing', 'I've handled that')\n"
-            "- Does NOT use markdown, bullet points, or special symbols ($)\n"
-            "- Write out numbers and symbols (e.g., 'twenty dollars' instead of '$20')"
-        )
-    else:
+    # Formatting instructions based on Agent and Channel
+    agent_id = _resolve_agent_id(state)
+    is_backend_ops = agent_id in ("ava_admin", "sre", "security", "release", "qa")
+
+    if is_backend_ops and channel not in ("voice", "avatar"):
+        # Backend Ops gets data-rich structured text
         format_instruction = (
             "- Use Markdown and bullet points to structure data and lists clearly\n"
             "- Keep the tone natural but data-rich\n"
             "- Address the user as the Founder when appropriate"
+        )
+    else:
+        # Frontend Agents (and Backend on Voice) get "Anam Style"
+        format_instruction = (
+            "- NO markdown, NO bullet points, NO bold/italic, NO special symbols ($)\n"
+            "- Write out numbers and symbols (e.g., 'twenty dollars' instead of '$20')\n"
+            "- Speak naturally with brief fillers ('Sure thing', 'I see')\n"
+            "- Sounds natural when spoken aloud (optimized for text-to-speech)"
         )
 
     # Build the summarization prompt
