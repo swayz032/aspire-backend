@@ -22,21 +22,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate required secrets
+      - name: Check secrets and run drift check
         env:
           N8N_API_URL: ${{ secrets.N8N_API_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
         run: |
           if [ -z "$N8N_API_URL" ] || [ -z "$N8N_API_KEY" ]; then
-            echo "⚠️ n8n secrets not configured — skipping drift check"
+            echo "n8n secrets not configured -- skipping drift check"
             echo "Add N8N_API_URL and N8N_API_KEY as repo secrets to enable"
             exit 0
           fi
-
-      - name: Drift check
-        if: ${{ secrets.N8N_API_URL != '' }}
-        env:
-          N8N_API_URL: ${{ secrets.N8N_API_URL }}
-          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
-        run: python scripts/check_n8n_drift.py
-
+          python scripts/check_n8n_drift.py
