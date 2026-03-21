@@ -110,6 +110,39 @@ def _resolve_risk_tier(state: OrchestratorState) -> str:
     return risk_tier_val.value if hasattr(risk_tier_val, "value") else str(risk_tier_val or "green")
 
 
+def _build_search_query_from_task(
+    task_type: str,
+    params: dict[str, Any],
+    state: OrchestratorState,
+) -> str:
+    """Build a search query for n8n scheduled tasks that don't provide one.
+
+    The n8n workflows send structured payloads (categories, context) but the
+    search.web tool needs a query string. This function constructs one from
+    the task context. Law #1: the Brain decides what to search for.
+    """
+    context = params.get("context") or state.get("context") or {}
+    industry = ""
+    if isinstance(context, dict):
+        industry = context.get("industry", "") or ""
+
+    _TASK_QUERY_TEMPLATES: dict[str, str] = {
+        "adam.pulse_scan": "{industry} industry news competitor moves market trends regulatory updates {date}",
+        "adam.daily_brief": "{industry} business intelligence daily brief insights trends {date}",
+        "adam.focus.weekly": "{industry} strategic business focus weekly analysis opportunities threats {date}",
+        "adam.library_curate": "{industry} best practices guides whitepapers tools resources {date}",
+        "adam.education.weekly": "{industry} business tutorials learning guides best practices case studies {date}",
+    }
+
+    template = _TASK_QUERY_TEMPLATES.get(task_type)
+    if not template:
+        return ""
+
+    from datetime import datetime, timezone
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m")
+    return template.format(industry=industry, date=date_str).strip()
+
+
 def _classify_execution_failure(
     *,
     task_type: str,
@@ -530,12 +563,26 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     _TOOL_TIMEOUTS = {"green": 15.0, "yellow": 30.0, "red": 60.0}
     tool_timeout = _TOOL_TIMEOUTS.get(risk_tier_str.lower(), 30.0)
 
-    if live and state.get("execution_params"):
+    # 5c: Auto-generate search query for n8n scheduled tasks that provide
+    # categories/context but not a literal query string (Law #1: Brain decides)
+    exec_params = state.get("execution_params")
+    if (
+        exec_params
+        and isinstance(exec_params, dict)
+        and tool_used == "search.web"
+        and "query" not in exec_params
+    ):
+        _query = _build_search_query_from_task(task_type, exec_params, state)
+        if _query:
+            exec_params = {**exec_params, "query": _query}
+            logger.info("Auto-generated search query for %s: %s", task_type, _query[:80])
+
+    if live and exec_params:
         try:
             tool_result = await asyncio.wait_for(
                 _execute_tool_async(
                     tool_id=tool_used,
-                    payload=state["execution_params"],
+                    payload=exec_params,
                     correlation_id=correlation_id,
                     suite_id=suite_id,
                     office_id=office_id,
