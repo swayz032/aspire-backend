@@ -470,17 +470,6 @@ class EnhancedFinnFinanceManager(AgenticSkillPack):
         else:
             return f"Good {time_of_day}{name_part}, I'm Finn — your finance intelligence manager. I track revenue, expenses, and help you understand your business health."
 
-    async def get_error_message(
-        self, missing_fields: list[str] | None = None, error_type: str = "generic",
-    ) -> str:
-        """Finn's error messages — precise with financial context (7c)."""
-        if error_type == "missing_fields" and missing_fields:
-            fields_str = " and ".join(missing_fields)
-            return f"I need the {fields_str} to pull accurate numbers. Can you provide {'those' if len(missing_fields) > 1 else 'that'}?"
-        elif error_type == "validation":
-            return "That value doesn't look right — double-check the format and try again."
-        else:
-            return "I couldn't complete that financial operation. Want to try a different approach?"
 
     async def finance_snapshot_read(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))

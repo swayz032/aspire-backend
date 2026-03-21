@@ -589,19 +589,6 @@ class EnhancedEliInbox(AgenticSkillPack):
         else:
             return f"Good {time_of_day}{name_part}, I'm Eli — I manage your inbox. I triage, draft, and keep your communications organized."
 
-    async def get_error_message(
-        self, missing_fields: list[str] | None = None, error_type: str = "generic",
-    ) -> str:
-        """Eli's error messages — clear and action-oriented (7c)."""
-        if error_type == "missing_fields" and missing_fields:
-            fields_str = " and ".join(missing_fields)
-            return f"I need the {fields_str} to handle that email. Can you fill {'those' if len(missing_fields) > 1 else 'that'} in?"
-        elif error_type == "validation":
-            return "That email doesn't look right — check the recipient and subject, then try again."
-        elif error_type == "dlp":
-            return "I can't send that — it contains sensitive information that needs to be reviewed first."
-        else:
-            return "I couldn't process that communication. What would you like me to try instead?"
 
     async def triage_email(self, email_data: dict, ctx: AgentContext) -> AgentResult:
         """Classify and prioritize incoming email. GREEN within YELLOW pack."""

@@ -111,6 +111,7 @@ def _generate_response_text(state: OrchestratorState) -> str:
 
     Maps task_type + outcome to a natural language response that Ava
     speaks to the user via ElevenLabs TTS or displays in chat.
+    Prioritizes agent-provided messages if available.
     """
     task_type = state.get("task_type", "unknown")
     outcome = state.get("outcome", Outcome.SUCCESS)
@@ -119,6 +120,13 @@ def _generate_response_text(state: OrchestratorState) -> str:
     utterance = state.get("utterance", "")
     tool_used = state.get("tool_used", "unknown")
     is_stub = execution_result.get("stub", False)
+
+    # 1. Prefer agent-generated error/status messages if present (Premium Human Logic)
+    # The agent skill packs now generate warm, personalized errors.
+    agent_message = execution_result.get("error_message") or execution_result.get("error") or execution_result.get("message")
+    if agent_message and isinstance(agent_message, str) and len(agent_message) > 5:
+        # If it looks like a real sentence, use it.
+        return agent_message
 
     # Skill pack prefix → human-readable domain
     domain_prefix = task_type.split(".")[0] if "." in task_type else task_type
@@ -145,8 +153,8 @@ def _generate_response_text(state: OrchestratorState) -> str:
         provider_key = tool_used.split(".")[0] if "." in tool_used else tool_used
         provider_name = provider_names.get(provider_key, provider_key)
         return (
-            f"I understand your request, but {provider_name} isn't connected yet. "
-            f"Head to your connections page to set it up, and I'll handle this right away."
+            f"I see what you need, but {provider_name} isn't connected yet. "
+            f"If you head to the connections page and set it up, I can handle this for you immediately."
         )
 
     # Outbox-submitted (RED tier async)
@@ -159,27 +167,27 @@ def _generate_response_text(state: OrchestratorState) -> str:
             "filing": "Your filing",
         }
         desc = _action_descriptions.get(domain_prefix, "Your request")
-        return f"{desc} has been submitted for secure processing. I'll notify you when it's complete."
+        return f"{desc} has been securely queued. I'll let you know as soon as it's finished."
 
     # Success with live execution
     if outcome_val == "success":
         _success_responses: dict[str, str] = {
-            "research": "I found some results for you. Check your activity feed for the full details.",
-            "invoice": "Your invoice has been created successfully.",
-            "contract": "Your contract has been prepared.",
-            "calendar": "Done — your calendar has been updated.",
-            "email": "Your email has been handled.",
-            "office": "Your office message is ready.",
-            "meeting": "Your meeting room is ready. You can join now.",
-            "conference": "Your conference room is set up and ready to go.",
-            "finance": "Here's what I found in your financial data.",
-            "payment": "Your payment has been processed.",
+            "research": "I've gathered some results for you. Take a look at your activity feed for the details.",
+            "invoice": "Your invoice is ready and has been created successfully.",
+            "contract": "I've drafted that contract for you. It's ready for review.",
+            "calendar": "All set — your calendar is updated.",
+            "email": "I've taken care of that email.",
+            "office": "Your office message is drafted and ready.",
+            "meeting": "Your meeting room is open. You can join whenever you're ready.",
+            "conference": "Your conference room is live and set up.",
+            "finance": "I've pulled those financial numbers for you.",
+            "payment": "Payment processed successfully.",
             "document": "Your document is ready.",
-            "contact": "Your contacts have been updated.",
-            "booking": "Your booking has been confirmed.",
-            "scheduling": "Your schedule has been updated.",
+            "contact": "Contact details updated.",
+            "booking": "Booking confirmed.",
+            "scheduling": "Schedule updated.",
         }
-        base = _success_responses.get(domain_prefix, "Done — I've completed your request.")
+        base = _success_responses.get(domain_prefix, "All set — I've completed that request for you.")
 
         # Enrich with action detail when available
         if domain_prefix == "research" and utterance:
@@ -187,30 +195,36 @@ def _generate_response_text(state: OrchestratorState) -> str:
             topic = utterance[:60].rstrip()
             if len(utterance) > 60:
                 topic += "..."
-            base = f"I searched for \"{topic}\". Check your activity feed for the results."
+            base = f"I've looked into \"{topic}\" for you. Check your feed for the full report."
         elif domain_prefix == "invoice" and action_suffix == "send":
-            base = "Your invoice has been sent to the client."
+            base = "I've sent that invoice off to the client."
         elif domain_prefix == "invoice" and action_suffix == "create":
-            base = "Your invoice has been created. It's waiting in your drafts."
+            base = "I've created the invoice. It's waiting in your drafts folder."
         elif domain_prefix == "contract" and action_suffix == "generate":
-            base = "Your contract has been drafted. Review it before sending."
+            base = "I've drafted the contract. Please give it a quick review."
         elif domain_prefix == "email" and action_suffix in ("send", "draft"):
-            base = "Your email draft is ready for review."
+            base = "I've prepared that email draft for you."
         elif domain_prefix == "office" and action_suffix in ("send", "draft", "create"):
-            base = "Your office message draft is ready for review."
+            base = "I've drafted the message. It's ready for your review."
 
         return base
 
-    # Failed execution
+    # Failed execution - Premium Fallback
     if outcome_val == "failed":
-        return "I ran into a problem processing that. Please try again, or check your connections page."
+        import random
+        _fail_responses = [
+            "I ran into a slight hiccup processing that. Could we try again?",
+            "Something interrupted me while I was working on that. Do you mind trying once more?",
+            "I hit a snag with that request. It might be a connection issue — want to retry?",
+        ]
+        return random.choice(_fail_responses)
 
-    # Denied by policy
+    # Denied by policy - Premium Fallback
     if outcome_val == "denied":
-        return "I'm not able to perform that action. It was blocked by your security policy."
+        return "I can't go ahead with that — it conflicts with your current security settings."
 
     # Fallback
-    return "I handled that request and can walk you through the result."
+    return "I've processed your request. Let me know if you need anything else."
 
 
 _FORMAT_STRIP_PHRASES = [

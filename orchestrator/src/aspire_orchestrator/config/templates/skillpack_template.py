@@ -116,25 +116,51 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
         self,
         missing_fields: list[str] | None = None,
         error_type: str = "generic",
+        error_details: str | None = None,
+        ctx: AgentContext | None = None,
+        user_name: str | None = None,
     ) -> str:
         """Generate warm, actionable error message (7c).
 
-        Subclasses can override for custom personality.
+        Uses LLM with 'chat' profile (0.7 temp) to generate a response that
+        sounds like the agent and provides helpful guidance.
 
         Args:
             missing_fields: List of missing required field names
             error_type: Type of error ("missing_fields", "validation", "generic")
+            error_details: Optional technical detail or context
+            ctx: Agent context (required for risk tier routing)
+            user_name: User's display name (e.g., "Mr. Scott") for personalization
 
         Returns:
             Friendly error message with guidance
         """
-        if error_type == "missing_fields" and missing_fields:
-            fields_str = " and ".join(missing_fields)
-            return f"I need the {fields_str} — can you provide {'those' if len(missing_fields) > 1 else 'that'}?"
-        elif error_type == "validation":
-            return "Something doesn't look right with that input. Could you double-check and try again?"
-        else:
-            return "I ran into an issue. Let me know what you'd like to try next."
+        # Fallback strings if LLM fails or context is missing
+        greeting = f"I apologize, {user_name}, but" if user_name else "I apologize, but"
+        fallback = f"{greeting} I ran into an issue. Let me know what you'd like to try next."
+        
+        prompt = (
+            f"You are {self._agent_name}. The user's request hit an error.\n"
+            f"User Name: {user_name or 'Unknown'}\n"
+            f"Error Type: {error_type}\n"
+            f"Details: {error_details or 'None'}\n"
+            f"Missing Fields: {', '.join(missing_fields) if missing_fields else 'None'}\n\n"
+            "Explain the problem briefly and naturally. "
+            "Use a 'Premium service recovery' tone: apologetic, confident, and helpful. "
+            f"Address the user as {user_name} if provided (e.g., 'Mr. Scott'). "
+            "Tell them exactly what info you need if fields are missing. "
+            "Sound helpful, not robotic. 1-2 sentences max."
+        )
+
+        try:
+            if ctx:
+                response = await self.call_llm(prompt, step_type="chat", risk_tier=ctx.risk_tier)
+                content = response.get("content")
+                if content:
+                    return content
+            return fallback
+        except Exception:
+            return fallback
 
     async def run_agentic_loop(
         self,

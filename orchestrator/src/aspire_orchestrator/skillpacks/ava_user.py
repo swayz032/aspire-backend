@@ -44,19 +44,6 @@ class AvaUserSkillPack(AgenticSkillPack):
         else:
             return f"Good {time_of_day}{name_part}, I'm Ava — your business operating system. How can I help you today?"
 
-    async def get_error_message(
-        self, missing_fields: list[str] | None = None, error_type: str = "generic",
-    ) -> str:
-        """Ava's error messages — warm with clear guidance (7c)."""
-        if error_type == "missing_fields" and missing_fields:
-            fields_str = " and ".join(missing_fields)
-            return f"I'd love to help with that — I just need the {fields_str} first. Could you share {'those' if len(missing_fields) > 1 else 'that'}?"
-        elif error_type == "validation":
-            return "That doesn't quite look right. Want to give it another try?"
-        elif error_type == "unauthorized":
-            return "I'll need your approval before I can proceed with that. Ready to authorize?"
-        else:
-            return "Something didn't work as expected. Let me know how you'd like to proceed."
 
     async def intent_classify(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         utterance = str(params.get('utterance', '')).strip()
