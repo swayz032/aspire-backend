@@ -1056,3 +1056,135 @@ actions:
       required: [request]
     redact_fields: []
 
+  # ──────────────────────────────────────────────
+  # n8n Automated Workflows — scheduled agent tasks
+  # These are system-initiated (no user in the loop),
+  # GREEN tier (safe automation), no approval needed.
+  # ──────────────────────────────────────────────
+
+  # Adam Research Agent — automated intelligence
+  adam.daily_brief:
+    risk_tier: green
+    tools: [search.web]
+    capability_scope: research:search
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  adam.pulse_scan:
+    risk_tier: green
+    tools: [search.web]
+    capability_scope: research:search
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  adam.focus.weekly:
+    risk_tier: green
+    tools: [search.web]
+    capability_scope: research:search
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  adam.library_curate:
+    risk_tier: green
+    tools: [search.web]
+    capability_scope: research:search
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  adam.education.weekly:
+    risk_tier: green
+    tools: [search.web]
+    capability_scope: research:search
+    category: research
+    approval:
+      type: none
+    redact_fields: []
+
+  # Quinn Invoice Agent — automated overdue check
+  quinn.check_overdue:
+    risk_tier: green
+    tools: [stripe.invoice.read]
+    capability_scope: invoicing:read
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [customer_id]
+
+  # Teressa Books Agent — automated sync
+  teressa.sync_books:
+    risk_tier: yellow
+    tools: [quickbooks.sync]
+    capability_scope: books:sync
+    category: bookkeeping
+    approval:
+      type: none
+    redact_fields: []
+
+  # Stripe-QBO Reconciliation — automated comparison
+  stripe_qbo.reconcile:
+    risk_tier: green
+    tools: [stripe.invoice.read, qbo.read_transactions]
+    capability_scope: books:report
+    category: bookkeeping
+    approval:
+      type: none
+    redact_fields: []
+
+  # Batch Email Digest — automated compilation
+  batch.email_digest:
+    risk_tier: green
+    tools: [internal.email.digest]
+    capability_scope: email:read
+    category: email
+    approval:
+      type: none
+    redact_fields: []
+
+  # Eli Email Triage — webhook-triggered classification
+  eli.triage_email:
+    risk_tier: green
+    tools: [internal.email.triage]
+    capability_scope: email:triage
+    category: email
+    approval:
+      type: none
+    redact_fields: [subject, body, from]
+
+  # Sarah Call Handler — webhook-triggered routing
+  sarah.handle_call:
+    risk_tier: green
+    tools: [twilio.call.create]
+    capability_scope: call:route
+    category: telephony
+    approval:
+      type: none
+    redact_fields: [caller_number]
+
+  # Nora Meeting Summary — webhook-triggered summarization
+  nora.summarize_meeting:
+    risk_tier: green
+    tools: [deepgram.transcribe]
+    capability_scope: meeting:summarize
+    category: conference
+    approval:
+      type: none
+    redact_fields: []
+
+  # Intake Activation — tenant onboarding bootstrap
+  intake.activation:
+    risk_tier: green
+    tools: [internal.onboarding.bootstrap]
+    capability_scope: admin:onboarding
+    category: admin
+    approval:
+      type: none
+    redact_fields: []
+

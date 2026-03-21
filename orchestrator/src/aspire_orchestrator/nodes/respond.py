@@ -499,45 +499,53 @@ def _call_openai_sync(
 def _load_agent_persona(agent_id: str) -> str:
     """Load the agent's persona file for response generation.
 
-    Personas are stored at:
-      config/pack_personas/{agent_id}_system_prompt.md
-
-    Special cases:
-      - "ava" → ava_user_system_prompt.md (user-facing Ava)
-      - "finn" / "finn_fm" → finn_fm_system_prompt.md (Finn — both Money Desk and Finance Manager share one persona)
-
-    Returns minimal built-in persona if file not found.
+    Injects universal platform awareness (Law #1: Single Brain) by prepending
+    aspire_awareness.md to the agent's specific system prompt.
     """
     from pathlib import Path
 
-    config_dir = Path(__file__).parent.parent / "config" / "pack_personas"
+    config_dir = Path(__file__).parent.parent / "config"
+    persona_dir = config_dir / "pack_personas"
 
-    # 3c: Use canonical persona map from single source of truth
+    # 1. Load Universal Awareness (Who is on the team, how Aspire works)
+    awareness_file = config_dir / "aspire_awareness.md"
+    awareness_text = ""
+    if awareness_file.exists():
+        try:
+            awareness_text = awareness_file.read_text(encoding="utf-8").strip() + "\n\n"
+        except Exception:
+            pass
+
+    # 2. Load Specific Agent Persona
     from aspire_orchestrator.services.agent_identity import AGENT_PERSONA_MAP
-
     filename = AGENT_PERSONA_MAP.get(agent_id, f"{agent_id}_system_prompt.md")
-    persona_file = config_dir / filename
+    persona_file = persona_dir / filename
 
+    agent_text = ""
     if persona_file.exists():
         try:
-            return persona_file.read_text(encoding="utf-8")
+            agent_text = persona_file.read_text(encoding="utf-8")
         except Exception:
             pass
 
     # Fallback: Ava's persona (she orchestrates all responses)
-    ava_file = config_dir / "ava_user_system_prompt.md"
-    if ava_file.exists():
-        try:
-            return ava_file.read_text(encoding="utf-8")
-        except Exception:
-            pass
+    if not agent_text:
+        ava_file = persona_dir / "ava_user_system_prompt.md"
+        if ava_file.exists():
+            try:
+                agent_text = ava_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
 
-    # Minimal built-in persona (last resort)
-    return (
-        "You are Ava, the AI executive assistant for Aspire. "
-        "You speak in a warm, professional, concise voice. "
-        "You confirm actions, explain outcomes, and guide the user — always briefly."
-    )
+    if not agent_text:
+        agent_text = (
+            "You are Ava, the AI executive assistant for Aspire. "
+            "You speak in a warm, professional, concise voice. "
+            "You confirm actions, explain outcomes, and guide the user."
+        )
+
+    # Combine: Awareness + Specific Persona
+    return awareness_text + agent_text
 
 
 def _generate_approval_prompt(state: OrchestratorState, channel: str = "chat") -> str:
