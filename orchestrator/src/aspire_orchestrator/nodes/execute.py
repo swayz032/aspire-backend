@@ -51,35 +51,57 @@ def _resolve_agent_from_routing(state: OrchestratorState) -> str:
 
     The routing plan is set by route_node from SkillRouter.
     Each step has a skill_pack ID that maps to a manifest with an owner.
-    Falls back to 'ava' if routing plan isn't available.
+    Falls back to task_type prefix matching, then 'ava'.
     """
     routing_plan = state.get("routing_plan")
-    if not routing_plan or not isinstance(routing_plan, dict):
-        return "ava"
+    if routing_plan and isinstance(routing_plan, dict):
+        steps = routing_plan.get("steps", [])
+        if steps:
+            # Use the first step's skill_pack to determine agent
+            skill_pack_id = steps[0].get("skill_pack", "")
 
-    steps = routing_plan.get("steps", [])
-    if not steps:
-        return "ava"
+            # skill_pack_id → agent owner mapping (from manifests)
+            _PACK_TO_AGENT: dict[str, str] = {
+                "sarah_front_desk": "sarah",
+                "eli_inbox": "eli",
+                "quinn_invoicing": "quinn",
+                "nora_conference": "nora",
+                "adam_research": "adam",
+                "tec_documents": "tec",
+                "finn_finance_manager": "finn",
+                "milo_payroll": "milo",
+                "teressa_books": "teressa",
+                "clara_legal": "clara",
+                "mail_ops_desk": "mail_ops",
+            }
 
-    # Use the first step's skill_pack to determine agent
-    skill_pack_id = steps[0].get("skill_pack", "")
+            agent = _PACK_TO_AGENT.get(skill_pack_id)
+            if agent:
+                return agent
 
-    # skill_pack_id → agent owner mapping (from manifests)
-    _PACK_TO_AGENT: dict[str, str] = {
-        "sarah_front_desk": "sarah",
-        "eli_inbox": "eli",
-        "quinn_invoicing": "quinn",
-        "nora_conference": "nora",
-        "adam_research": "adam",
-        "tec_documents": "tec",
-        "finn_finance_manager": "finn",
-        "milo_payroll": "milo",
-        "teressa_books": "teressa",
-        "clara_legal": "clara",
-        "mail_ops_desk": "mail_ops",
+    # Fallback: infer agent from task_type prefix (for n8n scheduled tasks
+    # that bypass the SkillRouter and call /v1/intents directly)
+    task_type = str(state.get("task_type", ""))
+    _TASK_PREFIX_TO_AGENT: dict[str, str] = {
+        "adam.": "adam",
+        "quinn.": "quinn",
+        "teressa.": "teressa",
+        "eli.": "eli",
+        "sarah.": "sarah",
+        "nora.": "nora",
+        "finn.": "finn",
+        "clara.": "clara",
+        "milo.": "milo",
+        "tec.": "tec",
+        "intake.": "ava",
+        "batch.": "ava",
+        "stripe_qbo.": "teressa",
     }
+    for prefix, agent in _TASK_PREFIX_TO_AGENT.items():
+        if task_type.startswith(prefix):
+            return agent
 
-    return _PACK_TO_AGENT.get(skill_pack_id, "ava")
+    return "ava"
 
 
 def _resolve_risk_tier(state: OrchestratorState) -> str:

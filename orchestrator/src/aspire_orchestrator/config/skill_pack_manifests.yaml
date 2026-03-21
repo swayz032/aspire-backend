@@ -40,10 +40,10 @@ skill_packs:
     risk_tier: green
     status: active
     description: "User-facing Ava orchestrator for intent classification, routing plans, and governance previews"
-    actions: [intent.classify, route.plan, governance.preview]
+    actions: [intent.classify, route.plan, governance.preview, batch.email_digest, intake.activation]
     providers: [internal]
-    capability_scopes: [brain:classify, brain:route, governance:preview]
-    tools: [internal.intent_classifier, internal.skill_router, internal.policy_preview]
+    capability_scopes: [brain:classify, brain:route, governance:preview, email:read, admin:onboarding]
+    tools: [internal.intent_classifier, internal.skill_router, internal.policy_preview, internal.email.digest, internal.onboarding.bootstrap]
     per_suite_enabled: true
 
   ava_admin:
@@ -68,7 +68,7 @@ skill_packs:
     risk_tier: yellow
     status: active
     description: "Call routing, transfers, and visitor logging workflows"
-    actions: [call.route, call.transfer, visitor.log]
+    actions: [call.route, call.transfer, visitor.log, sarah.handle_call]
     providers: [twilio]
     capability_scopes: [call:route, call:transfer, visitor:log]
     tools: [twilio.call.create, internal.visitor.log]
@@ -82,7 +82,7 @@ skill_packs:
     risk_tier: yellow
     status: active
     description: "Inbox triage, drafting, sending, and internal office messaging workflows"
-    actions: [email.read, email.triage, email.draft, email.send, office.read, office.create, office.draft, office.send]
+    actions: [email.read, email.triage, email.draft, email.send, office.read, office.create, office.draft, office.send, eli.triage_email]
     providers: [polarism, internal]
     capability_scopes: [email:read, email:triage, comms:draft_email, comms:send_email, office:read, office:create, office:draft, office:send]
     tools: [polaris.email.read, internal.email.triage, polaris.email.draft, polaris.email.send, internal.office.read, internal.office.create, internal.office.draft, internal.office.send]
@@ -100,10 +100,10 @@ skill_packs:
     risk_tier: yellow
     status: active
     description: "Invoice and quote proposal workflows with approval-gated execution"
-    actions: [invoice.create, invoice.send, invoice.void, quote.create, quote.send]
+    actions: [invoice.create, invoice.send, invoice.void, quote.create, quote.send, quinn.check_overdue]
     providers: [stripe]
-    capability_scopes: [invoicing:create, invoicing:send, invoicing:void, quotes:create, quotes:send]
-    tools: [stripe.invoice.create, stripe.invoice.send, stripe.invoice.void, stripe.quote.create, stripe.quote.send]
+    capability_scopes: [invoicing:create, invoicing:send, invoicing:void, quotes:create, quotes:send, invoicing:read]
+    tools: [stripe.invoice.create, stripe.invoice.send, stripe.invoice.void, stripe.quote.create, stripe.quote.send, stripe.invoice.read]
     per_suite_enabled: true
 
   nora_conference:
@@ -114,7 +114,7 @@ skill_packs:
     risk_tier: yellow
     status: active
     description: "Meeting room creation, scheduling, and meeting summarization"
-    actions: [meeting.schedule, meeting.create_room, meeting.summarize]
+    actions: [meeting.schedule, meeting.create_room, meeting.summarize, nora.summarize_meeting]
     providers: [livekit, deepgram]
     capability_scopes: [meetings:schedule, meeting:create_room, meeting:summarize]
     tools: [livekit.meeting.schedule, livekit.room.create, livekit.room.list, deepgram.transcribe]
@@ -132,10 +132,10 @@ skill_packs:
     risk_tier: green
     status: active
     description: "Web search, places lookup, vendor comparison, and RFQ generation"
-    actions: [research.search, research.places, research.compare, research.rfq]
+    actions: [research.search, research.places, research.compare, research.rfq, adam.daily_brief, adam.pulse_scan, adam.focus.weekly, adam.library_curate, adam.education.weekly]
     providers: [brave, tavily, google_places, tomtom, here, foursquare, osm_overpass, mapbox]
     capability_scopes: [research:search, research:places, research:compare, research:rfq]
-    tools: [brave.search, tavily.search, google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode, internal.document.generate]
+    tools: [brave.search, tavily.search, search.web, google_places.search, tomtom.search, here.search, foursquare.search, osm_overpass.query, mapbox.geocode, internal.document.generate]
     per_suite_enabled: true
     knowledge_domains:
       - domain: general
@@ -200,7 +200,7 @@ skill_packs:
     risk_tier: yellow
     status: active
     description: "Books sync, categorization, reporting, and journal entry workflows"
-    actions: [books.sync, books.categorize, books.report, books.journal_entry]
+    actions: [books.sync, books.categorize, books.report, books.journal_entry, teressa.sync_books, stripe_qbo.reconcile]
     providers: [quickbooks]
     capability_scopes: [books:sync, books:categorize, books:report, books:journal_entry]
     tools: [quickbooks.sync, qbo.read_transactions, qbo.read_accounts, qbo.journal_entry.create]
