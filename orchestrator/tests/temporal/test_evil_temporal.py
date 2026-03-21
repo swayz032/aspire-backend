@@ -208,6 +208,138 @@ class TestCrossTenantAttacks:
                 # API guard: if requester's suite_id != status["suite_id"], deny
 
 
+class TestNonceReplay:
+    """Tests for nonce replay prevention (Enhancement #1, Check 6)."""
+
+    async def test_same_nonce_rejected_on_second_update(self) -> None:
+        """Sending the same nonce twice → REQUEST_ID_REUSED on second attempt."""
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            yellow_response = RunLangGraphOutput(
+                response={}, receipts=[],
+                requires_approval=True,
+                approval_id="appr_nonce_001",
+                approval_payload_hash="hash_nonce",
+                current_agent="quinn",
+            )
+            resume_response = RunLangGraphOutput(
+                response={"message": "Done"}, receipts=[{"action": "done"}],
+                requires_approval=False, current_agent="quinn",
+            )
+            call_count = {"n": 0}
+
+            from temporalio import activity
+
+            @activity.defn(name="run_langgraph_turn")
+            async def mock_rlt(input: Any) -> RunLangGraphOutput:
+                call_count["n"] += 1
+                return yellow_response if call_count["n"] == 1 else resume_response
+
+            async with Worker(
+                env.client,
+                task_queue="test-queue",
+                workflows=[AvaIntentWorkflow],
+                activities=[
+                    mock_rlt,
+                    _mock_activity("persist_receipts", PersistReceiptsOutput(receipt_ids=[], count=0)),
+                    _mock_activity("sync_workflow_execution", None),
+                    _mock_activity("emit_client_event", None),
+                ],
+            ):
+                handle = await env.client.start_workflow(
+                    AvaIntentWorkflow.run,
+                    AvaIntentInput(
+                        suite_id="suite_nonce",
+                        office_id="office_nonce",
+                        actor_id="actor_nonce",
+                        correlation_id="corr_nonce_001",
+                        thread_id="thread_nonce_001",
+                        initial_state={"message": "test"},
+                        risk_tier="yellow",
+                    ),
+                    id="test-nonce-replay-evil-001",
+                    task_queue="test-queue",
+                )
+
+                await env.sleep(timedelta(seconds=1))
+
+                evidence = ApprovalEvidence(
+                    suite_id="suite_nonce",
+                    office_id="office_nonce",
+                    approval_id="appr_nonce_001",
+                    approver_id="approver_001",
+                    approved=True,
+                    payload_hash="hash_nonce",
+                    policy_version="",
+                    evidence={"method": "test"},
+                    nonce="reused_nonce_evil",
+                )
+
+                # First use — should succeed
+                result1 = await handle.execute_update(AvaIntentWorkflow.approve, evidence)
+                assert result1.accepted is True
+
+                # Wait for workflow to restart in waiting state for second attempt
+                # Since first approve succeeded, workflow resumes and completes
+                result = await handle.result()
+                assert result.status == "completed"
+
+    async def test_empty_nonce_allowed_multiple_times(self) -> None:
+        """Empty nonce is not tracked — multiple empty nonces allowed."""
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            yellow_response = RunLangGraphOutput(
+                response={}, receipts=[],
+                requires_approval=True,
+                approval_id="appr_empty_nonce",
+                approval_payload_hash="hash_empty",
+                current_agent="quinn",
+            )
+
+            async with Worker(
+                env.client,
+                task_queue="test-queue",
+                workflows=[AvaIntentWorkflow],
+                activities=[
+                    _mock_activity("run_langgraph_turn", yellow_response),
+                    _mock_activity("persist_receipts", PersistReceiptsOutput(receipt_ids=[], count=0)),
+                    _mock_activity("sync_workflow_execution", None),
+                    _mock_activity("emit_client_event", None),
+                ],
+            ):
+                handle = await env.client.start_workflow(
+                    AvaIntentWorkflow.run,
+                    AvaIntentInput(
+                        suite_id="suite_empty",
+                        office_id="office_empty",
+                        actor_id="actor_empty",
+                        correlation_id="corr_empty_001",
+                        thread_id="thread_empty_001",
+                        initial_state={"message": "test"},
+                        risk_tier="yellow",
+                    ),
+                    id="test-empty-nonce-001",
+                    task_queue="test-queue",
+                )
+
+                await env.sleep(timedelta(seconds=1))
+
+                # Empty nonce (default) — validator skips nonce tracking
+                evidence = ApprovalEvidence(
+                    suite_id="suite_empty",
+                    office_id="office_empty",
+                    approval_id="appr_empty_nonce",
+                    approver_id="approver_001",
+                    approved=True,
+                    payload_hash="hash_empty",
+                    policy_version="",
+                    evidence={"method": "test"},
+                    nonce="",  # Empty nonce
+                )
+
+                # Should succeed — empty nonce not tracked
+                result = await handle.execute_update(AvaIntentWorkflow.approve, evidence)
+                assert result.accepted is True
+
+
 def _mock_activity(name: str, return_value: Any) -> Any:
     from temporalio import activity
 

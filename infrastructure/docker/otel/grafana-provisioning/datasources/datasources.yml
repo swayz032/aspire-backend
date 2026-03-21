@@ -12,7 +12,7 @@ datasources:
     type: postgres
     uid: supabase-pg
     access: proxy
-    url: ${SUPABASE_DB_HOST:-aws-0-us-east-1.pooler.supabase.com}:${SUPABASE_DB_PORT:-6543}
+    url: ${SUPABASE_DB_HOST:-aws-1-us-east-1.pooler.supabase.com}:${SUPABASE_DB_PORT:-6543}
     user: ${SUPABASE_DB_USER:-postgres.qtuehjqlcmfcascqjjhc}
     editable: true
     jsonData:

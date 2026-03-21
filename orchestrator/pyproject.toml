@@ -41,6 +41,7 @@ dev = [
     "pytest-asyncio>=0.25.0,<0.26",
     "pytest-cov>=6.0,<7.0",
     "httpx",  # for TestClient
+    "moto[s3]>=5.0,<6.0",  # S3 mocking for provider tests
 ]
 
 [tool.pytest.ini_options]

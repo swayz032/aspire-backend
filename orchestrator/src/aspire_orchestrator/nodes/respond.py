@@ -411,6 +411,7 @@ def _call_openai_sync(
     model: str | None = None,
     timeout: float = settings.openai_timeout_seconds,
     channel: str = "chat",
+    temperature: float | None = None,
 ) -> str:
     """Shared sync OpenAI SDK call for respond node LLM operations.
 
@@ -466,6 +467,9 @@ def _call_openai_sync(
         role = "developer" if _is_reasoning else "system"
         processed_messages.insert(0, {"role": role, "content": verbosity_instruction})
 
+    # Use provided temperature or default to 0.1 for precision if not specified
+    effective_temp = temperature if temperature is not None else 0.1
+
     return generate_text_sync(
         model=model,
         messages=processed_messages,
@@ -473,7 +477,7 @@ def _call_openai_sync(
         base_url=settings.openai_base_url,
         timeout_seconds=timeout,
         max_output_tokens=4096,
-        temperature=None if _is_reasoning else 0.3,
+        temperature=None if _is_reasoning else effective_temp,
         prefer_responses_api=True,
     ).strip()
 

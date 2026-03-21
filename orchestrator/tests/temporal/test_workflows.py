@@ -623,6 +623,143 @@ class TestAvaIntentSignalHandlers:
 
 
 # ---------------------------------------------------------------------------
+# Stale Signal Warning Tests (Wave 3D)
+# ---------------------------------------------------------------------------
+class TestStaleSignalWarning:
+    """Tests that stale approval_decision signals are logged, not silently dropped."""
+
+    async def test_stale_signal_during_presence_wait_not_approval(self) -> None:
+        """approval_decision signal when status=waiting_presence (not waiting_approval) → dropped gracefully."""
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            red_response = RunLangGraphOutput(
+                response={"message": "Contract ready"},
+                receipts=[],
+                requires_approval=False,
+                requires_presence=True,
+                presence_token="pres_tok_stale",
+                current_agent="clara",
+            )
+
+            async with Worker(
+                env.client,
+                task_queue="test-queue",
+                workflows=[AvaIntentWorkflow],
+                activities=[
+                    _mock_activity("run_langgraph_turn", red_response),
+                    _mock_activity("persist_receipts", PersistReceiptsOutput(receipt_ids=["r1"], count=1)),
+                    _mock_activity("sync_workflow_execution", None),
+                    _mock_activity("emit_client_event", None),
+                ],
+            ):
+                handle = await env.client.start_workflow(
+                    AvaIntentWorkflow.run,
+                    AvaIntentInput(
+                        suite_id="suite_stale",
+                        office_id="office_stale",
+                        actor_id="actor_stale",
+                        correlation_id="corr_stale_001",
+                        thread_id="thread_stale_001",
+                        initial_state={"message": "sign contract"},
+                        risk_tier="red",
+                    ),
+                    id="test-stale-signal-001",
+                    task_queue="test-queue",
+                )
+
+                await env.sleep(timedelta(seconds=1))
+
+                # Verify workflow is in waiting_presence state
+                status = await handle.query(AvaIntentWorkflow.get_status)
+                assert status["status"] == "waiting_presence"
+
+                # Send approval_decision signal while in waiting_presence — should be dropped gracefully
+                await handle.signal(
+                    AvaIntentWorkflow.approval_decision,
+                    {"approval_id": "stale_001", "approved": True, "approver_id": "x"},
+                )
+
+                # Workflow should still be waiting for presence (signal was dropped)
+                status = await handle.query(AvaIntentWorkflow.get_status)
+                assert status["status"] == "waiting_presence"
+
+
+# ---------------------------------------------------------------------------
+# Presence Timeout Receipt Tests (Wave 3C — Law #2)
+# ---------------------------------------------------------------------------
+class TestPresenceTimeoutReceipt:
+    """Tests that RED-tier presence timeout emits a receipt (Law #2)."""
+
+    async def test_presence_timeout_emits_receipt(self) -> None:
+        """RED-tier presence timeout → receipt with action=presence_timeout."""
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            red_response = RunLangGraphOutput(
+                response={"message": "Contract ready"},
+                receipts=[],
+                requires_approval=False,
+                requires_presence=True,
+                presence_token="pres_tok_001",
+                current_agent="clara",
+            )
+
+            receipt_calls: list[Any] = []
+
+            from temporalio import activity
+
+            @activity.defn(name="persist_receipts")
+            async def tracking_receipts(input: Any) -> PersistReceiptsOutput:
+                receipt_calls.append(input)
+                return PersistReceiptsOutput(receipt_ids=["r_pres_timeout"], count=1)
+
+            async with Worker(
+                env.client,
+                task_queue="test-queue",
+                workflows=[AvaIntentWorkflow],
+                activities=[
+                    _mock_activity("run_langgraph_turn", red_response),
+                    tracking_receipts,
+                    _mock_activity("sync_workflow_execution", None),
+                    _mock_activity("emit_client_event", None),
+                ],
+            ):
+                handle = await env.client.start_workflow(
+                    AvaIntentWorkflow.run,
+                    AvaIntentInput(
+                        suite_id="suite_red",
+                        office_id="office_red",
+                        actor_id="actor_red",
+                        correlation_id="corr_red_001",
+                        thread_id="thread_red_001",
+                        initial_state={"message": "sign contract"},
+                        risk_tier="red",
+                    ),
+                    id="test-presence-timeout-001",
+                    task_queue="test-queue",
+                )
+
+                # Let presence timeout expire (30 min in time-skipping mode)
+                await env.sleep(timedelta(minutes=31))
+
+                result = await handle.result()
+                assert result.status == "timed_out"
+                assert result.error == "PRESENCE_TIMEOUT"
+                assert result.receipt_ids == ["r_pres_timeout"]
+
+                # Verify receipt was emitted with correct fields
+                assert len(receipt_calls) > 0
+                timeout_receipt = None
+                for call in receipt_calls:
+                    # Activity input may be dict or dataclass depending on serialization
+                    receipts = call.receipts if hasattr(call, "receipts") else call.get("receipts", [])
+                    for r in receipts:
+                        if r.get("action") == "presence_timeout":
+                            timeout_receipt = r
+                            break
+                assert timeout_receipt is not None
+                assert timeout_receipt["risk_tier"] == "red"
+                assert timeout_receipt["suite_id"] == "suite_red"
+
+
+# ---------------------------------------------------------------------------
 # Helper: Create mock activities
 # ---------------------------------------------------------------------------
 def _mock_activity(name: str, return_value: Any) -> Any:

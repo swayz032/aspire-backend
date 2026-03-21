@@ -84,6 +84,8 @@ class ModelConfig(BaseModel):
     )
     max_tokens: int = Field(default=1024, description="Max output tokens")
     temperature: float = Field(default=0.1, description="Sampling temperature")
+    top_p: float | None = Field(default=None, description="Nucleus sampling threshold")
+    top_k: int | None = Field(default=None, description="Top-k sampling threshold")
     timeout_seconds: int = Field(default=15, description="Request timeout")
 
 
@@ -98,6 +100,9 @@ class RouteDecision(BaseModel):
     fallback_used: bool = False
     fallback_reason: str | None = None
     max_tokens: int = 1024
+    temperature: float = 0.1
+    top_p: float | None = None
+    top_k: int | None = None
     temperature: float = 0.1
     timeout_seconds: int = 15
 
@@ -199,6 +204,8 @@ def _load_model_configs() -> dict[ModelProfile, ModelConfig]:
             base_url=base_url,
             max_tokens=model_data.get("max_tokens", 1024),
             temperature=model_data.get("temperature", 0.1),
+            top_p=model_data.get("top_p"),
+            top_k=model_data.get("top_k"),
             timeout_seconds=model_data.get("timeout_seconds", 15),
         )
 

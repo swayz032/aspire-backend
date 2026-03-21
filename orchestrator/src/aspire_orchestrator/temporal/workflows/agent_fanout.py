@@ -20,6 +20,7 @@ with workflow.unsafe.imports_passed_through():
         QUEUE_BACKGROUND,
         SEARCH_ATTR_CORRELATION_ID,
         SEARCH_ATTR_OFFICE_ID,
+        SEARCH_ATTR_RISK_TIER,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
         safe_upsert_search_attributes,
@@ -56,6 +57,7 @@ class AgentFanOutWorkflow:
         # Enhancement #9: Search attributes
         safe_upsert_search_attributes([
             SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER).value_set(input.risk_tier),
             SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("agent_fanout"),
             SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
             SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),

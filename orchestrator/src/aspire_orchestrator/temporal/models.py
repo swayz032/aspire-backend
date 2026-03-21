@@ -283,6 +283,8 @@ class CallbackInput:
     ref_id: str
     parent_workflow_id: str | None = None
     timeout_hours: float = 72.0
+    risk_tier: str = "green"
+    agent_id: str | None = None
 
 
 @dataclass
@@ -325,6 +327,7 @@ class FanOutInput:
     correlation_id: str
     agent_tasks: list[AgentTask] = field(default_factory=list)
     sla_timeout_minutes: int = 10
+    risk_tier: str = "green"
 
 
 @dataclass
@@ -355,6 +358,7 @@ class SpecialistInput:
     agent_id: str
     skill_pack: str
     input: dict[str, Any] = field(default_factory=dict)
+    risk_tier: str = "green"
 
 
 @dataclass

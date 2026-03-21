@@ -40,6 +40,6 @@ async def emit_client_event(input: EmitClientEventInput) -> None:
             input.event_type,
             input.correlation_id,
         )
-        # Non-critical — don't fail the workflow over a UI notification
-        # But still raise so Temporal can retry
+        # Retryable: Temporal retries per caller's retry policy.
+        # Callers use short timeout (5s) so retries are bounded.
         raise

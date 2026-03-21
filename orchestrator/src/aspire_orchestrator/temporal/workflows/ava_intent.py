@@ -260,7 +260,28 @@ class AvaIntentWorkflow:
                 )
             except asyncio.TimeoutError:
                 self._status = "timed_out"
-                return AvaIntentOutput(status="timed_out", error="PRESENCE_TIMEOUT")
+                # Law #2: RED-tier presence timeout MUST produce a receipt
+                receipt_output = await workflow.execute_activity(
+                    "persist_receipts",
+                    PersistReceiptsInput(
+                        receipts=[{
+                            "action": "presence_timeout",
+                            "status": "timed_out",
+                            "risk_tier": "red",
+                            "correlation_id": input.correlation_id,
+                            "suite_id": input.suite_id,
+                        }],
+                        suite_id=input.suite_id,
+                        correlation_id=input.correlation_id,
+                    ),
+                    result_type=PersistReceiptsOutput,
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+                return AvaIntentOutput(
+                    status="timed_out",
+                    error="PRESENCE_TIMEOUT",
+                    receipt_ids=receipt_output.receipt_ids,
+                )
 
         # Step 4: Persist receipts
         receipt_output = await workflow.execute_activity(
@@ -424,7 +445,12 @@ class AvaIntentWorkflow:
         approval result, unblocking the wait_condition.
         """
         if self._status != "waiting_approval":
-            return  # Ignore stale signals
+            workflow.logger.warning(
+                "Stale approval_decision signal dropped: status=%s approval_id=%s",
+                self._status,
+                data.get("approval_id", "unknown"),
+            )
+            return
 
         self._approval_result = ApprovalEvidence(
             suite_id=self._suite_id,

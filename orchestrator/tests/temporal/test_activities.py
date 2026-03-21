@@ -99,6 +99,60 @@ class TestPersistReceipts:
         assert result.receipt_ids == []
 
 
+class TestErrorClassification:
+    """Tests for _classify_error — Law #3 fail-closed behavior."""
+
+    def test_unknown_exception_returns_input_not_server(self) -> None:
+        """Law #3: Unknown exceptions classified as INPUT (non-retryable), not SERVER."""
+        from aspire_orchestrator.temporal.activities.provider_activity import _classify_error
+        from aspire_orchestrator.providers.error_codes import ProviderErrorCategory
+
+        # ValueError, TypeError, etc. should NOT retry
+        result = _classify_error(ValueError("bad value"))
+        assert result == ProviderErrorCategory.INPUT
+
+        result = _classify_error(TypeError("wrong type"))
+        assert result == ProviderErrorCategory.INPUT
+
+        result = _classify_error(RuntimeError("unexpected"))
+        assert result == ProviderErrorCategory.INPUT
+
+    def test_provider_error_with_category_used_directly(self) -> None:
+        """ProviderError.category is returned directly."""
+        from aspire_orchestrator.temporal.activities.provider_activity import _classify_error
+        from aspire_orchestrator.providers.error_codes import ProviderErrorCategory
+
+        class FakeProviderError(Exception):
+            category = ProviderErrorCategory.DOMAIN
+
+        result = _classify_error(FakeProviderError("domain issue"))
+        assert result == ProviderErrorCategory.DOMAIN
+
+    def test_provider_error_with_error_code_category(self) -> None:
+        """ProviderError with error_code.category is resolved."""
+        from aspire_orchestrator.temporal.activities.provider_activity import _classify_error
+        from aspire_orchestrator.providers.error_codes import ProviderErrorCategory
+
+        class FakeErrorCode:
+            category = ProviderErrorCategory.AUTH
+
+        class FakeError(Exception):
+            error_code = FakeErrorCode()
+
+        result = _classify_error(FakeError("auth issue"))
+        assert result == ProviderErrorCategory.AUTH
+
+    def test_network_error_is_retryable(self) -> None:
+        """NETWORK category errors should be retryable (not in non-retryable list)."""
+        from aspire_orchestrator.providers.error_codes import ProviderErrorCategory
+
+        # NETWORK is NOT in the non-retryable set (AUTH, INPUT, DOMAIN)
+        non_retryable = {ProviderErrorCategory.AUTH, ProviderErrorCategory.INPUT, ProviderErrorCategory.DOMAIN}
+        assert ProviderErrorCategory.NETWORK not in non_retryable
+        assert ProviderErrorCategory.RATE not in non_retryable
+        assert ProviderErrorCategory.SERVER not in non_retryable
+
+
 class TestProviderActivity:
     """Tests for provider call activities."""
 
@@ -125,3 +179,26 @@ class TestProviderActivity:
         phases = [call.args[0]["phase"] for call in mock_heartbeat.call_args_list]
         assert "provider_call_start" in phases
         assert "provider_call_complete" in phases
+
+    @patch("aspire_orchestrator.services.tool_executor.execute_tool")
+    @patch("temporalio.activity.heartbeat")
+    async def test_unknown_error_raises_non_retryable(
+        self, mock_heartbeat: MagicMock, mock_execute: AsyncMock
+    ) -> None:
+        """Law #3: Unknown exception → non-retryable ApplicationError (InputError)."""
+        from aspire_orchestrator.temporal.activities.provider_activity import execute_provider_call
+        from temporalio.exceptions import ApplicationError
+
+        mock_execute.side_effect = ValueError("invalid format")
+
+        input_data = ProviderCallInput(
+            suite_id="s1", office_id="o1", correlation_id="c1",
+            provider="stripe", action="create_invoice",
+            payload={"amount": 500},
+        )
+
+        with pytest.raises(ApplicationError) as exc_info:
+            await execute_provider_call(input_data)
+
+        assert exc_info.value.non_retryable is True
+        assert exc_info.value.type == "InputError"

@@ -145,7 +145,7 @@ def create_payload_codec() -> PayloadCodec:
     """Factory: KMS codec in production, no-op in dev."""
     kms_key_arn = os.getenv("TEMPORAL_KMS_KEY_ARN")
     if kms_key_arn:
-        logger.info("Temporal PayloadCodec: KMS encryption enabled (key=%s)", kms_key_arn[:20] + "...")
+        logger.info("Temporal PayloadCodec: KMS encryption enabled (key=***%s)", kms_key_arn[-4:])
         return KmsPayloadCodec(kms_key_arn)
     logger.info("Temporal PayloadCodec: no-op (dev mode, TEMPORAL_KMS_KEY_ARN not set)")
     return NoOpPayloadCodec()

@@ -1,13 +1,9 @@
 """S3 Provider Client — Document storage for Tec (Documents) skill pack.
 
-Provider: AWS S3 (via httpx with presigned URLs / stub implementation)
+Provider: AWS S3 (via boto3)
 Auth: AWS credentials from environment (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
 Risk tier: GREEN (url.sign — read-only) / YELLOW (document.upload — state change)
 Idempotency: Yes (S3 PUT is inherently idempotent by key)
-
-NOTE: This is a STUB implementation. Production S3 access requires boto3
-or presigned URL generation. The stub follows the full provider client
-pattern (receipts, error handling) for correctness.
 
 Tools:
   - s3.document.upload: Upload a document to S3 (YELLOW tier — state change)
@@ -16,7 +12,9 @@ Tools:
 
 from __future__ import annotations
 
+import base64
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -36,10 +34,10 @@ logger = logging.getLogger(__name__)
 
 
 class S3Client(BaseProviderClient):
-    """AWS S3 document storage client (stub implementation).
+    """AWS S3 document storage client (boto3 implementation).
 
-    In production, this would use boto3 or generate presigned URLs.
-    For Phase 2, returns stub success with receipt tracking.
+    Uses boto3 for real S3 operations: put_object for uploads,
+    generate_presigned_url for signed URL generation.
     """
 
     provider_id = "s3"
@@ -48,9 +46,27 @@ class S3Client(BaseProviderClient):
     max_retries = 1
     idempotency_support = True  # S3 PUT is idempotent by key
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._boto3_client: Any = None
+
+    def _get_s3_client(self) -> Any:
+        """Lazily create and cache a boto3 S3 client with region from settings."""
+        if self._boto3_client is None:
+            import boto3
+
+            self._boto3_client = boto3.client(
+                "s3",
+                region_name=settings.aws_s3_region,
+                aws_access_key_id=settings.aws_access_key_id,
+                aws_secret_access_key=settings.aws_secret_access_key,
+            )
+        return self._boto3_client
+
     async def _authenticate_headers(
         self, request: ProviderRequest
     ) -> dict[str, str]:
+        """Verify AWS credentials are configured via STS get_caller_identity."""
         access_key = settings.aws_access_key_id
         secret_key = settings.aws_secret_access_key
         if not access_key or not secret_key:
@@ -59,14 +75,31 @@ class S3Client(BaseProviderClient):
                 message="AWS credentials not configured (ASPIRE_AWS_ACCESS_KEY_ID, ASPIRE_AWS_SECRET_ACCESS_KEY)",
                 provider_id=self.provider_id,
             )
-        # In production: SigV4 signing. For stub: just verify credentials exist.
-        return {"X-Aws-Auth": "stub-sigv4"}
+        # Verify credentials are valid via STS
+        try:
+            import boto3
+
+            sts = boto3.client(
+                "sts",
+                region_name=settings.aws_s3_region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+            )
+            sts.get_caller_identity()
+        except Exception as exc:
+            raise ProviderError(
+                code=InternalErrorCode.AUTH_INVALID_KEY,
+                message=f"AWS credential verification failed: {str(exc)[:200]}",
+                provider_id=self.provider_id,
+            ) from exc
+        return {"X-Aws-Auth": "verified"}
 
     async def _request(self, request: ProviderRequest) -> ProviderResponse:
-        """Override: skip HTTP, return stub result.
+        """Execute real S3 operations via boto3.
 
-        In production, this would use boto3 for S3 operations or
-        generate presigned URLs via AWS SDK.
+        Supported paths:
+          /upload — put_object (bucket, key, body_base64, content_type)
+          /sign   — generate_presigned_url (bucket, key, expires_in)
         """
         # Authenticate first (verifies credentials are configured)
         try:
@@ -82,7 +115,7 @@ class S3Client(BaseProviderClient):
             )
 
         logger.info(
-            "S3 stub request: %s %s (suite=%s, corr=%s)",
+            "S3 boto3 request: %s %s (suite=%s, corr=%s)",
             request.method,
             request.path,
             (request.suite_id[:8] if len(request.suite_id) > 8 else request.suite_id),
@@ -90,45 +123,111 @@ class S3Client(BaseProviderClient):
         )
 
         body = request.body or {}
+        start = time.monotonic()
 
-        if "/upload" in request.path:
-            return ProviderResponse(
-                status_code=200,
-                body={
-                    "stub": True,
-                    "uploaded": True,
-                    "bucket": body.get("bucket", ""),
-                    "key": body.get("key", ""),
-                    "etag": f"stub-{uuid.uuid4().hex[:12]}",
-                    "uploaded_at": datetime.now(timezone.utc).isoformat(),
-                },
-                success=True,
-                latency_ms=0.2,
+        try:
+            s3 = self._get_s3_client()
+
+            if "/upload" in request.path:
+                bucket = body.get("bucket", "")
+                key = body.get("key", "")
+                content_type = body.get("content_type", "application/octet-stream")
+                body_base64 = body.get("body_base64", "")
+
+                # Decode base64 body if provided, otherwise empty bytes
+                file_bytes = base64.b64decode(body_base64) if body_base64 else b""
+
+                put_kwargs: dict[str, Any] = {
+                    "Bucket": bucket,
+                    "Key": key,
+                    "Body": file_bytes,
+                    "ContentType": content_type,
+                }
+
+                response = s3.put_object(**put_kwargs)
+                latency_ms = (time.monotonic() - start) * 1000
+                etag = response.get("ETag", "").strip('"')
+
+                self._circuit.record_success()
+                return ProviderResponse(
+                    status_code=200,
+                    body={
+                        "uploaded": True,
+                        "bucket": bucket,
+                        "key": key,
+                        "etag": etag,
+                        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    success=True,
+                    latency_ms=latency_ms,
+                )
+
+            elif "/sign" in request.path:
+                bucket = body.get("bucket", "aspire-documents")
+                key = body.get("key", "unknown")
+                expires_in = body.get("expires_in", 3600)
+
+                presigned_url = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": bucket, "Key": key},
+                    ExpiresIn=expires_in,
+                )
+                latency_ms = (time.monotonic() - start) * 1000
+
+                self._circuit.record_success()
+                return ProviderResponse(
+                    status_code=200,
+                    body={
+                        "presigned_url": presigned_url,
+                        "expires_in": expires_in,
+                        "bucket": bucket,
+                        "key": key,
+                    },
+                    success=True,
+                    latency_ms=latency_ms,
+                )
+
+            else:
+                return ProviderResponse(
+                    status_code=400,
+                    body={"error": "Unknown S3 operation"},
+                    success=False,
+                    error_code=InternalErrorCode.INPUT_INVALID_FORMAT,
+                    error_message="Unknown S3 operation path",
+                )
+
+        except ProviderError:
+            raise
+        except Exception as exc:
+            latency_ms = (time.monotonic() - start) * 1000
+            self._circuit.record_failure()
+
+            # Map common boto3/botocore errors to appropriate codes
+            exc_name = type(exc).__name__
+            error_message = str(exc)[:200]
+
+            if "NoSuchBucket" in exc_name or "NoSuchBucket" in str(exc):
+                error_code = InternalErrorCode.DOMAIN_NOT_FOUND
+                status_code = 404
+            elif "AccessDenied" in str(exc) or "Forbidden" in str(exc):
+                error_code = InternalErrorCode.AUTH_SCOPE_INSUFFICIENT
+                status_code = 403
+            else:
+                error_code = InternalErrorCode.SERVER_INTERNAL_ERROR
+                status_code = 500
+
+            logger.error(
+                "S3 boto3 error: %s %s — %s: %s",
+                request.method, request.path, exc_name, error_message,
             )
-        elif "/sign" in request.path:
-            bucket = body.get("bucket", "aspire-documents")
-            key = body.get("key", "unknown")
-            region = settings.aws_s3_region
-            expires_in = body.get("expires_in", 3600)
+
             return ProviderResponse(
-                status_code=200,
-                body={
-                    "stub": True,
-                    "presigned_url": f"https://{bucket}.s3.{region}.amazonaws.com/{key}?X-Amz-Expires={expires_in}&stub=true",
-                    "expires_in": expires_in,
-                    "bucket": bucket,
-                    "key": key,
-                },
-                success=True,
-                latency_ms=0.1,
-            )
-        else:
-            return ProviderResponse(
-                status_code=400,
-                body={"error": "Unknown S3 operation"},
+                status_code=status_code,
+                body={"error": error_code.value, "message": error_message},
                 success=False,
-                error_code=InternalErrorCode.INPUT_INVALID_FORMAT,
-                error_message="Unknown S3 operation path",
+                error_code=error_code,
+                error_message=error_message,
+                latency_ms=latency_ms,
             )
 
     def _parse_error(
@@ -241,10 +340,8 @@ async def execute_s3_document_upload(
                 "content_type": content_type,
                 "etag": response.body.get("etag", ""),
                 "uploaded": True,
-                "stub": response.body.get("stub", False),
             },
             receipt_data=receipt,
-            is_stub=True,
         )
     else:
         return ToolExecutionResult(
@@ -342,10 +439,8 @@ async def execute_s3_url_sign(
                 "bucket": bucket,
                 "key": key,
                 "expires_in": expires_in,
-                "stub": response.body.get("stub", False),
             },
             receipt_data=receipt,
-            is_stub=True,
         )
     else:
         return ToolExecutionResult(

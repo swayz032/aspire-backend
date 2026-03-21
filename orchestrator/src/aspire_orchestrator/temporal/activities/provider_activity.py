@@ -147,5 +147,9 @@ def _classify_error(error: Exception) -> Any:
     if hasattr(error, "error_code") and hasattr(error.error_code, "category"):
         return error.error_code.category
 
-    # Fallback: treat as SERVER (retryable)
-    return ProviderErrorCategory.SERVER
+    # Law #3: Fail closed — unknown exceptions must NOT retry (non-retryable INPUT)
+    logger.warning(
+        "Unknown exception type %s classified as INPUT (non-retryable) — Law #3 fail-closed",
+        type(error).__name__,
+    )
+    return ProviderErrorCategory.INPUT

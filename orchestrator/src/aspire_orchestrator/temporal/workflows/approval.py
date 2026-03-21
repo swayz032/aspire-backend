@@ -34,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
         ApprovalWorkflowOutput,
         EmitClientEventInput,
         PersistReceiptsInput,
+        PersistReceiptsOutput,
     )
 
 
@@ -170,6 +171,7 @@ class ApprovalWorkflow:
                     suite_id=input.suite_id,
                     correlation_id=input.correlation_id,
                 ),
+                result_type=PersistReceiptsOutput,
                 start_to_close_timeout=timedelta(seconds=5),
             )
             return ApprovalWorkflowOutput(status="expired")
@@ -189,6 +191,7 @@ class ApprovalWorkflow:
                 suite_id=input.suite_id,
                 correlation_id=input.correlation_id,
             ),
+            result_type=PersistReceiptsOutput,
             start_to_close_timeout=timedelta(seconds=5),
         )
 

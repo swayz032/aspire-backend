@@ -35,6 +35,7 @@ with workflow.unsafe.imports_passed_through():
         OutboxJobInput,
         OutboxJobOutput,
         PersistReceiptsInput,
+        PersistReceiptsOutput,
         ProviderCallInput,
         ProviderCallOutput,
         SyncWorkflowInput,
@@ -143,7 +144,7 @@ class OutboxExecutionWorkflow:
             compensation_results = await self._compensate(input)
 
             self._status = "failed"
-            error_msg = str(e)[:500]
+            error_msg = str(e)[:2000]
 
             await workflow.execute_activity(
                 "fail_outbox_job",
@@ -171,6 +172,7 @@ class OutboxExecutionWorkflow:
                     suite_id=input.suite_id,
                     correlation_id=input.correlation_id,
                 ),
+                result_type=PersistReceiptsOutput,
                 start_to_close_timeout=timedelta(seconds=5),
             )
 
@@ -206,6 +208,7 @@ class OutboxExecutionWorkflow:
                 suite_id=input.suite_id,
                 correlation_id=input.correlation_id,
             ),
+            result_type=PersistReceiptsOutput,
             start_to_close_timeout=timedelta(seconds=5),
         )
 
@@ -252,7 +255,7 @@ class OutboxExecutionWorkflow:
                 compensation_results.append({
                     "step": step.step_name,
                     "status": "compensation_failed",
-                    "error": str(comp_error)[:200],
+                    "error": str(comp_error)[:2000],
                 })
                 # Emit receipt for manual intervention
                 await workflow.execute_activity(
@@ -261,7 +264,7 @@ class OutboxExecutionWorkflow:
                         receipts=[{
                             "action": "compensation_failed",
                             "step": step.step_name,
-                            "error": str(comp_error)[:200],
+                            "error": str(comp_error)[:2000],
                             "requires_manual_intervention": True,
                             "suite_id": input.suite_id,
                             "correlation_id": input.correlation_id,
@@ -269,6 +272,7 @@ class OutboxExecutionWorkflow:
                         suite_id=input.suite_id,
                         correlation_id=input.correlation_id,
                     ),
+                    result_type=PersistReceiptsOutput,
                     start_to_close_timeout=timedelta(seconds=5),
                 )
 

@@ -49,5 +49,7 @@ profiles:
     model_env: "ASPIRE_ROUTER_MODEL_CHAT"
     max_tokens: 1024
     temperature: 0.7
+    top_p: 0.9
+    top_k: 50
     timeout_seconds: 15
     description: "Creative, natural persona for chat, greetings, and status updates"

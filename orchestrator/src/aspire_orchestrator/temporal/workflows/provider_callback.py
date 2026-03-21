@@ -17,8 +17,10 @@ from temporalio.common import SearchAttributeKey
 with workflow.unsafe.imports_passed_through():
     from aspire_orchestrator.temporal.config import (
         CALLBACK_DEFAULT_TIMEOUT_HOURS,
+        SEARCH_ATTR_AGENT_ID,
         SEARCH_ATTR_CORRELATION_ID,
         SEARCH_ATTR_OFFICE_ID,
+        SEARCH_ATTR_RISK_TIER,
         SEARCH_ATTR_SUITE_ID,
         SEARCH_ATTR_WORKFLOW_KIND,
         safe_upsert_search_attributes,
@@ -46,12 +48,18 @@ class ProviderCallbackWorkflow:
     @workflow.run
     async def run(self, input: CallbackInput) -> CallbackOutput:
         # Enhancement #9: Search attributes
-        safe_upsert_search_attributes([
+        search_attrs = [
             SearchAttributeKey.for_keyword(SEARCH_ATTR_SUITE_ID).value_set(input.suite_id),
+            SearchAttributeKey.for_keyword(SEARCH_ATTR_RISK_TIER).value_set(input.risk_tier),
             SearchAttributeKey.for_keyword(SEARCH_ATTR_WORKFLOW_KIND).value_set("callback"),
             SearchAttributeKey.for_keyword(SEARCH_ATTR_OFFICE_ID).value_set(input.office_id),
             SearchAttributeKey.for_keyword(SEARCH_ATTR_CORRELATION_ID).value_set(input.correlation_id),
-        ])
+        ]
+        if input.agent_id:
+            search_attrs.append(
+                SearchAttributeKey.for_keyword(SEARCH_ATTR_AGENT_ID).value_set(input.agent_id)
+            )
+        safe_upsert_search_attributes(search_attrs)
 
         # Wait for external callback
         try:
