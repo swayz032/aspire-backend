@@ -906,7 +906,8 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         if utterance == "__greeting__":
             agent_id = _resolve_agent_id(state)
             user_profile = state.get("user_profile") or {}
-            user_name = user_profile.get("display_name") or user_profile.get("first_name")
+            # Prioritize owner_name for formal greeting (Mr./Mrs. Last Name logic in skillpack)
+            user_name = user_profile.get("owner_name") or user_profile.get("display_name") or user_profile.get("first_name")
             
             # Resolve agent instance and call LLM-powered get_greeting (Premium Human Logic)
             try:

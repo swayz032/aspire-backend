@@ -100,10 +100,27 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
             except Exception:
                 pass  # Memory failure is non-critical for greetings
 
+        # Premium Personalization Logic: Parse "Mr./Mrs. Last Name"
+        display_name = user_name or "User"
+        formal_name = display_name
+        
+        if user_name and " " in user_name:
+            parts = user_name.split(" ")
+            last_name = parts[-1]
+            # Since gender is PII-filtered, we instruct LLM to use a respectful title 
+            # (Mr./Mrs./Ms.) based on the context or a generic professional greeting.
+            formal_name = f"Mr./Ms. {last_name}"
+
         if is_returning:
-            greeting_prompt = f"You are {self._agent_name}. Welcome back {user_name or 'the user'} for another {time_of_day} session. Keep it warm, professional, and very brief."
+            greeting_prompt = (
+                f"You are {self._agent_name}. Welcome back {formal_name} for another {time_of_day} session. "
+                f"Address them explicitly as {formal_name}. Keep it warm, professional, and very brief."
+            )
         else:
-            greeting_prompt = f"You are {self._agent_name}. Introduce yourself to {user_name or 'the user'} this {time_of_day}. Keep it natural, business-like, and welcoming."
+            greeting_prompt = (
+                f"You are {self._agent_name}. Introduce yourself to {formal_name} this {time_of_day}. "
+                f"Address them explicitly as {formal_name}. Keep it natural, business-like, and welcoming."
+            )
 
         try:
             # Use 'chat' step type for natural temperature (0.7)
