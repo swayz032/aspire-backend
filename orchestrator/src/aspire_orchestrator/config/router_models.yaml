@@ -43,3 +43,11 @@ profiles:
     temperature: 0.0
     timeout_seconds: 30
     description: "Most careful model for financial, legal, and high-risk decisions"
+
+  natural_chat:
+    model_id: "gpt-5"
+    model_env: "ASPIRE_ROUTER_MODEL_CHAT"
+    max_tokens: 1024
+    temperature: 0.7
+    timeout_seconds: 15
+    description: "Creative, natural persona for chat, greetings, and status updates"

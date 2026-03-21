@@ -294,18 +294,29 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
         "- Directly addresses what the user asked\n"
         "- Confirms what was done or explains what happened\n"
         "- Sounds natural when spoken aloud (this will be text-to-speech)\n"
+        "- Uses brief verbal fillers or character cues (e.g., 'Sure thing', 'I've handled that', 'All set')\n"
         "- Does NOT use markdown, bullet points, or formatting\n"
-        "- Does NOT say 'I processed your request' or generic filler\n"
         "Respond with ONLY the spoken text, nothing else."
     )
 
     try:
+        # Use LLM Router to get natural_chat profile (StepType.CHAT)
+        from aspire_orchestrator.services.llm_router import get_llm_router, StepType
+        router = get_llm_router()
+        route = router.route(StepType.CHAT, state.get("risk_tier", "green"), desk=agent_id)
+
         messages = []
         if persona:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
 
-        content = _call_openai_sync(messages, model=settings.router_model_general, channel=channel)
+        # Use the routed model and temperature (0.7)
+        content = _call_openai_sync(
+            messages, 
+            model=route.concrete_model, 
+            channel=channel,
+            temperature=route.temperature
+        )
 
         if content:
             logger.info("LLM summarization success for %s (len=%d)", agent_id, len(content))

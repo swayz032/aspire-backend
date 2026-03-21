@@ -101,9 +101,16 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
                 pass  # Memory failure is non-critical for greetings
 
         if is_returning:
-            return f"{time_part}{name_part}, how can I help?"
+            greeting_prompt = f"You are {self._agent_name}. Welcome back {user_name or 'the user'} for another {time_of_day} session. Keep it warm, professional, and very brief."
         else:
-            return f"{time_part}{name_part}, I'm {self._agent_name}. How can I help you today?"
+            greeting_prompt = f"You are {self._agent_name}. Introduce yourself to {user_name or 'the user'} this {time_of_day}. Keep it natural, business-like, and welcoming."
+
+        try:
+            # Use 'chat' step type for natural temperature (0.7)
+            response = await self.call_llm(greeting_prompt, step_type="chat", risk_tier=ctx.risk_tier)
+            return response.get("content") or f"Good {time_of_day}, I'm {self._agent_name}. How can I help?"
+        except Exception:
+            return f"Good {time_of_day}, I'm {self._agent_name}. How can I help?"
 
     async def get_error_message(
         self,

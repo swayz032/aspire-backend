@@ -81,6 +81,18 @@ rules:
       risk_tier: [low, medium, high]
     use: high_risk_guard
 
+  # Conversational chat at low/medium risk -> natural chat (human-like)
+  - when:
+      step_type: [chat]
+      risk_tier: [low, medium]
+    use: natural_chat
+
+  # Conversational chat at high risk -> primary reasoner (keep it professional for RED)
+  - when:
+      step_type: [chat]
+      risk_tier: [high]
+    use: primary_reasoner
+
 # Fallback chain: if no rule matches, try these profiles in order
 # Most conservative first (HIGH_RISK_GUARD), then degrade
 fallback_chain:

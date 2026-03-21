@@ -45,6 +45,7 @@ class ModelProfile(str, Enum):
     FAST_GENERAL = "fast_general"
     PRIMARY_REASONER = "primary_reasoner"
     HIGH_RISK_GUARD = "high_risk_guard"
+    NATURAL_CHAT = "natural_chat"
 
 
 class StepType(str, Enum):
@@ -57,6 +58,7 @@ class StepType(str, Enum):
     PLAN = "plan"
     VERIFY = "verify"
     POLICY_CHECK = "policy_check"
+    CHAT = "chat"
 
 
 class RouterRiskTier(str, Enum):
