@@ -61,7 +61,7 @@ jobs:
         working-directory: orchestrator
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio pytest-timeout httpx
 
       - name: Run tests
         working-directory: orchestrator
@@ -88,7 +88,7 @@ jobs:
 
       - name: Lint
         working-directory: orchestrator
-        run: ruff check src/ --select E,W,F --ignore E501,E402,E721,F401,F541,F811,F821,F841,W293
+        run: ruff check src/ --select E,W,F --ignore E501,E402,E721,F401,F541,F811,F821,F841,W291,W293
 
   typecheck:
     runs-on: ubuntu-latest

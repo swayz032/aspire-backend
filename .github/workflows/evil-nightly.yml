@@ -5,6 +5,10 @@ on:
     - cron: '0 3 * * *'  # 3 AM UTC daily
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   evil-tests:
     runs-on: ubuntu-latest
@@ -44,7 +48,7 @@ jobs:
         working-directory: orchestrator
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio pytest-timeout httpx
 
       - name: Run evil tests
         working-directory: orchestrator

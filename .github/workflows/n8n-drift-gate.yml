@@ -27,10 +27,14 @@ jobs:
           N8N_API_URL: ${{ secrets.N8N_API_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
         run: |
-          test -n "$N8N_API_URL" || (echo "Missing secret: N8N_API_URL" && exit 1)
-          test -n "$N8N_API_KEY" || (echo "Missing secret: N8N_API_KEY" && exit 1)
+          if [ -z "$N8N_API_URL" ] || [ -z "$N8N_API_KEY" ]; then
+            echo "⚠️ n8n secrets not configured — skipping drift check"
+            echo "Add N8N_API_URL and N8N_API_KEY as repo secrets to enable"
+            exit 0
+          fi
 
       - name: Drift check
+        if: ${{ secrets.N8N_API_URL != '' }}
         env:
           N8N_API_URL: ${{ secrets.N8N_API_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}

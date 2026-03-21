@@ -312,8 +312,8 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
 
         # Use the routed model and temperature (0.7)
         content = _call_openai_sync(
-            messages, 
-            model=route.concrete_model, 
+            messages,
+            model=route.concrete_model,
             channel=channel,
             temperature=route.temperature
         )
