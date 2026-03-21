@@ -447,30 +447,6 @@ class EnhancedFinnFinanceManager(AgenticSkillPack):
             memory_enabled=True,
         )
 
-    async def get_greeting(
-        self, ctx: AgentContext, *, user_name: str | None = None, time_of_day: str | None = None,
-    ) -> str:
-        """Finn's greeting — precise, data-aware finance personality (7b)."""
-        if time_of_day is None:
-            from datetime import datetime, timezone
-            hour = datetime.now(timezone.utc).hour
-            time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
-
-        name_part = f" {user_name}" if user_name else ""
-        is_returning = False
-        if self._memory_enabled:
-            try:
-                episodes = await self.recall_episodes(ctx, limit=1)
-                is_returning = bool(episodes)
-            except Exception:
-                pass
-
-        if is_returning:
-            return f"Good {time_of_day}{name_part}. Ready to look at the numbers?"
-        else:
-            return f"Good {time_of_day}{name_part}, I'm Finn — your finance intelligence manager. I track revenue, expenses, and help you understand your business health."
-
-
     async def finance_snapshot_read(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
         result = await read_finance_snapshot(

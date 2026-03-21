@@ -12,7 +12,7 @@ from aspire_orchestrator.config.templates.skillpack_template import AgenticSkill
 
 class AvaUserSkillPack(AgenticSkillPack):
     """Template-compliant wrapper for the Ava User orchestration surface."""
-
+class EnhancedAvaUser(AgenticSkillPack):
     def __init__(self) -> None:
         super().__init__(
             agent_id='ava_user',
@@ -21,31 +21,8 @@ class AvaUserSkillPack(AgenticSkillPack):
             memory_enabled=True,
         )
 
-    async def get_greeting(
-        self, ctx: AgentContext, *, user_name: str | None = None, time_of_day: str | None = None,
-    ) -> str:
-        """Ava's greeting — warm orchestrator personality (7b)."""
-        if time_of_day is None:
-            from datetime import datetime, timezone
-            hour = datetime.now(timezone.utc).hour
-            time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
-
-        name_part = f" {user_name}" if user_name else ""
-        is_returning = False
-        if self._memory_enabled:
-            try:
-                episodes = await self.recall_episodes(ctx, limit=1)
-                is_returning = bool(episodes)
-            except Exception:
-                pass
-
-        if is_returning:
-            return f"Good {time_of_day}{name_part}. What can I help you with?"
-        else:
-            return f"Good {time_of_day}{name_part}, I'm Ava — your business operating system. How can I help you today?"
-
-
     async def intent_classify(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+
         utterance = str(params.get('utterance', '')).strip()
         if not utterance:
             return AgentResult(success=False, error='Missing required parameter: utterance')

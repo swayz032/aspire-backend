@@ -566,28 +566,6 @@ class EnhancedEliInbox(AgenticSkillPack):
         )
         self._rule_pack = EliInboxSkillPack()
 
-    async def get_greeting(
-        self, ctx: AgentContext, *, user_name: str | None = None, time_of_day: str | None = None,
-    ) -> str:
-        """Eli's greeting — efficient communication personality (7b)."""
-        if time_of_day is None:
-            from datetime import datetime, timezone
-            hour = datetime.now(timezone.utc).hour
-            time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
-
-        name_part = f" {user_name}" if user_name else ""
-        is_returning = False
-        if self._memory_enabled:
-            try:
-                episodes = await self.recall_episodes(ctx, limit=1)
-                is_returning = bool(episodes)
-            except Exception:
-                pass
-
-        if is_returning:
-            return f"Good {time_of_day}{name_part}. Let me check your inbox."
-        else:
-            return f"Good {time_of_day}{name_part}, I'm Eli — I manage your inbox. I triage, draft, and keep your communications organized."
 
 
     async def triage_email(self, email_data: dict, ctx: AgentContext) -> AgentResult:

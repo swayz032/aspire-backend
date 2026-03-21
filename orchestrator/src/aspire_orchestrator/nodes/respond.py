@@ -904,15 +904,34 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
 
         # Handle __greeting__ sentinel from Desktop mount
         if utterance == "__greeting__":
-            from datetime import datetime
+            agent_id = _resolve_agent_id(state)
+            user_profile = state.get("user_profile") or {}
+            user_name = user_profile.get("display_name") or user_profile.get("first_name")
+            
+            # Resolve agent instance and call LLM-powered get_greeting (Premium Human Logic)
+            try:
+                import asyncio
+                from aspire_orchestrator.services.agent_registry import get_agent_registry
+                from aspire_orchestrator.services.agent_sdk_base import AgentContext
+                
+                registry = get_agent_registry()
+                agent_instance = registry.get_agent(agent_id)
+                
+                if agent_instance:
+                    ctx = AgentContext(
+                        suite_id=state.get("suite_id", "unknown"),
+                        office_id=state.get("office_id", "default"),
+                        correlation_id=correlation_id,
+                        risk_tier="green",
+                    )
+                    # Run async greeting in sync context
+                    greeting_text = asyncio.run(agent_instance.get_greeting(ctx, user_name=user_name))
+                else:
+                    greeting_text = "Good morning! How can I help you today?"
+            except Exception as e:
+                logger.warning("Failed to generate LLM greeting for %s: %s", agent_id, e)
+                greeting_text = "Good morning! How can I help you today?"
 
-            hour = datetime.now().hour
-            time_greeting = (
-                "Good morning" if hour < 12
-                else "Good afternoon" if hour < 17
-                else "Good evening"
-            )
-            greeting_text = f"{time_greeting}! How can I help you today?"
             response: dict[str, Any] = {
                 "text": greeting_text,
                 "correlation_id": correlation_id,
