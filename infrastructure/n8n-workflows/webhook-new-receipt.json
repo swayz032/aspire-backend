@@ -1,0 +1,153 @@
+{
+  "name": "pg_net: New Receipt Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-receipt",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-receipt-trigger",
+      "name": "Webhook: New Receipt",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "status-check",
+              "leftValue": "={{ $json.body.status }}",
+              "rightValue": "error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "if-error-status",
+      "name": "Is Error Receipt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_BACKEND_URL }}/api/v1/incidents/from-receipt",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.ASPIRE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "value": "={{ $json.body.receipt_id }}"
+            },
+            {
+              "name": "receipt_type",
+              "value": "={{ $json.body.receipt_type }}"
+            },
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.body.tenant_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "create-incident",
+      "name": "Create Incident from Error Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\", \"action\": \"receipt_processed\" }"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 400]
+    }
+  ],
+  "connections": {
+    "Webhook: New Receipt": {
+      "main": [
+        [
+          {
+            "node": "Is Error Receipt?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Error Receipt?": {
+      "main": [
+        [
+          {
+            "node": "Create Incident from Error Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Incident from Error Receipt": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "pg_net" },
+    { "name": "webhook" },
+    { "name": "receipts" }
+  ]
+}

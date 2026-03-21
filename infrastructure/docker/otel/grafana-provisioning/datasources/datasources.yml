@@ -7,3 +7,21 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: true
+
+  - name: Supabase Postgres
+    type: postgres
+    uid: supabase-pg
+    access: proxy
+    url: ${SUPABASE_DB_HOST:-aws-0-us-east-1.pooler.supabase.com}:${SUPABASE_DB_PORT:-6543}
+    user: ${SUPABASE_DB_USER:-postgres.qtuehjqlcmfcascqjjhc}
+    editable: true
+    jsonData:
+      database: postgres
+      sslmode: require
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: ${SUPABASE_DB_PASSWORD}

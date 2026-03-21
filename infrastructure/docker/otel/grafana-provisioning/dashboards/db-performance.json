@@ -1,0 +1,132 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Supabase Postgres performance: slowest queries, cache hit rate, index recommendations",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Top 20 Slowest Queries (avg ms)",
+      "type": "table",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "supabase-pg" },
+      "targets": [
+        {
+          "rawSql": "SELECT LEFT(query, 120) AS query_preview, calls, round(mean_exec_time::numeric, 2) AS avg_ms, round(total_exec_time::numeric, 2) AS total_ms, rows FROM pg_stat_statements WHERE calls > 1 ORDER BY mean_exec_time DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "avg_ms" },
+            "properties": [
+              { "id": "custom.width", "value": 100 },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "value": 0, "color": "green" }, { "value": 100, "color": "yellow" }, { "value": 500, "color": "red" }] } },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "title": "Cache Hit Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "datasource": { "type": "postgres", "uid": "supabase-pg" },
+      "targets": [
+        {
+          "rawSql": "SELECT round(100.0 * sum(shared_blks_hit) / nullif(sum(shared_blks_hit + shared_blks_read), 0), 2) AS cache_hit_pct FROM pg_stat_statements",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0, "color": "red" },
+              { "value": 90, "color": "yellow" },
+              { "value": 99, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Query Call Volume (top 10)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "datasource": { "type": "postgres", "uid": "supabase-pg" },
+      "targets": [
+        {
+          "rawSql": "SELECT LEFT(query, 60) AS query_preview, calls FROM pg_stat_statements ORDER BY calls DESC LIMIT 10",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Receipt Daily Stats (last 7 days)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "datasource": { "type": "postgres", "uid": "supabase-pg" },
+      "targets": [
+        {
+          "rawSql": "SELECT day::date, status, receipt_type, sum(cnt) AS total FROM receipt_daily_stats WHERE day > NOW() - INTERVAL '7 days' GROUP BY day, status, receipt_type ORDER BY day DESC, total DESC LIMIT 50",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Index Recommendations",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "datasource": { "type": "postgres", "uid": "supabase-pg" },
+      "targets": [
+        {
+          "rawSql": "SELECT recommendation, source_query, created_at FROM index_recommendations ORDER BY created_at DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "pg_cron Job History (last 24h)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "type": "postgres", "uid": "supabase-pg" },
+      "targets": [
+        {
+          "rawSql": "SELECT j.jobname, d.status, d.start_time, d.end_time, d.return_message FROM cron.job_run_details d JOIN cron.job j ON d.jobid = j.jobid WHERE d.start_time > NOW() - INTERVAL '24 hours' ORDER BY d.start_time DESC LIMIT 50",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["supabase", "performance", "pg_stat_statements"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "DB Performance (pg_stat_statements)",
+  "uid": "db-performance",
+  "version": 1
+}

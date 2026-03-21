@@ -1,0 +1,166 @@
+{
+  "name": "pg_net: New Incident Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-incident",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-incident-trigger",
+      "name": "Webhook: New Incident",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "severity-critical",
+              "leftValue": "={{ $json.body.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "severity-high",
+              "leftValue": "={{ $json.body.severity }}",
+              "rightValue": "high",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "if-high-severity",
+      "name": "Is High/Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_BACKEND_URL }}/api/v1/notifications/urgent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.ASPIRE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "incident_id",
+              "value": "={{ $json.body.incident_id }}"
+            },
+            {
+              "name": "severity",
+              "value": "={{ $json.body.severity }}"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.body.title }}"
+            },
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.body.tenant_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "urgent-notify",
+      "name": "Send Urgent Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\", \"action\": \"incident_processed\" }"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 400]
+    }
+  ],
+  "connections": {
+    "Webhook: New Incident": {
+      "main": [
+        [
+          {
+            "node": "Is High/Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is High/Critical?": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Urgent Notification": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "pg_net" },
+    { "name": "webhook" },
+    { "name": "incidents" }
+  ]
+}

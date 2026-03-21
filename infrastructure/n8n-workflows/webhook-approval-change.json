@@ -1,0 +1,153 @@
+{
+  "name": "pg_net: Approval Change Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approval-change",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-approval-trigger",
+      "name": "Webhook: Approval Change",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "approved-check",
+              "leftValue": "={{ $json.body.status }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "if-approved",
+      "name": "Is Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASPIRE_BACKEND_URL }}/api/v1/approvals/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.ASPIRE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "approval_id",
+              "value": "={{ $json.body.approval_id }}"
+            },
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.body.tenant_id }}"
+            },
+            {
+              "name": "operation",
+              "value": "={{ $json.body.operation }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "execute-approved",
+      "name": "Execute Approved Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\", \"action\": \"approval_processed\" }"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 400]
+    }
+  ],
+  "connections": {
+    "Webhook: Approval Change": {
+      "main": [
+        [
+          {
+            "node": "Is Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Approved?": {
+      "main": [
+        [
+          {
+            "node": "Execute Approved Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Approved Action": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "pg_net" },
+    { "name": "webhook" },
+    { "name": "approvals" }
+  ]
+}
