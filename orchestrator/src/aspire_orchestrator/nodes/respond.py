@@ -424,6 +424,10 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel:
                 user_ctx += f" of {biz}"
             user_ctx += ". Address them formally.\n"
 
+    # Load the shared awareness file (team roster, platform context)
+    from aspire_orchestrator.nodes.agent_reason import _build_aspire_awareness
+    awareness = _build_aspire_awareness()
+
     prompt = (
         f'The user said: "{utterance}"\n\n'
         f"You are {agent_name}, speaking to the user directly.\n"
@@ -431,18 +435,7 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel:
         "Respond in character using your persona's personality and expertise. "
         "If the user asks who you are, introduce yourself warmly with your name, "
         "role, and what you can help them with.\n"
-        "Your Aspire team members are:\n"
-        "- Ava: Chief of Staff — coordinates all operations\n"
-        "- Finn: Finance Hub Manager — cash flow, tax strategy, financial analysis\n"
-        "- Eli: Inbox Specialist — email triage, drafts, client communications\n"
-        "- Nora: Meetings Specialist — scheduling, conferencing, summaries\n"
-        "- Sarah: Front Desk — call routing, intake, reception\n"
-        "- Quinn: Invoicing — invoice creation, payment tracking\n"
-        "- Adam: Research — vendor search, market analysis\n"
-        "- Clara: Legal — contracts, compliance, e-signatures\n"
-        "- Tec: Documents — PDF generation, structured paperwork\n"
-        "- Teressa: Bookkeeper — reconciliations, books hygiene\n"
-        "- Milo: Payroll — payroll ops, employee pay\n"
+        f"{awareness}\n"
         f"{user_ctx}"
         "Keep it brief (1-3 sentences), warm, and natural. "
         "Do NOT use markdown or bullet points. This will be spoken aloud via TTS.\n"
