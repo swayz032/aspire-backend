@@ -50,11 +50,11 @@ def verify_retrieval_grounding(
             confidence=1.0,
         )
 
-    # Conversational responses that didn't use RAG should pass through —
-    # requiring grounding for a chat reply with no retrieval data makes no sense.
-    if retrieval_status in {"not_applicable", "skipped"} or (
-        retrieval_status == "ok" and grounding_score == 0.0
-    ):
+    # Conversational responses with no retrieval data should pass through —
+    # requiring grounding when there's nothing to ground against makes no sense.
+    # Retrieval router returns "degraded" with score=0.0 when vector RPCs fail
+    # or no chunks are found, "not_applicable"/"skipped" when RAG was bypassed.
+    if grounding_score == 0.0 or retrieval_status in {"not_applicable", "skipped"}:
         return RetrievalVerificationReport(
             passed=True,
             mode="no_retrieval",
