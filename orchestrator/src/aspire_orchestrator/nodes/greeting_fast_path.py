@@ -13,6 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from aspire_orchestrator.services.llm_cache import get_llm_cache
+
 GREETING_PATTERNS = [
     r"^(hi|hello|hey|howdy|yo|sup|good\s*(morning|afternoon|evening|day)|what'?s?\s*up|greetings)[\s!?.]*$",
     r"^(how\s*(are\s*you(\s*doing)?|you\s*doing|is\s*it\s*going))[\s!?.]*$",
@@ -66,10 +68,11 @@ def greeting_response(agent: str) -> str:
     return random.choice(responses)
 
 
-def greeting_fast_path_node(state: dict[str, Any]) -> dict[str, Any]:
+async def greeting_fast_path_node(state: dict[str, Any]) -> dict[str, Any]:
     """Graph node: If utterance is a greeting, short-circuit to respond.
 
     Sets response text + receipt directly, skipping classify/route/execute.
+    Uses LLM cache for sub-10ms repeated greetings.
     """
     utterance = state.get("utterance", "")
     agent = state.get("requested_agent") or state.get("agent") or "ava"
@@ -80,7 +83,15 @@ def greeting_fast_path_node(state: dict[str, Any]) -> dict[str, Any]:
         state["_greeting_fast_path"] = False
         return state
 
-    response_text = greeting_response(agent)
+    # Try cache first (sub-10ms)
+    cache = get_llm_cache()
+    cache_key = f"voice:greeting:{agent}"
+    cached = await cache.get(cache_key)
+    if cached:
+        response_text = cached
+    else:
+        response_text = greeting_response(agent)
+        await cache.set(cache_key, response_text, profile="voice_greeting")
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 

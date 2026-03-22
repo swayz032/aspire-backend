@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 _PROFILE_TTL: dict[str, int | None] = {
     "cheap_classifier": 3600,
     "fast_general": 300,
+    "voice_greeting": 3600,     # 1 hour — greetings don't change
+    "voice_classifier": 300,    # 5 min — intent classification is stable
     "primary_reasoner": None,  # Never cache
     "high_risk_guard": None,   # Never cache
 }
