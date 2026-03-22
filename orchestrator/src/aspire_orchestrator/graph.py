@@ -1,14 +1,17 @@
 """Aspire LangGraph Orchestrator Graph — the Single Brain (Law #1).
 
-Dual-path flow (13 nodes):
-  ACTION PATH (12 nodes):
-    Intake → Safety → Classify → Route → ParamExtract → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+Dual-path flow (14 nodes):
+  GREETING FAST PATH (3 nodes):
+    Intake → GreetingCheck → Respond (< 500ms, skips full graph)
 
-  CONVERSATION PATH (4 nodes):
-    Intake → Safety → Classify → AgentReason → Respond
+  ACTION PATH (13 nodes):
+    Intake → GreetingCheck → Safety → Classify → Route → ParamExtract → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
 
-Backwards-compatible flow (8 nodes, when utterance is not set):
-  Intake → Safety → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+  CONVERSATION PATH (5 nodes):
+    Intake → GreetingCheck → Safety → Classify → AgentReason → Respond
+
+Backwards-compatible flow (9 nodes, when utterance is not set):
+  Intake → GreetingCheck → Safety → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
 
 Conditional routing:
   - safety_gate: BLOCKED → respond (with safety denial receipt)
@@ -51,6 +54,7 @@ from aspire_orchestrator.models import (
     RiskTier,
 )
 
+from aspire_orchestrator.nodes.greeting_fast_path import greeting_fast_path_node
 from aspire_orchestrator.nodes.intake import intake_node
 from aspire_orchestrator.nodes.safety_gate import safety_gate_node
 from aspire_orchestrator.nodes.param_extract import param_extract_node
@@ -765,11 +769,12 @@ def _route_after_qa(state: OrchestratorState) -> str:
 
 
 async def build_orchestrator_graph_async() -> StateGraph:
-    """Build the Aspire orchestrator StateGraph with 13 nodes.
+    """Build the Aspire orchestrator StateGraph with 14 nodes.
 
-    Dual-path architecture:
-    - ACTION PATH: classify → route → param_extract → policy → approval → execute
-    - CONVERSATION PATH: classify → agent_reason → respond
+    Tri-path architecture:
+    - GREETING FAST PATH: intake → greeting_check → respond (< 500ms)
+    - ACTION PATH: greeting_check → safety → classify → route → param_extract → policy → approval → execute
+    - CONVERSATION PATH: greeting_check → safety → classify → agent_reason → respond
 
     Backwards compatible: if utterance is not set, classify/route/param_extract are skipped.
 
@@ -777,8 +782,9 @@ async def build_orchestrator_graph_async() -> StateGraph:
     """
     graph = StateGraph(OrchestratorState)
 
-    # Add all 13 nodes (8 existing + 3 Brain Layer + 1 param_extract + 1 agent_reason)
+    # Add all 14 nodes (8 existing + 3 Brain Layer + 1 param_extract + 1 agent_reason + 1 greeting_check)
     graph.add_node("intake", intake_node)
+    graph.add_node("greeting_check", greeting_fast_path_node)
     graph.add_node("safety_gate", safety_gate_node)
     graph.add_node("classify", classify_node)
     graph.add_node("route", route_node)
@@ -796,13 +802,24 @@ async def build_orchestrator_graph_async() -> StateGraph:
     graph.set_entry_point("intake")
 
     # Linear edges (unconditional)
-    graph.add_edge("intake", "safety_gate")
+    graph.add_edge("intake", "greeting_check")
     graph.add_edge("token_mint", "execute")
     graph.add_edge("execute", "receipt_write")
     graph.add_edge("receipt_write", "qa")  # Phase 2: receipt_write → qa (was → respond)
     graph.add_edge("respond", END)
 
     # Conditional edges (branching)
+
+    # greeting_check → respond (fast path) OR safety_gate (full pipeline)
+    def _route_after_greeting(state: OrchestratorState) -> str:
+        if state.get("_greeting_fast_path"):
+            return "respond"
+        return "safety_gate"
+
+    graph.add_conditional_edges("greeting_check", _route_after_greeting, {
+        "respond": "respond",
+        "safety_gate": "safety_gate",
+    })
 
     # safety_gate → classify (utterance) OR policy_eval (backwards compat) OR respond (blocked)
     graph.add_conditional_edges("safety_gate", _route_after_safety, {
