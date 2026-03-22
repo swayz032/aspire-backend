@@ -86,7 +86,7 @@ class TestExtractAndStore:
 
         # Verify receipt (Law #2)
         receipt = mock_receipts.call_args[0][0][0]
-        assert receipt["event_type"] == "memory.facts_extracted"
+        assert receipt["receipt_type"] == "memory.facts_extracted"
         assert receipt["facts_extracted"] == 1
 
     @pytest.mark.asyncio
