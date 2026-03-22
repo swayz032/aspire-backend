@@ -127,6 +127,23 @@ async def _app_lifespan(_: FastAPI):
     configure_logging()
 
     await warm_orchestrator_graph()
+
+    # Warm the LLM connection pool — prevents first-request cold penalty
+    try:
+        import uuid as _uuid
+        warmup_state = {
+            "utterance": "warmup",
+            "suite_id": "system",
+            "office_id": "system",
+            "actor_id": "warmup",
+            "correlation_id": f"warmup-{_uuid.uuid4()}",
+            "channel": "system",
+        }
+        await invoke_orchestrator_graph(warmup_state, thread_id="system:warmup")
+        logger.info("Startup warmup: graph + LLM connection pool ready")
+    except Exception as e:
+        logger.warning(f"Startup warmup failed (non-blocking): {e}")
+
     start_receipt_writer()
     from aspire_orchestrator.services.task_queue import start_task_queue, stop_task_queue
     start_task_queue()
