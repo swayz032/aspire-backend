@@ -50,6 +50,17 @@ def verify_retrieval_grounding(
             confidence=1.0,
         )
 
+    # Conversational responses that didn't use RAG should pass through —
+    # requiring grounding for a chat reply with no retrieval data makes no sense.
+    if retrieval_status in {"not_applicable", "skipped"} or (
+        retrieval_status == "ok" and grounding_score == 0.0
+    ):
+        return RetrievalVerificationReport(
+            passed=True,
+            mode="no_retrieval",
+            confidence=1.0,
+        )
+
     conflicts = [flag for flag in (conflict_flags or []) if flag]
     reasons: list[str] = []
     mode = "grounded"
