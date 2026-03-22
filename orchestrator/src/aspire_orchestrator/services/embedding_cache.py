@@ -130,7 +130,9 @@ class EmbeddingCache:
                 except Exception as e:
                     logger.debug("Embedding cache batch write error: %s", e)
 
-        return results  # type: ignore[return-value]
+        # Ensure no None values remain (embed_fn truncation guard)
+        safe_results = [r if r is not None else [] for r in results]
+        return safe_results
 
     async def close(self) -> None:
         if self._redis:
