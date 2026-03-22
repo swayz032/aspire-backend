@@ -19,6 +19,7 @@ Law compliance:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -242,7 +243,7 @@ def build_stream_receipt(
     Used for: stream.initiate, stream.complete, stream.error, stream.denied
     """
     now = datetime.now(timezone.utc).isoformat()
-    return {
+    receipt = {
         "id": str(uuid.uuid4()),
         "correlation_id": correlation_id,
         "suite_id": suite_id,
@@ -256,10 +257,13 @@ def build_stream_receipt(
         "reason_code": reason_code,
         "created_at": now,
         "receipt_type": "streaming",
-        "receipt_hash": "",
         "redacted_inputs": None,
         "redacted_outputs": details or {"stream_id": stream_id},
     }
+    receipt["receipt_hash"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    return receipt
 
 
 # ---------------------------------------------------------------------------

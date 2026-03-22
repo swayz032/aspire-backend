@@ -134,12 +134,20 @@ async def greeting_fast_path_node(state: dict[str, Any]) -> dict[str, Any]:
     state["_fast_path_receipt"] = {
         "id": receipt_id,
         "receipt_id": receipt_id,
-        "action": "greeting.fast_path",
-        "result": "success",
+        "receipt_type": "greeting.fast_path",
+        "action_type": "greeting",
+        "outcome": "success",
+        "reason_code": "GREETING_FAST_PATH",
         "risk_tier": "green",
         "created_at": now,
         "receipt_hash": "",
-        "payload": {
+        "actor_type": state.get("actor_type", "user"),
+        "actor_id": state.get("actor_id", ""),
+        "suite_id": state.get("suite_id", ""),
+        "office_id": state.get("office_id", ""),
+        "correlation_id": state.get("correlation_id", ""),
+        "tool_used": "greeting_fast_path_node",
+        "redacted_inputs": {
             "utterance_words": len(utterance.strip().split()),
             "agent": agent,
             "fast_path": True,

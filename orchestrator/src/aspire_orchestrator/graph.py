@@ -466,6 +466,25 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
             float(result["intent_result"].get("confidence") or 0.0),
             0.95,
         )
+        # Law #2: Receipt for money-movement denial
+        from datetime import datetime, timezone
+        money_denial_receipt = {
+            "id": str(uuid.uuid4()),
+            "receipt_type": "classification.money_movement_denied",
+            "action_type": state.get("task_type", "unknown"),
+            "risk_tier": "red",
+            "outcome": "denied",
+            "reason_code": "MONEY_MOVEMENT_UNSUPPORTED",
+            "actor_type": state.get("actor_type", "user"),
+            "actor_id": state.get("actor_id", ""),
+            "suite_id": state.get("suite_id", ""),
+            "office_id": state.get("office_id", ""),
+            "correlation_id": state.get("correlation_id", ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "tool_used": "classify_node",
+        }
+        pipeline_receipts = state.get("pipeline_receipts", []) + [money_denial_receipt]
+        result["pipeline_receipts"] = pipeline_receipts
         logger.info("Classify: unsupported money movement denied at classify gate")
         return result
 
@@ -537,6 +556,24 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
         result["error_code"] = "ROUTING_DENIED"
         result["error_message"] = f"Routing denied: {routing_plan.deny_reason}"
         result["outcome"] = "denied"
+        # Law #2: Receipt for routing denial
+        from datetime import datetime, timezone
+        deny_receipt = {
+            "id": str(uuid.uuid4()),
+            "receipt_type": "routing.denied",
+            "action_type": state.get("task_type", "unknown"),
+            "risk_tier": state.get("risk_tier", "green"),
+            "outcome": "denied",
+            "reason_code": "ROUTING_DENIED",
+            "actor_type": state.get("actor_type", "user"),
+            "actor_id": state.get("actor_id", ""),
+            "suite_id": state.get("suite_id", ""),
+            "office_id": state.get("office_id", ""),
+            "correlation_id": state.get("correlation_id", ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "tool_used": "route_node",
+        }
+        result["pipeline_receipts"] = state.get("pipeline_receipts", []) + [deny_receipt]
         return result
 
     # Set state fields used by downstream nodes
@@ -564,6 +601,24 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
         result["error"] = True
         result["error_code"] = "EMPTY_ROUTING_STEPS"
         result["error_message"] = "Routing produced no execution steps"
+        # Law #2: Receipt for empty routing steps
+        from datetime import datetime, timezone
+        empty_receipt = {
+            "id": str(uuid.uuid4()),
+            "receipt_type": "routing.empty_steps",
+            "action_type": state.get("task_type", "unknown"),
+            "risk_tier": state.get("risk_tier", "green"),
+            "outcome": "denied",
+            "reason_code": "EMPTY_ROUTING_STEPS",
+            "actor_type": state.get("actor_type", "user"),
+            "actor_id": state.get("actor_id", ""),
+            "suite_id": state.get("suite_id", ""),
+            "office_id": state.get("office_id", ""),
+            "correlation_id": state.get("correlation_id", ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "tool_used": "route_node",
+        }
+        result["pipeline_receipts"] = state.get("pipeline_receipts", []) + [empty_receipt]
 
     logger.info(
         "Route: steps=%d, risk=%s, strategy=%s",

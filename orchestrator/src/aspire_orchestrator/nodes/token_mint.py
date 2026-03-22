@@ -154,8 +154,31 @@ def token_mint_node(state: OrchestratorState) -> dict[str, Any]:
             "pipeline_receipts": existing,
         }
 
-    # Use the first allowed tool for token scoping
-    tool = allowed_tools[0] if allowed_tools else "unknown.tool"
+    # Fail closed if no allowed tools (Law #3: never guess)
+    if not allowed_tools:
+        logger.error("Token mint failed: no allowed_tools available")
+        error_receipt = {
+            "id": str(uuid.uuid4()),
+            "receipt_type": "capability_token.mint_failed",
+            "action_type": state.get("task_type", "unknown"),
+            "risk_tier": state.get("risk_tier", "yellow"),
+            "outcome": "failed",
+            "reason_code": "NO_ALLOWED_TOOLS",
+            "actor_type": state.get("actor_type", "user"),
+            "actor_id": state.get("actor_id", ""),
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "correlation_id": correlation_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "tool_used": "token_mint_node",
+        }
+        existing = list(state.get("pipeline_receipts", []))
+        return {
+            "error_code": "TOKEN_SCOPE_UNKNOWN",
+            "outcome": "failed",
+            "pipeline_receipts": existing + [error_receipt],
+        }
+    tool = allowed_tools[0]
 
     # Determine scopes from task_type
     task_type = state.get("task_type", "")
@@ -202,8 +225,31 @@ def token_mint_node(state: OrchestratorState) -> dict[str, Any]:
         tool, scopes, ttl, suite_id[:8],
     )
 
+    # Law #2: Receipt for successful token mint
+    risk_tier = state.get("risk_tier")
+    risk_tier_str = risk_tier.value if isinstance(risk_tier, RiskTier) else str(risk_tier or "yellow")
+    mint_receipt = {
+        "id": str(uuid.uuid4()),
+        "receipt_type": "capability_token.minted",
+        "action_type": state.get("task_type", "unknown"),
+        "risk_tier": risk_tier_str,
+        "outcome": "success",
+        "reason_code": "TOKEN_MINTED",
+        "capability_token_id": token["token_id"],
+        "capability_token_hash": token_hash,
+        "actor_type": state.get("actor_type", "user"),
+        "actor_id": state.get("actor_id", ""),
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "correlation_id": correlation_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "tool_used": "token_mint_node",
+    }
+    pipeline_receipts = list(state.get("pipeline_receipts", [])) + [mint_receipt]
+
     return {
         "capability_token_id": token["token_id"],
         "capability_token_hash": token_hash,
         "capability_token": token,
+        "pipeline_receipts": pipeline_receipts,
     }

@@ -208,11 +208,33 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
         from aspire_orchestrator.config.settings import settings as _settings
         if _settings.ava_safe_mode:
             logger.warning("Execute denied: safe mode active")
+            # Law #2: Receipt for safe-mode denial
+            _sm_allowed_tools = state.get("allowed_tools", [])
+            _sm_risk_tier = _resolve_risk_tier(state)
+            _sm_receipt = {
+                "id": str(uuid.uuid4()),
+                "correlation_id": state.get("correlation_id", ""),
+                "suite_id": state.get("suite_id", "unknown"),
+                "office_id": state.get("office_id", "unknown"),
+                "actor_type": "system",
+                "actor_id": "orchestrator.execute",
+                "action_type": f"execute.{state.get('task_type', 'unknown')}",
+                "risk_tier": _sm_risk_tier,
+                "tool_used": _sm_allowed_tools[0] if _sm_allowed_tools else "unknown",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "outcome": Outcome.DENIED.value,
+                "reason_code": "SAFE_MODE",
+                "receipt_type": ReceiptType.TOOL_EXECUTION.value,
+                "receipt_hash": "",
+            }
+            _sm_receipts = list(state.get("pipeline_receipts", []))
+            _sm_receipts.append(_sm_receipt)
             return {
                 "outcome": Outcome.DENIED,
                 "execution_result": {"status": "denied", "reason": "SAFE_MODE", "stub": False},
                 "error_code": "SAFE_MODE",
                 "error_message": "Safe mode active — all tool execution disabled",
+                "pipeline_receipts": _sm_receipts,
             }
     except Exception as e:
         logger.error("Settings unavailable in execute_node — failing closed: %s", e)

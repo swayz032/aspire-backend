@@ -82,8 +82,12 @@ def receipt_write_node(state: OrchestratorState) -> dict[str, Any]:
 
         # Phase 1: Persist to in-memory receipt store
         # Phase 2+: Moves to Supabase (atomic INSERT under transaction lock)
-        from aspire_orchestrator.services.receipt_store import store_receipts
-        store_receipts(pipeline_receipts)
+        from aspire_orchestrator.services.receipt_store import store_receipts, store_receipts_strict
+        risk_tier = state.get("risk_tier", "green")
+        if risk_tier in ("yellow", "red", "YELLOW", "RED"):
+            store_receipts_strict(pipeline_receipts)
+        else:
+            store_receipts(pipeline_receipts)
 
         final_hash = pipeline_receipts[-1].get("receipt_hash", "")[:16]
         logger.info(

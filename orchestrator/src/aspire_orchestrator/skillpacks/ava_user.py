@@ -63,7 +63,7 @@ class EnhancedAvaUser(AgenticSkillPack):
                 'suite_id': ctx.suite_id,
                 'office_id': ctx.office_id,
                 'current_agent': 'ava',
-                'allow_internal_routing': bool(params.get('allow_internal_routing', False)),
+                'allow_internal_routing': False,  # Server-side only — never from user params
             },
         )
         receipt = self.build_receipt(
