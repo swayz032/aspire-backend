@@ -21,6 +21,7 @@ from typing import Any
 from openai import AsyncOpenAI, OpenAI
 
 from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
+from aspire_orchestrator.services.llm_cache import LLMCache, get_llm_cache
 from aspire_orchestrator.services.metrics import METRICS
 
 logger = logging.getLogger(__name__)
@@ -473,7 +474,16 @@ async def generate_text_async(
     effective_top_k = None if reasoning_model else top_k
 
     # --- LLM cache check (Phase 5A) ---
-    # ... (keep existing cache logic)
+    cache = get_llm_cache()
+    cache_key = LLMCache.cache_key(resolved_model, "", str(normalized))
+    cached_result = await cache.get(cache_key)
+    if cached_result is not None:
+        METRICS.record_llm_request(
+            endpoint="cache",
+            resolved_model=resolved_model,
+            outcome="hit",
+        )
+        return cached_result
 
     async def _via_responses(call_model: str) -> tuple[str, Any]:
         client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
