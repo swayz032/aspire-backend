@@ -64,6 +64,8 @@ def _is_truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+
 _ASPIRE_ENV = (os.getenv("ASPIRE_ENV") or "").strip().lower()
 _ALLOW_LOCAL_DOTENV = _is_truthy(os.getenv("ASPIRE_ENABLE_LOCAL_DOTENV"))
 if _ALLOW_LOCAL_DOTENV and _ASPIRE_ENV not in {"prod", "production"}:
@@ -651,6 +653,21 @@ async def stream_agent_activity(
                 "icon": "done",
                 "timestamp": int(time.time() * 1000),
             })
+
+        # Emit sentence-level partial_response events for streaming TTS
+        response_text = response.get("text", "") if isinstance(response, dict) else ""
+        if response_text:
+            sentences = _SENTENCE_SPLIT_RE.split(response_text)
+            sentences = [s.strip() for s in sentences if s.strip()]
+            for i, sentence in enumerate(sentences):
+                partial_event = {
+                    "type": "partial_response",
+                    "text": sentence,
+                    "index": i,
+                    "is_last": i == len(sentences) - 1,
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }
+                yield format_sse_event(partial_event)
 
         yield format_sse_event({"type": "response", "data": response})
 
