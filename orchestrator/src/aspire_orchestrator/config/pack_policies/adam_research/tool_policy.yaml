@@ -21,6 +21,7 @@ tool_policy:
 
 # tool: brave.search
 # tool: tavily.search
+# tool: search.web
 # tool: google_places.search
 # tool: tomtom.search
 # tool: here.search

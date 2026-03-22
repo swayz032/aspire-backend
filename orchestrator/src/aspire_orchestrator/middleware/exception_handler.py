@@ -30,14 +30,19 @@ _INTERNAL_ERROR_CODE = "INTERNAL_SERVER_ERROR"
 class GlobalExceptionMiddleware(BaseHTTPMiddleware):
     """Catch unhandled exceptions, create incident + receipt, return sanitized 500."""
 
+    # Exception types that indicate malformed client input (return 400, not 500)
+    _CLIENT_ERROR_TYPES = (RecursionError, UnicodeDecodeError)
+
     async def dispatch(self, request: Request, call_next) -> Response:
         try:
             response = await call_next(request)
             return response
+        except self._CLIENT_ERROR_TYPES as exc:
+            return await self._handle_exception(request, exc, status_code=400)
         except Exception as exc:
             return await self._handle_exception(request, exc)
 
-    async def _handle_exception(self, request: Request, exc: Exception) -> JSONResponse:
+    async def _handle_exception(self, request: Request, exc: Exception, *, status_code: int = 500) -> JSONResponse:
         """Create incident, store receipt, return safe error response."""
         # Use correlation ID from contextvar (set by CorrelationIdMiddleware)
         # Fall back to header/uuid if middleware hasn't run yet
@@ -136,11 +141,17 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
                 logger.error("Catastrophic fallback failure: %s", e)
 
         # Return sanitized response (Law #9: never expose internals)
+        error_code = "MALFORMED_REQUEST" if status_code == 400 else _INTERNAL_ERROR_CODE
+        error_msg = (
+            "Request rejected: payload is malformed or exceeds depth limits."
+            if status_code == 400
+            else "An internal error occurred. The incident has been logged."
+        )
         return JSONResponse(
-            status_code=500,
+            status_code=status_code,
             content={
-                "error": _INTERNAL_ERROR_CODE,
-                "message": "An internal error occurred. The incident has been logged.",
+                "error": error_code,
+                "message": error_msg,
                 "correlation_id": correlation_id,
                 "incident_id": incident_id,
             },

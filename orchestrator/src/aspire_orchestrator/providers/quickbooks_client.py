@@ -57,6 +57,15 @@ _QBO_PRODUCTION_URL = "https://quickbooks.api.intuit.com/v3"
 # QuickBooks OAuth2 token endpoint
 _QBO_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
+# QBO AccountType allowlist — prevents query injection (Law #9)
+_VALID_QBO_ACCOUNT_TYPES = frozenset({
+    "Bank", "Other Current Asset", "Fixed Asset", "Other Asset",
+    "Accounts Receivable", "Equity", "Expense", "Other Expense",
+    "Cost of Goods Sold", "Accounts Payable", "Credit Card",
+    "Long Term Liability", "Other Current Liability", "Income",
+    "Other Income",
+})
+
 
 def _get_base_url() -> str:
     """Resolve QuickBooks base URL from settings (default: sandbox)."""
@@ -427,6 +436,24 @@ async def execute_qbo_read_accounts(
 
     account_type = payload.get("account_type", "")
     if account_type:
+        if account_type not in _VALID_QBO_ACCOUNT_TYPES:
+            receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id="qbo.read_accounts",
+                risk_tier=risk_tier,
+                outcome=Outcome.DENIED,
+                reason_code="INVALID_ACCOUNT_TYPE",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.DENIED,
+                tool_id="qbo.read_accounts",
+                error=f"Invalid account_type: {account_type!r}. Must be one of: {sorted(_VALID_QBO_ACCOUNT_TYPES)}",
+                receipt_data=receipt,
+            )
         query = f"SELECT * FROM Account WHERE AccountType = '{account_type}'"
     else:
         query = "SELECT * FROM Account"

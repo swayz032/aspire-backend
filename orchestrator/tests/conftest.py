@@ -27,8 +27,8 @@ def _reset_rate_limiter():
     """Reset rate limiter state between tests to prevent 429 accumulation across modules.
 
     Without this, test modules sharing a TestClient accumulate requests against
-    the sliding window (100/60s limit), causing later tests to get 429 instead
-    of their expected responses.
+    the sliding window (default 500/60s, CI uses ASPIRE_RATE_LIMIT=10000),
+    causing later tests to get 429 instead of their expected responses.
     """
     import aspire_orchestrator.middleware.rate_limiter as rl
 

@@ -29,6 +29,19 @@ from aspire_orchestrator.models import (
 )
 from aspire_orchestrator.state import OrchestratorState
 
+_MAX_PAYLOAD_DEPTH = 20
+
+
+def _check_depth(obj: Any, depth: int = 0) -> bool:
+    """Return True if obj exceeds _MAX_PAYLOAD_DEPTH nesting."""
+    if depth > _MAX_PAYLOAD_DEPTH:
+        return True
+    if isinstance(obj, dict):
+        return any(_check_depth(v, depth + 1) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_check_depth(v, depth + 1) for v in obj)
+    return False
+
 
 def _make_receipt(
     *,
@@ -84,6 +97,29 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
             "correlation_id": correlation_id,
             "error_code": AspireErrorCode.SCHEMA_VALIDATION_FAILED.value,
             "error_message": "No request provided",
+            "outcome": Outcome.DENIED,
+            "safety_passed": False,
+            "pipeline_receipts": [receipt],
+            "receipt_ids": [],
+        }
+
+    # Reject excessively nested payloads (defense-in-depth, Law #3)
+    if isinstance(raw_request, dict) and _check_depth(raw_request):
+        correlation_id = raw_request.get("correlation_id") or str(uuid.uuid4())
+        receipt = _make_receipt(
+            correlation_id=correlation_id,
+            suite_id=raw_request.get("suite_id", "unknown"),
+            office_id=raw_request.get("office_id", "unknown"),
+            actor_type=ActorType.SYSTEM.value,
+            actor_id="orchestrator",
+            action_type="intake.validate",
+            outcome=Outcome.DENIED.value,
+            reason_code=AspireErrorCode.SCHEMA_VALIDATION_FAILED.value,
+        )
+        return {
+            "correlation_id": correlation_id,
+            "error_code": AspireErrorCode.SCHEMA_VALIDATION_FAILED.value,
+            "error_message": f"Payload exceeds maximum nesting depth ({_MAX_PAYLOAD_DEPTH})",
             "outcome": Outcome.DENIED,
             "safety_passed": False,
             "pipeline_receipts": [receipt],

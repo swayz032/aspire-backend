@@ -181,9 +181,8 @@ maybe_add_chaos(app)
 app.add_middleware(GlobalExceptionMiddleware)
 
 # Rate Limiting — per-tenant sliding window (B-H7, Enterprise Remediation Wave 4)
-_rate_limit = int(os.environ.get("ASPIRE_RATE_LIMIT", "100"))
-_rate_window = int(os.environ.get("ASPIRE_RATE_WINDOW_SECONDS", "60"))
-app.add_middleware(RateLimitMiddleware, limit=_rate_limit, window_seconds=_rate_window)
+# Defaults live in rate_limiter.py (500/60s). Override via ASPIRE_RATE_LIMIT env var.
+app.add_middleware(RateLimitMiddleware)
 
 # Correlation ID — extracts/generates X-Correlation-Id, propagates via contextvars
 app.add_middleware(CorrelationIdMiddleware)

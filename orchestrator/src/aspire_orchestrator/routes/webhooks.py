@@ -118,11 +118,11 @@ async def pandadoc_webhook(request: Request) -> JSONResponse:
 
     # M11: Signature verification (Law #3: fail-closed)
     pandadoc_signature = request.headers.get("X-PandaDoc-Signature")
-    webhook_key = os.environ.get("PANDADOC_WEBHOOK_KEY", "")
+    webhook_key = os.environ.get("ASPIRE_PANDADOC_WEBHOOK_SECRET", "")
 
     # Law #3: No secret configured = deny (fail-closed, not fail-open)
     if not webhook_key:
-        logger.warning("PandaDoc webhook rejected: PANDADOC_WEBHOOK_KEY not configured")
+        logger.warning("PandaDoc webhook rejected: ASPIRE_PANDADOC_WEBHOOK_SECRET not configured")
         return JSONResponse(
             status_code=401,
             content={"status": "rejected", "reason": "webhook_secret_not_configured"},
