@@ -16,6 +16,8 @@ Law compliance:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 
@@ -135,6 +137,17 @@ async def pandadoc_webhook(request: Request) -> JSONResponse:
             content={"status": "rejected", "reason": "missing_signature"},
         )
 
+    # Verify HMAC-SHA256 signature (Law #3: fail-closed on mismatch)
+    expected_sig = hmac.new(
+        webhook_key.encode(), raw_body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_sig, pandadoc_signature):
+        logger.warning("PandaDoc webhook rejected: signature mismatch")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "rejected", "reason": "signature_verification_failed"},
+        )
+
     try:
         import json
         body = json.loads(raw_body)
@@ -197,6 +210,36 @@ async def twilio_webhook(request: Request) -> JSONResponse:
             status_code=401,
             content={"status": "rejected", "reason": "missing_signature"},
         )
+
+    # Verify Twilio request signature (Law #3: fail-closed on mismatch)
+    try:
+        from twilio.request_validator import RequestValidator
+        validator = RequestValidator(auth_token)
+        request_url = str(request.url)
+        form_dict = {str(k): str(v) for k, v in form_data.items()}
+        if not validator.validate(request_url, form_dict, twilio_signature):
+            logger.warning("Twilio webhook rejected: signature verification failed")
+            return JSONResponse(
+                status_code=401,
+                content={"status": "rejected", "reason": "signature_verification_failed"},
+            )
+    except ImportError:
+        # Twilio SDK not installed — compute HMAC manually as fallback
+        sorted_params = "".join(
+            f"{k}{form_data.get(k, '')}"
+            for k in sorted(form_data.keys())
+        )
+        data_to_sign = str(request.url) + sorted_params
+        import base64
+        expected_sig = base64.b64encode(
+            hmac.new(auth_token.encode(), data_to_sign.encode(), hashlib.sha1).digest()
+        ).decode()
+        if not hmac.compare_digest(expected_sig, twilio_signature):
+            logger.warning("Twilio webhook rejected: signature verification failed (manual)")
+            return JSONResponse(
+                status_code=401,
+                content={"status": "rejected", "reason": "signature_verification_failed"},
+            )
 
     try:
         call_sid = form_data.get("CallSid", form_data.get("MessageSid", "unknown"))
