@@ -56,6 +56,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aspire_test
           REDIS_URL: redis://localhost:6379
           ENVIRONMENT: test
+          ASPIRE_RATE_LIMIT: "10000"
         run: |
           echo "EvilBot: Running evil + RLS isolation tests..."
           python -m pytest tests/ -k "evil or rls or isolation or tenant" -q --tb=short --timeout=60 2>&1
@@ -67,6 +68,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aspire_test
           REDIS_URL: redis://localhost:6379
           ENVIRONMENT: test
+          ASPIRE_RATE_LIMIT: "10000"
         run: |
           echo "EvilBot: Running security tests..."
           python -m pytest tests/ -k "security or auth or token or capability" -q --tb=short --timeout=60 2>&1

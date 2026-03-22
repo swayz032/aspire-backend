@@ -69,6 +69,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aspire_test
           REDIS_URL: redis://localhost:6379
           ENVIRONMENT: test
+          ASPIRE_RATE_LIMIT: "10000"
         run: |
           python -m pytest tests/ -q --tb=short -x --timeout=60 2>&1 | tail -30
           echo "Exit code: $?"
