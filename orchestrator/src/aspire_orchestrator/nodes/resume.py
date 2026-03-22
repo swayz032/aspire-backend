@@ -320,7 +320,7 @@ def _error(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "outcome": Outcome.DENIED.value,
         "reason_code": code,
-        "receipt_type": ReceiptType.TOOL_EXECUTION.value,
+        "receipt_type": "resume.validation_denied",
         "receipt_hash": "",
     }
     receipts.append(receipt)

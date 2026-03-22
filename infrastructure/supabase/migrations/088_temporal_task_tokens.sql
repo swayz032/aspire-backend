@@ -42,7 +42,7 @@ CREATE POLICY temporal_task_tokens_tenant_select
     ON public.temporal_task_tokens
     FOR SELECT
     TO authenticated
-    USING (suite_id = (current_setting('app.suite_id', true))::TEXT);
+    USING (suite_id = (current_setting('app.current_suite_id', true))::TEXT);
 
 -- Cleanup function for expired tokens (called by pg_cron or scheduled workflow)
 CREATE OR REPLACE FUNCTION public.cleanup_expired_task_tokens()

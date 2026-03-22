@@ -42,6 +42,12 @@ def _base_receipt(
         "risk_tier": "green",
         "outcome": "success",
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "action_type": receipt_type,
+        "tool_used": "deployment_system",
+        "receipt_hash": "",
+        "reason_code": "EXECUTED",
+        "capability_token_id": None,
+        "redacted_inputs": {},
     }
 
 

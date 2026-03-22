@@ -216,8 +216,8 @@ def _build_mode_change_receipt(
     return {
         "id": str(uuid.uuid4()),
         "correlation_id": str(uuid.uuid4()),
-        "suite_id": "system",
-        "office_id": "system",
+        "suite_id": "00000000-0000-0000-0000-000000000000",
+        "office_id": "00000000-0000-0000-0000-000000000000",
         "actor_type": "system",
         "actor_id": "kill_switch",
         "action_type": "kill_switch.mode_changed",

@@ -5,7 +5,7 @@ Emits receipts for role-based access control events:
   - rbac.role.revoked
   - rbac.permission.escalated
 
-All RBAC receipts are GREEN risk tier (ops events, no user-facing actions).
+RBAC receipts are YELLOW risk tier (permission changes are state-changing).
 """
 
 from __future__ import annotations
@@ -36,9 +36,15 @@ def _base_receipt(
         "correlation_id": str(uuid.uuid4()),
         "actor_type": "system",
         "actor_id": "rbac_system",
-        "risk_tier": "green",
+        "risk_tier": "yellow",
         "outcome": "success",
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "action_type": receipt_type,
+        "tool_used": "rbac_system",
+        "receipt_hash": "",
+        "reason_code": "EXECUTED",
+        "capability_token_id": None,
+        "redacted_inputs": {},
     }
 
 
