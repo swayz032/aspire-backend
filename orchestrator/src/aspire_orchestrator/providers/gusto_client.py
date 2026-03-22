@@ -25,6 +25,7 @@ Per-suite tokens stored in finance_connections; access tokens cached in memory.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from aspire_orchestrator.config.settings import settings
@@ -40,6 +41,16 @@ from aspire_orchestrator.providers.oauth2_manager import OAuth2Config, OAuth2Man
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
 logger = logging.getLogger(__name__)
+
+
+_PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,50}$")
+
+
+def _validate_provider_id(value: str, field_name: str) -> str:
+    """Validate provider IDs to prevent path traversal attacks (Law #9)."""
+    if not _PROVIDER_ID_RE.match(value):
+        raise ValueError(f"Invalid {field_name}: must be alphanumeric/dash/underscore, max 50 chars")
+    return value
 
 
 def _make_oauth2_config() -> OAuth2Config:
@@ -185,6 +196,8 @@ async def execute_gusto_read_company(
             receipt_data=receipt,
         )
 
+    _validate_provider_id(company_id, "company_id")
+
     response = await client._request(
         ProviderRequest(
             method="GET",
@@ -277,6 +290,8 @@ async def execute_gusto_read_payrolls(
             error="Missing required parameter: company_id",
             receipt_data=receipt,
         )
+
+    _validate_provider_id(company_id, "company_id")
 
     query_params: dict[str, str] = {}
     if payload.get("start_date"):
@@ -400,6 +415,9 @@ async def execute_gusto_payroll_run(
             error=f"Missing required parameters: {', '.join(missing)}",
             receipt_data=receipt,
         )
+
+    _validate_provider_id(company_id, "company_id")
+    _validate_provider_id(payroll_id, "payroll_id")
 
     response = await client._request(
         ProviderRequest(

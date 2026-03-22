@@ -6,15 +6,57 @@ RLS-scoped by suite_id — tenant isolation is enforced at the DB layer (Law #6)
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from aspire_orchestrator.models import Outcome
+from aspire_orchestrator.models import Outcome, ReceiptType
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
 logger = logging.getLogger(__name__)
+
+
+def _make_calendar_receipt(
+    *,
+    tool_id: str,
+    suite_id: str,
+    office_id: str,
+    correlation_id: str,
+    outcome: str,
+    reason_code: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Build a full receipt for calendar operations (Law #2)."""
+    now = datetime.now(timezone.utc).isoformat()
+    inputs_canonical = json.dumps(inputs or {}, sort_keys=True, default=str)
+    receipt_hash = hashlib.sha256(inputs_canonical.encode()).hexdigest()
+    return {
+        "id": str(uuid.uuid4()),
+        "correlation_id": correlation_id,
+        "suite_id": suite_id,
+        "office_id": office_id or "",
+        "actor_type": "system",
+        "actor_id": f"provider.calendar",
+        "action_type": f"execute.{tool_id}",
+        "risk_tier": risk_tier,
+        "tool_used": tool_id,
+        "capability_token_id": capability_token_id,
+        "capability_token_hash": capability_token_hash,
+        "created_at": now,
+        "executed_at": now,
+        "outcome": outcome,
+        "reason_code": reason_code,
+        "receipt_type": ReceiptType.TOOL_EXECUTION.value,
+        "receipt_hash": f"sha256:{receipt_hash}",
+        "timestamp": now,
+    }
 
 
 def _validate_uuid(value: str, field_name: str) -> None:
@@ -49,13 +91,12 @@ async def execute_calendar_event_create(
             data["participants"] = payload["participants"]
 
         result = await supabase_insert("calendar_events", data)
-        receipt = {
-            "tool_used": tool_id,
-            "suite_id": suite_id,
-            "correlation_id": correlation_id,
-            "outcome": "success",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        receipt = _make_calendar_receipt(
+            tool_id=tool_id, suite_id=suite_id, office_id=office_id,
+            correlation_id=correlation_id, outcome="success",
+            reason_code="EXECUTED", risk_tier="yellow",
+            inputs={"action": "calendar.event.create", "title": data.get("title", "")},
+        )
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS, tool_id=tool_id,
             data=result if isinstance(result, dict) else {"created": True, "event_id": data["id"]},
@@ -63,14 +104,12 @@ async def execute_calendar_event_create(
         )
     except Exception as e:
         logger.error("Calendar event create failed: %s", e)
-        receipt = {
-            "tool_used": tool_id,
-            "suite_id": suite_id,
-            "correlation_id": correlation_id,
-            "outcome": "failed",
-            "error": str(e),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        receipt = _make_calendar_receipt(
+            tool_id=tool_id, suite_id=suite_id, office_id=office_id,
+            correlation_id=correlation_id, outcome="failed",
+            reason_code="SUPABASE_ERROR", risk_tier="yellow",
+            error=str(e),
+        )
         return ToolExecutionResult(
             outcome=Outcome.FAILED, tool_id=tool_id,
             error=str(e), receipt_data=receipt,
@@ -89,13 +128,12 @@ async def execute_calendar_event_list(
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         filters = f"suite_id=eq.{suite_id}&start_time=gte.{today}T00:00:00&start_time=lte.{today}T23:59:59&order=start_time.asc"
         result = await supabase_select("calendar_events", filters)
-        receipt = {
-            "tool_used": tool_id,
-            "suite_id": suite_id,
-            "correlation_id": correlation_id,
-            "outcome": "success",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        receipt = _make_calendar_receipt(
+            tool_id=tool_id, suite_id=suite_id, office_id="",
+            correlation_id=correlation_id, outcome="success",
+            reason_code="EXECUTED", risk_tier="green",
+            inputs={"action": "calendar.event.list", "suite_id": suite_id},
+        )
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS, tool_id=tool_id,
             data={"events": result} if isinstance(result, list) else {"events": []},
@@ -103,14 +141,12 @@ async def execute_calendar_event_list(
         )
     except Exception as e:
         logger.error("Calendar event list failed: %s", e)
-        receipt = {
-            "tool_used": tool_id,
-            "suite_id": suite_id,
-            "correlation_id": correlation_id,
-            "outcome": "failed",
-            "error": str(e),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        receipt = _make_calendar_receipt(
+            tool_id=tool_id, suite_id=suite_id, office_id="",
+            correlation_id=correlation_id, outcome="failed",
+            reason_code="SUPABASE_ERROR", risk_tier="green",
+            error=str(e),
+        )
         return ToolExecutionResult(
             outcome=Outcome.FAILED, tool_id=tool_id,
             error=str(e), receipt_data=receipt,
@@ -129,14 +165,12 @@ async def execute_calendar_event_complete(
         return ToolExecutionResult(
             outcome=Outcome.FAILED, tool_id=tool_id,
             error="event_id required",
-            receipt_data={
-                "tool_used": tool_id,
-                "suite_id": suite_id,
-                "correlation_id": correlation_id,
-                "outcome": "failed",
-                "error": "event_id required",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
+            receipt_data=_make_calendar_receipt(
+                tool_id=tool_id, suite_id=suite_id, office_id="",
+                correlation_id=correlation_id, outcome="failed",
+                reason_code="INPUT_MISSING_REQUIRED", risk_tier="yellow",
+                error="event_id required",
+            ),
         )
 
     try:
@@ -147,13 +181,12 @@ async def execute_calendar_event_complete(
             f"id=eq.{event_id}&suite_id=eq.{suite_id}",
             {"status": "completed"},
         )
-        receipt = {
-            "tool_used": tool_id,
-            "suite_id": suite_id,
-            "correlation_id": correlation_id,
-            "outcome": "success",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        receipt = _make_calendar_receipt(
+            tool_id=tool_id, suite_id=suite_id, office_id="",
+            correlation_id=correlation_id, outcome="success",
+            reason_code="EXECUTED", risk_tier="yellow",
+            inputs={"action": "calendar.event.complete", "event_id": event_id},
+        )
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS, tool_id=tool_id,
             data=result if isinstance(result, dict) else {"completed": True},
@@ -161,14 +194,12 @@ async def execute_calendar_event_complete(
         )
     except Exception as e:
         logger.error("Calendar event complete failed: %s", e)
-        receipt = {
-            "tool_used": tool_id,
-            "suite_id": suite_id,
-            "correlation_id": correlation_id,
-            "outcome": "failed",
-            "error": str(e),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        receipt = _make_calendar_receipt(
+            tool_id=tool_id, suite_id=suite_id, office_id="",
+            correlation_id=correlation_id, outcome="failed",
+            reason_code="SUPABASE_ERROR", risk_tier="yellow",
+            error=str(e),
+        )
         return ToolExecutionResult(
             outcome=Outcome.FAILED, tool_id=tool_id,
             error=str(e), receipt_data=receipt,

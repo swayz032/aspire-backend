@@ -30,6 +30,7 @@ QuickBooks API model:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -65,6 +66,16 @@ _VALID_QBO_ACCOUNT_TYPES = frozenset({
     "Long Term Liability", "Other Current Liability", "Income",
     "Other Income",
 })
+
+
+_PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,50}$")
+
+
+def _validate_provider_id(value: str, field_name: str) -> str:
+    """Validate provider IDs to prevent path traversal attacks (Law #9)."""
+    if not _PROVIDER_ID_RE.match(value):
+        raise ValueError(f"Invalid {field_name}: must be alphanumeric/dash/underscore, max 50 chars")
+    return value
 
 
 def _get_base_url() -> str:
@@ -212,6 +223,8 @@ async def execute_qbo_read_company(
             receipt_data=receipt,
         )
 
+    _validate_provider_id(realm_id, "realm_id")
+
     response = await client._request(
         ProviderRequest(
             method="GET",
@@ -308,6 +321,8 @@ async def execute_qbo_read_transactions(
             error="Missing required parameters: realm_id, start_date, end_date",
             receipt_data=receipt,
         )
+
+    _validate_provider_id(realm_id, "realm_id")
 
     # S3-M6: Validate limit is integer (SQL injection prevention)
     try:
@@ -433,6 +448,8 @@ async def execute_qbo_read_accounts(
             error="Missing required parameter: realm_id",
             receipt_data=receipt,
         )
+
+    _validate_provider_id(realm_id, "realm_id")
 
     account_type = payload.get("account_type", "")
     if account_type:
@@ -572,6 +589,8 @@ async def execute_qbo_journal_entry_create(
             error="Missing required parameters: realm_id, lines",
             receipt_data=receipt,
         )
+
+    _validate_provider_id(realm_id, "realm_id")
 
     # Validate lines have required fields
     for i, line in enumerate(lines):

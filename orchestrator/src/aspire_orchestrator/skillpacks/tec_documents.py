@@ -83,6 +83,8 @@ class TecContext:
     suite_id: str
     office_id: str
     correlation_id: str
+    capability_token_id: str | None = None
+    capability_token_hash: str | None = None
 
 
 # =============================================================================
@@ -550,6 +552,8 @@ class TecDocumentsSkillPack:
                 suite_id=context.suite_id,
                 office_id=context.office_id,
                 risk_tier=risk_tier,
+                capability_token_id=context.capability_token_id,
+                capability_token_hash=context.capability_token_hash,
             )
 
         # Real execution path
@@ -562,6 +566,8 @@ class TecDocumentsSkillPack:
             suite_id=context.suite_id,
             office_id=context.office_id,
             risk_tier=risk_tier,
+            capability_token_id=context.capability_token_id,
+            capability_token_hash=context.capability_token_hash,
         )
 
 

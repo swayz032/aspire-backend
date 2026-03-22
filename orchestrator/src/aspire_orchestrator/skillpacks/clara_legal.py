@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from aspire_orchestrator.models import Outcome
-from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 from aspire_orchestrator.services.tool_executor import execute_tool
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
@@ -1049,6 +1048,10 @@ async def _intelligent_compliance_assessment(
             "recommended_actions (array of strings), "
             "risk_score (integer 0-100)."
         )
+
+        # Local import to avoid module-level OpenAI coupling; legacy pattern —
+        # new code should use execute_with_llm() via EnhancedClaraLegal.
+        from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 
         content = await generate_text_async(
             model=model,

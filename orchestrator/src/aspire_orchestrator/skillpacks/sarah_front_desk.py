@@ -256,30 +256,14 @@ class SarahFrontDeskSkillPack:
 
         # YELLOW tier: return approval_required with binding fields (Law #4)
         # The orchestrator approval flow must confirm before execution proceeds.
+        # Execution happens AFTER user approval — not before.
         binding_fields = {"call_id": call_id, "destination": destination}
         binding_hash = _compute_inputs_hash(binding_fields)
 
-        # Execute transfer via tool_executor (Law #7)
-        result: ToolExecutionResult = await execute_tool(
-            tool_id="twilio.call.create",
-            payload={
-                "call_id": call_id,
-                "destination": destination,
-                "action": "transfer",
-            },
-            correlation_id=context.correlation_id,
-            suite_id=context.suite_id,
-            office_id=context.office_id,
-            risk_tier="yellow",
-            capability_token_id=context.capability_token_id,
-            capability_token_hash=context.capability_token_hash,
-        )
-
-        status = "ok" if result.outcome == Outcome.SUCCESS else "failed"
         receipt = _emit_receipt(
             ctx=context,
             event_type="call.transfer",
-            status=status,
+            status="pending_approval",
             risk_tier="yellow",
             inputs={
                 "action": "call.transfer",
@@ -287,7 +271,6 @@ class SarahFrontDeskSkillPack:
                 "destination": destination,
             },
             metadata={
-                "tool_id": result.tool_id,
                 "binding_hash": binding_hash,
             },
             approval_evidence={
@@ -297,10 +280,16 @@ class SarahFrontDeskSkillPack:
         )
 
         return SkillPackResult(
-            success=result.outcome == Outcome.SUCCESS,
-            data=result.data,
+            success=True,
+            data={
+                "call_id": call_id,
+                "destination": destination,
+                "tool_id": "twilio.call.create",
+                "risk_tier": "yellow",
+                "binding_hash": binding_hash,
+            },
             receipt=receipt,
-            error=result.error,
+            error=None,
             approval_required=True,
         )
 

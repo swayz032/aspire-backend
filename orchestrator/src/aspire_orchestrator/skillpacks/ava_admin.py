@@ -43,7 +43,7 @@ class AvaAdminSkillPack(AgenticSkillPack):
         incident_id = str(params.get('incident_id', '')).strip()
         if not incident_id:
             return AgentResult(success=False, error='Missing required parameter: incident_id')
-        return await self._desk.dispatch_council(ctx, incident_id=incident_id)
+        return await self._desk.dispatch_council(ctx, incident_id=incident_id, evidence_pack={})
 
     async def admin_ops_learning_entry_create(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         incident_id = str(params.get('incident_id', '')).strip()
@@ -52,4 +52,4 @@ class AvaAdminSkillPack(AgenticSkillPack):
             return AgentResult(success=False, error='Missing required parameter: incident_id')
         if not lesson:
             return AgentResult(success=False, error='Missing required parameter: lesson')
-        return await self._desk.create_learning_entry(ctx, incident_id=incident_id, lesson=lesson)
+        return await self._desk.create_learning_entry(ctx, incident_id=incident_id, entry_type="lesson", content={"lesson": lesson})

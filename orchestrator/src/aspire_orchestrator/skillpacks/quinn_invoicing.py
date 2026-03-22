@@ -763,6 +763,7 @@ class EnhancedQuinnInvoicing(AgenticSkillPack):
                 inputs={"action": "invoice.draft_plan"},
             )
             receipt["policy"] = {"decision": "deny", "reasons": ["empty_parsed_data"]}
+            await self.emit_receipt(receipt)
             return AgentResult(success=False, data={}, receipt=receipt)
 
         return await self.execute_with_llm(

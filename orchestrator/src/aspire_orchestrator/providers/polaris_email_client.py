@@ -26,7 +26,6 @@ from aspire_orchestrator.models import Outcome, ReceiptType
 from aspire_orchestrator.services.domain_rail_client import (
     DomainRailClientError,
     DomainRailResponse,
-    _build_s2s_headers,
     _call_domain_rail,
 )
 from aspire_orchestrator.services.tool_types import ToolExecutionResult

@@ -543,12 +543,17 @@ class BaseProviderClient(ABC):
                     )
                 except Exception:
                     pass
+                sanitized_msg = f"{type(e).__name__}: Provider operation failed"
+                logger.error(
+                    "Provider %s unexpected error: %s: %s",
+                    self.provider_id, type(e).__name__, str(e)[:500],
+                )
                 return ProviderResponse(
                     status_code=500,
-                    body={"error": "PROVIDER_ERROR", "message": str(e)[:200]},
+                    body={"error": "PROVIDER_ERROR", "message": sanitized_msg},
                     success=False,
                     error_code=InternalErrorCode.SERVER_INTERNAL_ERROR,
-                    error_message=str(e)[:200],
+                    error_message=sanitized_msg,
                 )
 
         # Exhausted retries — log final failure (Wave 6 fix)

@@ -208,16 +208,18 @@ class OAuth2Manager:
 
             if response.status_code != 200:
                 error_body = response.json() if response.content else {}
-                error_msg = error_body.get("error_description", error_body.get("error", f"HTTP {response.status_code}"))
+                # Law #9: Log only the error code, never error_description
+                # (may contain PII, tokens, or sensitive provider details).
+                error_code_str = error_body.get("error", f"HTTP {response.status_code}")
                 logger.error(
-                    "OAuth2 refresh failed for %s suite=%s: %s",
+                    "OAuth2 refresh failed for %s suite=%s: error=%s",
                     self._config.provider_id,
                     suite_id[:8] if len(suite_id) > 8 else suite_id,
-                    error_msg,
+                    error_code_str,
                 )
                 raise ProviderError(
                     code=InternalErrorCode.AUTH_REFRESH_FAILED,
-                    message=f"OAuth2 refresh failed: {error_msg}",
+                    message=f"OAuth2 refresh failed: {error_code_str}",
                     provider_id=self._config.provider_id,
                     status_code=response.status_code,
                 )

@@ -41,6 +41,9 @@ class LiveKitClient(BaseProviderClient):
     async def _authenticate_headers(
         self, request: ProviderRequest
     ) -> dict[str, str]:
+        import time as _time
+        import jwt
+
         api_key = settings.livekit_api_key
         api_secret = settings.livekit_api_secret
         if not api_key or not api_secret:
@@ -49,7 +52,24 @@ class LiveKitClient(BaseProviderClient):
                 message="LiveKit API key/secret not configured (ASPIRE_LIVEKIT_API_KEY, ASPIRE_LIVEKIT_API_SECRET)",
                 provider_id=self.provider_id,
             )
-        return {"Authorization": f"Bearer {api_key}"}
+        # LiveKit requires a JWT signed with api_key (issuer) + api_secret
+        now = _time.time()
+        token = jwt.encode(
+            {
+                "iss": api_key,
+                "sub": api_key,
+                "exp": int(now) + 600,
+                "nbf": int(now),
+                "video": {
+                    "roomCreate": True,
+                    "roomList": True,
+                    "roomAdmin": True,
+                },
+            },
+            api_secret,
+            algorithm="HS256",
+        )
+        return {"Authorization": f"Bearer {token}"}
 
     def _parse_error(
         self, status_code: int, body: dict[str, Any]

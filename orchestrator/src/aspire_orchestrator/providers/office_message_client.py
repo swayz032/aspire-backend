@@ -38,15 +38,26 @@ def _mk_receipt(
     outcome: Outcome,
     reason_code: str,
 ) -> dict[str, Any]:
+    now = _ts()
     return {
         "id": str(uuid.uuid4()),
-        "tool_used": tool_id,
+        "correlation_id": correlation_id,
         "suite_id": suite_id,
         "office_id": office_id,
-        "correlation_id": correlation_id,
+        "actor_type": "system",
+        "actor_id": "provider.office_message",
+        "action_type": f"execute.{tool_id}",
+        "risk_tier": "yellow",
+        "tool_used": tool_id,
+        "capability_token_id": None,
+        "capability_token_hash": None,
+        "created_at": now,
+        "executed_at": now,
         "outcome": outcome.value,
         "reason_code": reason_code,
-        "timestamp": _ts(),
+        "receipt_type": "tool_execution",
+        "receipt_hash": "",
+        "timestamp": now,
     }
 
 

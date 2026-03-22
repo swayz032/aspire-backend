@@ -128,14 +128,14 @@ class TeressaBooksSkillPack:
     async def books_sync(
         self,
         account_id: str,
-        context: TeressaBooksContext,
+        context: TeressaContext,
     ) -> SkillPackResult:
         return await self.sync_books(account_id=account_id, context=context)
 
     async def books_categorize(
         self,
         transaction: dict[str, Any],
-        context: TeressaBooksContext,
+        context: TeressaContext,
     ) -> SkillPackResult:
         return await self.categorize_transaction(transaction=transaction, context=context)
 
@@ -143,14 +143,14 @@ class TeressaBooksSkillPack:
         self,
         report_type: str,
         date_range: dict[str, str],
-        context: TeressaBooksContext,
+        context: TeressaContext,
     ) -> SkillPackResult:
         return await self.generate_report(report_type=report_type, date_range=date_range, context=context)
 
     async def books_journal_entry(
         self,
         entry_data: dict[str, Any],
-        context: TeressaBooksContext,
+        context: TeressaContext,
     ) -> SkillPackResult:
         return await self.create_journal_entry(entry_data=entry_data, context=context)
 
@@ -772,6 +772,7 @@ class EnhancedTeressaBooks(AgenticSkillPack):
                 inputs={"action": "books.reconcile_plan"},
             )
             receipt["policy"] = {"decision": "deny", "reasons": ["empty_reconciliation_data"]}
+            await self.emit_receipt(receipt)
             return AgentResult(success=False, data={}, receipt=receipt)
 
         return await self.execute_with_llm(

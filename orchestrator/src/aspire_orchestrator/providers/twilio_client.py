@@ -268,12 +268,15 @@ class TwilioClient(BaseProviderClient):
 
             except Exception as e:
                 self._circuit.record_failure()
+                # Law #9: Never expose raw exception details in responses.
+                # Internal stack traces may leak secrets, paths, or provider internals.
+                safe_msg = f"{type(e).__name__}: Operation failed"
                 return ProviderResponse(
                     status_code=500,
-                    body={"error": "PROVIDER_ERROR", "message": str(e)[:200]},
+                    body={"error": "PROVIDER_ERROR", "message": safe_msg},
                     success=False,
                     error_code=InternalErrorCode.SERVER_INTERNAL_ERROR,
-                    error_message=str(e)[:200],
+                    error_message=safe_msg,
                 )
 
         # Exhausted retries

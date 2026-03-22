@@ -66,7 +66,11 @@ class S3Client(BaseProviderClient):
     async def _authenticate_headers(
         self, request: ProviderRequest
     ) -> dict[str, str]:
-        """Verify AWS credentials are configured via STS get_caller_identity."""
+        """Verify AWS credentials are configured.
+
+        Credential validity is verified lazily on the actual S3 call
+        (not via per-request STS to avoid blocking the event loop).
+        """
         access_key = settings.aws_access_key_id
         secret_key = settings.aws_secret_access_key
         if not access_key or not secret_key:
@@ -75,24 +79,7 @@ class S3Client(BaseProviderClient):
                 message="AWS credentials not configured (ASPIRE_AWS_ACCESS_KEY_ID, ASPIRE_AWS_SECRET_ACCESS_KEY)",
                 provider_id=self.provider_id,
             )
-        # Verify credentials are valid via STS
-        try:
-            import boto3
-
-            sts = boto3.client(
-                "sts",
-                region_name=settings.aws_s3_region,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-            )
-            sts.get_caller_identity()
-        except Exception as exc:
-            raise ProviderError(
-                code=InternalErrorCode.AUTH_INVALID_KEY,
-                message=f"AWS credential verification failed: {str(exc)[:200]}",
-                provider_id=self.provider_id,
-            ) from exc
-        return {"X-Aws-Auth": "verified"}
+        return {"X-Aws-Auth": "configured"}
 
     async def _request(self, request: ProviderRequest) -> ProviderResponse:
         """Execute real S3 operations via boto3.

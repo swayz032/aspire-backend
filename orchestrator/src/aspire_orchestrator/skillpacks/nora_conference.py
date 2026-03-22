@@ -20,6 +20,8 @@ Law compliance:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -52,6 +54,8 @@ class NoraContext:
     suite_id: str
     office_id: str
     correlation_id: str
+    capability_token_id: str | None = None
+    capability_token_hash: str | None = None
 
 
 def _make_receipt(
@@ -62,10 +66,13 @@ def _make_receipt(
     outcome: str,
     reason_code: str,
     tool_used: str = "",
+    inputs: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a receipt for a Nora conference operation (Law #2)."""
     now = datetime.now(timezone.utc).isoformat()
+    inputs_canonical = json.dumps(inputs or {}, sort_keys=True, default=str)
+    inputs_hash = f"sha256:{hashlib.sha256(inputs_canonical.encode()).hexdigest()}"
     receipt: dict[str, Any] = {
         "receipt_version": "1.0",
         "receipt_id": f"rcpt-nora-{uuid.uuid4().hex[:12]}",
@@ -77,7 +84,7 @@ def _make_receipt(
         "correlation_id": ctx.correlation_id,
         "risk_tier": risk_tier,  # S4-T7: Include risk_tier in receipt (Law #2)
         "status": "ok" if outcome == "success" else outcome,
-        "inputs_hash": f"sha256:{uuid.uuid4().hex}",
+        "inputs_hash": inputs_hash,
         "policy": {
             "decision": "allow" if outcome == "success" else "deny",
             "policy_id": "nora-conference-v1",
@@ -179,6 +186,8 @@ class NoraConferenceSkillPack:
                 suite_id=context.suite_id,
                 office_id=context.office_id,
                 risk_tier="green",
+                capability_token_id=context.capability_token_id,
+                capability_token_hash=context.capability_token_hash,
             )
 
             if result.outcome == Outcome.SUCCESS:
@@ -353,6 +362,8 @@ class NoraConferenceSkillPack:
                 suite_id=context.suite_id,
                 office_id=context.office_id,
                 risk_tier="green",
+                capability_token_id=context.capability_token_id,
+                capability_token_hash=context.capability_token_hash,
             )
 
             if result.outcome == Outcome.SUCCESS:

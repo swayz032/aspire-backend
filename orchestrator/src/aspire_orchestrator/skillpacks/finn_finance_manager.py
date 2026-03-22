@@ -442,10 +442,17 @@ class EnhancedFinnFinanceManager(AgenticSkillPack):
     def __init__(self) -> None:
         super().__init__(
             agent_id="finn-finance-manager",
-            agent_name="Finn",
+            agent_name="Finn Finance Manager",
             default_risk_tier="yellow",
             memory_enabled=True,
         )
+        self._rule_pack_funcs = {
+            "snapshot": read_finance_snapshot,
+            "exceptions": read_finance_exceptions,
+            "draft": draft_finance_packet,
+            "proposal": create_finance_proposal,
+            "delegation": dispatch_a2a_delegation,
+        }
 
     async def finance_snapshot_read(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         fm_ctx = FinnFMContext(suite_id=ctx.suite_id, office_id=ctx.office_id or "default", correlation_id=ctx.correlation_id or str(uuid.uuid4()))
@@ -512,21 +519,6 @@ class EnhancedFinnFinanceManager(AgenticSkillPack):
 
     YELLOW tier for proposals/delegations, GREEN for analysis.
     """
-
-    def __init__(self) -> None:
-        super().__init__(
-            agent_id="finn-finance-manager",
-            agent_name="Finn Finance Manager",
-            default_risk_tier="yellow",
-            memory_enabled=True,
-        )
-        self._rule_pack_funcs = {
-            "snapshot": read_finance_snapshot,
-            "exceptions": read_finance_exceptions,
-            "draft": draft_finance_packet,
-            "proposal": create_finance_proposal,
-            "delegation": dispatch_a2a_delegation,
-        }
 
     async def analyze_financial_health(
         self, snapshot_data: dict, exceptions: list, ctx: AgentContext,

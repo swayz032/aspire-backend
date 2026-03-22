@@ -52,6 +52,14 @@ class OsmOverpassClient(BaseProviderClient):
         # No authentication required — public API
         return {}
 
+    def _prepare_body(self, request: ProviderRequest) -> tuple[str, bytes | None]:
+        """Overpass API expects application/x-www-form-urlencoded, not JSON."""
+        if not request.body:
+            return "application/x-www-form-urlencoded", None
+        from urllib.parse import urlencode
+        encoded = urlencode(request.body)
+        return "application/x-www-form-urlencoded", encoded.encode()
+
     def _parse_error(
         self, status_code: int, body: dict[str, Any]
     ) -> InternalErrorCode:
@@ -142,9 +150,7 @@ async def execute_osm_overpass_query(
             f'out body;'
         )
 
-    # Overpass API uses POST with form data
-    # Note: We send as body dict and let the base client serialize as JSON,
-    # but Overpass expects form-encoded. We override by sending raw body.
+    # Overpass API uses POST with form-encoded data (handled by _prepare_body override)
     response = await client._request(
         ProviderRequest(
             method="POST",
@@ -153,9 +159,6 @@ async def execute_osm_overpass_query(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
-            extra_headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
         )
     )
 

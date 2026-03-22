@@ -722,6 +722,7 @@ class EnhancedMailOps(AgenticSkillPack):
                 inputs={"action": "mail.diagnose"},
             )
             receipt["policy"] = {"decision": "deny", "reasons": ["empty_issue_data"]}
+            await self.emit_receipt(receipt)
             return AgentResult(success=False, data={}, receipt=receipt)
 
         return await self.execute_with_llm(

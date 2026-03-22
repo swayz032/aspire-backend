@@ -378,6 +378,8 @@ async def execute_plaid_transfer_create(
         missing.append("amount")
     if not description:
         missing.append("description")
+    if not idempotency_key:
+        missing.append("idempotency_key")
 
     if missing:
         receipt = client.make_receipt_data(

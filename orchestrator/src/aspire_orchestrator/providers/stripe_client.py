@@ -74,8 +74,10 @@ class StripeClient(BaseProviderClient):
     max_retries = 2  # Stripe is idempotent-safe for retries
     idempotency_support = True
 
-    # Per-suite Stripe connected account IDs: {suite_id: "acct_xxx"}
-    _connected_accounts: dict[str, str] = {}
+    def __init__(self) -> None:
+        super().__init__()
+        # Per-suite Stripe connected account IDs: {suite_id: "acct_xxx"}
+        self._connected_accounts: dict[str, str] = {}
 
     def _prepare_body(self, request: ProviderRequest) -> tuple[str, bytes | None]:
         """Stripe requires application/x-www-form-urlencoded for POST bodies."""
