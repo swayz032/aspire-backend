@@ -91,6 +91,7 @@ def _build_receipt(
     outcome: str,
     reason_code: str | None = None,
     details: dict[str, Any] | None = None,
+    risk_tier: str = "green",
 ) -> dict[str, Any]:
     """Build a classification receipt (Law #2)."""
     now = datetime.now(timezone.utc).isoformat()
@@ -102,7 +103,7 @@ def _build_receipt(
         "actor_type": "system",
         "actor_id": actor_id,
         "action_type": action_type,
-        "risk_tier": "green",
+        "risk_tier": risk_tier,
         "tool_used": "intent_classifier",
         "outcome": outcome,
         "reason_code": reason_code,
@@ -258,6 +259,7 @@ async def classify_intent(request: Request) -> JSONResponse:
             action_type="intent.classify",
             outcome="denied",
             reason_code="low_confidence",
+            risk_tier=intent_result.risk_tier.value,
             details={
                 "confidence": intent_result.confidence,
                 "action_type": intent_result.action_type,
@@ -296,6 +298,7 @@ async def classify_intent(request: Request) -> JSONResponse:
             action_type="intent.classify",
             outcome="success",
             reason_code="requires_clarification",
+            risk_tier=intent_result.risk_tier.value,
             details={
                 "confidence": intent_result.confidence,
                 "action_type": intent_result.action_type,
@@ -336,10 +339,9 @@ async def classify_intent(request: Request) -> JSONResponse:
     current_agent = str(requested_agent).strip().lower() or "ava"
 
     try:
-        allow_internal_routing = bool(
-            req.payload.get("allow_internal_routing")
-            or req.payload.get("admin_bridge_approved")
-        )
+        # SECURITY: allow_internal_routing is derived server-side from admin
+        # token presence — NEVER from user payload (THREAT-002).
+        allow_internal_routing = bool(request.headers.get("x-admin-token"))
         routing_plan: RoutingPlan = await skill_router.route(
             intent_result,
             context={
@@ -418,6 +420,7 @@ async def classify_intent(request: Request) -> JSONResponse:
         actor_id=actor_id,
         action_type="intent.classify",
         outcome="success",
+        risk_tier=intent_result.risk_tier.value,
         details={
             "confidence": intent_result.confidence,
             "action_type": intent_result.action_type,

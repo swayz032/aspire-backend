@@ -448,6 +448,14 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
     correlation_id = _get_correlation_id(request)
     auth_header = request.headers.get("authorization", "").strip()
     if not auth_header.lower().startswith("bearer "):
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.auth.exchange",
+            outcome="denied",
+            reason_code="MISSING_BEARER_TOKEN",
+        )
+        store_receipts([denial_receipt])
         return _ops_error(
             code="AUTH_REQUIRED",
             message="Missing Authorization bearer token",
@@ -457,6 +465,14 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
 
     access_token = auth_header.split(" ", 1)[1].strip()
     if not access_token:
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.auth.exchange",
+            outcome="denied",
+            reason_code="MISSING_BEARER_TOKEN",
+        )
+        store_receipts([denial_receipt])
         return _ops_error(
             code="AUTH_REQUIRED",
             message="Missing Authorization bearer token",
@@ -466,6 +482,14 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
 
     admin_secret = (os.environ.get("ASPIRE_ADMIN_JWT_SECRET") or "").strip()
     if not admin_secret:
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.auth.exchange",
+            outcome="denied",
+            reason_code="AUTH_CONFIG_MISSING",
+        )
+        store_receipts([denial_receipt])
         return _ops_error(
             code="AUTH_CONFIG_MISSING",
             message="Admin auth secret is not configured",
@@ -500,6 +524,14 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
     if not actor_id:
         supabase = _get_supabase_client()
         if supabase is None and not supabase_secret:
+            denial_receipt = _build_access_receipt(
+                correlation_id=correlation_id,
+                actor_id="anonymous",
+                action_type="admin.auth.exchange",
+                outcome="denied",
+                reason_code="AUTH_CONFIG_MISSING",
+            )
+            store_receipts([denial_receipt])
             return _ops_error(
                 code="AUTH_CONFIG_MISSING",
                 message="Supabase auth verifier is not configured",
@@ -525,6 +557,14 @@ async def exchange_admin_token(request: Request) -> JSONResponse:
                 "Supabase local JWT validation failed and Auth API fallback did not recover the session: %s",
                 local_decode_error,
             )
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.auth.exchange",
+            outcome="denied",
+            reason_code="INVALID_TOKEN",
+        )
+        store_receipts([denial_receipt])
         return _ops_error(
             code="AUTHZ_DENIED",
             message="Invalid session token",
@@ -619,6 +659,7 @@ def _build_access_receipt(
     outcome: str,
     reason_code: str | None = None,
     details: dict[str, Any] | None = None,
+    risk_tier: str = "green",
 ) -> dict[str, Any]:
     """Build an access receipt for an admin API call (Law #2).
 
@@ -633,7 +674,7 @@ def _build_access_receipt(
         "actor_type": "admin",
         "actor_id": actor_id,
         "action_type": action_type,
-        "risk_tier": "green",
+        "risk_tier": risk_tier,
         "tool_used": "admin_facade",
         "outcome": outcome,
         "reason_code": reason_code,
@@ -2619,6 +2660,15 @@ async def approve_proposal(request: Request, proposal_id: str) -> JSONResponse:
     try:
         body = await request.json()
     except Exception:
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id=actor_id,
+            action_type="admin.proposals.approve",
+            outcome="denied",
+            reason_code="JSON_PARSE_ERROR",
+            risk_tier="red",
+        )
+        store_receipts([denial_receipt])
         return _ops_error(
             code="VALIDATION_ERROR",
             message="Invalid JSON body",
@@ -4304,6 +4354,14 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
     correlation_id = _get_correlation_id(request)
     actor_id = _require_admin(request)
     if actor_id is None:
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.voice.tts_stream",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([denial_receipt])
         return JSONResponse(
             status_code=401,
             content={"code": "AUTHZ_DENIED", "message": "Missing or invalid admin token", "correlation_id": correlation_id},
@@ -4622,6 +4680,14 @@ async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
     # Auth (Law #3: fail closed)
     actor_id = _require_admin(request)
     if actor_id is None:
+        denial_receipt = _build_access_receipt(
+            correlation_id=correlation_id,
+            actor_id="anonymous",
+            action_type="admin.chat",
+            outcome="denied",
+            reason_code="AUTHZ_DENIED",
+        )
+        store_receipts([denial_receipt])
         return _ops_error(
             code="AUTH_REQUIRED",
             message="Valid admin token required",
