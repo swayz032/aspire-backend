@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from aspire_orchestrator.config.settings import settings
 
 
-_KNOWLEDGE_INTENTS = {"knowledge", "advice", "conversation", "question"}
+_KNOWLEDGE_INTENTS = {"knowledge", "advice", "question"}
 
 
 @dataclass(frozen=True)
