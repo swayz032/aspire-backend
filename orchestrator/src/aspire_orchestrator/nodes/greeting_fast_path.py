@@ -7,6 +7,7 @@ Law #3 compliance: Falls through to full pipeline if uncertain.
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 import uuid
@@ -14,6 +15,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aspire_orchestrator.services.llm_cache import get_llm_cache
+
+logger = logging.getLogger(__name__)
 
 GREETING_PATTERNS = [
     r"^(hi|hello|hey|howdy|yo|sup|good\s*(morning|afternoon|evening|day)|what'?s?\s*up|greetings)[\s!?.]*$",
@@ -79,19 +82,30 @@ async def greeting_fast_path_node(state: dict[str, Any]) -> dict[str, Any]:
     if isinstance(agent, str):
         agent = agent.strip().lower() or "ava"
 
+    logger.info("greeting_check: utterance=%r agent=%s", utterance, agent)
+
     if not is_greeting(utterance):
+        logger.info("greeting_check: not a greeting, continuing to full pipeline")
         state["_greeting_fast_path"] = False
         return state
 
+    logger.info("greeting_check: GREETING DETECTED, using fast path")
+
     # Try cache first (sub-10ms)
-    cache = get_llm_cache()
-    cache_key = f"voice:greeting:{agent}"
-    cached = await cache.get(cache_key)
-    if cached:
-        response_text = cached
-    else:
+    try:
+        cache = get_llm_cache()
+        cache_key = f"voice:greeting:{agent}"
+        cached = await cache.get(cache_key)
+        if cached:
+            response_text = cached
+            logger.info("greeting_check: cache HIT for %s", cache_key)
+        else:
+            response_text = greeting_response(agent)
+            await cache.set(cache_key, response_text, profile="voice_greeting")
+            logger.info("greeting_check: cache MISS, generated response")
+    except Exception as e:
+        logger.warning("greeting_check: cache error (non-blocking): %s", e)
         response_text = greeting_response(agent)
-        await cache.set(cache_key, response_text, profile="voice_greeting")
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
