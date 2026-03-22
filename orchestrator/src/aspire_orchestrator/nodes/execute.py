@@ -258,6 +258,40 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     assigned_agent = _resolve_agent_from_routing(state)
 
     # -------------------------------------------------------------------
+    # Deny helper — must be defined before first use (Python nested funcs
+    # are NOT hoisted). Used by Eli quality gates and capability token checks.
+    # -------------------------------------------------------------------
+    def _deny_execution(reason_code: str, message: str) -> dict[str, Any]:
+        """Build denial response with receipt. Agent identity preserved."""
+        receipt = {
+            "id": str(uuid.uuid4()),
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "actor_type": "agent",
+            "actor_id": assigned_agent,
+            "action_type": f"execute.{task_type}",
+            "risk_tier": risk_tier_str,
+            "tool_used": allowed_tools[0] if allowed_tools else "unknown",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "outcome": Outcome.DENIED.value,
+            "reason_code": reason_code,
+            "receipt_type": ReceiptType.TOOL_EXECUTION.value,
+            "receipt_hash": "",
+        }
+        existing = list(state.get("pipeline_receipts", []))
+        existing.append(receipt)
+        return {
+            "outcome": Outcome.DENIED,
+            "execution_result": None,
+            "error_code": reason_code,
+            "error_message": message,
+            "tool_used": allowed_tools[0] if allowed_tools else "unknown",
+            "pipeline_receipts": existing,
+            "assigned_agent": assigned_agent,
+        }
+
+    # -------------------------------------------------------------------
     # Eli expert gates: quality + deliverability preflight for outbound mail.
     # -------------------------------------------------------------------
     if assigned_agent == "eli" and task_type in ("email.draft", "email.send"):
@@ -309,35 +343,6 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     # This is the enforcement boundary: tokens are minted by token_mint
     # node, but MUST be validated again here before any execution.
     # -------------------------------------------------------------------
-    def _deny_execution(reason_code: str, message: str) -> dict[str, Any]:
-        """Build denial response with receipt. Agent identity preserved."""
-        receipt = {
-            "id": str(uuid.uuid4()),
-            "correlation_id": correlation_id,
-            "suite_id": suite_id,
-            "office_id": office_id,
-            "actor_type": "agent",
-            "actor_id": assigned_agent,
-            "action_type": f"execute.{task_type}",
-            "risk_tier": risk_tier_str,
-            "tool_used": allowed_tools[0] if allowed_tools else "unknown",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "outcome": Outcome.DENIED.value,
-            "reason_code": reason_code,
-            "receipt_type": ReceiptType.TOOL_EXECUTION.value,
-            "receipt_hash": "",
-        }
-        existing = list(state.get("pipeline_receipts", []))
-        existing.append(receipt)
-        return {
-            "outcome": Outcome.DENIED,
-            "execution_result": None,
-            "error_code": reason_code,
-            "error_message": message,
-            "tool_used": allowed_tools[0] if allowed_tools else "unknown",
-            "pipeline_receipts": existing,
-            "assigned_agent": assigned_agent,
-        }
 
     # Check 0: Token must exist
     if not capability_token_id or not capability_token:

@@ -130,7 +130,7 @@ class TeressaBooksSkillPack:
         account_id: str,
         context: TeressaContext,
     ) -> SkillPackResult:
-        return await self.sync_books(account_id=account_id, context=context)
+        return await self.sync_books(account_id=account_id, date_range={}, context=context)
 
     async def books_categorize(
         self,
