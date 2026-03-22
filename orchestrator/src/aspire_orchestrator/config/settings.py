@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     langgraph_checkpointer: str = "memory"          # memory | postgres
     langgraph_postgres_dsn: str = ""                # Required when checkpointer=postgres
 
-    # Capability Tokens
-    token_signing_key: str = ""  # HMAC-SHA256 key — MUST be set in production
+    # Capability Tokens (Law #3: fail-closed — sentinel value causes HMAC to fail if not overridden)
+    token_signing_key: str = "UNCONFIGURED-FAIL-CLOSED"  # MUST be overridden via ASPIRE_TOKEN_SIGNING_KEY
     token_ttl_seconds: int = 45  # Default <60s per Law #5
 
     # Gateway
@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
 
-    # Security — credential rotation enforcement
-    credential_strict_mode: bool = False  # CREDENTIAL_STRICT_MODE=1 in production
+    # Security — credential rotation enforcement (Law #3: fail-closed default)
+    credential_strict_mode: bool = True  # Fail-closed; set ASPIRE_CREDENTIAL_STRICT_MODE=0 to disable in dev
 
     # --- Adam Research geo/places provider keys ---
     google_maps_api_key: str = ""

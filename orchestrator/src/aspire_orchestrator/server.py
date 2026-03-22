@@ -374,14 +374,24 @@ async def readyz() -> JSONResponse:
     except Exception:
         checks["receipt_store"] = False
 
-    # Check Redis connectivity (if configured)
+    # Check Redis connectivity (if configured) — run sync ping in thread to avoid blocking event loop
     redis_url = os.environ.get("REDIS_URL") or os.environ.get("ASPIRE_REDIS_URL")
     if redis_url:
         try:
-            import redis
-            r = redis.from_url(redis_url, socket_timeout=2)
-            r.ping()
-            checks["redis"] = True
+            import asyncio
+            import redis as _redis_lib
+
+            def _redis_ping() -> bool:
+                r = _redis_lib.from_url(redis_url, socket_timeout=2)
+                try:
+                    return bool(r.ping())
+                finally:
+                    r.close()
+
+            checks["redis"] = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, _redis_ping),
+                timeout=3.0,
+            )
         except Exception:
             checks["redis"] = False
 

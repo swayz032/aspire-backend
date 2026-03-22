@@ -25,8 +25,10 @@ Law compliance:
 
 from __future__ import annotations
 
-import logging
+import hashlib
 import hmac
+import json
+import logging
 import os
 import re
 import threading
@@ -637,7 +639,13 @@ def _build_access_receipt(
         "reason_code": reason_code,
         "created_at": now,
         "receipt_type": "admin_access",
-        "receipt_hash": str(uuid.uuid4()),
+        "receipt_hash": hashlib.sha256(
+            json.dumps(
+                {"correlation_id": correlation_id, "actor_id": actor_id,
+                 "action_type": action_type, "outcome": outcome, "created_at": now},
+                sort_keys=True, default=str,
+            ).encode()
+        ).hexdigest(),
         "redacted_inputs": None,
         "redacted_outputs": details,
     }
@@ -726,20 +734,28 @@ async def _check_postgres() -> dict[str, Any]:
 
 
 async def _check_redis() -> dict[str, Any]:
-    """Check Redis via PING command."""
+    """Check Redis via PING command (run in executor to avoid blocking event loop)."""
     redis_url = os.environ.get("REDIS_URL") or os.environ.get("ASPIRE_REDIS_URL")
     if not redis_url:
         return {"status": "not_configured"}
 
     import redis as redis_lib
 
-    r = redis_lib.from_url(redis_url, socket_timeout=2)
+    def _ping() -> bool:
+        r = redis_lib.from_url(redis_url, socket_timeout=2)
+        try:
+            return bool(r.ping())
+        finally:
+            r.close()
+
     try:
-        if r.ping():
-            return {"status": "up"}
+        result = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _ping),
+            timeout=3.0,
+        )
+        return {"status": "up"} if result else {"status": "degraded"}
+    except Exception:
         return {"status": "degraded"}
-    finally:
-        r.close()
 
 
 async def _check_openai() -> dict[str, Any]:

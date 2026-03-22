@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
+import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -149,7 +152,6 @@ async def pandadoc_webhook(request: Request) -> JSONResponse:
         )
 
     try:
-        import json
         body = json.loads(raw_body)
         event_type = body.get("event", "unknown")
         document_id = body.get("data", {}).get("id", "unknown")
@@ -159,11 +161,35 @@ async def pandadoc_webhook(request: Request) -> JSONResponse:
             event_type, document_id[:12] if len(document_id) > 12 else document_id,
         )
 
+        # Law #2: Emit receipt for every processed webhook event
+        now = datetime.now(timezone.utc).isoformat()
+        receipt_data = {
+            "event_type": event_type,
+            "document_id": document_id,
+            "received_at": now,
+        }
+        receipt = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": body.get("data", {}).get("metadata", {}).get("suite_id", "unknown"),
+            "actor_type": "system",
+            "actor_id": "pandadoc_webhook",
+            "action_type": "webhook.received",
+            "risk_tier": "GREEN",
+            "status": "success",
+            "receipt_hash": hashlib.sha256(
+                json.dumps(receipt_data, sort_keys=True, default=str).encode()
+            ).hexdigest(),
+            "created_at": now,
+            "executed_at": now,
+        }
+        logger.info("PandaDoc webhook receipt emitted: %s", receipt["id"])
+
         return JSONResponse(
             status_code=200,
             content={
                 "status": "acknowledged",
                 "event_type": event_type,
+                "receipt_id": receipt["id"],
             },
         )
 
@@ -251,12 +277,36 @@ async def twilio_webhook(request: Request) -> JSONResponse:
             call_status,
         )
 
+        # Law #2: Emit receipt for every processed webhook event
+        now = datetime.now(timezone.utc).isoformat()
+        receipt_data = {
+            "sid": str(call_sid),
+            "status": str(call_status),
+            "received_at": now,
+        }
+        receipt = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": str(form_data.get("AccountSid", "unknown")),
+            "actor_type": "system",
+            "actor_id": "twilio_webhook",
+            "action_type": "webhook.received",
+            "risk_tier": "GREEN",
+            "status": "success",
+            "receipt_hash": hashlib.sha256(
+                json.dumps(receipt_data, sort_keys=True, default=str).encode()
+            ).hexdigest(),
+            "created_at": now,
+            "executed_at": now,
+        }
+        logger.info("Twilio webhook receipt emitted: %s", receipt["id"])
+
         return JSONResponse(
             status_code=200,
             content={
                 "status": "acknowledged",
                 "sid": str(call_sid)[:12] if call_sid else "?",
                 "call_status": str(call_status),
+                "receipt_id": receipt["id"],
             },
         )
 
