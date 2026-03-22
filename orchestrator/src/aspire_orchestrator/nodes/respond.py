@@ -410,13 +410,40 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel:
     }
     agent_name = _DISPLAY_NAMES.get(agent_id, "Ava")
 
+    # Build user context if available
+    user_ctx = ""
+    user_profile = state.get("user_profile")
+    if user_profile:
+        name = user_profile.get("owner_name") or user_profile.get("display_name") or ""
+        biz = user_profile.get("business_name") or ""
+        if name:
+            parts = name.strip().split()
+            last = parts[-1] if parts else name
+            user_ctx = f"\nYou are speaking to Mr./Ms. {last}"
+            if biz:
+                user_ctx += f" of {biz}"
+            user_ctx += ". Address them formally.\n"
+
     prompt = (
         f'The user said: "{utterance}"\n\n'
         f"You are {agent_name}, speaking to the user directly.\n"
         "This is a conversational message, not an action request. "
         "Respond in character using your persona's personality and expertise. "
         "If the user asks who you are, introduce yourself warmly with your name, "
-        "role, and what you can help them with. "
+        "role, and what you can help them with.\n"
+        "Your Aspire team members are:\n"
+        "- Ava: Chief of Staff — coordinates all operations\n"
+        "- Finn: Finance Hub Manager — cash flow, tax strategy, financial analysis\n"
+        "- Eli: Inbox Specialist — email triage, drafts, client communications\n"
+        "- Nora: Meetings Specialist — scheduling, conferencing, summaries\n"
+        "- Sarah: Front Desk — call routing, intake, reception\n"
+        "- Quinn: Invoicing — invoice creation, payment tracking\n"
+        "- Adam: Research — vendor search, market analysis\n"
+        "- Clara: Legal — contracts, compliance, e-signatures\n"
+        "- Tec: Documents — PDF generation, structured paperwork\n"
+        "- Teressa: Bookkeeper — reconciliations, books hygiene\n"
+        "- Milo: Payroll — payroll ops, employee pay\n"
+        f"{user_ctx}"
         "Keep it brief (1-3 sentences), warm, and natural. "
         "Do NOT use markdown or bullet points. This will be spoken aloud via TTS.\n"
         "Respond with ONLY the spoken text."
@@ -916,12 +943,21 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             # Capability questions
             "how can you help", "how can you help me",
             "what are your capabilities", "what services do you offer",
+            # Team/agent questions
+            "who is finn", "who is nora", "who is eli", "who is sarah",
+            "who is adam", "who is quinn", "who is clara", "who is tec",
+            "who do you work for", "what team do you have",
+            "who is on the team", "who is on your team",
             # Courtesy
             "help", "thanks", "thank you", "bye", "goodbye",
             "see you", "later", "nice to meet you",
         })
         normalized = utterance.lower().strip().rstrip("!?.,")
-        _IDENTITY_SUBSTRINGS = ("your name", "who are you", "what do you do", "how can you help", "what can you")
+        _IDENTITY_SUBSTRINGS = (
+            "your name", "who are you", "what do you do", "how can you help", "what can you",
+            "who is ", "who do you", "tell me about", "what is aspire", "what's aspire",
+            "do you know", "can you tell me", "explain ", "describe ",
+        )
         is_conversational = (
             intent_type in ("greeting", "chitchat", "conversational")
             or normalized in _GREETING_PATTERNS
