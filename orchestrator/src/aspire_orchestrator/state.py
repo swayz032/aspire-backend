@@ -118,5 +118,15 @@ class OrchestratorState(TypedDict, total=False):
     eli_agentic_plan: dict[str, Any] | None
     eli_quality_report: dict[str, Any] | None
 
+    # --- Greeting Fast Path (Wave 2 — bypass full graph for simple greetings) ---
+    _greeting_fast_path: bool  # True if greeting was detected and fast path used
+    _fast_path_receipt: dict[str, Any] | None  # Receipt from fast path (for respond node)
+
+    # --- Respond node shared fields ---
+    response_text: str | None  # Final response text (set by greeting fast path or respond node)
+    status: str | None  # "success" | "error"
+    governance: dict[str, Any] | None  # Governance metadata (receipt_ids, risk_tier)
+    requested_agent: str | None  # Agent requested by user (from intake)
+
     # --- Accumulated receipts for the full pipeline ---
     pipeline_receipts: list[dict[str, Any]]
