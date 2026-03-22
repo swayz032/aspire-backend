@@ -578,8 +578,9 @@ async def generate_text_async(
                 error_message=str(e)[:500],
             )
             logger.warning(
-                "Responses API failed for model=%s (%s)",
-                call_model, type(e).__name__,
+                "Responses API failed for model=%s (%s): %s",
+                call_model, type(e).__name__, e,
+                exc_info=True,
             )
             continue
 
@@ -668,8 +669,9 @@ def generate_text_sync(
                 outcome="failed",
             )
             logger.warning(
-                "Responses API failed for model=%s (%s)",
-                call_model, type(e).__name__,
+                "Responses API failed for model=%s (%s): %s",
+                call_model, type(e).__name__, e,
+                exc_info=True,
             )
             continue
 
