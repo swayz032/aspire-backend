@@ -105,7 +105,7 @@ class Settings(BaseSettings):
 
     # --- Clara RAG Knowledge Base ---
     embedding_model: str = "text-embedding-3-large"
-    embedding_dimensions: int = 1536  # Reduced from 3072 for cost savings (99% quality retention)
+    embedding_dimensions: int = 3072  # Must match DB vector(3072) columns
     embedding_batch_size: int = 50
     rag_max_chunks_per_query: int = 10
     rag_min_similarity: float = 0.3
