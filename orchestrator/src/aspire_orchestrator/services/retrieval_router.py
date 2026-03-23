@@ -68,6 +68,7 @@ _FINANCE_SIGNALS = {
     "tax", "invoice", "payment", "cash flow", "deduction", "revenue",
     "expense", "budget", "profit", "loss", "financial", "money",
     "accounting", "bookkeeping", "payroll", "irs", "quarterly",
+    "stripe", "billing", "quote", "customer_id", "cus_", "payout",
 }
 _LEGAL_SIGNALS = {
     "contract", "agreement", "clause", "nda", "liability", "legal",

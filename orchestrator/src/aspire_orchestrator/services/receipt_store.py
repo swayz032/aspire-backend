@@ -181,9 +181,8 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
         "created_at": receipt.get("created_at"),
     }
 
-    # Only include office_id if present (nullable FK)
-    if office_id:
-        row["office_id"] = office_id
+    # Always include office_id for batch schema consistency (PGRST102 fix)
+    row["office_id"] = office_id or None
 
     # Trace context — thread through receipt dict or derive from correlation_id
     try:
@@ -209,15 +208,13 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
     row["span_id"] = span_id or None
     row["parent_span_id"] = parent_span_id or None
 
-    # run_id for grouping related receipts in a single orchestrator run
+    # Always include run_id and receipt_hash for batch schema consistency (PGRST102 fix)
     run_id = receipt.get("run_id", "")
-    if run_id:
-        row["run_id"] = run_id
+    row["run_id"] = run_id or None
 
     # receipt_hash as hex string (Supabase accepts hex for bytea via \\x prefix)
     receipt_hash = receipt.get("receipt_hash")
-    if receipt_hash and isinstance(receipt_hash, str):
-        row["receipt_hash"] = f"\\x{receipt_hash}"
+    row["receipt_hash"] = f"\\x{receipt_hash}" if (receipt_hash and isinstance(receipt_hash, str)) else None
 
     return row
 

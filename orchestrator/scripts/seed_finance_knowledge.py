@@ -397,6 +397,12 @@ for topic, content in [
     _add("regulatory_compliance", "rule" if "rule" in topic.lower() or "requirement" in topic.lower() or "mandate" in topic.lower() else "deadline" if "calendar" in topic.lower() or "deadline" in topic.lower() else "checklist", content.strip(), jurisdiction="federal")
 
 
+# ---------------------------------------------------------------------------
+# NOTE: Stripe API docs are seeded separately via seed_stripe_knowledge.py
+# using real Stripe documentation (58 files, 120+ chunks).
+# ---------------------------------------------------------------------------
+
+
 # =============================================================================
 # Seeding Logic
 # =============================================================================

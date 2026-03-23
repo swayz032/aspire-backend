@@ -52,13 +52,13 @@ def _pick_subject_name(params: dict[str, Any] | None) -> str | None:
         # Prefer the client_signer or first non-owner party
         for party in parties:
             if isinstance(party, dict) and party.get("role") != "owner_signer":
-                pname = party.get("name", "").strip()
+                pname = (party.get("name") or "").strip()
                 if pname:
                     return pname
         # Fallback: just use first party name
         first = parties[0]
         if isinstance(first, dict):
-            pname = first.get("name", "").strip()
+            pname = (first.get("name") or "").strip()
             if pname:
                 return pname
 

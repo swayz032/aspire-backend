@@ -418,6 +418,11 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
     result: dict[str, Any] = {
         "intent_result": intent_result.model_dump(),
         "action_type": intent_result.action_type,
+        # BUG FIX: Promote intent_type and agent_target to top-level state
+        # so agent_reason_node can read them without digging into intent_result dict.
+        # Without this, intent_type defaults to "conversation" and max_tokens stays 500.
+        "intent_type": intent_result.intent_type,
+        "agent_target": intent_result.agent_target,
     }
     requested_agent = requested_agent if isinstance(requested_agent, str) else "ava"
 

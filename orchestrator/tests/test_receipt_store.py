@@ -256,9 +256,11 @@ class TestReceiptFieldMapping:
         assert row["action"] == {}
         assert row["result"] == {}
 
-    def test_office_id_excluded_when_none(self):
+    def test_office_id_none_when_absent(self):
+        """office_id must always be present (PGRST102 fix) but None when absent."""
         row = _map_receipt_to_row({"id": "r1", "office_id": None})
-        assert "office_id" not in row
+        assert "office_id" in row
+        assert row["office_id"] is None
 
     def test_office_id_included_when_present(self):
         _OFF_UUID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"

@@ -24,8 +24,17 @@ tool_policy:
     allowed: true
     risk_tier: yellow
 
-# tool: stripe.invoice.create
-# tool: stripe.invoice.send
-# tool: stripe.invoice.void
-# tool: stripe.quote.create
-# tool: stripe.quote.send
+  "invoice.read":
+    tool_id: stripe.invoice.read
+    allowed: true
+    risk_tier: green
+
+  "customer.create":
+    tool_id: stripe.customer.create
+    allowed: true
+    risk_tier: yellow
+
+  "customer.search":
+    tool_id: stripe.customer.search
+    allowed: true
+    risk_tier: green
