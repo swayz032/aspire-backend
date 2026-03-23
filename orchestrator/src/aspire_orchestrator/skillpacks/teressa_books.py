@@ -128,16 +128,19 @@ class TeressaBooksSkillPack:
     async def books_sync(
         self,
         account_id: str,
+        date_range: dict[str, str],
         context: TeressaContext,
     ) -> SkillPackResult:
-        return await self.sync_books(account_id=account_id, date_range={}, context=context)
+        return await self.sync_books(account_id=account_id, date_range=date_range, context=context)
 
     async def books_categorize(
         self,
-        transaction: dict[str, Any],
+        transaction_id: str,
         context: TeressaContext,
+        *,
+        suggested_category: str | None = None,
     ) -> SkillPackResult:
-        return await self.categorize_transaction(transaction=transaction, context=context)
+        return await self.categorize_transaction(transaction_id=transaction_id, context=context, suggested_category=suggested_category)
 
     async def books_report(
         self,

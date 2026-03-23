@@ -299,7 +299,7 @@ class ClaraLegalSkillPack:
         return await self.review_contract(contract_id=contract_id, context=context)
 
     async def contract_sign(self, contract_id: str, signer_name: str, signer_email: str, context: ClaraContext) -> SkillPackResult:
-        return await self.sign_contract(contract_id=contract_id, signer_name=signer_name, signer_email=signer_email, context=context)
+        return await self.sign_contract(contract_id=contract_id, signer_info={"name": signer_name, "email": signer_email}, context=context)
 
     async def contract_compliance(self, contract_id: str, context: ClaraContext) -> SkillPackResult:
         return await self.track_compliance(contract_id=contract_id, context=context)

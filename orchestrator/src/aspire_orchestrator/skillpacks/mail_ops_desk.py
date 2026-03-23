@@ -168,13 +168,10 @@ class MailOpsDeskSkillPack:
         self,
         domain_name: str,
         record_type: str,
-        name: str,
-        value: str,
+        record_value: str,
         context: MailOpsContext,
-        *,
-        ttl: int = 3600,
     ) -> SkillPackResult:
-        return await self.create_dns_record(domain_name=domain_name, record_type=record_type, name=name, value=value, context=context, ttl=ttl)
+        return await self.create_dns_record(domain_name=domain_name, record_type=record_type, record_value=record_value, context=context)
 
     async def domain_purchase(
         self,
@@ -183,25 +180,22 @@ class MailOpsDeskSkillPack:
         contact_email: str,
         context: MailOpsContext,
     ) -> SkillPackResult:
-        return await self.purchase_domain(domain_name=domain_name, years=years, contact_email=contact_email, context=context)
+        return await self.purchase_domain(domain_name=domain_name, registrant_info={"years": years, "contact_email": contact_email}, context=context)
 
     async def domain_delete(
         self,
         domain_name: str,
         context: MailOpsContext,
-        *,
-        confirm: bool = False,
     ) -> SkillPackResult:
-        return await self.delete_domain(domain_name=domain_name, context=context, confirm=confirm)
+        return await self.delete_domain(domain_name=domain_name, context=context)
 
     async def mail_account_create(
         self,
         domain_name: str,
-        mailbox_name: str,
-        password: str,
+        email_address: str,
         context: MailOpsContext,
     ) -> SkillPackResult:
-        return await self.create_mail_account(domain_name=domain_name, mailbox_name=mailbox_name, password=password, context=context)
+        return await self.create_mail_account(domain_name=domain_name, email_address=email_address, context=context)
 
     async def mail_account_read(
         self,
