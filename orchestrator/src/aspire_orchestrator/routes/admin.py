@@ -4585,12 +4585,18 @@ async def _stream_ava_chat(
     )
 
     # Inject user profile if provided (Bug 6D)
+    # Security: sanitize to prevent prompt injection (THREAT-001)
+    _ALLOWED_SALUTATIONS = {"Mr.", "Ms.", "Mrs.", "Dr.", "Mx.", ""}
     if user_profile:
         name = user_profile.get("owner_name", "")
-        if name:
-            parts = name.strip().split()
+        if isinstance(name, str) and name.strip():
+            # Strip newlines/control chars, cap length
+            name = name.replace("\n", "").replace("\r", "").replace("\t", "").strip()[:100]
+            parts = name.split()
             last = parts[-1] if parts else ""
             salutation = user_profile.get("salutation", "Mr.")
+            if not isinstance(salutation, str) or salutation not in _ALLOWED_SALUTATIONS:
+                salutation = "Mr."
             system_prompt += f"\n\nThe user's name is {name}. Address them as {salutation} {last}."
 
     model = settings.ava_llm_model
