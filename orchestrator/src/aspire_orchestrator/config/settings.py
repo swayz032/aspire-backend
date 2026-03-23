@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # Domain Rail (S2S)
     domain_rail_url: str = "http://domain-rail.railway.internal"
-    s2s_hmac_secret: str = ""
+    s2s_hmac_secret: str = "UNCONFIGURED-FAIL-CLOSED"  # MUST be overridden via env — Law #3
 
     # --- Provider API Keys (loaded from env, never hardcoded — Law #9) ---
     stripe_api_key: str = ""

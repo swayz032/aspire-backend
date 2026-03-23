@@ -80,9 +80,9 @@ def _get_signing_key() -> str:
     import os
 
     key = settings.token_signing_key
-    if not key:
+    if not key or key == "UNCONFIGURED-FAIL-CLOSED":
         key = os.environ.get("ASPIRE_TOKEN_SIGNING_KEY", "")
-    if not key:
+    if not key or key == "UNCONFIGURED-FAIL-CLOSED":
         raise ValueError(
             "ASPIRE_TOKEN_SIGNING_KEY not configured. "
             "Cannot validate capability tokens without a signing key. "

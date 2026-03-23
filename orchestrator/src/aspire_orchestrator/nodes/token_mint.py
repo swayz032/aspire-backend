@@ -44,10 +44,10 @@ def _get_signing_key() -> str:
     A missing signing key means we cannot mint valid tokens.
     """
     key = settings.token_signing_key
-    if not key:
+    if not key or key == "UNCONFIGURED-FAIL-CLOSED":
         # Allow dev override via environment for testing
         key = os.environ.get("ASPIRE_TOKEN_SIGNING_KEY", "")
-    if not key:
+    if not key or key == "UNCONFIGURED-FAIL-CLOSED":
         raise ValueError(
             "ASPIRE_TOKEN_SIGNING_KEY not configured. "
             "Cannot mint capability tokens without a signing key. "

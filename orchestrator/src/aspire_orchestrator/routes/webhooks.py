@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from aspire_orchestrator.services.receipt_store import store_receipts
+
 from aspire_orchestrator.providers.stripe_webhook import (
     StripeWebhookHandler,
     WebhookDuplicateError,
@@ -182,7 +184,12 @@ async def pandadoc_webhook(request: Request) -> JSONResponse:
             "created_at": now,
             "executed_at": now,
         }
-        logger.info("PandaDoc webhook receipt emitted: %s", receipt["id"])
+        # Law #2: Persist receipt (was log-only — THREAT-034 fix)
+        try:
+            store_receipts([receipt])
+        except Exception as store_err:
+            logger.warning("PandaDoc receipt store failed: %s", store_err)
+        logger.info("PandaDoc webhook receipt stored: %s", receipt["id"])
 
         return JSONResponse(
             status_code=200,
@@ -298,7 +305,12 @@ async def twilio_webhook(request: Request) -> JSONResponse:
             "created_at": now,
             "executed_at": now,
         }
-        logger.info("Twilio webhook receipt emitted: %s", receipt["id"])
+        # Law #2: Persist receipt (was log-only — THREAT-034 fix)
+        try:
+            store_receipts([receipt])
+        except Exception as store_err:
+            logger.warning("Twilio receipt store failed: %s", store_err)
+        logger.info("Twilio webhook receipt stored: %s", receipt["id"])
 
         return JSONResponse(
             status_code=200,

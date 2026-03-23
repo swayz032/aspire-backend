@@ -70,9 +70,9 @@ def _get_s2s_secret() -> str:
     import os
 
     secret = settings.s2s_hmac_secret
-    if not secret:
+    if not secret or secret == "UNCONFIGURED-FAIL-CLOSED":
         secret = os.environ.get("ASPIRE_S2S_HMAC_SECRET", "")
-    if not secret:
+    if not secret or secret == "UNCONFIGURED-FAIL-CLOSED":
         raise DomainRailClientError(
             "S2S_SECRET_MISSING",
             "S2S HMAC secret not configured. "

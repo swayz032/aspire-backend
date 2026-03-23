@@ -791,7 +791,7 @@ async def _check_redis() -> dict[str, Any]:
 
     try:
         result = await asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(None, _ping),
+            asyncio.get_running_loop().run_in_executor(None, _ping),
             timeout=3.0,
         )
         return {"status": "up"} if result else {"status": "degraded"}
@@ -827,15 +827,25 @@ async def _check_n8n() -> dict[str, Any]:
 
 @router.get("/admin/ops/health/deep")
 async def admin_health_deep(request: Request) -> JSONResponse:
-    """Deep health check — cascading dependency probe. No auth required.
+    """Deep health check — cascading dependency probe. Auth required.
 
     Checks each dependency with a 3s timeout. Individual dependency failures
     do not fail the overall health; they are reported as degraded.
 
-    Law #3 compliance: the endpoint itself always responds (fail-open for
-    observability), but clearly reports which dependencies are down so
-    upstream consumers can fail-closed on specific subsystems.
+    Law #3 compliance: requires admin or incident-reporter credentials to
+    prevent exposing internal infrastructure topology to unauthenticated callers.
     """
+    # Auth gate — deep health exposes infrastructure topology (BUG-RT8-09)
+    actor_id, _ = _require_incident_reporter(request)
+    if actor_id is None:
+        actor_id = _require_admin(request)
+    if actor_id is None:
+        return _ops_error(
+            code="AUTHZ_DENIED",
+            message="Deep health check requires admin or incident-reporter credentials",
+            correlation_id=_get_correlation_id(request),
+            status_code=401,
+        )
     check_timeout = 3.0
 
     # Run all checks concurrently (none depend on each other)
@@ -1199,10 +1209,25 @@ async def ingest_client_event(request: Request) -> JSONResponse:
         logger.warning("ingest_client_event: write failed: %s", exc)
         return _ops_error(
             code="STORE_ERROR",
-            message=f"Client event store error: {exc}",
+            message="Internal error writing client event",
             correlation_id=correlation_id,
             status_code=500,
         )
+
+    # Law #2: Receipt for successful client event ingest
+    store_receipts([{
+        "id": str(uuid.uuid4()),
+        "suite_id": tenant_id or "system",
+        "office_id": "system",
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "action_type": "client_event.ingest",
+        "risk_tier": "GREEN",
+        "outcome": "success",
+        "correlation_id": event_correlation,
+        "receipt_hash": "",
+        "created_at": _now_iso(),
+    }])
 
     return JSONResponse(
         status_code=202,

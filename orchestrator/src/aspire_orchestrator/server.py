@@ -352,7 +352,8 @@ async def readyz() -> JSONResponse:
 
     checks: dict[str, bool] = {
         "signing_key_configured": bool(
-            settings.token_signing_key or os.environ.get("ASPIRE_TOKEN_SIGNING_KEY")
+            (settings.token_signing_key and settings.token_signing_key != "UNCONFIGURED-FAIL-CLOSED")
+            or os.environ.get("ASPIRE_TOKEN_SIGNING_KEY")
         ),
         "graph_built": True,
     }
@@ -389,7 +390,7 @@ async def readyz() -> JSONResponse:
                     r.close()
 
             checks["redis"] = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, _redis_ping),
+                asyncio.get_running_loop().run_in_executor(None, _redis_ping),
                 timeout=3.0,
             )
         except Exception:

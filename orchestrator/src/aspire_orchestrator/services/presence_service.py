@@ -89,9 +89,9 @@ _revoked_presence_tokens: set[str] = set()
 def _get_presence_signing_key() -> str:
     """Get the presence token signing key. Fail closed if not configured."""
     key = settings.token_signing_key
-    if not key:
+    if not key or key == "UNCONFIGURED-FAIL-CLOSED":
         key = os.environ.get("ASPIRE_TOKEN_SIGNING_KEY", "")
-    if not key:
+    if not key or key == "UNCONFIGURED-FAIL-CLOSED":
         raise ValueError(
             "Signing key not configured. Cannot mint presence tokens. Fail-closed per Law #3."
         )

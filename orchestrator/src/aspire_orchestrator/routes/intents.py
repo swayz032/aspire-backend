@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -339,9 +340,21 @@ async def classify_intent(request: Request) -> JSONResponse:
     current_agent = str(requested_agent).strip().lower() or "ava"
 
     try:
-        # SECURITY: allow_internal_routing is derived server-side from admin
-        # token presence — NEVER from user payload (THREAT-002).
-        allow_internal_routing = bool(request.headers.get("x-admin-token"))
+        # SECURITY: allow_internal_routing requires VALID admin JWT —
+        # not just header presence (THREAT-002, BUG-RT8-01).
+        _admin_token = request.headers.get("x-admin-token", "")
+        allow_internal_routing = False
+        if _admin_token:
+            import jwt as pyjwt
+            _jwt_secret = os.environ.get("ASPIRE_ADMIN_JWT_SECRET", "")
+            if _jwt_secret:
+                try:
+                    pyjwt.decode(_admin_token, _jwt_secret, algorithms=["HS256"])
+                    allow_internal_routing = True
+                except (pyjwt.InvalidTokenError, Exception):
+                    logger.warning("Invalid admin token for internal routing — denied")
+            else:
+                logger.warning("ASPIRE_ADMIN_JWT_SECRET not configured — internal routing denied")
         routing_plan: RoutingPlan = await skill_router.route(
             intent_result,
             context={
