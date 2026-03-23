@@ -725,7 +725,7 @@ class TestGustoReadCompany:
         assert result.outcome == Outcome.SUCCESS
         assert result.data["company_id"] == "company_123"
         assert result.data["name"] == "Acme Corp"
-        assert result.data["ein"] == "12-3456789"
+        assert result.data["ein"] == "<EIN_REDACTED>"  # Law #9: PII redacted
 
     @pytest.mark.asyncio
     async def test_missing_company_id(self, suite_id, office_id, correlation_id):
