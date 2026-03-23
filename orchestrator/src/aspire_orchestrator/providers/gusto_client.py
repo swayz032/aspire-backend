@@ -234,7 +234,7 @@ async def execute_gusto_read_company(
             data={
                 "company_id": company.get("id", company.get("uuid", "")),
                 "name": company.get("name", ""),
-                "ein": company.get("ein", ""),
+                "ein": "<EIN_REDACTED>",
                 "status": company.get("company_status", company.get("status", "")),
             },
             receipt_data=receipt,

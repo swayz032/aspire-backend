@@ -50,6 +50,11 @@ GREETING_RESPONSES: dict[str, list[str]] = {
         "Hey{name}! Adam here. Need me to research something?",
         "Hi{name}! Ready to dig into some research for you.",
     ],
+    "ava_admin": [
+        "Good {tod}{name}. Admin Ava here — your ops commander. All systems reporting. What do you need?",
+        "Good {tod}{name}. Platform status is nominal. How can I assist?",
+        "Good {tod}{name}. Ava Admin online. What should I look into?",
+    ],
 }
 
 _COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in GREETING_PATTERNS]
@@ -76,7 +81,7 @@ def _time_of_day() -> str:
 
 
 def _formal_name(user_profile: dict[str, Any] | None) -> str:
-    """Extract 'Mr./Ms. LastName' from user_profile, or empty string."""
+    """Extract 'Mr./Mrs. LastName' from user_profile, or empty string."""
     if not user_profile:
         return ""
     name = user_profile.get("owner_name") or user_profile.get("display_name") or ""
@@ -84,7 +89,8 @@ def _formal_name(user_profile: dict[str, Any] | None) -> str:
         return ""
     parts = name.strip().split()
     last_name = parts[-1] if parts else name
-    return f", Mr. {last_name}"
+    salutation = user_profile.get("salutation") or user_profile.get("title") or "Mr."
+    return f", {salutation} {last_name}"
 
 
 def greeting_response(agent: str, user_profile: dict[str, Any] | None = None) -> str:

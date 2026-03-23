@@ -103,7 +103,6 @@ class RouteDecision(BaseModel):
     temperature: float = 0.1
     top_p: float | None = None
     top_k: int | None = None
-    temperature: float = 0.1
     timeout_seconds: int = 15
 
 

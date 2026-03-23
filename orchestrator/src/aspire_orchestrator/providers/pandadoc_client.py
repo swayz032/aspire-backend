@@ -396,6 +396,9 @@ class PandaDocClient(BaseProviderClient):
             # Parse ISO8601 date
             last_rotated = datetime.fromisoformat(last_rotated_str)
 
+            # Ensure both datetimes are naive for safe comparison
+            if last_rotated.tzinfo is not None:
+                last_rotated = last_rotated.replace(tzinfo=None)
             age_days = (datetime.now() - last_rotated).days
 
             if age_days > 30:

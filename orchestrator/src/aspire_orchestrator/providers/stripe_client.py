@@ -181,9 +181,8 @@ async def _resolve_stripe_customer(
             return data[0].get("id")
     else:
         logger.warning(
-            "Stripe customer search failed: status=%s body=%s",
+            "Stripe customer search failed: status=%s",
             search_response.status_code,
-            str(search_response.body)[:200],
         )
 
     # Not found — create

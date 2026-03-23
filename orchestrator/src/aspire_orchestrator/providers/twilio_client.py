@@ -397,8 +397,8 @@ async def execute_twilio_call_create(
             data={
                 "call_sid": call.get("sid", ""),
                 "status": call.get("status", ""),
-                "from": call.get("from", ""),
-                "to": call.get("to", ""),
+                "from": "<PHONE_REDACTED>",
+                "to": "<PHONE_REDACTED>",
                 "direction": call.get("direction", "outbound-api"),
             },
             receipt_data=receipt,

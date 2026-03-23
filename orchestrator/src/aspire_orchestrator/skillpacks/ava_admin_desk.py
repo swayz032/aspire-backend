@@ -692,6 +692,376 @@ class AvaAdminDesk(AgenticSkillPack):
         )
 
 
+    # =========================================================================
+    # 7. Sentry Summary (GREEN — read-only)
+    # =========================================================================
+
+    async def get_sentry_summary(self, ctx: AgentContext) -> AgentResult:
+        """Get aggregated Sentry issue summary."""
+        try:
+            from aspire_orchestrator.services.sentry_read import get_sentry_read_service
+            service = get_sentry_read_service()
+            summary = await service.get_summary()
+        except Exception as e:
+            return AgentResult(success=False, error=f"Sentry summary failed: {e}")
+
+        issue_count = len(summary.get("issues", [])) if isinstance(summary, dict) else 0
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.sentry_summary",
+            status="ok",
+            inputs={"requested_at": datetime.now(timezone.utc).isoformat()},
+            metadata={"issue_count": issue_count},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"summary": summary, "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 8. Sentry Issues (GREEN — read-only)
+    # =========================================================================
+
+    async def get_sentry_issues(
+        self,
+        ctx: AgentContext,
+        *,
+        project: str | None = None,
+        limit: int = 10,
+    ) -> AgentResult:
+        """Get unresolved Sentry issues, optionally filtered by project."""
+        try:
+            from aspire_orchestrator.services.sentry_read import get_sentry_read_service
+            service = get_sentry_read_service()
+            raw = await service.get_issues(limit=limit)
+            issues = raw.get("issues", []) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
+        except Exception as e:
+            return AgentResult(success=False, error=f"Sentry issues failed: {e}")
+
+        if project:
+            issues = [i for i in issues if i.get("project", {}).get("slug") == project]
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.sentry_issues",
+            status="ok",
+            inputs={"project": project, "limit": limit},
+            metadata={"issue_count": len(issues)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"issues": issues, "count": len(issues), "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 9. Workflow Status (GREEN — read-only Supabase query)
+    # =========================================================================
+
+    async def get_workflow_status(
+        self,
+        ctx: AgentContext,
+        *,
+        limit: int = 20,
+    ) -> AgentResult:
+        """Get recent workflow execution status with counts."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            result = await supabase_select(
+                "workflow_executions",
+                {},
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            rows = result if isinstance(result, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"Workflow status query failed: {e}")
+
+        # Compute counts by status
+        counts: dict[str, int] = {}
+        for row in rows:
+            status = row.get("status", "unknown")
+            counts[status] = counts.get(status, 0) + 1
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.workflow_status",
+            status="ok",
+            inputs={"limit": limit},
+            metadata={"total": len(rows), "counts": counts},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "workflows": rows,
+                "counts": counts,
+                "total": len(rows),
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 10. Approval Queue (GREEN — read-only Supabase query)
+    # =========================================================================
+
+    async def get_approval_queue(
+        self,
+        ctx: AgentContext,
+        *,
+        status: str = "pending",
+        limit: int = 20,
+    ) -> AgentResult:
+        """Get approval requests filtered by status."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            filters = f"status=eq.{status}" if status else ""
+            result = await supabase_select(
+                "approval_requests",
+                filters,
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            rows = result if isinstance(result, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"Approval queue query failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.approval_queue",
+            status="ok",
+            inputs={"status_filter": status, "limit": limit},
+            metadata={"count": len(rows)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "approvals": rows,
+                "count": len(rows),
+                "filter": status,
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 11. Receipt Audit (GREEN — read-only chain integrity check)
+    # =========================================================================
+
+    async def get_receipt_audit(
+        self,
+        ctx: AgentContext,
+        *,
+        suite_id: str = "system",
+        limit: int = 50,
+    ) -> AgentResult:
+        """Audit receipt chain integrity for a suite."""
+        try:
+            from aspire_orchestrator.services.receipt_store import (
+                get_receipt_count,
+                get_chain_receipts,
+            )
+            total_count = get_receipt_count(suite_id=suite_id)
+            chain = get_chain_receipts(suite_id=suite_id)
+        except Exception as e:
+            return AgentResult(success=False, error=f"Receipt audit failed: {e}")
+
+        # Check chain integrity — look for gaps
+        gaps: list[dict[str, Any]] = []
+        chain_list = chain[:limit] if chain else []
+        for i in range(1, len(chain_list)):
+            prev = chain_list[i - 1]
+            curr = chain_list[i]
+            if curr.get("prev_hash") and prev.get("receipt_hash"):
+                if curr["prev_hash"] != prev["receipt_hash"]:
+                    gaps.append({
+                        "index": i,
+                        "expected": prev["receipt_hash"],
+                        "actual": curr.get("prev_hash"),
+                    })
+
+        audit = {
+            "suite_id": suite_id,
+            "total_receipts": total_count,
+            "chain_length": len(chain_list),
+            "gaps_found": len(gaps),
+            "gaps": gaps,
+            "integrity": "INTACT" if len(gaps) == 0 else "BROKEN",
+        }
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.receipt_audit",
+            status="ok",
+            inputs={"suite_id": suite_id, "limit": limit},
+            metadata={"total": total_count, "gaps": len(gaps)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"audit": audit, "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 12. Web Search via Brave (GREEN — read-only)
+    # =========================================================================
+
+    async def search_web(
+        self,
+        ctx: AgentContext,
+        *,
+        query: str,
+        count: int = 5,
+    ) -> AgentResult:
+        """Search the web using Brave Search API."""
+        if not query or not query.strip():
+            return AgentResult(success=False, error="Missing required parameter: query")
+
+        try:
+            from aspire_orchestrator.providers.brave_client import execute_brave_search
+            tool_result = await execute_brave_search(
+                payload={"query": query.strip(), "count": count},
+                correlation_id=ctx.correlation_id,
+                suite_id=ctx.suite_id,
+                office_id=ctx.office_id,
+            )
+            result_data = tool_result.data if hasattr(tool_result, "data") else {}
+        except Exception as e:
+            return AgentResult(success=False, error=f"Brave search failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.web_search",
+            status="ok",
+            inputs={"query_length": len(query), "count": count},
+            metadata={"results_count": len(result_data.get("results", []))},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"search_results": result_data, "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 13. Council History (GREEN — read-only)
+    # =========================================================================
+
+    async def get_council_history(
+        self,
+        ctx: AgentContext,
+        *,
+        status: str | None = None,
+        limit: int = 10,
+    ) -> AgentResult:
+        """Get Meeting of Minds council session history."""
+        try:
+            from aspire_orchestrator.services.council_service import list_sessions
+            sessions = list_sessions(status=status)
+        except Exception as e:
+            return AgentResult(success=False, error=f"Council history failed: {e}")
+
+        # Convert dataclasses to dicts and apply limit
+        session_dicts = []
+        for s in sessions[:limit]:
+            if hasattr(s, "__dict__"):
+                d = {k: v for k, v in s.__dict__.items() if not k.startswith("_")}
+                # Convert datetime fields to ISO strings
+                for key, val in d.items():
+                    if isinstance(val, datetime):
+                        d[key] = val.isoformat()
+                session_dicts.append(d)
+            else:
+                session_dicts.append(s)
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.council_history",
+            status="ok",
+            inputs={"status_filter": status, "limit": limit},
+            metadata={"session_count": len(session_dicts)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "sessions": session_dicts,
+                "count": len(session_dicts),
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 14. Metrics Snapshot (GREEN — read-only Prometheus counters)
+    # =========================================================================
+
+    async def get_metrics_snapshot(self, ctx: AgentContext) -> AgentResult:
+        """Get current Prometheus metrics snapshot."""
+        try:
+            from aspire_orchestrator.services.metrics import (
+                REQUEST_COUNTER,
+                TOOL_EXECUTION_COUNTER,
+                RECEIPT_WRITE_COUNTER,
+                TOKEN_MINT_COUNTER,
+                A2A_TASK_COUNTER,
+                LLM_REQUEST_COUNTER,
+            )
+
+            def _counter_value(counter: Any) -> float:
+                """Extract total value from a Prometheus counter."""
+                try:
+                    # Sum all label combinations
+                    total = 0.0
+                    for metric in counter.collect():
+                        for sample in metric.samples:
+                            if sample.name.endswith("_total"):
+                                total += sample.value
+                    return total
+                except Exception:
+                    return 0.0
+
+            snapshot = {
+                "requests_total": _counter_value(REQUEST_COUNTER),
+                "tool_executions_total": _counter_value(TOOL_EXECUTION_COUNTER),
+                "receipt_writes_total": _counter_value(RECEIPT_WRITE_COUNTER),
+                "token_mints_total": _counter_value(TOKEN_MINT_COUNTER),
+                "a2a_tasks_total": _counter_value(A2A_TASK_COUNTER),
+                "llm_requests_total": _counter_value(LLM_REQUEST_COUNTER),
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            return AgentResult(success=False, error=f"Metrics snapshot failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.metrics_snapshot",
+            status="ok",
+            inputs={"requested_at": datetime.now(timezone.utc).isoformat()},
+            metadata={"counters_collected": len(snapshot) - 1},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"metrics": snapshot, "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+
 # =============================================================================
 # Module-level singleton
 # =============================================================================

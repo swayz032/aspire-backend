@@ -1,0 +1,30 @@
+# Ava Admin Desk routing rules
+version: v1
+rule_id: ava_admin_desk_router
+agent: ava_admin
+match:
+  domain: platform.ops
+  intents:
+    - platform_health
+    - system_status
+    - incident_triage
+    - sentry_issues
+    - workflow_status
+    - approval_queue
+    - receipt_audit
+    - metrics_snapshot
+    - council_dispatch
+    - web_search
+route:
+  agent: ava_admin
+  skillpack: ava-admin
+model_overrides:
+  # Admin uses cheap_classifier for triage, primary_reasoner for verification
+  classify.low: cheap_classifier
+  draft.low: fast_general
+  summarize.low: cheap_classifier
+  verify.low: primary_reasoner
+notes:
+  - All methods are GREEN (read-only observation)
+  - Council dispatch is YELLOW (spawns advisors)
+  - Admin Ava observes and proposes — never executes without orchestrator approval

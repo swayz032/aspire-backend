@@ -181,7 +181,7 @@ def _build_user_context(state: OrchestratorState) -> str:
 
 
 def _build_channel_context(state: OrchestratorState) -> str:
-    """Voice vs chat response style guidance."""
+    """Voice vs chat response style guidance with Anam TTS optimization."""
     channel = "voice"  # Default
     profile = state.get("user_profile")
     if profile and isinstance(profile, dict):
@@ -189,9 +189,12 @@ def _build_channel_context(state: OrchestratorState) -> str:
 
     if channel in ("voice", "avatar"):
         return (
-            "RESPONSE STYLE: Keep your response to 1-3 sentences. "
-            "Speak naturally and conversationally. No markdown, no bullet points. "
-            "Optimized for text-to-speech."
+            "RESPONSE STYLE: Keep your response to one to three sentences. "
+            "Speak naturally like a trusted professional. "
+            "Use brief fillers like 'Got it', 'Let me check', 'Here is what I see'. "
+            "Write out numbers and symbols for TTS: 'twenty dollars' not '$20'. "
+            "No markdown, no bullet points, no special characters. "
+            "Optimized for text-to-speech via Anam avatar."
         )
     return (
         "RESPONSE STYLE: You may be more detailed. Use clear structure "
@@ -284,6 +287,7 @@ def _identity_intro(agent_id: str) -> str:
         "teressa": "I'm Teressa, your bookkeeping specialist in Aspire. I handle reconciliations, books hygiene, and close-readiness.",
         "milo": "I'm Milo, your payroll specialist in Aspire. I handle payroll operations, timing, and employee pay workflows.",
         "mail_ops": "I'm Mail Ops, your domain and mailbox specialist in Aspire. I handle mailbox setup, routing, and domain mail operations.",
+        "ava_admin": "I'm Ava Admin, your ops commander in Aspire. I monitor platform health, triage incidents, track workflows, audit receipts, and coordinate the council when needed.",
     }
     return intros.get(agent_id, "I'm your Aspire specialist assistant. Tell me what you need and I'll handle it.")
 
