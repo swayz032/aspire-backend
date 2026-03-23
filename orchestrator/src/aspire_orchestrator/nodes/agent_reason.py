@@ -180,12 +180,44 @@ def _build_user_context(state: OrchestratorState) -> str:
     return "\n".join(parts) if parts else ""
 
 
+def _resolve_channel(state: OrchestratorState) -> str:
+    """Resolve interaction channel from state with 3-location priority.
+
+    Priority:
+      1. state["channel"]           — top-level (set by intake)
+      2. state["request"].payload.channel — where desktop puts it
+      3. state["user_profile"]["channel"] — original location (usually null)
+      4. Default: "chat" (NOT "voice" — safer default)
+
+    Normalizes "text" → "chat" for consistency.
+    """
+    # Priority 1: top-level state (set by intake node)
+    channel = state.get("channel")
+
+    # Priority 2: request payload
+    if not channel:
+        req = state.get("request")
+        if req is not None:
+            payload = req.get("payload", {}) if isinstance(req, dict) else getattr(req, "payload", {})
+            if isinstance(payload, dict):
+                channel = payload.get("channel")
+
+    # Priority 3: user_profile
+    if not channel:
+        profile = state.get("user_profile")
+        if profile and isinstance(profile, dict):
+            channel = profile.get("channel")
+
+    # Default + normalize
+    channel = channel or "chat"
+    if channel == "text":
+        channel = "chat"
+    return channel
+
+
 def _build_channel_context(state: OrchestratorState) -> str:
     """Channel-aware response style: voice (audio-only), avatar (Anam video), chat (text)."""
-    channel = "voice"  # Default
-    profile = state.get("user_profile")
-    if profile and isinstance(profile, dict):
-        channel = profile.get("channel", "voice")
+    channel = _resolve_channel(state)
 
     # Shared TTS rules for spoken channels (voice + avatar)
     _tts_base = (
@@ -196,18 +228,17 @@ def _build_channel_context(state: OrchestratorState) -> str:
         "No markdown, no bullet points, no special characters. "
     )
 
-    if channel == "avatar":
-        # Ava + Finn — full Anam avatar rendering with video
-        return _tts_base + "Optimized for text-to-speech via Anam avatar."
+    if channel in ("avatar", "voice"):
+        suffix = "Optimized for text-to-speech via Anam avatar." if channel == "avatar" else "Optimized for text-to-speech delivery."
+        return _tts_base + suffix
 
-    if channel == "voice":
-        # Audio-only TTS (all agents) — no avatar reference
-        return _tts_base + "Optimized for text-to-speech delivery."
-
-    # Chat — structured text formatting allowed
+    # Chat — structured text formatting allowed, warm conversational tone
     return (
-        "RESPONSE STYLE: You may be more detailed. Use clear structure "
-        "when appropriate. You can use markdown formatting."
+        "RESPONSE STYLE: You are chatting with the user in a text interface. "
+        "Be warm and conversational but substantive. "
+        "For complex topics, use 3-6 sentences. Light formatting (bold for emphasis, "
+        "short lists for multi-part answers) is welcome. "
+        "Don't force brevity — give the user real value."
     )
 
 
@@ -500,15 +531,37 @@ async def _agent_reason_inner(
     except Exception as e:
         logger.warning("Memory loading failed (non-fatal, continuing without): %s", e)
 
+    # 4b. Finn research delegation hint (RC5)
+    if agent_id in ("finn", "finn_fm") and retrieval_status in ("no_results", "offline", "degraded"):
+        _research_hint = (
+            "\n## Research Delegation\n"
+            "If this question is outside your financial expertise, tell the user you'll "
+            "ask Adam (your research specialist) to look into it. Suggest specific "
+            "angles Adam could research. Don't give generic advice — either give "
+            "domain-specific financial insight or delegate to Adam."
+        )
+        rag_context = (rag_context + _research_hint) if rag_context else _research_hint
+
     # 5. Assemble system message
     identity_guard = (
         f"IDENTITY CONSTRAINT: You are {agent_id}. "
         f"Never claim to be Ava unless your agent id is exactly 'ava'. "
         "Do not self-identify as any other agent."
     )
+
+    # Temporal context (RC1) — agents need to know current date/time
+    now = datetime.now(timezone.utc)
+    temporal_ctx = (
+        f"## Current Date & Time\n"
+        f"Today is {now.strftime('%A, %B %d, %Y')}. "
+        f"Current time is {now.strftime('%I:%M %p')} UTC. "
+        f"Current quarter: Q{(now.month - 1) // 3 + 1} {now.year}."
+    )
+
     system_parts = [identity_guard, "", awareness, "", persona]
     if user_ctx:
         system_parts.extend(["", "## User Context", user_ctx])
+    system_parts.extend(["", temporal_ctx])
     if memory_ctx:
         system_parts.extend(["", memory_ctx])
     if rag_context:
@@ -530,13 +583,16 @@ async def _agent_reason_inner(
         if _conversation_history:
             llm_messages.extend(_conversation_history)
         llm_messages.append({"role": "user", "content": utterance})
+        # RC4: Advisory questions get more tokens for substantive answers
+        _max_tokens = 1200 if intent_type in ("knowledge", "advice") else 500
+
         response_text = await generate_text_async(
             model=model,
             messages=llm_messages,
             api_key=resolve_openai_api_key(),
             base_url=settings.openai_base_url,
             timeout_seconds=float(settings.openai_timeout_seconds),
-            max_output_tokens=500,
+            max_output_tokens=_max_tokens,
             temperature=None if _is_reasoning else 0.7,
             prefer_responses_api=True,
         )
@@ -588,10 +644,7 @@ async def _agent_reason_inner(
     )
     if not grounding_report.passed:
         response_text = grounding_report.fallback_text
-    channel = "voice"
-    profile = state.get("user_profile")
-    if isinstance(profile, dict):
-        channel = profile.get("channel", "voice")
+    channel = _resolve_channel(state)
 
     fallback_map = {
         "ava": "I can give you a safe first pass now. Which exact detail should I verify first?",

@@ -312,9 +312,9 @@ def test_ava_admin_voice_anam_style() -> None:
     assert "Anam avatar" in avatar_ctx
     assert "write out numbers" in avatar_ctx.lower()
 
-    # Chat channel — structured formatting
+    # Chat channel — structured formatting (warm conversational, light formatting OK)
     chat_ctx = _build_channel_context({"user_profile": {"channel": "chat"}})
-    assert "markdown" in chat_ctx.lower()
+    assert "formatting" in chat_ctx.lower()
     assert "write out numbers" not in chat_ctx.lower()
 
 
@@ -342,3 +342,176 @@ def test_route_decision_no_duplicate_temperature() -> None:
     # Pydantic v2: model_fields is a dict — 'temperature' appears once
     temp_count = sum(1 for k in fields if k == 'temperature')
     assert temp_count == 1
+
+
+# =========================================================================
+# v1.2.0: Channel resolution, temporal context, formatting, delegation
+# =========================================================================
+
+
+class TestResolveChannel:
+    """Tests for _resolve_channel helper (RC0 fix)."""
+
+    def test_resolve_channel_from_top_level_state(self) -> None:
+        """Channel in top-level state takes priority."""
+        from aspire_orchestrator.nodes.agent_reason import _resolve_channel
+        state = {"channel": "chat"}
+        assert _resolve_channel(state) == "chat"
+
+    def test_resolve_channel_from_payload(self) -> None:
+        """Channel in payload.channel when top-level missing."""
+        from aspire_orchestrator.nodes.agent_reason import _resolve_channel
+        state = {"request": {"payload": {"channel": "voice"}}}
+        assert _resolve_channel(state) == "voice"
+
+    def test_resolve_channel_default_chat(self) -> None:
+        """No channel anywhere → defaults to 'chat' not 'voice'."""
+        from aspire_orchestrator.nodes.agent_reason import _resolve_channel
+        state = {}
+        assert _resolve_channel(state) == "chat"
+
+    def test_resolve_channel_normalizes_text(self) -> None:
+        """'text' → 'chat' normalization."""
+        from aspire_orchestrator.nodes.agent_reason import _resolve_channel
+        state = {"channel": "text"}
+        assert _resolve_channel(state) == "chat"
+
+    def test_resolve_channel_from_user_profile(self) -> None:
+        """Falls back to user_profile.channel as last resort."""
+        from aspire_orchestrator.nodes.agent_reason import _resolve_channel
+        state = {"user_profile": {"channel": "avatar"}}
+        assert _resolve_channel(state) == "avatar"
+
+
+class TestTemporalContext:
+    """Tests for temporal context injection (RC1 fix)."""
+
+    def test_temporal_context_in_system_prompt(self) -> None:
+        """Date/time string should be present in assembled system message."""
+        from aspire_orchestrator.nodes.agent_reason import _build_channel_context, _resolve_channel
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        # Verify that temporal_ctx format produces current year
+        expected_year = str(now.year)
+        expected_quarter = f"Q{(now.month - 1) // 3 + 1}"
+        temporal_ctx = (
+            f"## Current Date & Time\n"
+            f"Today is {now.strftime('%A, %B %d, %Y')}. "
+            f"Current time is {now.strftime('%I:%M %p')} UTC. "
+            f"Current quarter: {expected_quarter} {now.year}."
+        )
+        assert expected_year in temporal_ctx
+        assert expected_quarter in temporal_ctx
+        assert "## Current Date & Time" in temporal_ctx
+
+
+class TestChannelAwareFormatting:
+    """Tests for channel-aware formatting (RC2/RC3 fix)."""
+
+    def test_chat_channel_allows_formatting(self) -> None:
+        """Chat channel should allow formatting, not TTS constraints."""
+        from aspire_orchestrator.nodes.agent_reason import _build_channel_context
+        state = {"channel": "chat"}
+        ctx = _build_channel_context(state)
+        assert "text-to-speech" not in ctx.lower()
+        assert "substantive" in ctx.lower() or "formatting" in ctx.lower()
+
+    def test_voice_channel_gets_tts_constraints(self) -> None:
+        """Voice channel should get TTS constraints."""
+        from aspire_orchestrator.nodes.agent_reason import _build_channel_context
+        state = {"channel": "voice"}
+        ctx = _build_channel_context(state)
+        assert "text-to-speech" in ctx.lower()
+
+    def test_avatar_channel_gets_tts_constraints(self) -> None:
+        """Avatar channel should get TTS constraints."""
+        from aspire_orchestrator.nodes.agent_reason import _build_channel_context
+        state = {"channel": "avatar"}
+        ctx = _build_channel_context(state)
+        assert "anam avatar" in ctx.lower()
+
+
+class TestAdvisoryMaxTokens:
+    """Tests for advisory max_output_tokens increase (RC4 fix)."""
+
+    def test_advisory_intent_gets_more_tokens(self) -> None:
+        """knowledge/advice intents should get 1200 tokens."""
+        for intent in ("knowledge", "advice"):
+            _max_tokens = 1200 if intent in ("knowledge", "advice") else 500
+            assert _max_tokens == 1200
+
+    def test_default_intent_stays_at_500(self) -> None:
+        """Non-advisory intents should stay at 500 tokens."""
+        for intent in ("greeting", "conversation", "action"):
+            _max_tokens = 1200 if intent in ("knowledge", "advice") else 500
+            assert _max_tokens == 500
+
+
+class TestFinnResearchDelegation:
+    """Tests for Finn→Adam delegation hint (RC5 fix)."""
+
+    def test_finn_gets_delegation_hint_when_rag_empty(self) -> None:
+        """Finn should get delegation hint when RAG has no results."""
+        agent_id = "finn"
+        retrieval_status = "no_results"
+        rag_context = ""
+
+        if agent_id in ("finn", "finn_fm") and retrieval_status in ("no_results", "offline", "degraded"):
+            _research_hint = (
+                "\n## Research Delegation\n"
+                "If this question is outside your financial expertise, tell the user you'll "
+                "ask Adam (your research specialist) to look into it."
+            )
+            rag_context = (rag_context + _research_hint) if rag_context else _research_hint
+
+        assert "Adam" in rag_context
+        assert "Research Delegation" in rag_context
+
+    def test_non_finn_no_delegation_hint(self) -> None:
+        """Non-Finn agents should NOT get delegation hint."""
+        agent_id = "ava"
+        retrieval_status = "no_results"
+        rag_context = ""
+
+        if agent_id in ("finn", "finn_fm") and retrieval_status in ("no_results", "offline", "degraded"):
+            rag_context = "delegation hint"
+
+        assert rag_context == ""
+
+
+class TestIntakeChannelExtraction:
+    """Tests for channel extraction in intake node."""
+
+    def test_intake_extracts_channel_from_payload(self) -> None:
+        """intake_node should extract channel to top-level state."""
+        from aspire_orchestrator.nodes.intake import intake_node
+        state = {
+            "request": {
+                "schema_version": "1.0",
+                "suite_id": "00000000-0000-0000-0000-000000000000",
+                "office_id": "00000000-0000-0000-0000-000000000001",
+                "request_id": "test-req",
+                "correlation_id": "test-corr",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "task_type": "unknown",
+                "payload": {"text": "hello", "channel": "chat"},
+            },
+            "auth_suite_id": "test-suite",
+            "auth_actor_id": "test-actor",
+        }
+        result = intake_node(state)
+        assert result.get("channel") == "chat"
+
+    def test_intake_normalizes_text_to_chat(self) -> None:
+        """intake_node should normalize 'text' → 'chat'."""
+        from aspire_orchestrator.nodes.intake import intake_node
+        state = {
+            "request": {
+                "text": "hello",
+                "channel": "text",
+            },
+            "auth_suite_id": "test-suite",
+            "auth_actor_id": "test-actor",
+        }
+        result = intake_node(state)
+        assert result.get("channel") == "chat"

@@ -4513,6 +4513,7 @@ async def _stream_ava_chat(
     correlation_id: str,
     message: str,
     history: list[dict[str, str]],
+    user_profile: dict[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream Ava admin chat response via SSE.
 
@@ -4573,6 +4574,25 @@ async def _stream_ava_chat(
 
     # --- Build OpenAI messages ---
     system_prompt = _load_ava_system_prompt()
+
+    # Inject temporal context (RC1)
+    _now = datetime.now(timezone.utc)
+    system_prompt += (
+        f"\n\n## Current Date & Time\n"
+        f"Today is {_now.strftime('%A, %B %d, %Y')}. "
+        f"Current time is {_now.strftime('%I:%M %p')} UTC. "
+        f"Current quarter: Q{(_now.month - 1) // 3 + 1} {_now.year}."
+    )
+
+    # Inject user profile if provided (Bug 6D)
+    if user_profile:
+        name = user_profile.get("owner_name", "")
+        if name:
+            parts = name.strip().split()
+            last = parts[-1] if parts else ""
+            salutation = user_profile.get("salutation", "Mr.")
+            system_prompt += f"\n\nThe user's name is {name}. Address them as {salutation} {last}."
+
     model = settings.ava_llm_model
     reasoning_model = _is_reasoning_model(model)
     system_role = "developer" if reasoning_model else "system"
@@ -4724,6 +4744,7 @@ async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
 
     message = message.strip()
     history = _validate_chat_history(body.get("history", []))
+    user_profile = body.get("user_profile") if isinstance(body.get("user_profile"), dict) else None
 
     return StreamingResponse(
         _stream_ava_chat(
@@ -4731,6 +4752,7 @@ async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
             correlation_id=correlation_id,
             message=message,
             history=history,
+            user_profile=user_profile,
         ),
         media_type="text/event-stream",
         headers={

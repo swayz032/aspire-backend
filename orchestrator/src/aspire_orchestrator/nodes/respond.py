@@ -297,24 +297,32 @@ def _llm_summarize(state: OrchestratorState, fallback_text: str, channel: str = 
     if persona:
         persona = _strip_format_instructions(persona)
 
-    # Formatting instructions based on Agent and Channel
+    # Formatting instructions based on Agent and Channel (3-path: voice, backend-chat, frontend-chat)
     agent_id = _resolve_agent_id(state)
     is_backend_ops = agent_id in ("ava_admin", "sre", "security", "release", "qa")
 
-    if is_backend_ops and channel not in ("voice", "avatar"):
-        # Backend Ops gets data-rich structured text
+    if channel in ("voice", "avatar"):
+        # TTS constraints for ALL agents on voice/avatar channels
+        format_instruction = (
+            "- NO markdown, NO bullet points, NO bold/italic, NO special symbols ($)\n"
+            "- Write out numbers and symbols (e.g., 'twenty dollars' instead of '$20')\n"
+            "- Speak naturally with brief fillers ('Sure thing', 'I see')\n"
+            "- Sounds natural when spoken aloud (optimized for text-to-speech)"
+        )
+    elif is_backend_ops:
+        # Backend Ops on chat gets data-rich structured text
         format_instruction = (
             "- Use Markdown and bullet points to structure data and lists clearly\n"
             "- Keep the tone natural but data-rich\n"
             "- Address the user as the Founder when appropriate"
         )
     else:
-        # Frontend Agents (and Backend on Voice) get "Anam Style"
+        # Frontend agents on chat — warm conversational with light formatting
         format_instruction = (
-            "- NO markdown, NO bullet points, NO bold/italic, NO special symbols ($)\n"
-            "- Write out numbers and symbols (e.g., 'twenty dollars' instead of '$20')\n"
-            "- Speak naturally with brief fillers ('Sure thing', 'I see')\n"
-            "- Sounds natural when spoken aloud (optimized for text-to-speech)"
+            "- Warm, professional tone — like a trusted colleague\n"
+            "- Light formatting OK: bold for emphasis, short lists for multi-part answers\n"
+            "- Be substantive — don't force brevity when the topic warrants detail\n"
+            "- Use dollar signs and numbers normally ($20, 15%, etc.)"
         )
 
     # Build the summarization prompt
@@ -428,18 +436,40 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel:
     from aspire_orchestrator.nodes.agent_reason import _build_aspire_awareness
     awareness = _build_aspire_awareness()
 
+    # Temporal context (RC1) — agents need current date/time
+    from datetime import datetime as _dt, timezone as _tz
+    _now = _dt.now(_tz.utc)
+    temporal_ctx = (
+        f"Today is {_now.strftime('%A, %B %d, %Y')}. "
+        f"Current time: {_now.strftime('%I:%M %p')} UTC. "
+        f"Quarter: Q{(_now.month - 1) // 3 + 1} {_now.year}."
+    )
+
+    # Channel-aware formatting (RC3)
+    if channel in ("voice", "avatar"):
+        style_instruction = (
+            "Keep it brief (1-3 sentences), warm, and natural. "
+            "Do NOT use markdown or bullet points. This will be spoken aloud via TTS.\n"
+        )
+    else:
+        style_instruction = (
+            "Be warm, conversational, and substantive. "
+            "For complex topics, use 3-6 sentences. Light formatting (bold, short lists) is OK. "
+            "Don't force brevity — give real value.\n"
+        )
+
     prompt = (
         f'The user said: "{utterance}"\n\n'
         f"You are {agent_name}, speaking to the user directly.\n"
+        f"{temporal_ctx}\n"
         "This is a conversational message, not an action request. "
         "Respond in character using your persona's personality and expertise. "
         "If the user asks who you are, introduce yourself warmly with your name, "
         "role, and what you can help them with.\n"
         f"{awareness}\n"
         f"{user_ctx}"
-        "Keep it brief (1-3 sentences), warm, and natural. "
-        "Do NOT use markdown or bullet points. This will be spoken aloud via TTS.\n"
-        "Respond with ONLY the spoken text."
+        f"{style_instruction}"
+        "Respond with ONLY the text."
     )
 
     try:

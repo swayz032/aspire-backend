@@ -275,6 +275,13 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
     if requested_agent:
         result["requested_agent"] = requested_agent
 
+    # --- Channel extraction: promote to top-level state for downstream nodes ---
+    if isinstance(request.payload, dict):
+        _channel = request.payload.get("channel", "chat")
+        if _channel == "text":
+            _channel = "chat"
+        result["channel"] = _channel
+
     # --- Conversational Intelligence: Extract user context ---
     if isinstance(request.payload, dict):
         user_profile = request.payload.get("user_profile")

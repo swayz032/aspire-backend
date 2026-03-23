@@ -74,16 +74,22 @@ class TestBuildUserContext:
 
 class TestBuildChannelContext:
     def test_voice_channel(self):
-        assert "1-3 sentences" in _build_channel_context({"user_profile": {"channel": "voice"}})
+        ctx = _build_channel_context({"user_profile": {"channel": "voice"}})
+        assert "text-to-speech" in ctx.lower()
 
     def test_avatar_channel(self):
-        assert "1-3 sentences" in _build_channel_context({"user_profile": {"channel": "avatar"}})
+        ctx = _build_channel_context({"user_profile": {"channel": "avatar"}})
+        assert "anam avatar" in ctx.lower()
 
     def test_chat_channel(self):
-        assert "more detailed" in _build_channel_context({"user_profile": {"channel": "chat"}})
+        ctx = _build_channel_context({"user_profile": {"channel": "chat"}})
+        assert "formatting" in ctx.lower()
 
-    def test_default_is_voice(self):
-        assert "1-3 sentences" in _build_channel_context({})
+    def test_default_is_chat(self):
+        # RC0 fix: default is now "chat" (not "voice")
+        ctx = _build_channel_context({})
+        assert "text-to-speech" not in ctx.lower()
+        assert "substantive" in ctx.lower() or "formatting" in ctx.lower()
 
 
 class TestGuardOutput:
