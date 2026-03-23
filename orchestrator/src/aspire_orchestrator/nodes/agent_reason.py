@@ -181,21 +181,30 @@ def _build_user_context(state: OrchestratorState) -> str:
 
 
 def _build_channel_context(state: OrchestratorState) -> str:
-    """Voice vs chat response style guidance with Anam TTS optimization."""
+    """Channel-aware response style: voice (audio-only), avatar (Anam video), chat (text)."""
     channel = "voice"  # Default
     profile = state.get("user_profile")
     if profile and isinstance(profile, dict):
         channel = profile.get("channel", "voice")
 
-    if channel in ("voice", "avatar"):
-        return (
-            "RESPONSE STYLE: Keep your response to one to three sentences. "
-            "Speak naturally like a trusted professional. "
-            "Use brief fillers like 'Got it', 'Let me check', 'Here is what I see'. "
-            "Write out numbers and symbols for TTS: 'twenty dollars' not '$20'. "
-            "No markdown, no bullet points, no special characters. "
-            "Optimized for text-to-speech via Anam avatar."
-        )
+    # Shared TTS rules for spoken channels (voice + avatar)
+    _tts_base = (
+        "RESPONSE STYLE: Keep your response to one to three sentences. "
+        "Speak naturally like a trusted professional. "
+        "Use brief fillers like 'Got it', 'Let me check', 'Here is what I see'. "
+        "Write out numbers and symbols for TTS: 'twenty dollars' not '$20'. "
+        "No markdown, no bullet points, no special characters. "
+    )
+
+    if channel == "avatar":
+        # Ava + Finn — full Anam avatar rendering with video
+        return _tts_base + "Optimized for text-to-speech via Anam avatar."
+
+    if channel == "voice":
+        # Audio-only TTS (all agents) — no avatar reference
+        return _tts_base + "Optimized for text-to-speech delivery."
+
+    # Chat — structured text formatting allowed
     return (
         "RESPONSE STYLE: You may be more detailed. Use clear structure "
         "when appropriate. You can use markdown formatting."

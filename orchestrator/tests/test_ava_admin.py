@@ -297,13 +297,25 @@ def test_ava_admin_identity_intro() -> None:
 
 
 def test_ava_admin_voice_anam_style() -> None:
-    """Verify voice channel context includes TTS instructions."""
+    """Verify three channels: voice (TTS no avatar), avatar (Anam), chat (markdown)."""
     from aspire_orchestrator.nodes.agent_reason import _build_channel_context
-    state = {"user_profile": {"channel": "voice"}}
-    ctx = _build_channel_context(state)
-    assert "Anam avatar" in ctx
-    assert "write out numbers" in ctx.lower()
-    assert "no markdown" in ctx.lower()
+
+    # Voice channel — audio-only TTS, no Anam avatar reference
+    voice_ctx = _build_channel_context({"user_profile": {"channel": "voice"}})
+    assert "write out numbers" in voice_ctx.lower()
+    assert "no markdown" in voice_ctx.lower()
+    assert "Anam avatar" not in voice_ctx
+    assert "text-to-speech delivery" in voice_ctx
+
+    # Avatar channel — Anam video rendering (Ava + Finn)
+    avatar_ctx = _build_channel_context({"user_profile": {"channel": "avatar"}})
+    assert "Anam avatar" in avatar_ctx
+    assert "write out numbers" in avatar_ctx.lower()
+
+    # Chat channel — structured formatting
+    chat_ctx = _build_channel_context({"user_profile": {"channel": "chat"}})
+    assert "markdown" in chat_ctx.lower()
+    assert "write out numbers" not in chat_ctx.lower()
 
 
 # =========================================================================
