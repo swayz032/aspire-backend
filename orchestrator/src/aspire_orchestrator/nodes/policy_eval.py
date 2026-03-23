@@ -209,7 +209,7 @@ def policy_eval_node(state: OrchestratorState) -> dict[str, Any]:
                     "required_approvals": [],
                     "presence_required": False,
                     "error_code": "PARAM_EXTRACTION_FAILED",
-                    "error_message": f"I need more details to proceed. Please provide: {missing_str}",
+                    "error_message": f"I'm missing a few details before I can move forward — {missing_str}. Can you fill me in?",
                     "outcome": Outcome.DENIED,
                     "pipeline_receipts": existing_receipts,
                 }

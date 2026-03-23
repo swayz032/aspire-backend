@@ -145,7 +145,7 @@ class TestYellowTierEvaluation:
     def test_invoice_has_required_params(self, matrix: PolicyMatrix) -> None:
         action = matrix.get_action("invoice.create")
         assert action is not None
-        assert "customer_id" in action.params_required
+        assert "customer_email" in action.params_required
         assert "amount" in action.params_required
 
 

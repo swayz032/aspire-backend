@@ -164,21 +164,33 @@ def _action_verb(outcome: str, execution_params: dict[str, Any] | None = None) -
     return "drafted"
 
 
+_CURRENCY_SYMBOLS: dict[str, str] = {
+    "USD": "$", "EUR": "€", "GBP": "£", "CAD": "CA$", "AUD": "A$",
+    "JPY": "¥", "CHF": "CHF ", "MXN": "MX$", "BRL": "R$",
+}
+
+
+def _format_money(amount: float, currency: str) -> str:
+    """Format money with currency symbol (e.g., $4,200.00)."""
+    symbol = _CURRENCY_SYMBOLS.get(currency.upper(), f"{currency} ")
+    return f"{symbol}{amount:,.2f}"
+
+
 def _money_from_params(params: dict[str, Any] | None) -> str:
     if not params:
         return ""
-    currency = params.get("currency", "USD")
+    currency = params.get("currency") or "USD"
     formatted = params.get("amount_display")
     if isinstance(formatted, str) and formatted.strip():
-        return f" for {currency} {formatted.strip()}"
+        return f" for {formatted.strip()}"
 
     cents = params.get("amount_cents")
     if isinstance(cents, (int, float)) and cents > 0:
-        return f" for {currency} {cents / 100:.2f}"
+        return f" for {_format_money(cents / 100, currency)}"
 
     amt = params.get("amount")
     if isinstance(amt, (int, float)) and amt > 0:
-        return f" for {currency} {amt:.2f}"
+        return f" for {_format_money(amt, currency)}"
     if isinstance(amt, str) and amt.strip():
         return f" for {currency} {amt.strip()}"
 

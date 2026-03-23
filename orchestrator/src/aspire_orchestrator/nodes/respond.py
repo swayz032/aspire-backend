@@ -1047,8 +1047,8 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         clarification = intent_result.get("clarification_prompt", "") if isinstance(intent_result, dict) else ""
         if not clarification:
             clarification = (
-                "I wasn't quite sure how to handle that. "
-                "Could you rephrase your request or be more specific?"
+                "I didn't catch exactly what you need there. "
+                "Can you give me a bit more context so I can route this to the right person on the team?"
             )
 
         logger.warning(

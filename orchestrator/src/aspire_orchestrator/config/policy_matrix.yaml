@@ -548,8 +548,9 @@ actions:
       binding_fields: [event_id]
     redact_fields: []
 
-  # Invoice (draft creation is GREEN — no money moves, just a Stripe draft)
-  # Sending the invoice (invoice.send) remains YELLOW — requires Authority Queue approval
+  # ── Invoices (Quinn) ─────────────────────────────────────────
+  # Draft creation is GREEN — no money moves, just a Stripe draft
+  # State-changing ops (send, void, pay, finalize) are YELLOW
   invoice.create:
     risk_tier: green
     tools: [stripe.invoice.create]
@@ -558,8 +559,71 @@ actions:
     approval:
       type: none
     params:
-      required: [customer_id, amount]
+      required: [customer_email, amount]
+    redact_fields: [customer_email]
+
+  invoice.read:
+    risk_tier: green
+    tools: [stripe.invoice.read]
+    capability_scope: invoicing:read
+    category: invoicing
+    approval:
+      type: none
     redact_fields: [customer_id]
+
+  invoice.update:
+    risk_tier: yellow
+    tools: [stripe.invoice.update]
+    capability_scope: invoicing:update
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
+
+  invoice.delete:
+    risk_tier: yellow
+    tools: [stripe.invoice.delete]
+    capability_scope: invoicing:delete
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
+
+  invoice.list:
+    risk_tier: green
+    tools: [stripe.invoice.list]
+    capability_scope: invoicing:list
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [customer_id]
+
+  invoice.search:
+    risk_tier: green
+    tools: [stripe.invoice.search]
+    capability_scope: invoicing:search
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [customer_id]
+
+  invoice.finalize:
+    risk_tier: yellow
+    tools: [stripe.invoice.finalize]
+    capability_scope: invoicing:finalize
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
 
   invoice.send:
     risk_tier: yellow
@@ -585,7 +649,219 @@ actions:
       required: [invoice_id]
     redact_fields: []
 
-  # Quote
+  invoice.pay:
+    risk_tier: yellow
+    tools: [stripe.invoice.pay]
+    capability_scope: invoicing:pay
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
+
+  invoice.mark_uncollectible:
+    risk_tier: yellow
+    tools: [stripe.invoice.mark_uncollectible]
+    capability_scope: invoicing:mark_uncollectible
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    params:
+      required: [invoice_id]
+    redact_fields: []
+
+  invoice.preview:
+    risk_tier: green
+    tools: [stripe.invoice.preview]
+    capability_scope: invoicing:preview
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [customer_id]
+
+  # ── Invoice Items (Quinn) ──────────────────────────────────
+  invoiceitem.create:
+    risk_tier: yellow
+    tools: [stripe.invoiceitem.create]
+    capability_scope: invoicing:item:create
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id, amount]
+    params:
+      required: [customer_id, amount]
+    redact_fields: [customer_id]
+
+  invoiceitem.read:
+    risk_tier: green
+    tools: [stripe.invoiceitem.read]
+    capability_scope: invoicing:item:read
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: []
+
+  invoiceitem.update:
+    risk_tier: yellow
+    tools: [stripe.invoiceitem.update]
+    capability_scope: invoicing:item:update
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoiceitem_id]
+    params:
+      required: [invoiceitem_id]
+    redact_fields: []
+
+  invoiceitem.delete:
+    risk_tier: yellow
+    tools: [stripe.invoiceitem.delete]
+    capability_scope: invoicing:item:delete
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoiceitem_id]
+    params:
+      required: [invoiceitem_id]
+    redact_fields: []
+
+  invoiceitem.list:
+    risk_tier: green
+    tools: [stripe.invoiceitem.list]
+    capability_scope: invoicing:item:list
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: []
+
+  # ── Invoice Line Items (bulk ops) ──────────────────────────
+  invoice_line_item.update:
+    risk_tier: yellow
+    tools: [stripe.invoice_line_item.update]
+    capability_scope: invoicing:line_item:update
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id, line_item_id]
+    redact_fields: []
+
+  invoice_line_item.bulk_add:
+    risk_tier: yellow
+    tools: [stripe.invoice_line_item.bulk_add]
+    capability_scope: invoicing:line_item:bulk_add
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    redact_fields: []
+
+  invoice_line_item.bulk_remove:
+    risk_tier: yellow
+    tools: [stripe.invoice_line_item.bulk_remove]
+    capability_scope: invoicing:line_item:bulk_remove
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    redact_fields: []
+
+  invoice_line_item.bulk_update:
+    risk_tier: yellow
+    tools: [stripe.invoice_line_item.bulk_update]
+    capability_scope: invoicing:line_item:bulk_update
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [invoice_id]
+    redact_fields: []
+
+  # ── Invoice Payments (read-only) ───────────────────────────
+  invoice_payment.read:
+    risk_tier: green
+    tools: [stripe.invoice_payment.read]
+    capability_scope: invoicing:payment:read
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: []
+
+  invoice_payment.list:
+    risk_tier: green
+    tools: [stripe.invoice_payment.list]
+    capability_scope: invoicing:payment:list
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: []
+
+  # ── Customers (Quinn) ──────────────────────────────────────
+  customer.create:
+    risk_tier: yellow
+    tools: [stripe.customer.create]
+    capability_scope: invoicing:customer:create
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [name, email]
+    params:
+      required: [email]
+    redact_fields: [email, phone]
+
+  customer.read:
+    risk_tier: green
+    tools: [stripe.customer.read]
+    capability_scope: invoicing:customer:read
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [email, phone]
+
+  customer.update:
+    risk_tier: yellow
+    tools: [stripe.customer.update]
+    capability_scope: invoicing:customer:update
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [customer_id]
+    params:
+      required: [customer_id]
+    redact_fields: [email, phone]
+
+  customer.delete:
+    risk_tier: yellow
+    tools: [stripe.customer.delete]
+    capability_scope: invoicing:customer:delete
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [customer_id]
+    params:
+      required: [customer_id]
+    redact_fields: []
+
+  customer.list:
+    risk_tier: green
+    tools: [stripe.customer.list]
+    capability_scope: invoicing:customer:list
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [email]
+
+  customer.search:
+    risk_tier: green
+    tools: [stripe.customer.search]
+    capability_scope: invoicing:customer:search
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [email]
+
+  # ── Quotes (Quinn) ─────────────────────────────────────────
   quote.create:
     risk_tier: yellow
     tools: [stripe.quote.create]
@@ -598,6 +874,72 @@ actions:
       required: [customer_id]
     redact_fields: [customer_id]
 
+  quote.read:
+    risk_tier: green
+    tools: [stripe.quote.read]
+    capability_scope: quotes:read
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [customer_id]
+
+  quote.update:
+    risk_tier: yellow
+    tools: [stripe.quote.update]
+    capability_scope: quotes:update
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [quote_id]
+    params:
+      required: [quote_id]
+    redact_fields: []
+
+  quote.list:
+    risk_tier: green
+    tools: [stripe.quote.list]
+    capability_scope: quotes:list
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: [customer_id]
+
+  quote.finalize:
+    risk_tier: yellow
+    tools: [stripe.quote.finalize]
+    capability_scope: quotes:finalize
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [quote_id]
+    params:
+      required: [quote_id]
+    redact_fields: []
+
+  quote.accept:
+    risk_tier: yellow
+    tools: [stripe.quote.accept]
+    capability_scope: quotes:accept
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [quote_id]
+    params:
+      required: [quote_id]
+    redact_fields: []
+
+  quote.cancel:
+    risk_tier: yellow
+    tools: [stripe.quote.cancel]
+    capability_scope: quotes:cancel
+    category: invoicing
+    approval:
+      type: explicit
+      binding_fields: [quote_id]
+    params:
+      required: [quote_id]
+    redact_fields: []
+
   quote.send:
     risk_tier: yellow
     tools: [stripe.quote.send]
@@ -608,6 +950,34 @@ actions:
       binding_fields: [quote_id]
     params:
       required: [quote_id]
+    redact_fields: []
+
+  quote.pdf:
+    risk_tier: green
+    tools: [stripe.quote.pdf]
+    capability_scope: quotes:pdf
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: []
+
+  # ── Payouts (read-only, Quinn) ─────────────────────────────
+  payout.read:
+    risk_tier: green
+    tools: [stripe.payout.read]
+    capability_scope: invoicing:payout:read
+    category: invoicing
+    approval:
+      type: none
+    redact_fields: []
+
+  payout.list:
+    risk_tier: green
+    tools: [stripe.payout.list]
+    capability_scope: invoicing:payout:list
+    category: invoicing
+    approval:
+      type: none
     redact_fields: []
 
   # Meeting
@@ -1108,35 +1478,15 @@ actions:
       type: none
     redact_fields: []
 
-  # Quinn Invoice Agent — read invoices and check overdue
+  # Quinn — automated overdue check (n8n scheduled)
   quinn.check_overdue:
     risk_tier: green
-    tools: [stripe.invoice.read]
-    capability_scope: invoicing:read
+    tools: [stripe.invoice.list]
+    capability_scope: invoicing:list
     category: invoicing
     approval:
       type: none
     redact_fields: [customer_id]
-
-  # Quinn — customer lookup for invoice creation
-  quinn.customer_search:
-    risk_tier: green
-    tools: [stripe.customer.search]
-    capability_scope: invoicing:customer_lookup
-    category: invoicing
-    approval:
-      type: none
-    redact_fields: [email]
-
-  # Quinn — customer creation for new client onboarding
-  quinn.customer_create:
-    risk_tier: yellow
-    tools: [stripe.customer.create]
-    capability_scope: invoicing:customer_create
-    category: invoicing
-    approval:
-      type: user_confirmation
-    redact_fields: [email, phone]
 
   # Teressa Books Agent — automated sync
   teressa.sync_books:

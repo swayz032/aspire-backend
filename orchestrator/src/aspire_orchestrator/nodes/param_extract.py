@@ -8,6 +8,115 @@ Also builds advisor_context via context_builder.
 
 from __future__ import annotations
 
+_AGENT_MISSING_PARAM_TEMPLATES: dict[str, dict[str, str]] = {
+    # Quinn — invoicing
+    "invoice": {
+        "customer_email": "Who is this invoice for? I need their name and email so I can either look them up or set them up as a new client.",
+        "amount": "What's the total for this invoice? I need at least one line item with a description and amount.",
+        "customer_email,amount": "I need a couple of things to draft this invoice — who's the client (name and email), and what services or items should I include with amounts?",
+        "_default": "I'm missing a few details to put this invoice together. {fields} — can you fill me in?",
+        "_agent": "quinn",
+    },
+    "quote": {
+        "_default": "To draft this quote, I need a bit more from you — {fields}. What do you have?",
+        "_agent": "quinn",
+    },
+    # Eli — email
+    "email": {
+        "to": "Who should I send this to? I need a recipient email address.",
+        "body": "What should the email say? Give me the key points and I'll draft it properly.",
+        "to,body": "I need two things — who's this going to, and what should it say?",
+        "_default": "I need a few more details to draft this email — {fields}. What do you have?",
+        "_agent": "eli",
+    },
+    # Nora — meetings/conference
+    "meeting": {
+        "_default": "To get this meeting set up, I need — {fields}. Can you fill me in?",
+        "_agent": "nora",
+    },
+    "conference": {
+        "_default": "I need a few details to set up this call — {fields}.",
+        "_agent": "nora",
+    },
+    # Clara — legal/contracts
+    "contract": {
+        "_default": "Before I can prepare this contract, I need — {fields}. What do you have?",
+        "_agent": "clara",
+    },
+    # Tec — documents
+    "document": {
+        "_default": "To create this document, I need — {fields}.",
+        "_agent": "tec",
+    },
+    # Adam — research
+    "research": {
+        "_default": "I need a bit more context to research this properly — {fields}.",
+        "_agent": "adam",
+    },
+    # Sarah — front desk / calls
+    "call": {
+        "_default": "Before I can handle this call, I need — {fields}.",
+        "_agent": "sarah",
+    },
+    # Finn — finance
+    "finance": {
+        "_default": "To pull that financial data, I need — {fields}. What do you have?",
+        "_agent": "finn",
+    },
+    # Teressa — books
+    "books": {
+        "_default": "I need a few more details for the bookkeeping — {fields}.",
+        "_agent": "teressa",
+    },
+}
+
+
+def _build_agent_aware_missing_message(task_type: str, missing_fields: list[str]) -> str:
+    """Build a persona-matched missing-field message instead of generic chatbot text."""
+    # Resolve domain from task_type (e.g., "invoice.create" → "invoice")
+    domain = task_type.split(".")[0] if task_type else "unknown"
+    templates = _AGENT_MISSING_PARAM_TEMPLATES.get(domain, {})
+
+    # Try exact field combo match first (e.g., "customer_email,amount")
+    field_key = ",".join(sorted(missing_fields))
+    if field_key in templates:
+        return templates[field_key]
+
+    # Try single-field match
+    if len(missing_fields) == 1 and missing_fields[0] in templates:
+        return templates[missing_fields[0]]
+
+    # Friendly field names
+    _friendly: dict[str, str] = {
+        "customer_email": "the client's email",
+        "customer_name": "the client's name",
+        "amount_cents": "the amount",
+        "amount": "the amount",
+        "currency": "the currency",
+        "due_date": "a due date",
+        "to": "the recipient",
+        "from_address": "the sender",
+        "subject": "a subject line",
+        "body": "the message content",
+        "description": "a description",
+        "contact_name": "a contact name",
+        "contact_email": "a contact email",
+        "document_title": "a document title",
+        "start_time": "a start time",
+        "end_time": "an end time",
+    }
+    friendly_list = [_friendly.get(f, f.replace("_", " ")) for f in missing_fields]
+    fields_str = ", ".join(friendly_list)
+
+    # Use domain template with field substitution
+    default_template = templates.get("_default")
+    if default_template:
+        return default_template.format(fields=fields_str)
+
+    # Ultimate fallback — still conversational, not robotic
+    return f"I need a couple more details before I can move forward — {fields_str}. Can you fill me in?"
+
+
 import json
 import logging
 import os
@@ -250,7 +359,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             return {
                 "execution_params": None,
                 "error_code": "PARAM_EXTRACTION_FAILED",
-                "error_message": f"I need more details to proceed. Please provide: {field_list}",
+                "error_message": _build_agent_aware_missing_message(task_type, missing_fields),
                 "advisor_context": advisor_context,
                 "pipeline_receipts": existing_receipts,
             }
@@ -630,7 +739,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         }
         friendly_fields = [_friendly_names.get(f, f.replace("_", " ")) for f in missing_fields]
         field_list = ", ".join(friendly_fields)
-        error_message = f"I need more details to proceed. Please provide: {field_list}"
+        # Agent-aware message (not generic chatbot text)
         if (
             tool_used in ("polaris.email.draft", "polaris.email.send")
             and email_tweak_request
@@ -638,9 +747,11 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
         ):
             error_message = (
                 "To revise this email, I need the recipient and sender context. "
-                "Please include `Recipient:` and `Sender:` (or paste the current draft headers), "
-                "then I can rewrite it immediately."
+                "Can you include who it's going to and who it's from, "
+                "or paste the current draft headers? I'll rewrite it right away."
             )
+        else:
+            error_message = _build_agent_aware_missing_message(task_type, missing_fields)
         logger.info("Param extraction missing required fields for %s: %s", tool_used, field_list)
         return {
             "execution_params": None,

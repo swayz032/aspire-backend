@@ -1,6 +1,37 @@
 tool_policy:
+  # ── Invoices ──────────────────────────────────────────────────
   "invoice.create":
     tool_id: stripe.invoice.create
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.read":
+    tool_id: stripe.invoice.read
+    allowed: true
+    risk_tier: green
+
+  "invoice.update":
+    tool_id: stripe.invoice.update
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.delete":
+    tool_id: stripe.invoice.delete
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.list":
+    tool_id: stripe.invoice.list
+    allowed: true
+    risk_tier: green
+
+  "invoice.search":
+    tool_id: stripe.invoice.search
+    allowed: true
+    risk_tier: green
+
+  "invoice.finalize":
+    tool_id: stripe.invoice.finalize
     allowed: true
     risk_tier: yellow
 
@@ -14,8 +45,158 @@ tool_policy:
     allowed: true
     risk_tier: yellow
 
+  "invoice.pay":
+    tool_id: stripe.invoice.pay
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.mark_uncollectible":
+    tool_id: stripe.invoice.mark_uncollectible
+    allowed: true
+    risk_tier: yellow
+
+  "invoice.preview":
+    tool_id: stripe.invoice.preview
+    allowed: true
+    risk_tier: green
+
+  "invoice.detach_payment":
+    tool_id: stripe.invoice.detach_payment
+    allowed: true
+    risk_tier: yellow
+
+  # ── Invoice Line Items ────────────────────────────────────────
+  "invoice_line_item.read":
+    tool_id: stripe.invoice_line_item.read
+    allowed: true
+    risk_tier: green
+
+  "invoice_line_item.update":
+    tool_id: stripe.invoice_line_item.update
+    allowed: true
+    risk_tier: yellow
+
+  "invoice_line_item.bulk_add":
+    tool_id: stripe.invoice_line_item.bulk_add
+    allowed: true
+    risk_tier: yellow
+
+  "invoice_line_item.bulk_remove":
+    tool_id: stripe.invoice_line_item.bulk_remove
+    allowed: true
+    risk_tier: yellow
+
+  "invoice_line_item.bulk_update":
+    tool_id: stripe.invoice_line_item.bulk_update
+    allowed: true
+    risk_tier: yellow
+
+  # ── Invoice Items (standalone) ────────────────────────────────
+  "invoiceitem.create":
+    tool_id: stripe.invoiceitem.create
+    allowed: true
+    risk_tier: yellow
+
+  "invoiceitem.read":
+    tool_id: stripe.invoiceitem.read
+    allowed: true
+    risk_tier: green
+
+  "invoiceitem.update":
+    tool_id: stripe.invoiceitem.update
+    allowed: true
+    risk_tier: yellow
+
+  "invoiceitem.delete":
+    tool_id: stripe.invoiceitem.delete
+    allowed: true
+    risk_tier: yellow
+
+  "invoiceitem.list":
+    tool_id: stripe.invoiceitem.list
+    allowed: true
+    risk_tier: green
+
+  # ── Invoice Payments ──────────────────────────────────────────
+  "invoice_payment.read":
+    tool_id: stripe.invoice_payment.read
+    allowed: true
+    risk_tier: green
+
+  "invoice_payment.list":
+    tool_id: stripe.invoice_payment.list
+    allowed: true
+    risk_tier: green
+
+  # ── Customers ─────────────────────────────────────────────────
+  "customer.create":
+    tool_id: stripe.customer.create
+    allowed: true
+    risk_tier: yellow
+
+  "customer.read":
+    tool_id: stripe.customer.read
+    allowed: true
+    risk_tier: green
+
+  "customer.update":
+    tool_id: stripe.customer.update
+    allowed: true
+    risk_tier: yellow
+
+  "customer.delete":
+    tool_id: stripe.customer.delete
+    allowed: true
+    risk_tier: yellow
+
+  "customer.list":
+    tool_id: stripe.customer.list
+    allowed: true
+    risk_tier: green
+
+  "customer.search":
+    tool_id: stripe.customer.search
+    allowed: true
+    risk_tier: green
+
+  "customer_session.create":
+    tool_id: stripe.customer_session.create
+    allowed: true
+    risk_tier: yellow
+
+  # ── Quotes ────────────────────────────────────────────────────
   "quote.create":
     tool_id: stripe.quote.create
+    allowed: true
+    risk_tier: yellow
+
+  "quote.read":
+    tool_id: stripe.quote.read
+    allowed: true
+    risk_tier: green
+
+  "quote.update":
+    tool_id: stripe.quote.update
+    allowed: true
+    risk_tier: yellow
+
+  "quote.list":
+    tool_id: stripe.quote.list
+    allowed: true
+    risk_tier: green
+
+  "quote.finalize":
+    tool_id: stripe.quote.finalize
+    allowed: true
+    risk_tier: yellow
+
+  "quote.accept":
+    tool_id: stripe.quote.accept
+    allowed: true
+    risk_tier: yellow
+
+  "quote.cancel":
+    tool_id: stripe.quote.cancel
     allowed: true
     risk_tier: yellow
 
@@ -24,17 +205,28 @@ tool_policy:
     allowed: true
     risk_tier: yellow
 
-  "invoice.read":
-    tool_id: stripe.invoice.read
+  "quote.pdf":
+    tool_id: stripe.quote.pdf
     allowed: true
     risk_tier: green
 
-  "customer.create":
-    tool_id: stripe.customer.create
+  "quote.line_items":
+    tool_id: stripe.quote.line_items
     allowed: true
-    risk_tier: yellow
+    risk_tier: green
 
-  "customer.search":
-    tool_id: stripe.customer.search
+  "quote.upfront_line_items":
+    tool_id: stripe.quote.upfront_line_items
+    allowed: true
+    risk_tier: green
+
+  # ── Payouts (read-only) ──────────────────────────────────────
+  "payout.read":
+    tool_id: stripe.payout.read
+    allowed: true
+    risk_tier: green
+
+  "payout.list":
+    tool_id: stripe.payout.list
     allowed: true
     risk_tier: green

@@ -625,18 +625,18 @@ async def _agent_reason_inner(
         existing_receipts.append(llm_fail_receipt)
         # Persona-specific fallback (NOT generic "I wasn't sure")
         fallback_map = {
-            "ava": "I apologize - I had trouble with that. Could you rephrase your question?",
-            "finn": "Hey, I'm Finn - I hit a snag processing that. Can you try rephrasing?",
-            "eli": "Hey, I'm Eli - I hit a snag processing that. Can you try that again?",
-            "nora": "Hey, I'm Nora - I hit a snag with that request. Can you rephrase it?",
-            "clara": "Hey, I'm Clara - I ran into an issue processing that. Can you rephrase?",
-            "quinn": "Hey, I'm Quinn - I hit an issue with that request. Can you rephrase it?",
-            "sarah": "Hey, I'm Sarah - I hit an issue processing that. Can you try again?",
-            "adam": "Hey, I'm Adam - I hit an issue with that request. Can you rephrase it?",
-            "tec": "Hey, I'm Tec - I ran into an issue with that request. Can you try again?",
-            "teressa": "Hey, I'm Teressa - I hit a snag processing that. Can you rephrase?",
-            "milo": "Hey, I'm Milo - I hit an issue with that request. Can you rephrase it?",
-            "mail_ops": "Hey, I'm Mail Ops - I ran into an issue processing that. Can you rephrase?",
+            "ava": "I hit a snag on my end — let me try that differently. Can you say that again or give me a bit more context?",
+            "finn": "I hit a bump pulling that together — can you give me a bit more context? I want to make sure I get the numbers right.",
+            "eli": "I stumbled on that one — can you rephrase it? I want to make sure I handle the message correctly.",
+            "nora": "I hit a snag setting that up — can you give me a bit more detail so I can get it right?",
+            "clara": "I ran into an issue processing that — can you give me a bit more context? I want to make sure we handle this properly.",
+            "quinn": "I hit a bump on that — can you rephrase it? I want to make sure the invoice details are accurate.",
+            "sarah": "I hit a snag with that — can you say that again? I want to make sure I route this correctly.",
+            "adam": "I stumbled on that one — can you give me a bit more context so I can research this properly?",
+            "tec": "I ran into an issue with that — can you rephrase it? I want to make sure the document comes out right.",
+            "teressa": "I hit a bump on that — can you give me a bit more detail? I want to make sure the books are accurate.",
+            "milo": "I hit a snag processing that — can you rephrase it so I can handle the payroll correctly?",
+            "mail_ops": "I ran into an issue with that — can you give me more detail so I can sort out the mail setup?",
         }
         response_text = fallback_map.get(agent_id, fallback_map["ava"])
 
