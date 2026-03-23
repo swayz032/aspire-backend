@@ -544,9 +544,10 @@ class BaseProviderClient(ABC):
                 except Exception:
                     pass
                 sanitized_msg = f"{type(e).__name__}: Provider operation failed"
+                # Law #9: Don't log str(e) — may contain query params with PII (emails, tokens)
                 logger.error(
-                    "Provider %s unexpected error: %s: %s",
-                    self.provider_id, type(e).__name__, str(e)[:500],
+                    "Provider %s unexpected error: %s",
+                    self.provider_id, type(e).__name__,
                 )
                 return ProviderResponse(
                     status_code=500,

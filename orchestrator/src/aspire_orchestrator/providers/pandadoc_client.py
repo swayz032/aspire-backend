@@ -417,6 +417,8 @@ class PandaDocClient(BaseProviderClient):
                 f"Failed to parse PANDADOC_CREDENTIAL_LAST_ROTATED: {e}. "
                 "Use ISO8601 format (YYYY-MM-DD)."
             )
+        except RuntimeError:
+            raise  # Re-raise strict mode enforcement — must not be swallowed
         except Exception as e:
             logger.error(f"Failed to check credential expiry: {e}")
 
