@@ -208,9 +208,16 @@ def _resolve_channel(state: OrchestratorState) -> str:
         if profile and isinstance(profile, dict):
             channel = profile.get("channel")
 
-    # Default + normalize
+    # Default + normalize + allowlist (THREAT-002)
     channel = channel or "chat"
+    if isinstance(channel, str):
+        channel = channel.strip().lower()
+    else:
+        channel = "chat"
     if channel == "text":
+        channel = "chat"
+    _ALLOWED_CHANNELS = {"chat", "voice", "avatar"}
+    if channel not in _ALLOWED_CHANNELS:
         channel = "chat"
     return channel
 

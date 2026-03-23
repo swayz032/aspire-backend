@@ -276,9 +276,16 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
         result["requested_agent"] = requested_agent
 
     # --- Channel extraction: promote to top-level state for downstream nodes ---
+    # THREAT-002: validate against allowlist, default to "chat"
+    _ALLOWED_CHANNELS = {"chat", "voice", "avatar"}
     if isinstance(request.payload, dict):
         _channel = request.payload.get("channel", "chat")
+        if not isinstance(_channel, str):
+            _channel = "chat"
+        _channel = _channel.strip().lower()
         if _channel == "text":
+            _channel = "chat"
+        if _channel not in _ALLOWED_CHANNELS:
             _channel = "chat"
         result["channel"] = _channel
 

@@ -4655,12 +4655,12 @@ async def _stream_ava_chat(
         _openai_circuit_breaker.record_failure()
         outcome = "FAILED"
         error_reason = type(exc).__name__
-        error_detail = str(exc)[:200]  # Cap length for safety
+        # THREAT-003: Log full detail server-side, send generic message to client
         logger.error("admin.chat streaming error: %s: %s", error_reason, exc)
         yield format_sse_event({
             "type": "error",
             "code": "STREAM_ERROR",
-            "message": f"{error_reason}: {error_detail}",
+            "message": "An error occurred while generating the response. Please try again.",
         })
 
     # --- Completion receipt (Law #2) ---
