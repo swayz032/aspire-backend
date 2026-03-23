@@ -374,7 +374,7 @@ async def probe_models_startup() -> dict[str, Any]:
     client = _get_or_create_async_client(
         api_key=api_key,
         base_url=settings.openai_base_url,
-        timeout=min(float(settings.openai_timeout_seconds), 10.0),
+        timeout=float(settings.openai_timeout_seconds),
     )
 
     _MODEL_PROBE_CACHE.clear()

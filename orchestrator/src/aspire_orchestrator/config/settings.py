@@ -112,13 +112,13 @@ class Settings(BaseSettings):
     rag_vector_weight: float = 0.7
     rag_text_weight: float = 0.3
     retrieval_min_grounding_score: float = 0.55
-    retrieval_router_cache_ttl_seconds: int = 60
+    retrieval_router_cache_ttl_seconds: int = 300
     retrieval_router_cache_max_entries: int = 500
     task_queue_max_concurrent: int = 20
     task_queue_max_pending: int = 500
 
     # --- Timeouts ---
-    openai_timeout_seconds: int = 15  # Railway adds latency; 8s was too short
+    openai_timeout_seconds: int = 45  # GPT-5 class models need 30-45s; Railway adds latency
 
     # --- Ava v1.5 Features ---
     ava_user_prompt_version: str | None = None     # AVA_USER_PROMPT_VERSION env var

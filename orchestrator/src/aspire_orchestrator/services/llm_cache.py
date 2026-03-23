@@ -26,7 +26,7 @@ _PROFILE_TTL: dict[str, int | None] = {
     "high_risk_guard": None,   # Never cache
 }
 
-_CACHE_ENABLED = os.environ.get("ASPIRE_LLM_CACHE_ENABLED", "false").lower() == "true"
+_CACHE_ENABLED = os.environ.get("ASPIRE_LLM_CACHE_ENABLED", "true").lower() == "true"
 
 
 class LLMCache:
