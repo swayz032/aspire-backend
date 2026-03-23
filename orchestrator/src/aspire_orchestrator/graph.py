@@ -4,8 +4,9 @@ Dual-path flow (14 nodes):
   GREETING FAST PATH (3 nodes):
     Intake → GreetingCheck → Respond (< 500ms, skips full graph)
 
-  ACTION PATH (13 nodes):
-    Intake → GreetingCheck → Safety → Classify → Route → ParamExtract → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+  ACTION PATH (14 nodes):
+    Intake → GreetingCheck → Safety → Classify → Route → AgentDispatch → Policy → Approval → TokenMint → Execute → ReceiptWrite → QA → Respond
+    (AgentDispatch invokes the agent's AgenticSkillPack for intelligent parameter resolution)
 
   CONVERSATION PATH (5 nodes):
     Intake → GreetingCheck → Safety → Classify → AgentReason → Respond
@@ -57,6 +58,7 @@ from aspire_orchestrator.models import (
 from aspire_orchestrator.nodes.greeting_fast_path import greeting_fast_path_node
 from aspire_orchestrator.nodes.intake import intake_node
 from aspire_orchestrator.nodes.safety_gate import safety_gate_node
+from aspire_orchestrator.nodes.agent_dispatch import agent_dispatch_node
 from aspire_orchestrator.nodes.param_extract import param_extract_node
 from aspire_orchestrator.nodes.policy_eval import policy_eval_node
 from aspire_orchestrator.nodes.approval_check import approval_check_node
@@ -754,24 +756,30 @@ def _route_after_classify(state: OrchestratorState) -> str:
 def _route_after_route(state: OrchestratorState) -> str:
     """Route after skill router.
 
-    If routing denied → respond. Otherwise → param_extract.
+    If routing denied → respond. Otherwise → agent_dispatch.
+    Agent dispatch invokes the agent's AgenticSkillPack for intelligent
+    parameter resolution, customer lookup, and multi-step reasoning.
     """
     routing_plan = state.get("routing_plan", {})
     if routing_plan.get("deny_reason"):
         return "respond"
-    return "param_extract"
+    return "agent_dispatch"
 
 
-def _route_after_param_extract(state: OrchestratorState) -> str:
-    """Route after parameter extraction.
+def _route_after_agent_dispatch(state: OrchestratorState) -> str:
+    """Route after agent dispatch.
 
-    If extraction failed (missing required fields) → agent_reason so the
-    assigned agent can ask for them using its persona + RAG knowledge.
-    Otherwise → policy_eval.
+    Two exits — no fallbacks:
+    - conversation_response set → respond (agent needs more info from user)
+    - execution_params set → policy_eval (agent resolved everything)
+    - error → respond (fail closed)
     """
-    if state.get("error_code") == "PARAM_EXTRACTION_FAILED":
-        return "agent_reason"
-    return "policy_eval"
+    if state.get("conversation_response"):
+        return "respond"
+    if state.get("execution_params"):
+        return "policy_eval"
+    # Fail closed — error or no result
+    return "respond"
 
 
 def _route_after_policy(state: OrchestratorState) -> str:
@@ -834,22 +842,23 @@ async def build_orchestrator_graph_async() -> StateGraph:
 
     Tri-path architecture:
     - GREETING FAST PATH: intake → greeting_check → respond (< 500ms)
-    - ACTION PATH: greeting_check → safety → classify → route → param_extract → policy → approval → execute
+    - ACTION PATH: greeting_check → safety → classify → route → agent_dispatch → policy → approval → execute
     - CONVERSATION PATH: greeting_check → safety → classify → agent_reason → respond
 
-    Backwards compatible: if utterance is not set, classify/route/param_extract are skipped.
+    Backwards compatible: if utterance is not set, classify/route/agent_dispatch are skipped.
 
     Returns a compiled graph ready for invocation.
     """
     graph = StateGraph(OrchestratorState)
 
-    # Add all 14 nodes (8 existing + 3 Brain Layer + 1 param_extract + 1 agent_reason + 1 greeting_check)
+    # Add all 15 nodes
     graph.add_node("intake", intake_node)
     graph.add_node("greeting_check", greeting_fast_path_node)
     graph.add_node("safety_gate", safety_gate_node)
     graph.add_node("classify", classify_node)
     graph.add_node("route", route_node)
-    graph.add_node("param_extract", param_extract_node)
+    graph.add_node("agent_dispatch", agent_dispatch_node)
+    graph.add_node("param_extract", param_extract_node)  # Legacy — kept for backward compat API
     graph.add_node("policy_eval", policy_eval_node)
     graph.add_node("approval_check", approval_check_node)
     graph.add_node("token_mint", token_mint_node)
@@ -899,16 +908,16 @@ async def build_orchestrator_graph_async() -> StateGraph:
     # agent_reason → respond (conversation path always ends at respond)
     graph.add_edge("agent_reason", "respond")
 
-    # route → param_extract OR respond (routing denied)
+    # route → agent_dispatch OR respond (routing denied)
     graph.add_conditional_edges("route", _route_after_route, {
-        "param_extract": "param_extract",
+        "agent_dispatch": "agent_dispatch",
         "respond": "respond",
     })
 
-    # param_extract → policy_eval OR agent_reason (extraction failed — let agent ask)
-    graph.add_conditional_edges("param_extract", _route_after_param_extract, {
+    # agent_dispatch → policy_eval (resolved) OR respond (needs info / error)
+    graph.add_conditional_edges("agent_dispatch", _route_after_agent_dispatch, {
         "policy_eval": "policy_eval",
-        "agent_reason": "agent_reason",
+        "respond": "respond",
     })
 
     graph.add_conditional_edges("policy_eval", _route_after_policy, {
