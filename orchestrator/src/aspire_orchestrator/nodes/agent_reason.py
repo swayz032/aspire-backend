@@ -549,6 +549,34 @@ async def _agent_reason_inner(
         )
         rag_context = (rag_context + _research_hint) if rag_context else _research_hint
 
+    # 4c. If routed here after param_extract failure, inject missing fields context
+    #     so the agent knows what information to ask for using its persona + RAG.
+    param_extract_ctx = ""
+    if state.get("error_code") == "PARAM_EXTRACTION_FAILED":
+        task_type = state.get("task_type", "")
+        error_msg = state.get("error_message", "")
+        missing_fields = state.get("missing_fields", [])
+        field_list = ", ".join(missing_fields) if missing_fields else ""
+        param_extract_ctx = (
+            "## Action Context — Missing Information\n"
+            f"The user wants to perform: **{task_type}**\n"
+        )
+        if field_list:
+            param_extract_ctx += f"Missing required fields: {field_list}\n"
+        if error_msg:
+            param_extract_ctx += f"Details: {error_msg}\n"
+        param_extract_ctx += (
+            "\nYour job: Ask the user for the missing information naturally, "
+            "using your domain expertise and personality. Don't list fields "
+            "mechanically — have a real conversation. Use your knowledge "
+            "(including any RAG context below) to ask smart follow-up questions "
+            "and suggest defaults where appropriate. If this involves a new "
+            "client, suggest onboarding them first."
+        )
+        # Override intent_type so RAG retrieval uses the action context
+        if intent_type in ("action", "conversation"):
+            intent_type = "advice"  # triggers more tokens + RAG retrieval
+
     # 5. Assemble system message
     identity_guard = (
         f"IDENTITY CONSTRAINT: You are {agent_id}. "
@@ -566,6 +594,8 @@ async def _agent_reason_inner(
     )
 
     system_parts = [identity_guard, "", awareness, "", persona]
+    if param_extract_ctx:
+        system_parts.extend(["", param_extract_ctx])
     if user_ctx:
         system_parts.extend(["", "## User Context", user_ctx])
     system_parts.extend(["", temporal_ctx])

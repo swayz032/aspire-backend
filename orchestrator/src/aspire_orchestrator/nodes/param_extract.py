@@ -360,6 +360,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
                 "execution_params": None,
                 "error_code": "PARAM_EXTRACTION_FAILED",
                 "error_message": _build_agent_aware_missing_message(task_type, missing_fields),
+                "missing_fields": missing_fields,
                 "advisor_context": advisor_context,
                 "pipeline_receipts": existing_receipts,
             }
@@ -757,6 +758,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             "execution_params": None,
             "error_code": "PARAM_EXTRACTION_FAILED",
             "error_message": error_message,
+            "missing_fields": missing_fields,
             "advisor_context": advisor_context,
             "pipeline_receipts": existing_receipts,
             "eli_rag_status": eli_agentic_meta.get("eli_rag_status"),

@@ -765,11 +765,12 @@ def _route_after_route(state: OrchestratorState) -> str:
 def _route_after_param_extract(state: OrchestratorState) -> str:
     """Route after parameter extraction.
 
-    If extraction failed (missing required fields) → respond.
+    If extraction failed (missing required fields) → agent_reason so the
+    assigned agent can ask for them using its persona + RAG knowledge.
     Otherwise → policy_eval.
     """
     if state.get("error_code") == "PARAM_EXTRACTION_FAILED":
-        return "respond"
+        return "agent_reason"
     return "policy_eval"
 
 
@@ -904,10 +905,10 @@ async def build_orchestrator_graph_async() -> StateGraph:
         "respond": "respond",
     })
 
-    # param_extract → policy_eval OR respond (extraction failed)
+    # param_extract → policy_eval OR agent_reason (extraction failed — let agent ask)
     graph.add_conditional_edges("param_extract", _route_after_param_extract, {
         "policy_eval": "policy_eval",
-        "respond": "respond",
+        "agent_reason": "agent_reason",
     })
 
     graph.add_conditional_edges("policy_eval", _route_after_policy, {

@@ -95,6 +95,7 @@ class OrchestratorState(TypedDict, total=False):
     # --- Error handling ---
     error_code: str | None
     error_message: str | None
+    missing_fields: list[str] | None  # Fields param_extract couldn't resolve
 
     # --- Brain Layer (Phase 2 — classify / route / qa) ---
     utterance: str | None  # Raw user input for intent classification
