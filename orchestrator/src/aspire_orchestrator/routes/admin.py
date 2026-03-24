@@ -4291,6 +4291,16 @@ async def voice_stt_proxy(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
+        # Cap audio size at 25MB (ElevenLabs limit) — prevents memory DoS
+        _MAX_STT_AUDIO_SIZE = 25 * 1024 * 1024
+        if len(body) > _MAX_STT_AUDIO_SIZE:
+            return _ops_error(
+                code="VALIDATION_ERROR",
+                message=f"Audio exceeds max size: {len(body)} > {_MAX_STT_AUDIO_SIZE} bytes",
+                correlation_id=correlation_id,
+                status_code=413,
+            )
+
         # Admin Ava always uses ElevenLabs STT.
         # Deepgram is Nora-only (conference transcription via LiveKit).
         stt_provider = "elevenlabs"
