@@ -617,6 +617,7 @@ async def generate_text_streaming_async(
     on_token: Any | None = None,
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
+    text_verbosity: str | None = None,
 ) -> str:
     """Stream text from OpenAI Responses API, calling on_token(str) per chunk.
 
@@ -650,6 +651,8 @@ async def generate_text_streaming_async(
             kwargs["temperature"] = effective_temp
         if reasoning_effort and reasoning_model:
             kwargs["reasoning"] = {"effort": reasoning_effort}
+        if text_verbosity:
+            kwargs["text"] = {"format": {"type": "text"}, "verbosity": text_verbosity}
 
         accumulated = []
         token_count = 0

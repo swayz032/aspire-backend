@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Prod: GPT-5.2 (via OpenAI API)
     ava_llm_provider: str = "openai"  # "openai" | "ollama"
     ava_llm_model: str = "gpt-5-mini"  # "gpt-5-mini" (dev) | "gpt-5.2" (prod)
+    # Voice channel model — non-reasoning for sub-500ms TTFT.
+    # GPT-4o: ~440ms TTFT (no reasoning overhead) vs GPT-5-mini: 8-97s TTFT.
+    ava_voice_model: str = "gpt-4o"  # Non-reasoning model for real-time voice
     openai_api_key: str = ""  # Required for production
     openai_base_url: str = "https://api.openai.com/v1"
     ava_llm_temperature: float = 0.4  # Slightly creative for natural conversation

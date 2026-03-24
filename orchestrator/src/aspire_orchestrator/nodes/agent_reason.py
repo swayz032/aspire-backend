@@ -624,7 +624,16 @@ async def _agent_reason_inner(
 
     # 6. Call LLM
     try:
-        model = settings.ava_llm_model or "gpt-5-mini"
+        # Voice channel: use non-reasoning model (GPT-4o, ~440ms TTFT) for real-time.
+        # Chat/other: use reasoning model (GPT-5-mini, better quality for text).
+        # Reasoning models (GPT-5*) have 8-97s TTFT due to internal thinking tokens —
+        # architecturally wrong for voice where sub-500ms TTFT is needed.
+        _channel_for_stream = _resolve_channel(state)
+        _is_voice = _channel_for_stream in ("voice", "avatar")
+        if _is_voice and settings.ava_voice_model:
+            model = settings.ava_voice_model  # Default: gpt-4o (non-reasoning)
+        else:
+            model = settings.ava_llm_model or "gpt-5-mini"
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
 
         # Reasoning models need "developer" role and no temperature
@@ -639,8 +648,7 @@ async def _agent_reason_inner(
 
         # Voice/avatar channels: stream tokens as SSE deltas for progressive TTS.
         # Chat channel: standard non-streaming call (no latency benefit from streaming).
-        _channel_for_stream = _resolve_channel(state)
-        if _channel_for_stream in ("voice", "avatar"):
+        if _is_voice:
             from aspire_orchestrator.skillpacks.adam_research import get_activity_event_callback
             _stream_cb = get_activity_event_callback()
 
@@ -660,7 +668,7 @@ async def _agent_reason_inner(
                 base_url=settings.openai_base_url,
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=_max_tokens,
-                temperature=None if _is_reasoning else 0.7,
+                temperature=0.7,  # GPT-4o (non-reasoning) uses temperature
                 on_token=_on_token,
             )
         else:
