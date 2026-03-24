@@ -722,6 +722,7 @@ async def generate_json_async(
     temperature: float | None = None,
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Generate JSON by prompting model for JSON and parsing output robustly."""
     text = await generate_text_async(
@@ -734,6 +735,7 @@ async def generate_json_async(
         temperature=temperature,
         prefer_responses_api=prefer_responses_api,
         model_profile=model_profile,
+        reasoning_effort=reasoning_effort,
     )
     return parse_json_text(text)
 

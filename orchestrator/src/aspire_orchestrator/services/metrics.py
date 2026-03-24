@@ -195,6 +195,7 @@ class MetricsCollector:
         endpoint: str,
         resolved_model: str,
         outcome: str,
+        latency_ms: float | None = None,
     ) -> None:
         """Record LLM request outcome."""
         self.llm_request_counter.labels(

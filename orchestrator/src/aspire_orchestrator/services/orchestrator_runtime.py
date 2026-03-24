@@ -106,21 +106,46 @@ async def _force_memory_checkpointer_graph(reason: Exception) -> bool:
                     os.environ["ASPIRE_ALLOW_MEMORY_CHECKPOINTER_IN_PROD"] = previous_allow
 
 
+# Graph execution timeout — prevents runaway LLM calls from blocking forever.
+# Server proxy has 90s, this is the hard cap on the entire graph pipeline.
+GRAPH_TIMEOUT_S = float(os.environ.get("ASPIRE_GRAPH_TIMEOUT_S", "75"))
+
+
 async def invoke_orchestrator_graph(initial_state: Any, *, thread_id: str) -> dict[str, Any]:
-    """Invoke orchestrator graph with async-first strategy and sync fallback."""
+    """Invoke orchestrator graph with async-first strategy, sync fallback, and timeout."""
     global _orchestrator_graph
     await warm_orchestrator_graph()
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
-        return await _orchestrator_graph.ainvoke(initial_state, config=config)
+        return await asyncio.wait_for(
+            _orchestrator_graph.ainvoke(initial_state, config=config),
+            timeout=GRAPH_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "Graph execution timed out after %.0fs [thread_id=%s]",
+            GRAPH_TIMEOUT_S,
+            thread_id,
+        )
+        raise GraphInvokeUnavailableError(
+            f"GRAPH_TIMEOUT: execution exceeded {GRAPH_TIMEOUT_S}s hard limit",
+        )
     except NotImplementedError:
         logger.warning(
             "Async graph invoke unsupported by checkpointer; falling back to sync invoke [thread_id=%s]",
             thread_id,
         )
         try:
-            return await asyncio.to_thread(_orchestrator_graph.invoke, initial_state, config=config)
+            return await asyncio.wait_for(
+                asyncio.to_thread(_orchestrator_graph.invoke, initial_state, config=config),
+                timeout=GRAPH_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Sync graph fallback timed out after %.0fs", GRAPH_TIMEOUT_S)
+            raise GraphInvokeUnavailableError(
+                f"GRAPH_TIMEOUT: sync fallback exceeded {GRAPH_TIMEOUT_S}s hard limit",
+            )
         except Exception as sync_err:  # pragma: no cover - defensive path
             raise GraphInvokeUnavailableError(
                 "CHECKPOINTER_UNAVAILABLE: async invoke unsupported and sync fallback failed",
@@ -129,7 +154,10 @@ async def invoke_orchestrator_graph(initial_state: Any, *, thread_id: str) -> di
         if _is_prepared_statement_error(invoke_err):
             switched = await _force_memory_checkpointer_graph(invoke_err)
             if switched and _orchestrator_graph is not None:
-                return await _orchestrator_graph.ainvoke(initial_state, config=config)
+                return await asyncio.wait_for(
+                    _orchestrator_graph.ainvoke(initial_state, config=config),
+                    timeout=GRAPH_TIMEOUT_S,
+                )
             raise GraphInvokeUnavailableError(
                 "CHECKPOINTER_UNAVAILABLE: Postgres checkpointer failover to memory failed",
             ) from invoke_err

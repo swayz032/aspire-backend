@@ -423,6 +423,7 @@ class IntentClassifier:
             max_output_tokens=effective_max_tokens,
             temperature=None if _is_reasoning else temperature,
             prefer_responses_api=True,
+            reasoning_effort="low" if _is_reasoning else None,
         )
         if not parsed:
             logger.error("LLM returned empty/invalid JSON for intent classifier (model=%s)", model)
