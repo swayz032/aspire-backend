@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
-from aspire_orchestrator.services.openai_client import generate_text_async
+from aspire_orchestrator.services.openai_client import generate_text_async, generate_text_streaming_async
 from aspire_orchestrator.services.agent_identity import (
     resolve_assigned_agent as _resolve_assigned_agent_shared,
 )
@@ -637,16 +637,43 @@ async def _agent_reason_inner(
         # RC4: Advisory questions get more tokens for substantive answers
         _max_tokens = 1200 if intent_type in ("knowledge", "advice") else 500
 
-        response_text = await generate_text_async(
-            model=model,
-            messages=llm_messages,
-            api_key=resolve_openai_api_key(),
-            base_url=settings.openai_base_url,
-            timeout_seconds=float(settings.openai_timeout_seconds),
-            max_output_tokens=_max_tokens,
-            temperature=None if _is_reasoning else 0.7,
-            prefer_responses_api=True,
-        )
+        # Voice/avatar channels: stream tokens as SSE deltas for progressive TTS.
+        # Chat channel: standard non-streaming call (no latency benefit from streaming).
+        _channel_for_stream = _resolve_channel(state)
+        if _channel_for_stream in ("voice", "avatar"):
+            from aspire_orchestrator.skillpacks.adam_research import get_activity_event_callback
+            _stream_cb = get_activity_event_callback()
+
+            def _on_token(delta: str) -> None:
+                if _stream_cb and delta:
+                    _stream_cb({
+                        "type": "delta",
+                        "content": delta,
+                        "agent": agent_id,
+                        "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                    })
+
+            response_text = await generate_text_streaming_async(
+                model=model,
+                messages=llm_messages,
+                api_key=resolve_openai_api_key(),
+                base_url=settings.openai_base_url,
+                timeout_seconds=float(settings.openai_timeout_seconds),
+                max_output_tokens=_max_tokens,
+                temperature=None if _is_reasoning else 0.7,
+                on_token=_on_token,
+            )
+        else:
+            response_text = await generate_text_async(
+                model=model,
+                messages=llm_messages,
+                api_key=resolve_openai_api_key(),
+                base_url=settings.openai_base_url,
+                timeout_seconds=float(settings.openai_timeout_seconds),
+                max_output_tokens=_max_tokens,
+                temperature=None if _is_reasoning else 0.7,
+                prefer_responses_api=True,
+            )
 
     except Exception as e:
         logger.error("agent_reason LLM call failed: %s", e)

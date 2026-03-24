@@ -603,6 +603,102 @@ async def generate_text_async(
     return ""
 
 
+async def generate_text_streaming_async(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    base_url: str = "https://api.openai.com/v1",
+    timeout_seconds: float = 30.0,
+    max_output_tokens: int = 1024,
+    temperature: float | None = None,
+    on_token: Any | None = None,
+    model_profile: str | None = None,
+) -> str:
+    """Stream text from OpenAI Responses API, calling on_token(str) per chunk.
+
+    Returns the full accumulated text. on_token is called with each text delta
+    as it arrives — use this to emit SSE events for progressive TTS.
+    Falls back to non-streaming generate_text_async if streaming fails.
+    """
+    if not _openai_circuit_breaker.allow_request():
+        raise OpenAIAdapterError(
+            "CIRCUIT_OPEN",
+            "OpenAI circuit breaker is OPEN — too many consecutive failures.",
+        )
+
+    profile = model_profile or _profile_for_model(model)
+    resolved_model, _ = _resolve_model_for_profile(profile, model)
+    reasoning_model = _is_reasoning_model(resolved_model)
+    normalized = _normalize_messages(messages, reasoning_model=reasoning_model)
+    effective_temp = None if reasoning_model else temperature
+
+    client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
+    call_start = time.monotonic()
+
+    try:
+        kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "input": normalized,
+            "max_output_tokens": max_output_tokens,
+            "stream": True,
+        }
+        if effective_temp is not None:
+            kwargs["temperature"] = effective_temp
+
+        accumulated = []
+        async for event in await client.responses.create(**kwargs):
+            # OpenAI Responses API streaming events:
+            # - response.output_text.delta → text chunk
+            # - response.output_text.done  → final text
+            event_type = getattr(event, "type", "")
+            if event_type == "response.output_text.delta":
+                delta = getattr(event, "delta", "")
+                if delta:
+                    accumulated.append(delta)
+                    if on_token:
+                        try:
+                            on_token(delta)
+                        except Exception:
+                            pass  # Non-fatal — don't break LLM stream for callback errors
+
+        latency_ms = round((time.monotonic() - call_start) * 1000, 1)
+        _openai_circuit_breaker.record_success()
+        METRICS.record_llm_request(
+            endpoint="responses_stream",
+            resolved_model=resolved_model,
+            outcome="success",
+            latency_ms=latency_ms,
+        )
+        return "".join(accumulated).strip()
+
+    except Exception as e:
+        latency_ms = round((time.monotonic() - call_start) * 1000, 1)
+        _openai_circuit_breaker.record_failure()
+        logger.warning(
+            "Streaming Responses API failed for model=%s (%s): %s — falling back to non-streaming",
+            resolved_model, type(e).__name__, e,
+        )
+        METRICS.record_llm_request(
+            endpoint="responses_stream",
+            resolved_model=resolved_model,
+            outcome="failed",
+            latency_ms=latency_ms,
+        )
+        # Fallback to non-streaming
+        return await generate_text_async(
+            model=model,
+            messages=messages,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            prefer_responses_api=True,
+            model_profile=model_profile,
+        )
+
+
 async def generate_json_async(
     *,
     model: str,
