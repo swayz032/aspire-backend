@@ -384,10 +384,33 @@ class _AsyncReceiptWriter:
                 await supabase_insert_batch("receipts", rows)
                 logger.info("Async-flushed %d receipts to Supabase", len(rows))
         except Exception as e:
-            logger.error("Async receipt flush failed for %d receipts: %s", len(batch), e)
-            # Re-enqueue failed batch for retry (at front of buffer)
-            with self._buffer_lock:
-                self._buffer = batch + self._buffer
+            msg = str(e).lower()
+            if "unknown suite_id" in msg:
+                # Retry one-by-one to isolate bad suite IDs (same logic as sync path)
+                from aspire_orchestrator.services.supabase_client import supabase_insert
+                good_rows: list[dict[str, Any]] = []
+                for row in rows:
+                    try:
+                        await supabase_insert("receipts", row)
+                    except Exception as row_err:
+                        if "unknown suite_id" in str(row_err).lower():
+                            sid = str(row.get("suite_id") or "")
+                            if sid:
+                                _invalid_suite_ids.add(sid)
+                            logger.warning(
+                                "Dropping receipt with unknown suite_id=%s from async buffer",
+                                sid or "unknown",
+                            )
+                        else:
+                            good_rows.append(row)
+                if good_rows:
+                    with self._buffer_lock:
+                        self._buffer = good_rows + self._buffer
+            else:
+                logger.error("Async receipt flush failed for %d receipts: %s", len(batch), e)
+                # Re-enqueue failed batch for retry (at front of buffer)
+                with self._buffer_lock:
+                    self._buffer = batch + self._buffer
 
     async def flush_now(self) -> None:
         """Flush ALL buffered receipts immediately (for strict mode and shutdown)."""
