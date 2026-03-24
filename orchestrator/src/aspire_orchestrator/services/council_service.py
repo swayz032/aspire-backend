@@ -496,9 +496,9 @@ async def run_council(
             continue
         try:
             await _insert_proposal(session.session_id, result)
+            proposals.append(result)
         except Exception as e:
-            logger.warning("Failed to persist proposal: %s", e)
-        proposals.append(result)
+            logger.warning("Failed to persist proposal from %s: %s", result.get("advisor", "?"), e)
 
     if not proposals:
         try:
@@ -594,7 +594,7 @@ async def get_session_async(session_id: str) -> CouncilSession | None:
         return None
 
 
-async def list_sessions_async(status: str | None = None) -> list[CouncilSession]:
+async def list_sessions_async(status: str | None = None, limit: int = 50) -> list[CouncilSession]:
     """List council sessions from Supabase, optionally filtered by status."""
     from aspire_orchestrator.services.supabase_client import supabase_select
 
@@ -602,7 +602,7 @@ async def list_sessions_async(status: str | None = None) -> list[CouncilSession]
         filters: dict[str, str] = {}
         if status:
             filters["status"] = f"eq.{status}"
-        rows = await supabase_select("council_sessions", filters, order_by="created_at.desc", limit=50)
+        rows = await supabase_select("council_sessions", filters, order_by="created_at.desc", limit=limit)
         return [
             CouncilSession(
                 session_id=str(row["id"]),

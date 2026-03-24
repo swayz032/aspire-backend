@@ -230,19 +230,22 @@ async def test_search_web_missing_query() -> None:
 
 @pytest.mark.asyncio
 async def test_get_council_history() -> None:
-    """Mock council_service, verify session listing."""
-    from datetime import datetime, timezone
-    from dataclasses import dataclass
-
-    @dataclass
-    class FakeSession:
-        session_id: str = 's1'
-        status: str = 'decided'
-        created_at: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    """Mock council_service list_sessions_async, verify session listing."""
+    fake_sessions = [
+        {
+            "id": "s1",
+            "incident_id": "inc-001",
+            "status": "decided",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "decided_at": "2026-01-01T00:01:00+00:00",
+            "members": ["gpt", "gemini", "claude"],
+        }
+    ]
 
     with patch(
-        'aspire_orchestrator.services.council_service.list_sessions',
-        return_value=[FakeSession()],
+        'aspire_orchestrator.services.council_service.list_sessions_async',
+        new_callable=AsyncMock,
+        return_value=fake_sessions,
     ):
         import aspire_orchestrator.skillpacks.ava_admin_desk as desk_mod
         old = desk_mod._instance
@@ -253,7 +256,6 @@ async def test_get_council_history() -> None:
             result = await desk.get_council_history(ctx, status="decided", limit=10)
             assert result.success is True
             assert result.data['count'] == 1
-            # Datetime should be converted to ISO string
             assert '2026-01-01' in result.data['sessions'][0]['created_at']
         finally:
             desk_mod._instance = old

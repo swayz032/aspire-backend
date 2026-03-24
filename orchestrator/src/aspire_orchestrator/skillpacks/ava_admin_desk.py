@@ -955,19 +955,18 @@ class AvaAdminDesk(AgenticSkillPack):
         status: str | None = None,
         limit: int = 10,
     ) -> AgentResult:
-        """Get Meeting of Minds council session history."""
+        """Get Meeting of Minds council session history from Supabase."""
         try:
-            from aspire_orchestrator.services.council_service import list_sessions
-            sessions = list_sessions(status=status)
+            from aspire_orchestrator.services.council_service import list_sessions_async
+            sessions = await list_sessions_async(status=status, limit=limit)
         except Exception as e:
             return AgentResult(success=False, error=f"Council history failed: {e}")
 
-        # Convert dataclasses to dicts and apply limit
+        # Supabase returns dicts — normalize datetime fields
         session_dicts = []
-        for s in sessions[:limit]:
+        for s in sessions:
             if hasattr(s, "__dict__"):
                 d = {k: v for k, v in s.__dict__.items() if not k.startswith("_")}
-                # Convert datetime fields to ISO strings
                 for key, val in d.items():
                     if isinstance(val, datetime):
                         d[key] = val.isoformat()

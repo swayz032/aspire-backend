@@ -4162,15 +4162,28 @@ async def get_council_session(request: Request, session_id: str) -> JSONResponse
             status_code=401,
         )
 
-    # Council sessions stored in receipt store keyed by correlation_id
-    council_receipts = query_receipts(
-        suite_id="system",
-        correlation_id=session_id,
-        action_type="council",
-        limit=50,
-    )
+    # Query Supabase council_sessions + council_proposals directly
+    sb = _get_supabase_client()
+    if sb is None:
+        return _ops_error(
+            code="SERVICE_UNAVAILABLE",
+            message="Supabase client unavailable",
+            correlation_id=correlation_id,
+            status_code=503,
+        )
 
-    if not council_receipts:
+    try:
+        session_resp = sb.table("council_sessions").select("*").eq("id", session_id).execute()
+    except Exception as exc:
+        logger.warning("Council session query failed: %s", exc)
+        return _ops_error(
+            code="QUERY_FAILED",
+            message="Failed to query council session",
+            correlation_id=correlation_id,
+            status_code=500,
+        )
+
+    if not session_resp.data:
         return _ops_error(
             code="NOT_FOUND",
             message=f"Council session {session_id} not found",
@@ -4178,35 +4191,39 @@ async def get_council_session(request: Request, session_id: str) -> JSONResponse
             status_code=404,
         )
 
-    # Build advisor slots from receipts
+    session_row = session_resp.data[0]
+    session_status = session_row.get("status", "open")
+
+    # Fetch proposals for this session
+    try:
+        proposals_resp = sb.table("council_proposals").select("*").eq("session_id", session_id).order("created_at").execute()
+        proposal_rows = proposals_resp.data or []
+    except Exception:
+        proposal_rows = []
+
     advisors = []
+    for p in proposal_rows:
+        advisors.append({
+            "role": p.get("member", "advisor"),
+            "model": p.get("model_used", "unknown"),
+            "proposal": p.get("fix_plan", ""),
+            "root_cause": p.get("root_cause", ""),
+            "confidence": p.get("confidence", 0.0),
+            "risk_tier": p.get("risk_tier", "yellow"),
+            "tests": p.get("tests", []),
+            "status": p.get("status", "submitted"),
+            "submitted_at": p.get("created_at", ""),
+        })
+
     adjudication = None
-    session_status = "deliberating"
-
-    for r in council_receipts:
-        action = r.get("action_type", "")
-        outputs = r.get("redacted_outputs") or {}
-
-        if "council.advisor" in action:
-            advisors.append({
-                "role": outputs.get("role", "advisor"),
-                "model": outputs.get("model", "unknown"),
-                "proposal": outputs.get("proposal", ""),
-                "confidence": outputs.get("confidence", 0.0),
-                "reasoning": outputs.get("reasoning", ""),
-                "submitted_at": r.get("created_at", ""),
-            })
-        elif "council.adjudicate" in action:
-            adjudication = {
-                "decision": outputs.get("decision", ""),
-                "rationale": outputs.get("rationale", ""),
-                "selected_advisor": outputs.get("selected_advisor", ""),
-                "decided_at": r.get("created_at", ""),
-            }
-            session_status = "decided"
-
-    if len(advisors) < 3 and not adjudication:
-        session_status = "collecting"
+    decision = session_row.get("decision")
+    if decision and isinstance(decision, dict):
+        adjudication = {
+            "decision": decision.get("fix_plan", ""),
+            "rationale": decision.get("adjudication_reasoning", ""),
+            "selected_advisor": decision.get("selected_member", ""),
+            "decided_at": session_row.get("decided_at", ""),
+        }
 
     receipt = _build_access_receipt(
         correlation_id=correlation_id,
@@ -4222,8 +4239,13 @@ async def get_council_session(request: Request, session_id: str) -> JSONResponse
         content={
             "session_id": session_id,
             "status": session_status,
+            "incident_id": session_row.get("incident_id", ""),
+            "trigger": session_row.get("trigger", ""),
+            "members": session_row.get("members", []),
             "advisors": advisors,
             "adjudication": adjudication,
+            "created_at": session_row.get("created_at", ""),
+            "decided_at": session_row.get("decided_at"),
             "server_time": _now_iso(),
         },
     )
@@ -4270,7 +4292,7 @@ async def voice_stt_proxy(request: Request) -> JSONResponse:
             )
 
         # Determine STT provider
-        stt_provider = os.environ.get("ASPIRE_STT_PROVIDER", "deepgram")
+        stt_provider = os.environ.get("ASPIRE_STT_PROVIDER", "elevenlabs")
 
         if stt_provider == "elevenlabs":
             transcript = await _stt_elevenlabs(body, correlation_id)
@@ -4450,17 +4472,20 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream(
                     "POST",
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=mp3_44100_128&optimize_streaming_latency=3",
                     headers={
                         "xi-api-key": api_key,
                         "Content-Type": "application/json",
                     },
                     json={
                         "text": safe_text,
-                        "model_id": "eleven_turbo_v2_5",
+                        "model_id": "eleven_flash_v2_5",
                         "voice_settings": {
-                            "stability": 0.5,
-                            "similarity_boost": 0.75,
+                            "stability": 0.42,
+                            "similarity_boost": 0.88,
+                            "style": 0.18,
+                            "use_speaker_boost": True,
+                            "speed": 1.0,
                         },
                     },
                 ) as resp:
