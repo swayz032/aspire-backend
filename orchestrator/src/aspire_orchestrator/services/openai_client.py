@@ -653,7 +653,7 @@ async def generate_text_streaming_async(
 
         accumulated = []
         token_count = 0
-        stream = client.responses.create(**kwargs)
+        stream = await client.responses.create(**kwargs)
         async for event in stream:
             # OpenAI Responses API streaming events:
             # - response.output_text.delta → text chunk
