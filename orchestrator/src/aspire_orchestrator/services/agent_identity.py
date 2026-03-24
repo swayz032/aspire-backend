@@ -49,6 +49,7 @@ _AGENT_ALIASES: dict[str, str] = {
 
 _KNOWN_AGENTS = {
     "ava",
+    "ava_admin",
     "finn",
     "eli",
     "nora",
@@ -80,6 +81,11 @@ def _request_agent_from_state(state: dict[str, Any]) -> str | None:
     explicit_agent = None
     if isinstance(request, dict):
         explicit_agent = request.get("requested_agent") or request.get("agent")
+        # Also check nested payload (admin portal sends requested_agent inside payload)
+        if not explicit_agent:
+            payload = request.get("payload")
+            if isinstance(payload, dict):
+                explicit_agent = payload.get("requested_agent") or payload.get("agent")
     elif hasattr(request, "payload") and isinstance(request.payload, dict):
         explicit_agent = request.payload.get("requested_agent") or request.payload.get("agent")
     return _normalize_agent(explicit_agent)
