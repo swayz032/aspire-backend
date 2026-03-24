@@ -45,7 +45,12 @@ from aspire_orchestrator.services.agent_identity import AGENT_PERSONA_MAP as _PE
 _PERSONAS_DIR = Path(__file__).parent.parent / "config" / "pack_personas"
 
 _AWARENESS_FILE = Path(__file__).parent.parent / "config" / "aspire_awareness.md"
+_AWARENESS_ADMIN_FILE = Path(__file__).parent.parent / "config" / "aspire_awareness_admin.md"
 _AWARENESS_CACHE: str | None = None
+_AWARENESS_ADMIN_CACHE: str | None = None
+
+# Admin agents get a separate awareness context with their actual team roster
+_ADMIN_AGENTS = {"ava_admin"}
 _LAST_EPISODE_TURN_SNAPSHOT: dict[str, int] = {}
 _ENABLE_BACKGROUND_MEMORY_PERSISTENCE = (
     os.getenv("ENABLE_BACKGROUND_MEMORY_PERSISTENCE", "true").strip().lower()
@@ -128,9 +133,31 @@ def _load_persona(agent_id: str) -> str:
     return fallback.read_text(encoding="utf-8") if fallback.exists() else "You are Ava, a helpful business assistant."
 
 
-def _build_aspire_awareness() -> str:
-    """Load shared Aspire platform awareness context from config file."""
-    global _AWARENESS_CACHE
+def _build_aspire_awareness(agent_id: str = "") -> str:
+    """Load Aspire platform awareness context.
+
+    Admin agents (ava_admin) get a separate awareness file with their actual
+    team roster (SRE Triage, Security Review, etc.) instead of the user-facing
+    team (Finn, Eli, Nora...).  This prevents identity confusion where admin
+    Ava thinks she commands user-facing agents.
+    """
+    global _AWARENESS_CACHE, _AWARENESS_ADMIN_CACHE
+
+    if agent_id in _ADMIN_AGENTS:
+        if _AWARENESS_ADMIN_CACHE is not None:
+            return _AWARENESS_ADMIN_CACHE
+        if _AWARENESS_ADMIN_FILE.exists():
+            try:
+                _AWARENESS_ADMIN_CACHE = _AWARENESS_ADMIN_FILE.read_text(encoding="utf-8")
+                return _AWARENESS_ADMIN_CACHE
+            except Exception:
+                pass
+        _AWARENESS_ADMIN_CACHE = (
+            "You are an AI agent on the Aspire Admin Platform — the operational "
+            "command center for platform health, incidents, and governance."
+        )
+        return _AWARENESS_ADMIN_CACHE
+
     if _AWARENESS_CACHE is not None:
         return _AWARENESS_CACHE
 
@@ -167,10 +194,7 @@ def _build_user_context(state: OrchestratorState) -> str:
     # Owner name (gateway sends owner_name, fallback to display_name)
     name = profile.get("owner_name") or profile.get("display_name") or ""
     if name:
-        # Extract last name for formal greeting (e.g., "Test Founder" → "Mr. Founder")
-        name_parts = name.strip().split()
-        last_name = name_parts[-1] if name_parts else name
-        parts.append(f"User: {name} (address as Mr./Ms. {last_name} in greetings)")
+        parts.append(f"User: {name}")
     if profile.get("business_name"):
         parts.append(f"Business: {profile['business_name']}")
     if profile.get("industry"):
@@ -238,6 +262,18 @@ def _build_channel_context(state: OrchestratorState) -> str:
     if channel in ("avatar", "voice"):
         suffix = "Optimized for text-to-speech via Anam avatar." if channel == "avatar" else "Optimized for text-to-speech delivery."
         return _tts_base + suffix
+
+    # Resolve agent for admin-specific chat style
+    agent_id = state.get("agent_target", "")
+    if agent_id in _ADMIN_AGENTS:
+        return (
+            "RESPONSE STYLE: You are in a text chat with the platform admin. "
+            "Be direct and operational. Lead with the answer or status, not context. "
+            "Use 1-3 sentences for simple questions, up to 5 for complex diagnostics. "
+            "Use structured data (tables, bullet points) only when presenting metrics or lists. "
+            "Never pad with filler, never repeat the question back, never ask 'would you like me to'. "
+            "If you can answer, answer. If you need to run a check, say which one and do it."
+        )
 
     # Chat — structured text formatting allowed, warm conversational tone
     return (
@@ -447,7 +483,7 @@ async def _agent_reason_inner(
     persona = _load_persona(agent_id)
 
     # 2. Build context layers
-    awareness = _build_aspire_awareness()
+    awareness = _build_aspire_awareness(agent_id)
     user_ctx = _build_user_context(state)
     channel_ctx = _build_channel_context(state)
     prompt_contract = _load_prompt_contract(agent_id)
@@ -636,9 +672,10 @@ async def _agent_reason_inner(
         # Reasoning models (GPT-5*) have 8-97s TTFT due to internal thinking tokens —
         # architecturally wrong for voice where sub-500ms TTFT is needed.
         _channel_for_stream = _resolve_channel(state)
-        _is_voice = _channel_for_stream in ("voice", "avatar")
-        if _is_voice and settings.ava_voice_model:
-            model = settings.ava_voice_model  # Default: gpt-4o (non-reasoning)
+        if _channel_for_stream == "avatar" and settings.ava_avatar_model:
+            model = settings.ava_avatar_model  # GPT-4.1 — smarter, cheaper, Anam animation covers TTFT
+        elif _channel_for_stream == "voice" and settings.ava_voice_model:
+            model = settings.ava_voice_model  # GPT-4o — fastest TTFT for pure voice
         else:
             model = settings.ava_llm_model or "gpt-5-mini"
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
@@ -651,7 +688,11 @@ async def _agent_reason_inner(
             llm_messages.extend(_conversation_history)
         llm_messages.append({"role": "user", "content": utterance})
         # RC4: Advisory questions get more tokens for substantive answers
-        _max_tokens = 1200 if intent_type in ("knowledge", "advice") else 500
+        # Admin agents: capped lower — ops answers should be tight, not essays
+        if agent_id in _ADMIN_AGENTS:
+            _max_tokens = 600 if intent_type in ("knowledge", "advice") else 400
+        else:
+            _max_tokens = 1200 if intent_type in ("knowledge", "advice") else 500
 
         # OpenAI prompt cache key: same agent = same persona prefix = same server.
         # ~15 RPM per key is optimal. agent_id groups requests with identical prefixes.
@@ -659,6 +700,7 @@ async def _agent_reason_inner(
 
         # Voice/avatar channels: stream tokens as SSE deltas for progressive TTS.
         # Chat channel: standard non-streaming call (no latency benefit from streaming).
+        _is_voice = _channel_for_stream in ("voice", "avatar")
         if _is_voice:
             from aspire_orchestrator.skillpacks.adam_research import get_activity_event_callback
             _stream_cb = get_activity_event_callback()
@@ -679,7 +721,7 @@ async def _agent_reason_inner(
                 base_url=settings.openai_base_url,
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=_max_tokens,
-                temperature=0.7,  # GPT-4o (non-reasoning) uses temperature
+                temperature=0.7,
                 on_token=_on_token,
                 prompt_cache_key=_cache_key,
                 prompt_cache_retention="24h",

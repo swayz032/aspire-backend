@@ -527,6 +527,10 @@ def _call_openai_sync(
             "Verbosity: LOW. Keep responses to 1-2 sentences max. "
             "No filler, no preamble, no lists. This will be spoken aloud via TTS."
         ),
+        "avatar": (
+            "Verbosity: LOW. Keep responses to 1-2 sentences max. "
+            "No filler, no preamble, no lists. This will be spoken aloud via TTS on an avatar."
+        ),
         "chat": (
             "Verbosity: MEDIUM. Keep responses to 3-5 sentences. "
             "Be informative but concise. No unnecessary padding."
@@ -564,13 +568,17 @@ def _call_openai_sync(
     # GPT-5 reasoning_effort="low" cuts TTFT dramatically for summarization
     effort = "low" if _is_reasoning else None
 
+    # Voice/avatar: cap tokens for natural speech length (1-2 sentences).
+    # Chat/video: full token budget for detailed text responses.
+    _max_tokens = 512 if channel in ("voice", "avatar") else 4096
+
     return generate_text_sync(
         model=model,
         messages=processed_messages,
         api_key=api_key,
         base_url=settings.openai_base_url,
         timeout_seconds=timeout,
-        max_output_tokens=4096,
+        max_output_tokens=_max_tokens,
         temperature=None if _is_reasoning else effective_temp,
         prefer_responses_api=True,
         reasoning_effort=effort,

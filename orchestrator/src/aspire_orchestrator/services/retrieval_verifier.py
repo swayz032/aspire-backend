@@ -9,6 +9,11 @@ from aspire_orchestrator.config.settings import settings
 
 _KNOWLEDGE_INTENTS = {"knowledge", "advice", "question"}
 
+# Admin agents use general intelligence — don't replace their answers with
+# canned fallbacks when RAG grounding is weak. They're ops commanders, not
+# domain-specific knowledge bots.
+_GROUNDING_BYPASS_AGENTS = {"ava_admin"}
+
 
 @dataclass(frozen=True)
 class RetrievalVerificationReport:
@@ -48,6 +53,15 @@ def verify_retrieval_grounding(
             passed=True,
             mode="not_applicable",
             confidence=1.0,
+        )
+
+    # Admin agents answer with general intelligence — weak RAG grounding
+    # should NOT replace their response with a canned fallback.
+    if agent_id in _GROUNDING_BYPASS_AGENTS:
+        return RetrievalVerificationReport(
+            passed=True,
+            mode="admin_bypass",
+            confidence=max(0.0, min(1.0, grounding_score)),
         )
 
     # Conversational responses with no retrieval data should pass through —

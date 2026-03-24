@@ -208,8 +208,9 @@ class TestAgentReasonNode:
                 result = await agent_reason_node(_make_state())
 
         response = result["conversation_response"]
-        assert "Finn" in response
-        assert "I wasn't sure" not in response
+        # Persona-specific fallback for Finn (personality pass v1.1.0-p7)
+        assert "I hit a bump" in response
+        assert "numbers right" in response
 
     @pytest.mark.asyncio
     async def test_ava_fallback_for_unknown_agent(self):
@@ -240,7 +241,8 @@ class TestAgentReasonNode:
             ):
                 result = await agent_reason_node(_make_state(agent_target="nonexistent"))
 
-        assert "rephrase" in result["conversation_response"].lower()
+        # Unknown agent falls back to Ava's persona fallback (personality pass v1.1.0-p7)
+        assert "I hit a snag" in result["conversation_response"]
 
     @pytest.mark.asyncio
     @patch("aspire_orchestrator.services.working_memory.get_working_memory")

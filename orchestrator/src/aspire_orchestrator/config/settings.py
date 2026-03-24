@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Voice channel model — non-reasoning for sub-500ms TTFT.
     # GPT-4o: ~440ms TTFT (no reasoning overhead) vs GPT-5-mini: 8-97s TTFT.
     ava_voice_model: str = "gpt-4o"  # Non-reasoning model for real-time voice
+    # Avatar channel model — Anam animation covers TTFT, so we can use smarter model.
+    # GPT-4.1: $2.00/1M input (20% cheaper than GPT-4o), better quality, 1M context.
+    ava_avatar_model: str = "gpt-4.1"  # Non-reasoning model for Anam avatar channel
     openai_api_key: str = ""  # Required for production
     openai_base_url: str = "https://api.openai.com/v1"
     ava_llm_temperature: float = 0.4  # Slightly creative for natural conversation
