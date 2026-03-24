@@ -4378,7 +4378,11 @@ async def _stt_elevenlabs(audio: bytes, correlation_id: str) -> str:
             "https://api.elevenlabs.io/v1/speech-to-text",
             headers={"xi-api-key": api_key},
             files={"file": ("audio.webm", audio, "audio/webm")},
-            data={"model_id": "scribe_v2", "language_code": "en"},
+            data={
+                "model_id": "scribe_v2",
+                "language_code": "en",
+                "keyterms": '["Aspire", "Ava", "Finn", "Eli", "Nora", "Sarah", "Quinn", "Clara", "Adam", "Tec", "Teressa"]',
+            },
         )
         resp.raise_for_status()
         data = resp.json()
@@ -4489,11 +4493,11 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
                                 "text": safe_text,
                                 "model_id": "eleven_flash_v2_5",
                                 "voice_settings": {
-                                    "stability": 0.55,           # Matches Ava tuned config — clearer pronunciation
-                                    "similarity_boost": 0.88,
-                                    "style": 0.12,               # Lower = less dramatic, steadier delivery
-                                    "use_speaker_boost": True,
-                                    "speed": 0.94,               # Slightly slower for clarity
+                                    "stability": 0.55,
+                                    "similarity_boost": 0.82,
+                                    "style": 0,                  # style=0 eliminates compute overhead (ElevenLabs 2026 best practice)
+                                    "use_speaker_boost": False,  # Reduces latency for real-time
+                                    "speed": 0.94,
                                 },
                             },
                         ) as resp:
