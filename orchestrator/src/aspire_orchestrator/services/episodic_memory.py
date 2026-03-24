@@ -123,6 +123,8 @@ class EpisodicMemory:
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=300,
                 prefer_responses_api=True,
+                prompt_cache_key="aspire-memory",
+                prompt_cache_retention="24h",
             )
 
             # 3. Parse structured output

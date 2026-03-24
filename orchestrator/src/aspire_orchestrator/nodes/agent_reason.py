@@ -607,19 +607,26 @@ async def _agent_reason_inner(
         f"Current quarter: Q{(now.month - 1) // 3 + 1} {now.year}."
     )
 
+    # Prompt caching optimization: stable prefix FIRST, dynamic content LAST.
+    # OpenAI caches exact token prefixes (>1024 tokens). identity_guard + awareness +
+    # persona + prompt_contract + channel_ctx are identical between requests for the
+    # same agent — these form the cacheable prefix (~1500-3000 tokens).
+    # Dynamic content (temporal, user profile, memory, RAG) goes after so it doesn't
+    # invalidate the cached prefix.
     system_parts = [identity_guard, "", awareness, "", persona]
-    if param_extract_ctx:
-        system_parts.extend(["", param_extract_ctx])
+    if prompt_contract:
+        system_parts.extend(["", "## Runtime Prompt Contract", prompt_contract])
+    system_parts.extend(["", channel_ctx])
+    # --- Dynamic content below (changes per request — after cacheable prefix) ---
+    system_parts.extend(["", temporal_ctx])
     if user_ctx:
         system_parts.extend(["", "## User Context", user_ctx])
-    system_parts.extend(["", temporal_ctx])
+    if param_extract_ctx:
+        system_parts.extend(["", param_extract_ctx])
     if memory_ctx:
         system_parts.extend(["", memory_ctx])
     if rag_context:
         system_parts.extend(["", rag_context])
-    if prompt_contract:
-        system_parts.extend(["", "## Runtime Prompt Contract", prompt_contract])
-    system_parts.extend(["", channel_ctx])
     system_message = "\n".join(system_parts)
 
     # 6. Call LLM
@@ -646,6 +653,10 @@ async def _agent_reason_inner(
         # RC4: Advisory questions get more tokens for substantive answers
         _max_tokens = 1200 if intent_type in ("knowledge", "advice") else 500
 
+        # OpenAI prompt cache key: same agent = same persona prefix = same server.
+        # ~15 RPM per key is optimal. agent_id groups requests with identical prefixes.
+        _cache_key = f"aspire-reason-{agent_id}"
+
         # Voice/avatar channels: stream tokens as SSE deltas for progressive TTS.
         # Chat channel: standard non-streaming call (no latency benefit from streaming).
         if _is_voice:
@@ -670,6 +681,8 @@ async def _agent_reason_inner(
                 max_output_tokens=_max_tokens,
                 temperature=0.7,  # GPT-4o (non-reasoning) uses temperature
                 on_token=_on_token,
+                prompt_cache_key=_cache_key,
+                prompt_cache_retention="24h",
             )
         else:
             response_text = await generate_text_async(
@@ -681,6 +694,8 @@ async def _agent_reason_inner(
                 max_output_tokens=_max_tokens,
                 temperature=None if _is_reasoning else 0.7,
                 prefer_responses_api=True,
+                prompt_cache_key=_cache_key,
+                prompt_cache_retention="24h",
             )
 
     except Exception as e:

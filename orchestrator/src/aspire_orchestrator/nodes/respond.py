@@ -574,6 +574,8 @@ def _call_openai_sync(
         temperature=None if _is_reasoning else effective_temp,
         prefer_responses_api=True,
         reasoning_effort=effort,
+        prompt_cache_key="aspire-respond",
+        prompt_cache_retention="24h",
     ).strip()
 
 

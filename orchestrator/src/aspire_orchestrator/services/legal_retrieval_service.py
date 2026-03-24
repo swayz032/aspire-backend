@@ -377,6 +377,8 @@ class LegalRetrievalService:
                 max_output_tokens=500,
                 temperature=0.0,
                 prefer_responses_api=True,
+                prompt_cache_key="aspire-retrieval",
+                prompt_cache_retention="24h",
             )
 
             parsed = parse_json_text(content)
