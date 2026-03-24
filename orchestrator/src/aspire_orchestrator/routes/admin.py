@@ -4621,200 +4621,93 @@ async def _stream_ava_chat(
     user_profile: dict[str, str] | None = None,
     channel: str = "chat",
 ) -> AsyncGenerator[str, None]:
-    """Stream Ava admin chat response via SSE.
+    """Stream Ava admin chat response via the LangGraph orchestrator pipeline.
 
-    Law #2: Initiation + completion receipts for every request.
-    Law #3: Fail closed on missing API key or circuit breaker open.
-    Law #9: PII redacted on all streamed content.
+    Law #1: Routes through invoke_orchestrator_graph — same pipeline as all agents.
+    Law #2: Receipts handled by the orchestrator graph (intake, policy, respond nodes).
+    Law #3: Fail closed on missing auth (handled by caller).
+    Law #9: PII redaction handled by respond node + SSE manager.
     """
-    from aspire_orchestrator.services.sse_manager import (
-        StreamRateLimiter,
-        format_sse_event,
-        redact_pii,
+    from aspire_orchestrator.services.sse_manager import format_sse_event
+    from aspire_orchestrator.services.orchestrator_runtime import (
+        invoke_orchestrator_graph,
+        resolve_thread_id,
     )
-    from aspire_orchestrator.services.openai_client import (
-        _get_or_create_async_client,
-        _openai_circuit_breaker,
-        _is_reasoning_model,
-    )
-    from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
 
+    # Build the request body matching AvaOrchestratorRequest schema exactly.
+    # All required Pydantic fields must be present for intake validation.
+    request_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
-    receipt_id = str(uuid.uuid4())
 
-    # --- Initiation receipt (Law #2) ---
-    try:
-        store_receipts([{
-            "id": str(uuid.uuid4()),
-            "correlation_id": correlation_id,
-            "suite_id": actor_id,
-            "office_id": "admin_portal",
-            "actor_type": "human",
-            "actor_id": actor_id,
-            "action_type": "admin.chat.request",
-            "risk_tier": "green",
-            "tool_used": "ava_admin_chat",
-            "outcome": "PENDING",
-            "created_at": now_iso,
-            "receipt_type": "admin_chat",
-            "receipt_hash": "",
-            "redacted_inputs": None,
-            "redacted_outputs": {"message_length": len(message)},
-        }])
-    except Exception:
-        pass  # Receipt failure never blocks the request
+    payload: dict[str, Any] = {
+        "text": message,
+        "utterance": message,
+        "requested_agent": "ava_admin",
+        "channel": channel,
+        "history": history,
+    }
+    if user_profile:
+        payload["user_profile"] = user_profile
 
-    # --- Pre-flight checks (Law #3: fail closed) ---
-    api_key = resolve_openai_api_key()
-    if not api_key:
-        logger.error("admin.chat: OpenAI API key not configured — denying")
-        yield format_sse_event({"type": "error", "code": "LLM_NOT_CONFIGURED", "message": "AI service not configured"})
-        yield "data: [DONE]\n\n"
-        return
+    request_body: dict[str, Any] = {
+        "schema_version": "1.0",
+        "suite_id": actor_id,
+        "office_id": "admin_portal",
+        "request_id": request_id,
+        "correlation_id": correlation_id,
+        "timestamp": now_iso,
+        "task_type": "admin.chat",
+        "payload": payload,
+    }
 
-    if not _openai_circuit_breaker.allow_request():
-        logger.warning("admin.chat: OpenAI circuit breaker OPEN — denying")
-        yield format_sse_event({"type": "error", "code": "CIRCUIT_OPEN", "message": "I'm having trouble reaching the AI service right now. Give me a moment and try again."})
-        yield "data: [DONE]\n\n"
-        return
-
-    # --- Build OpenAI messages ---
-    system_prompt = _load_ava_system_prompt()
-
-    # Inject channel context so prompt rules apply correctly
-    system_prompt += f"\n\n[Channel: {channel}]"
-
-    # Inject whether this is first message (empty history = greeting allowed)
-    if not history:
-        system_prompt += "\n\nThis is the first message in the conversation. You may greet the admin."
-    else:
-        system_prompt += "\n\nThis is a follow-up message. Do NOT greet — answer directly."
-
-    # Inject temporal context (RC1)
-    _now = datetime.now(timezone.utc)
-    system_prompt += (
-        f"\n\n## Current Date & Time\n"
-        f"Today is {_now.strftime('%A, %B %d, %Y')}. "
-        f"Current time is {_now.strftime('%I:%M %p')} UTC. "
-        f"Current quarter: Q{(_now.month - 1) // 3 + 1} {_now.year}."
+    thread_id = resolve_thread_id(
+        request_body,
+        suite_id=actor_id,
+        actor_id=actor_id,
+        correlation_id=correlation_id,
     )
 
-    # Inject user profile if provided (Bug 6D)
-    # Security: sanitize to prevent prompt injection (THREAT-001)
-    _ALLOWED_SALUTATIONS = {"Mr.", "Ms.", "Mrs.", "Dr.", "Mx.", ""}
+    initial_state: dict[str, Any] = {
+        "request": request_body,
+        "actor_id": actor_id,
+        "thread_id": thread_id,
+        "correlation_id": correlation_id,
+        "auth_suite_id": actor_id,
+        # Explicit top-level fields so the graph doesn't need to re-parse
+        "utterance": message,
+        "requested_agent": "ava_admin",
+        "suite_id": actor_id,
+        "office_id": "admin_portal",
+        "channel": channel,
+    }
+    # Promote user_profile to top-level state so agent_reason._build_user_context reads it
     if user_profile:
-        name = user_profile.get("owner_name", "")
-        if isinstance(name, str) and name.strip():
-            # Strip newlines/control chars, cap length
-            name = name.replace("\n", "").replace("\r", "").replace("\t", "").strip()[:100]
-            parts = name.split()
-            last = parts[-1] if parts else ""
-            salutation = user_profile.get("salutation", "Mr.")
-            if not isinstance(salutation, str) or salutation not in _ALLOWED_SALUTATIONS:
-                salutation = "Mr."
-            system_prompt += f"\n\nThe user's name is {name}. Address them as {salutation} {last}."
+        initial_state["user_profile"] = user_profile
 
-    model = settings.ava_llm_model
-    reasoning_model = _is_reasoning_model(model)
-    system_role = "developer" if reasoning_model else "system"
+    # Use stream_agent_activity from server.py — the same SSE streaming
+    # wrapper that Desktop /v1/intents?stream=true uses.
+    from aspire_orchestrator.server import stream_agent_activity
 
-    openai_messages: list[dict[str, str]] = [
-        {"role": system_role, "content": system_prompt},
-    ]
-    openai_messages.extend(history)
-    openai_messages.append({"role": "user", "content": message})
-
-    # --- Stream from OpenAI ---
-    rate_limiter = StreamRateLimiter()
-    full_content = ""
-    pending_content = ""  # Buffer for tokens not yet sent due to rate limiting
-    outcome = "SUCCEEDED"
-    error_reason = None
-
-    try:
-        client = _get_or_create_async_client(
-            api_key=api_key,
-            base_url=settings.openai_base_url,
-            timeout=float(settings.openai_timeout_seconds) if hasattr(settings, "openai_timeout_seconds") else 30.0,
-        )
-
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=openai_messages,
-            stream=True,
-            max_completion_tokens=settings.ava_llm_max_tokens,
-            **({"temperature": settings.ava_llm_temperature} if not reasoning_model else {}),
-        )
-
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            content = getattr(delta, "content", None)
-            if content:
-                full_content += content
-                pending_content += content
-                if rate_limiter.check():
-                    redacted = redact_pii(pending_content)
-                    yield format_sse_event({"type": "delta", "content": redacted})
-                    pending_content = ""
-
-        # Flush any remaining buffered content
-        if pending_content:
-            redacted = redact_pii(pending_content)
-            yield format_sse_event({"type": "delta", "content": redacted})
-
-        _openai_circuit_breaker.record_success()
-
-    except Exception as exc:
-        _openai_circuit_breaker.record_failure()
-        outcome = "FAILED"
-        error_reason = type(exc).__name__
-        # THREAT-003: Log full detail server-side, send generic message to client
-        logger.error("admin.chat streaming error: %s: %s", error_reason, exc)
-        yield format_sse_event({
-            "type": "error",
-            "code": "STREAM_ERROR",
-            "message": "An error occurred while generating the response. Please try again.",
-        })
-
-    # --- Completion receipt (Law #2) ---
-    try:
-        store_receipts([{
-            "id": receipt_id,
-            "correlation_id": correlation_id,
-            "suite_id": actor_id,
-            "office_id": "admin_portal",
-            "actor_type": "system",
-            "actor_id": "ava_admin",
-            "action_type": "admin.chat.response",
-            "risk_tier": "green",
-            "tool_used": "ava_admin_chat",
-            "outcome": outcome,
-            "reason_code": error_reason,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "receipt_type": "admin_chat",
-            "receipt_hash": "",
-            "redacted_inputs": None,
-            "redacted_outputs": {"response_length": len(full_content)},
-        }])
-    except Exception:
-        pass
-
-    # --- Done event ---
-    yield format_sse_event({"type": "done", "receipt_id": receipt_id})
-    yield "data: [DONE]\n\n"
+    async for event in stream_agent_activity(
+        initial_state,
+        suite_id=actor_id,
+        office_id="admin_portal",
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        thread_id=thread_id,
+    ):
+        yield event
 
 
 @router.post("/admin/ops/chat", response_model=None)
 async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
-    """Ava Admin Chat — streaming LLM endpoint.
+    """Ava Admin Chat — routes through the LangGraph orchestrator pipeline.
 
     Streams Ava admin responses via SSE. Requires admin JWT.
-    Law #1: Brain decides (LLM generates response).
-    Law #2: Receipts emitted for initiation and completion.
-    Law #3: Fail closed on missing auth, API key, or circuit breaker.
-    Law #9: PII redacted on all streamed content.
+    Law #1: Routes through invoke_orchestrator_graph (same pipeline as all agents).
+    Law #2: Receipts handled by orchestrator graph nodes.
+    Law #3: Fail closed on missing auth.
+    Law #9: PII redaction handled by respond node.
     """
     correlation_id = _get_correlation_id(request)
 

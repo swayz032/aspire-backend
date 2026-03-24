@@ -532,6 +532,20 @@ async def _agent_reason_inner(
                 msg_role_turn = "assistant" if turn.role == "agent" else "user"
                 _conversation_history.append({"role": msg_role_turn, "content": turn.content[:500]})
 
+        # 3b: If no working memory turns, fall back to payload.history
+        # (admin portal sends explicit history since it lacks persistent sessions)
+        if not _conversation_history:
+            _payload_history = []
+            _req = state.get("request")
+            if isinstance(_req, dict):
+                _payload_history = _req.get("payload", {}).get("history", [])
+            elif hasattr(_req, "payload") and isinstance(getattr(_req, "payload", None), dict):
+                _payload_history = _req.payload.get("history", [])
+            if isinstance(_payload_history, list):
+                for _h in _payload_history[-6:]:
+                    if isinstance(_h, dict) and _h.get("role") in ("user", "assistant") and isinstance(_h.get("content"), str):
+                        _conversation_history.append({"role": _h["role"], "content": _h["content"][:500]})
+
         if mem_parts:
             memory_ctx = "\n".join(mem_parts)
 

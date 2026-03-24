@@ -58,6 +58,7 @@ def _init_registry() -> dict[str, Any]:
         "milo": ("aspire_orchestrator.skillpacks.milo_payroll", "EnhancedMiloPayroll"),
         "mail_ops": ("aspire_orchestrator.skillpacks.mail_ops_desk", "EnhancedMailOps"),
         "ava": ("aspire_orchestrator.skillpacks.ava_user", "EnhancedAvaUser"),
+        "ava_admin": ("aspire_orchestrator.skillpacks.ava_admin", "AvaAdminSkillPack"),
     }
 
     for agent_id, (module_path, class_name) in _class_map.items():
@@ -98,6 +99,7 @@ def _resolve_agent_id(state: OrchestratorState) -> str:
                 "milo_payroll": "milo",
                 "mail_ops_desk": "mail_ops",
                 "ava_user": "ava",
+                "ava_admin": "ava_admin",
             }
             agent = _PACK_TO_AGENT.get(skill_pack_id)
             if agent:
@@ -116,6 +118,7 @@ def _resolve_agent_id(state: OrchestratorState) -> str:
         "finance.": "finn", "cashflow.": "finn", "budget.": "finn",
         "books.": "teressa", "qbo.": "teressa", "stripe_qbo.": "teressa",
         "payroll.": "milo",
+        "admin.": "ava_admin", "admin_ops.": "ava_admin",
     }
     for prefix, agent in _PREFIX_MAP.items():
         if task_type.startswith(prefix):
@@ -211,6 +214,61 @@ async def _dispatch_to_skill_pack(
                 if plan_result.receipt:
                     receipts.append(plan_result.receipt)
                 result["_dispatch_receipts"] = receipts
+                return result
+
+    # ── Ava Admin: Direct desk method dispatch for admin ops ─────────
+    if agent_id == "ava_admin" and task_type.startswith(("admin.", "admin_ops.")):
+        # Map classified action types to skill pack method names.
+        # e.g. "admin.ops.list_incidents" → "admin_ops_list_incidents"
+        method_name = task_type.replace(".", "_").replace("admin_ops_", "admin_ops_")
+        # Normalize: admin.ops.health_pulse → admin_ops_health_pulse
+        if method_name.startswith("admin_ops_"):
+            pass  # Already correct
+        elif method_name.startswith("admin_"):
+            method_name = method_name.replace("admin_", "admin_ops_", 1)
+
+        method = getattr(pack, method_name, None)
+        if method is not None:
+            if activity_callback:
+                import time as _dispatch_time
+                activity_callback({
+                    "type": "tool_call",
+                    "message": f"Ava Admin is executing {method_name.replace('admin_ops_', '').replace('_', ' ')}...",
+                    "icon": "server-outline",
+                    "agent": "ava_admin",
+                    "status": "active",
+                    "timestamp": int(_dispatch_time.time() * 1000),
+                })
+
+            # Extract params from state/utterance for the desk method
+            params: dict[str, Any] = {}
+            if isinstance(state.get("execution_params"), dict):
+                params = state["execution_params"]
+            elif isinstance(state.get("request"), dict):
+                req_payload = state["request"].get("payload", {})
+                if isinstance(req_payload, dict):
+                    params = {k: v for k, v in req_payload.items()
+                              if k not in ("text", "utterance", "requested_agent", "channel", "history", "user_profile")}
+
+            try:
+                admin_result = await method(params, ctx)
+                if admin_result.success:
+                    content = (admin_result.data or {}).get("content", str(admin_result.data))
+                    result["conversation_response"] = content
+                    result["agent_target"] = "ava_admin"
+                    if admin_result.receipt:
+                        result["_dispatch_receipts"] = [admin_result.receipt]
+                    return result
+                else:
+                    result["conversation_response"] = admin_result.error or "I couldn't complete that operation."
+                    result["agent_target"] = "ava_admin"
+                    if admin_result.receipt:
+                        result["_dispatch_receipts"] = [admin_result.receipt]
+                    return result
+            except Exception as admin_exc:
+                logger.error("ava_admin dispatch failed: method=%s error=%s", method_name, admin_exc)
+                result["conversation_response"] = f"I hit an issue running {method_name.replace('admin_ops_', '').replace('_', ' ')}. Let me try again."
+                result["agent_target"] = "ava_admin"
                 return result
 
     # ── Generic agentic loop for all other agents/tasks ──────────────

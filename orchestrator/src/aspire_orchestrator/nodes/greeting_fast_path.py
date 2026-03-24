@@ -52,9 +52,9 @@ GREETING_RESPONSES: dict[str, list[str]] = {
         "Hi{name}! Ready to dig into some research for you.",
     ],
     "ava_admin": [
-        "Good {tod}{name}. Admin Ava here — your ops commander. All systems reporting. What do you need?",
-        "Good {tod}{name}. Platform status is nominal. How can I assist?",
-        "Good {tod}{name}. Ava Admin online. What should I look into?",
+        "Good {tod}{name}. Admin Ava here — your ops commander. What do you need?",
+        "Good {tod}{name}. Ava Admin online. How can I assist?",
+        "Good {tod}{name}. Ready when you are. What should I look into?",
     ],
 }
 

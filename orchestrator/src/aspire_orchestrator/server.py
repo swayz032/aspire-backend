@@ -656,6 +656,7 @@ async def stream_agent_activity(
 
                     yield format_sse_event({
                         "type": "response",
+                        "content": response_text,
                         "message": response_text,
                         "agent": graph_result.get("agent_target", "ava"),
                         "timestamp": int(time.time() * 1000),
@@ -725,7 +726,8 @@ async def stream_agent_activity(
                 }
                 yield format_sse_event(partial_event)
 
-        yield format_sse_event({"type": "response", "data": response})
+        # [DONE] sentinel — signals end of SSE stream to clients
+        yield "data: [DONE]\n\n"
 
         completion_receipt = build_stream_receipt(
             action_type="stream.complete",

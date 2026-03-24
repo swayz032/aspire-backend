@@ -27,6 +27,8 @@ _DOMAIN_TO_AGENT: dict[str, str] = {
     "payroll": "milo",
     "contract": "clara",
     "legal": "clara",
+    "admin": "ava_admin",
+    "admin_ops": "ava_admin",
     "document": "tec",
     "filing": "teressa",
     "bookkeeping": "teressa",
