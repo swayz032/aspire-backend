@@ -541,31 +541,14 @@ class IntentClassifier:
             return None
         current_agent = str((context or {}).get("current_agent", "")).strip().lower()
 
-        # Ava Admin: ALWAYS conversation — skip LLM classify entirely.
+        # Ava Admin: ALWAYS conversation path — skip LLM classify entirely.
         # Admin portal requests are pre-routed to ava_admin; the classify LLM
         # call adds ~500-1500ms of latency for zero value (we already know the
         # agent and intent type). Critical for voice latency.
+        # ALL admin intents use intent_type="conversation" → agent_reason path.
+        # The skill router has no admin.ops mappings, so the action path would
+        # fail with "could not be routed to a valid skill path".
         if current_agent == "ava_admin":
-            # Check for admin ops action keywords that need tool dispatch
-            admin_action_signals = (
-                "incident", "health", "status", "council", "codex",
-                "patch", "deploy", "workflow", "receipt", "audit",
-                "security", "scan", "release", "rollback",
-            )
-            if any(kw in text for kw in admin_action_signals):
-                return IntentResult(
-                    action_type="admin.ops.dispatch",
-                    skill_pack="ava_admin",
-                    confidence=0.95,
-                    entities={},
-                    risk_tier=self._risk_tiers.get("admin.ops.dispatch", RiskTier.GREEN),
-                    requires_clarification=False,
-                    clarification_prompt=None,
-                    raw_llm_response={"rule_based": "admin.ops.dispatch"},
-                    intent_type="action",
-                    agent_target="ava_admin",
-                )
-            # Default: conversational (who are you, help, advice, etc.)
             return IntentResult(
                 action_type="admin.chat",
                 skill_pack="ava_admin",
@@ -574,7 +557,7 @@ class IntentClassifier:
                 risk_tier=self._risk_tiers.get("admin.chat", RiskTier.GREEN),
                 requires_clarification=False,
                 clarification_prompt=None,
-                raw_llm_response={"rule_based": "admin.chat.conversation"},
+                raw_llm_response={"rule_based": "admin.chat"},
                 intent_type="conversation",
                 agent_target="ava_admin",
             )
