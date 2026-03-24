@@ -225,7 +225,7 @@ async def test_search_web_missing_query() -> None:
     ctx = _make_ctx()
     result = await desk.search_web(ctx, query="", count=5)
     assert result.success is False
-    assert "Missing required parameter" in result.error
+    assert "search query" in result.error
 
 
 @pytest.mark.asyncio

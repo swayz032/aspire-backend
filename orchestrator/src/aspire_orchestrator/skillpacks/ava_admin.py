@@ -25,7 +25,7 @@ class AvaAdminSkillPack(AgenticSkillPack):
     async def admin_ops_triage(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         incident_id = str(params.get('incident_id', '')).strip()
         if not incident_id:
-            return AgentResult(success=False, error='Missing required parameter: incident_id')
+            return AgentResult(success=False, error='I need the incident ID to look that up.')
         return await self._desk.triage_incident(ctx, incident_id=incident_id)
 
     async def admin_ops_provider_analysis(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
@@ -36,22 +36,22 @@ class AvaAdminSkillPack(AgenticSkillPack):
     async def admin_ops_robot_triage(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         run_id = str(params.get('run_id', '')).strip()
         if not run_id:
-            return AgentResult(success=False, error='Missing required parameter: run_id')
+            return AgentResult(success=False, error='I need the run ID to trace that robot failure.')
         return await self._desk.triage_robot_failure(ctx, run_id=run_id)
 
     async def admin_ops_council_dispatch(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         incident_id = str(params.get('incident_id', '')).strip()
         if not incident_id:
-            return AgentResult(success=False, error='Missing required parameter: incident_id')
+            return AgentResult(success=False, error='I need the incident ID to look that up.')
         return await self._desk.dispatch_council(ctx, incident_id=incident_id, evidence_pack={})
 
     async def admin_ops_learning_entry_create(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         incident_id = str(params.get('incident_id', '')).strip()
         lesson = str(params.get('lesson', '')).strip()
         if not incident_id:
-            return AgentResult(success=False, error='Missing required parameter: incident_id')
+            return AgentResult(success=False, error='I need the incident ID to look that up.')
         if not lesson:
-            return AgentResult(success=False, error='Missing required parameter: lesson')
+            return AgentResult(success=False, error='I need the lesson content to log it.')
         return await self._desk.create_learning_entry(ctx, incident_id=incident_id, entry_type="lesson", content={"lesson": lesson})
 
     # --- Wave 1: New capability wrappers ---
@@ -81,7 +81,7 @@ class AvaAdminSkillPack(AgenticSkillPack):
     async def admin_ops_web_search(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         query = str(params.get('query', '')).strip()
         if not query:
-            return AgentResult(success=False, error='Missing required parameter: query')
+            return AgentResult(success=False, error='I need a search query to look that up.')
         count = int(params.get('count', 5))
         return await self._desk.search_web(ctx, query=query, count=count)
 
@@ -113,7 +113,7 @@ class AvaAdminSkillPack(AgenticSkillPack):
     async def admin_ops_trace(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         correlation_id = str(params.get('correlation_id', '')).strip()
         if not correlation_id:
-            return AgentResult(success=False, error='Missing required parameter: correlation_id')
+            return AgentResult(success=False, error='I need the correlation ID to pull that trace.')
         return await self._desk.get_trace(ctx, correlation_id=correlation_id)
 
     async def admin_ops_list_incidents(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:

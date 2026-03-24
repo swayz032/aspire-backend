@@ -4433,6 +4433,16 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
             status_code=400,
         )
 
+    # ElevenLabs text length cap (5000 chars per request)
+    _MAX_TTS_TEXT_LENGTH = 5000
+    if len(text) > _MAX_TTS_TEXT_LENGTH:
+        return _ops_error(
+            code="VALIDATION_ERROR",
+            message=f"Text exceeds max length: {len(text)} > {_MAX_TTS_TEXT_LENGTH} chars",
+            correlation_id=correlation_id,
+            status_code=400,
+        )
+
     # Default to Ava's voice
     voice_id = body.get("voice_id", os.environ.get("ASPIRE_AVA_VOICE_ID", "uYXf8XasLslADfZ2MB4u"))
     api_key = os.environ.get("ASPIRE_ELEVENLABS_API_KEY", "").strip()
@@ -4456,44 +4466,89 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
     # Redact PII from text before sending to TTS (Law #9)
     safe_text = redact_pii(text)
 
-    receipt = _build_access_receipt(
-        correlation_id=correlation_id,
-        actor_id=actor_id,
-        action_type="admin.ops.voice.tts",
-        outcome="success",
-        details={"voice_id": voice_id, "text_length": len(safe_text)},
-    )
-    store_receipts([receipt])
-
     async def audio_generator():
         import httpx
 
+        bytes_streamed = 0
+        elevenlabs_request_id = None
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=mp3_44100_128&optimize_streaming_latency=3",
-                    headers={
-                        "xi-api-key": api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "text": safe_text,
-                        "model_id": "eleven_flash_v2_5",
-                        "voice_settings": {
-                            "stability": 0.42,
-                            "similarity_boost": 0.88,
-                            "style": 0.18,
-                            "use_speaker_boost": True,
-                            "speed": 1.0,
-                        },
-                    },
-                ) as resp:
-                    resp.raise_for_status()
-                    async for chunk in resp.aiter_bytes(chunk_size=4096):
-                        yield chunk
+                # Retry once on 429/5xx (match Desktop parity)
+                last_exc: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        async with client.stream(
+                            "POST",
+                            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=mp3_44100_128&optimize_streaming_latency=3",
+                            headers={
+                                "xi-api-key": api_key,
+                                "Content-Type": "application/json",
+                                "Accept": "audio/mpeg",
+                            },
+                            json={
+                                "text": safe_text,
+                                "model_id": "eleven_flash_v2_5",
+                                "voice_settings": {
+                                    "stability": 0.42,
+                                    "similarity_boost": 0.88,
+                                    "style": 0.18,
+                                    "use_speaker_boost": True,
+                                    "speed": 1.0,
+                                },
+                            },
+                        ) as resp:
+                            elevenlabs_request_id = resp.headers.get("request-id")
+                            if resp.status_code in (429, 500, 502, 503, 504) and attempt == 0:
+                                logger.warning(
+                                    "TTS ElevenLabs %d on attempt %d, retrying: request_id=%s",
+                                    resp.status_code, attempt, elevenlabs_request_id,
+                                )
+                                continue
+                            resp.raise_for_status()
+                            async for chunk in resp.aiter_bytes(chunk_size=4096):
+                                bytes_streamed += len(chunk)
+                                yield chunk
+                            # Stream completed successfully — emit success receipt
+                            receipt = _build_access_receipt(
+                                correlation_id=correlation_id,
+                                actor_id=actor_id,
+                                action_type="admin.ops.voice.tts",
+                                outcome="success",
+                                details={
+                                    "voice_id": voice_id,
+                                    "text_length": len(safe_text),
+                                    "audio_bytes": bytes_streamed,
+                                    "elevenlabs_request_id": elevenlabs_request_id,
+                                },
+                            )
+                            store_receipts([receipt])
+                            return
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code in (429, 500, 502, 503, 504) and attempt == 0:
+                            last_exc = exc
+                            continue
+                        raise
+                # Both attempts failed
+                if last_exc:
+                    raise last_exc
         except Exception as exc:
-            logger.error("TTS streaming error: %s", exc)
+            logger.error("TTS streaming error: %s (request_id=%s)", exc, elevenlabs_request_id)
+            # Emit failure receipt (Law #2: receipt on ALL outcomes)
+            failure_receipt = _build_access_receipt(
+                correlation_id=correlation_id,
+                actor_id=actor_id,
+                action_type="admin.ops.voice.tts",
+                outcome="failed",
+                reason_code="TTS_STREAM_ERROR",
+                details={
+                    "voice_id": voice_id,
+                    "text_length": len(safe_text),
+                    "bytes_before_error": bytes_streamed,
+                    "error": str(exc)[:200],
+                    "elevenlabs_request_id": elevenlabs_request_id,
+                },
+            )
+            store_receipts([failure_receipt])
 
     return StreamingResponse(
         audio_generator(),
@@ -4618,7 +4673,7 @@ async def _stream_ava_chat(
 
     if not _openai_circuit_breaker.allow_request():
         logger.warning("admin.chat: OpenAI circuit breaker OPEN — denying")
-        yield format_sse_event({"type": "error", "code": "CIRCUIT_OPEN", "message": "AI service temporarily unavailable"})
+        yield format_sse_event({"type": "error", "code": "CIRCUIT_OPEN", "message": "I'm having trouble reaching the AI service right now. Give me a moment and try again."})
         yield "data: [DONE]\n\n"
         return
 

@@ -296,13 +296,13 @@ class AvaAdminDesk(AgenticSkillPack):
         except Exception as e:
             return AgentResult(
                 success=False,
-                error=f"Failed to fetch incident {incident_id}: {e}",
+                error=f"Hit an issue pulling incident {incident_id}. The store returned an error.",
             )
 
         if not incident:
             return AgentResult(
                 success=False,
-                error=f"Incident {incident_id} not found",
+                error=f"No record of incident {incident_id} in the system.",
             )
 
         # Gather evidence
@@ -434,7 +434,7 @@ class AvaAdminDesk(AgenticSkillPack):
         if not run_receipts:
             return AgentResult(
                 success=False,
-                error=f"No receipts found for robot run {run_id}",
+                error=f"No execution trail found for run {run_id}. It may not have started yet.",
             )
 
         # Analyze failure pattern
@@ -591,7 +591,7 @@ class AvaAdminDesk(AgenticSkillPack):
         if entry_type not in valid_types:
             return AgentResult(
                 success=False,
-                error=f"Invalid entry_type: {entry_type}. Valid: {valid_types}",
+                error=f"That entry type isn't supported. Valid options are: {', '.join(valid_types)}.",
             )
 
         entry = {
@@ -637,7 +637,7 @@ class AvaAdminDesk(AgenticSkillPack):
             pcl = get_provider_call_logger()
             calls = pcl.query_calls(provider=provider, limit=limit)
         except Exception as e:
-            return AgentResult(success=False, error=f"Failed to query provider calls: {e}")
+            return AgentResult(success=False, error="Couldn't reach the provider call logs right now. The data store may be temporarily unavailable.")
 
         # Analyze patterns
         total = len(calls)
@@ -692,7 +692,7 @@ class AvaAdminDesk(AgenticSkillPack):
             service = get_sentry_read_service()
             summary = await service.get_summary()
         except Exception as e:
-            return AgentResult(success=False, error=f"Sentry summary failed: {e}")
+            return AgentResult(success=False, error="Couldn't pull the Sentry summary right now. The error monitoring service may be temporarily unreachable.")
 
         issue_count = len(summary.get("issues", [])) if isinstance(summary, dict) else 0
         receipt = self.build_receipt(
@@ -728,7 +728,7 @@ class AvaAdminDesk(AgenticSkillPack):
             raw = await service.get_issues(limit=limit)
             issues = raw.get("issues", []) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
         except Exception as e:
-            return AgentResult(success=False, error=f"Sentry issues failed: {e}")
+            return AgentResult(success=False, error="Couldn't retrieve Sentry issues right now. I'll flag this for a retry.")
 
         if project:
             issues = [i for i in issues if i.get("project", {}).get("slug") == project]
@@ -769,7 +769,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = result if isinstance(result, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"Workflow status query failed: {e}")
+            return AgentResult(success=False, error="Couldn't pull the workflow status. The approval queue may be temporarily unreachable.")
 
         # Compute counts by status
         counts: dict[str, int] = {}
@@ -820,7 +820,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = result if isinstance(result, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"Approval queue query failed: {e}")
+            return AgentResult(success=False, error="Hit an issue checking the approval queue. The data store may be temporarily down.")
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -862,7 +862,7 @@ class AvaAdminDesk(AgenticSkillPack):
             total_count = get_receipt_count(suite_id=suite_id)
             chain = get_chain_receipts(suite_id=suite_id)
         except Exception as e:
-            return AgentResult(success=False, error=f"Receipt audit failed: {e}")
+            return AgentResult(success=False, error="Couldn't complete the receipt audit. The ledger may be temporarily unreachable.")
 
         # Check chain integrity — look for gaps
         gaps: list[dict[str, Any]] = []
@@ -915,7 +915,7 @@ class AvaAdminDesk(AgenticSkillPack):
     ) -> AgentResult:
         """Search the web using Brave Search API."""
         if not query or not query.strip():
-            return AgentResult(success=False, error="Missing required parameter: query")
+            return AgentResult(success=False, error="I need a search query to look that up.")
 
         try:
             from aspire_orchestrator.providers.brave_client import execute_brave_search
@@ -927,7 +927,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             result_data = tool_result.data if hasattr(tool_result, "data") else {}
         except Exception as e:
-            return AgentResult(success=False, error=f"Brave search failed: {e}")
+            return AgentResult(success=False, error="Web search didn't go through. The search provider may be temporarily unreachable.")
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -960,7 +960,7 @@ class AvaAdminDesk(AgenticSkillPack):
             from aspire_orchestrator.services.council_service import list_sessions_async
             sessions = await list_sessions_async(status=status, limit=limit)
         except Exception as e:
-            return AgentResult(success=False, error=f"Council history failed: {e}")
+            return AgentResult(success=False, error="Couldn't pull council session history right now. The database may be temporarily unreachable.")
 
         # Supabase returns dicts — normalize datetime fields
         session_dicts = []
@@ -1032,7 +1032,7 @@ class AvaAdminDesk(AgenticSkillPack):
                 "captured_at": datetime.now(timezone.utc).isoformat(),
             }
         except Exception as e:
-            return AgentResult(success=False, error=f"Metrics snapshot failed: {e}")
+            return AgentResult(success=False, error="Couldn't grab the metrics snapshot. Prometheus may be temporarily unreachable.")
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -1080,7 +1080,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = rows if isinstance(rows, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"Provider call logs query failed: {e}")
+            return AgentResult(success=False, error="Couldn't reach the provider call logs. The data store may be temporarily down.")
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -1128,7 +1128,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = rows if isinstance(rows, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"Client events query failed: {e}")
+            return AgentResult(success=False, error="Couldn't pull client events right now. The events table may be temporarily unreachable.")
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -1204,7 +1204,7 @@ class AvaAdminDesk(AgenticSkillPack):
     ) -> AgentResult:
         """Trace a correlation ID across receipts and provider call logs."""
         if not correlation_id:
-            return AgentResult(success=False, error="Missing required parameter: correlation_id")
+            return AgentResult(success=False, error="I need the correlation ID to pull that trace.")
 
         receipts: list[dict[str, Any]] = []
         provider_calls: list[dict[str, Any]] = []
@@ -1273,7 +1273,7 @@ class AvaAdminDesk(AgenticSkillPack):
                 state=state, severity=severity, limit=limit,
             )
         except Exception as e:
-            return AgentResult(success=False, error=f"Incidents query failed: {e}")
+            return AgentResult(success=False, error="Couldn't retrieve the incidents list. The data store may be temporarily unreachable.")
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -1311,7 +1311,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = rows if isinstance(rows, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"Outbox status query failed: {e}")
+            return AgentResult(success=False, error="Couldn't check the outbox right now. The job queue may be temporarily down.")
 
         counts: dict[str, int] = {}
         for row in rows:
@@ -1359,7 +1359,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = rows if isinstance(rows, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"n8n operations query failed: {e}")
+            return AgentResult(success=False, error="Couldn't reach n8n right now. The workflow engine may be temporarily unreachable.")
 
         by_type: dict[str, int] = {}
         for row in rows:
@@ -1412,7 +1412,7 @@ class AvaAdminDesk(AgenticSkillPack):
             )
             rows = rows if isinstance(rows, list) else []
         except Exception as e:
-            return AgentResult(success=False, error=f"Webhook health query failed: {e}")
+            return AgentResult(success=False, error="Couldn't check webhook health right now. The data store may be temporarily down.")
 
         receipt = self.build_receipt(
             ctx=ctx,
