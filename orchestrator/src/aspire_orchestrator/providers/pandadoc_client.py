@@ -1607,6 +1607,8 @@ async def _llm_fill_missing_tokens(
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
             temperature=create_kwargs.get("temperature"),
             prefer_responses_api=True,
+            prompt_cache_key="aspire-legal-tokens",
+            prompt_cache_retention="24h",
         )
         raw_values = _extract_json_from_llm_response(content, dict)
         if raw_values is not None:
@@ -2309,6 +2311,8 @@ async def _llm_parse_pricing(
             max_output_tokens=400,
             temperature=None if _is_reasoning else 0.0,
             prefer_responses_api=True,
+            prompt_cache_key="aspire-legal-pricing",
+            prompt_cache_retention="24h",
         )
         # Extract JSON array using robust parser
         items = _extract_json_from_llm_response(content, list)
@@ -2466,6 +2470,8 @@ async def _build_content_placeholders(
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
             temperature=create_kwargs.get("temperature"),
             prefer_responses_api=True,
+            prompt_cache_key="aspire-legal-content",
+            prompt_cache_retention="24h",
         )
 
         # Extract JSON array
@@ -3491,6 +3497,8 @@ async def _generate_smart_questions(
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
             temperature=create_kwargs.get("temperature"),
             prefer_responses_api=True,
+            prompt_cache_key="aspire-legal-questions",
+            prompt_cache_retention="24h",
         )
         # Extract JSON array
         questions = _extract_json_from_llm_response(content, list)

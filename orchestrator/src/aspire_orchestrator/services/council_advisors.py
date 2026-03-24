@@ -56,30 +56,33 @@ def _resolve_api_key(*env_names: str) -> str:
 
 
 async def _call_openai(prompt: str, model: str = "gpt-5.2") -> dict[str, Any]:
-    """Call OpenAI API for GPT advisor."""
-    import httpx
+    """Call OpenAI API for GPT advisor via shared client (prompt caching enabled)."""
+    from aspire_orchestrator.config.settings import resolve_openai_api_key, settings
+    from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 
-    api_key = _resolve_api_key("ASPIRE_OPENAI_API_KEY", "OPENAI_API_KEY")
+    _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
+    system_role = "developer" if _is_reasoning else "system"
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": _ADVISOR_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1000,
-                "response_format": {"type": "json_object"},
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
+    content = await generate_text_async(
+        model=model,
+        messages=[
+            {"role": system_role, "content": _ADVISOR_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        api_key=resolve_openai_api_key(),
+        base_url=settings.openai_base_url,
+        timeout_seconds=float(_TIMEOUT_SECONDS),
+        max_output_tokens=1000,
+        temperature=None if _is_reasoning else 0.3,
+        prefer_responses_api=True,
+        prompt_cache_key="aspire-council",
+        prompt_cache_retention="24h",
+    )
+
+    parsed = parse_json_text(content)
+    if isinstance(parsed, dict):
+        return parsed
+    return json.loads(content)
 
 
 async def _call_google(prompt: str, model: str = "gemini-3") -> dict[str, Any]:
