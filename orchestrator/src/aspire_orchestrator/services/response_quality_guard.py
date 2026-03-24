@@ -84,7 +84,7 @@ def evaluate_response_quality(
         score -= 10
         warnings.append("excessive punctuation")
 
-    if channel in {"voice", "avatar"}:
+    if channel == "voice":
         sentence_count = len([s for s in re.split(r"[.!?]+", normalized) if s.strip()])
         if sentence_count > 3:
             score -= 20
@@ -93,6 +93,16 @@ def evaluate_response_quality(
             score -= 10
             violations.append("voice response uses bullets")
         style_signals.append("voice_compact")
+    elif channel == "avatar":
+        # Avatar has visual context — allow longer responses than pure voice
+        sentence_count = len([s for s in re.split(r"[.!?]+", normalized) if s.strip()])
+        if sentence_count > 6:
+            score -= 10
+            warnings.append("avatar response exceeds 6 sentences")
+        if re.search(r"(^|\n)[*-]\s", normalized):
+            score -= 5
+            warnings.append("avatar response uses bullets")
+        style_signals.append("avatar_conversational")
     else:
         if not allow_markdown and re.search(r"(^|\n)[*-]\s", normalized):
             score -= 5
