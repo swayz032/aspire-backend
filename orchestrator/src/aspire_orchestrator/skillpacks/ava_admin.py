@@ -92,3 +92,51 @@ class AvaAdminSkillPack(AgenticSkillPack):
 
     async def admin_ops_metrics_snapshot(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
         return await self._desk.get_metrics_snapshot(ctx)
+
+    # --- Wave 2: Data intelligence wrappers ---
+
+    async def admin_ops_provider_call_logs(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        provider = params.get('provider')
+        status = params.get('status')
+        limit = int(params.get('limit', 50))
+        return await self._desk.get_provider_call_logs(ctx, provider=provider, status=status, limit=limit)
+
+    async def admin_ops_client_events(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        event_type = params.get('event_type')
+        severity = params.get('severity')
+        limit = int(params.get('limit', 50))
+        return await self._desk.get_client_events(ctx, event_type=event_type, severity=severity, limit=limit)
+
+    async def admin_ops_db_performance(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        return await self._desk.get_db_performance(ctx)
+
+    async def admin_ops_trace(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        correlation_id = str(params.get('correlation_id', '')).strip()
+        if not correlation_id:
+            return AgentResult(success=False, error='Missing required parameter: correlation_id')
+        return await self._desk.get_trace(ctx, correlation_id=correlation_id)
+
+    async def admin_ops_list_incidents(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        state = params.get('state')
+        severity = params.get('severity')
+        limit = int(params.get('limit', 20))
+        return await self._desk.list_incidents(ctx, state=state, severity=severity, limit=limit)
+
+    async def admin_ops_outbox_status(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        limit = int(params.get('limit', 50))
+        return await self._desk.get_outbox_status(ctx, limit=limit)
+
+    async def admin_ops_n8n_operations(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        limit = int(params.get('limit', 50))
+        return await self._desk.get_n8n_operations(ctx, limit=limit)
+
+    async def admin_ops_webhook_health(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        provider = params.get('provider')
+        return await self._desk.get_webhook_health(ctx, provider=provider)
+
+    async def admin_ops_model_policy(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        return await self._desk.get_model_policy(ctx)
+
+    async def admin_ops_business_snapshot(self, params: dict[str, Any], ctx: AgentContext) -> AgentResult:
+        limit = int(params.get('limit', 100))
+        return await self._desk.get_business_snapshot(ctx, limit=limit)

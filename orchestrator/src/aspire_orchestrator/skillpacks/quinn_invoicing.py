@@ -658,6 +658,7 @@ class EnhancedQuinnInvoicing(AgenticSkillPack):
         self,
         user_request: str,
         ctx: AgentContext,
+        activity_callback: Any | None = None,
     ) -> AgentResult:
         """Parse natural language into structured invoice data using LLM.
 
@@ -669,6 +670,17 @@ class EnhancedQuinnInvoicing(AgenticSkillPack):
 
         YELLOW tier — returns structured plan, requires approval to execute.
         """
+        if activity_callback:
+            import time
+            activity_callback({
+                "type": "thinking",
+                "message": "Quinn is parsing invoice details...",
+                "icon": "receipt-outline",
+                "agent": "quinn",
+                "status": "active",
+                "timestamp": int(time.time() * 1000),
+            })
+
         if not user_request or not user_request.strip():
             receipt = self.build_receipt(
                 ctx=ctx, event_type="invoice.parse_intent",
@@ -705,12 +717,24 @@ class EnhancedQuinnInvoicing(AgenticSkillPack):
         customer_name: str,
         known_customers: list[dict[str, Any]],
         ctx: AgentContext,
+        activity_callback: Any | None = None,
     ) -> AgentResult:
         """Fuzzy-match customer name to existing Stripe customers using LLM.
 
         Uses cheap_classifier (GPT-5-mini) for fast matching.
         GREEN tier operation within YELLOW pack — matching is read-only.
         """
+        if activity_callback:
+            import time
+            activity_callback({
+                "type": "thinking",
+                "message": "Quinn is checking customer records...",
+                "icon": "receipt-outline",
+                "agent": "quinn",
+                "status": "active",
+                "timestamp": int(time.time() * 1000),
+            })
+
         if not customer_name:
             receipt = self.build_receipt(
                 ctx=ctx, event_type="invoice.match_customer",
@@ -748,12 +772,24 @@ class EnhancedQuinnInvoicing(AgenticSkillPack):
         self,
         parsed_data: dict[str, Any],
         ctx: AgentContext,
+        activity_callback: Any | None = None,
     ) -> AgentResult:
         """Build a complete invoice plan for user approval.
 
         Uses fast_general (GPT-5) to validate and enrich the parsed data.
         YELLOW tier — requires user approval before Stripe API call.
         """
+        if activity_callback:
+            import time
+            activity_callback({
+                "type": "thinking",
+                "message": "Quinn is drafting the invoice plan...",
+                "icon": "receipt-outline",
+                "agent": "quinn",
+                "status": "active",
+                "timestamp": int(time.time() * 1000),
+            })
+
         # Law #3: Fail-closed on empty input
         if not parsed_data:
             receipt = self.build_receipt(

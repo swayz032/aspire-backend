@@ -42,6 +42,12 @@ from aspire_orchestrator.providers.stripe_client import (
     execute_stripe_invoice_void,
     execute_stripe_quote_create,
     execute_stripe_quote_send,
+    execute_stripe_quote_cancel,
+    execute_stripe_quote_update,
+    execute_stripe_quote_finalize,
+    execute_stripe_quote_pdf,
+    execute_stripe_payout_list,
+    execute_stripe_payout_retrieve,
 )
 from aspire_orchestrator.providers.twilio_client import (
     execute_twilio_call_create,
@@ -723,6 +729,12 @@ _INVOICING_EXECUTORS: dict[str, ToolExecutorFn] = {
     "stripe.invoice.void": execute_stripe_invoice_void,
     "stripe.quote.create": execute_stripe_quote_create,
     "stripe.quote.send": execute_stripe_quote_send,
+    "stripe.quote.cancel": execute_stripe_quote_cancel,
+    "stripe.quote.update": execute_stripe_quote_update,
+    "stripe.quote.finalize": execute_stripe_quote_finalize,
+    "stripe.quote.pdf": execute_stripe_quote_pdf,
+    "stripe.payout.list": execute_stripe_payout_list,
+    "stripe.payout.read": execute_stripe_payout_retrieve,
 }
 
 # Phase 2: Conference tools (GREEN/YELLOW — Nora Conference pack)

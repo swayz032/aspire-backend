@@ -1,14 +1,21 @@
-"""Stripe Provider Client — Invoicing for Quinn skill pack.
+"""Stripe Provider Client — Invoicing & Quoting for Quinn skill pack.
 
 Provider: Stripe (https://api.stripe.com/v1)
 Auth: API key (Bearer token) — per-suite connected accounts via Stripe Connect
-Risk tier: GREEN (invoice.create draft), YELLOW (invoice.send), RED (payment.send via Stripe transfers)
+Risk tier: GREEN (invoice.create draft, quote.create draft), YELLOW (invoice.send, quote.send), RED (payment.send)
 Idempotency: Yes — Stripe-native idempotency keys (Idempotency-Key header)
 
 Tools:
-  - stripe.invoice.create: Create a draft invoice
+  - stripe.invoice.create: Create a draft invoice (auto-finalizes for preview URL)
   - stripe.invoice.send: Finalize and send an invoice
   - stripe.invoice.void: Void an open invoice
+  - stripe.quote.create: Create a draft quote (auto-finalizes for PDF)
+  - stripe.quote.send: Finalize and accept a quote
+  - stripe.quote.cancel: Cancel a draft/open quote
+  - stripe.quote.update: Update a draft quote
+  - stripe.quote.finalize: Finalize a draft quote (standalone)
+  - stripe.payout.list: List payouts (GREEN tier, read-only)
+  - stripe.payout.read: Retrieve a single payout (GREEN tier, read-only)
   - stripe.transfer.create: Create a Stripe transfer (RED tier, for Finn)
 
 Per policy_matrix.yaml:
@@ -153,11 +160,23 @@ def _get_client() -> StripeClient:
 async def _resolve_stripe_customer(
     client: StripeClient,
     email: str,
-    name: str | None,
     suite_id: str,
     correlation_id: str,
+    *,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    business_name: str | None = None,
+    address: dict[str, str] | str | None = None,
+    phone: str | None = None,
+    name: str | None = None,
 ) -> str | None:
     """Find or create a Stripe customer by email.
+
+    Accepts full onboarding fields matching Stripe Create Customer API:
+      - first_name + last_name → combined into `name` field
+      - business_name → Stripe `description` (visible on invoices)
+      - address → Stripe `address` object
+      - phone → Stripe `phone`
 
     Returns customer ID (cus_xxx) or None on failure.
     """
@@ -185,10 +204,37 @@ async def _resolve_stripe_customer(
             search_response.status_code,
         )
 
-    # Not found — create
+    # Not found — create with full onboarding fields
     create_body: dict[str, Any] = {"email": email}
-    if name:
-        create_body["name"] = name
+
+    # Build name from first/last or fall back to legacy `name` param
+    # Stripe Create Customer has: `name` (general), `individual_name` (person), `business_name` (company)
+    full_name = None
+    if first_name and last_name:
+        full_name = f"{first_name.strip()} {last_name.strip()}"
+    elif first_name:
+        full_name = first_name.strip()
+    elif name:
+        full_name = name
+    if full_name:
+        create_body["name"] = full_name
+
+    # Business name → Stripe `business_name` field (up to 150 chars)
+    if business_name:
+        create_body["business_name"] = business_name.strip()[:150]
+
+    # Phone
+    if phone:
+        create_body["phone"] = phone.strip()
+
+    # Address — accept dict or string
+    if isinstance(address, dict):
+        # Stripe expects: line1, line2, city, state, postal_code, country
+        create_body["address"] = address
+    elif isinstance(address, str) and address.strip():
+        # Free-form text → put in line1
+        create_body["address"] = {"line1": address.strip()}
+
     create_body["metadata"] = {"aspire_suite_id": suite_id}
 
     create_response = await client._request(
@@ -232,14 +278,19 @@ async def execute_stripe_invoice_create(
 
     Required payload (one of):
       - customer_id: str — Stripe customer ID (direct)
-      - customer_email: str — email to find-or-create customer (from param_extract)
+      - customer_email: str — email to find-or-create customer
 
-    Required:
+    Customer onboarding fields (for new customer creation):
+      - customer_first_name: str — client's first name
+      - customer_last_name: str — client's last name
+      - customer_business_name: str — business name (optional)
+      - customer_address: str | dict — address (optional)
+      - customer_phone: str — phone number (optional)
+      - customer_name: str — legacy full name fallback
+
+    Invoice fields:
       - amount_cents: int — total amount in cents (preferred)
       - amount: int — alias for amount_cents (backward compat)
-
-    Optional payload:
-      - customer_name: str — name for new customer creation
       - currency: str — 3-letter ISO (default "usd")
       - description: str — invoice description
       - line_items: list[dict] — individual line items
@@ -257,9 +308,14 @@ async def execute_stripe_invoice_create(
         resolved = await _resolve_stripe_customer(
             client,
             email=customer_email,
-            name=payload.get("customer_name"),
             suite_id=suite_id,
             correlation_id=correlation_id,
+            first_name=payload.get("customer_first_name"),
+            last_name=payload.get("customer_last_name"),
+            business_name=payload.get("customer_business_name"),
+            address=payload.get("customer_address"),
+            phone=payload.get("customer_phone"),
+            name=payload.get("customer_name"),  # legacy fallback
         )
         if resolved:
             customer_id = resolved
@@ -393,16 +449,44 @@ async def execute_stripe_invoice_create(
                     is_stub=False,
                 )
 
+        # Auto-finalize to generate hosted_invoice_url for preview
+        # Stripe only populates hosted_invoice_url after finalization (status=open)
+        # The user reviews the preview in Authority Queue before approving "send"
+        finalize_response = await client._request(
+            ProviderRequest(
+                method="POST",
+                path=f"/invoices/{invoice_id}/finalize",
+                body={"auto_advance": False},  # Don't auto-charge
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                idempotency_key=f"finalize_{invoice_id}_{correlation_id}",
+            )
+        )
+        if finalize_response.success:
+            finalized = finalize_response.body
+            hosted_url = finalized.get("hosted_invoice_url")
+            final_status = finalized.get("status", "open")
+        else:
+            # Finalize failed — return draft anyway (non-fatal, preview just won't be available)
+            logger.warning(
+                "Auto-finalize failed for invoice %s: %s (preview URL unavailable)",
+                invoice_id, finalize_response.status_code,
+            )
+            hosted_url = None
+            final_status = "draft"
+
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id="stripe.invoice.create",
             data={
                 "invoice_id": invoice_id,
-                "status": invoice.get("status", "draft"),
+                "status": final_status,
                 "amount_due": int(amount) if amount else invoice.get("amount_due", 0),
                 "currency": invoice.get("currency", "usd"),
                 "customer": invoice.get("customer", ""),
-                "hosted_invoice_url": invoice.get("hosted_invoice_url"),
+                "hosted_invoice_url": hosted_url,
+                "invoice_pdf": finalize_response.body.get("invoice_pdf") if finalize_response.success else None,
                 "created": invoice.get("created"),
             },
             receipt_data=receipt,
@@ -647,24 +731,36 @@ async def execute_stripe_quote_create(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Execute stripe.quote.create — create a quote for a customer.
+    """Execute stripe.quote.create — create a draft quote for a customer.
+
+    Supports two resolution paths (same as invoice.create):
+      1. customer_email (preferred) — resolves/creates customer via _resolve_stripe_customer
+      2. customer_id (legacy) — direct Stripe customer ID
 
     Required payload:
-      - customer_id: str — Stripe customer ID
+      - customer_email OR customer_id
       - line_items: list[dict] — line items with price_data
 
     Optional payload:
-      - expires_at: int — Unix timestamp for quote expiration
+      - customer_first_name, customer_last_name, customer_business_name,
+        customer_address, customer_phone — onboarding fields for new customers
+      - description: str — displayed on the quote PDF (max 500 chars)
+      - header: str — displayed on the quote PDF (max 50 chars)
+      - footer: str — displayed on the quote PDF (max 500 chars)
+      - expiry_days: int — days until quote expires (default 30)
       - idempotency_key: str — explicit idempotency key
 
-    Each line_item: {price_data: {currency, unit_amount, product_data: {name}}}
+    Each line_item: {price_data: {currency, unit_amount, product_data: {name}}, quantity: int}
+
+    Auto-finalizes after creation so quote PDF is immediately available.
     """
     client = _get_client()
 
+    customer_email = payload.get("customer_email", "")
     customer_id = payload.get("customer_id", "")
     line_items = payload.get("line_items", [])
 
-    if not customer_id or not line_items:
+    if (not customer_email and not customer_id) or not line_items:
         receipt = client.make_receipt_data(
             correlation_id=correlation_id,
             suite_id=suite_id,
@@ -679,7 +775,60 @@ async def execute_stripe_quote_create(
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id="stripe.quote.create",
-            error="Missing required parameters: customer_id, line_items",
+            error="Missing required parameters: customer_email (or customer_id) and line_items",
+            receipt_data=receipt,
+        )
+
+    # Resolve customer via email if no customer_id provided
+    if not customer_id and customer_email:
+        try:
+            customer_id = await _resolve_stripe_customer(
+                client,
+                customer_email,
+                suite_id,
+                correlation_id,
+                first_name=payload.get("customer_first_name"),
+                last_name=payload.get("customer_last_name"),
+                business_name=payload.get("customer_business_name"),
+                address=payload.get("customer_address"),
+                phone=payload.get("customer_phone"),
+                name=payload.get("customer_name"),
+            )
+        except RuntimeError as e:
+            receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id="stripe.quote.create",
+                risk_tier=risk_tier,
+                outcome=Outcome.FAILED,
+                reason_code="CUSTOMER_RESOLUTION_FAILED",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id="stripe.quote.create",
+                error=str(e),
+                receipt_data=receipt,
+            )
+
+    if not customer_id:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.quote.create",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="CUSTOMER_RESOLUTION_FAILED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.create",
+            error="Could not resolve Stripe customer",
             receipt_data=receipt,
         )
 
@@ -693,10 +842,22 @@ async def execute_stripe_quote_create(
         },
     }
 
-    if payload.get("expires_at"):
-        body["expires_at"] = payload["expires_at"]
+    # Optional quote fields per Stripe API
+    if payload.get("description"):
+        body["description"] = str(payload["description"])[:500]
+    if payload.get("header"):
+        body["header"] = str(payload["header"])[:50]
+    if payload.get("footer"):
+        body["footer"] = str(payload["footer"])[:500]
 
-    # 5e: Auto-generate idempotency key if not provided
+    # Expiry: convert expiry_days to Unix timestamp, default 30 days
+    import time as _time_quote
+    expiry_days = int(payload.get("expiry_days", 30))
+    body["expires_at"] = int(_time_quote.time()) + (expiry_days * 86400)
+    if payload.get("expires_at"):
+        body["expires_at"] = int(payload["expires_at"])
+
+    # Auto-generate idempotency key if not provided
     import uuid as _uuid_quote
     quote_idem_key = payload.get("idempotency_key") or f"quote_create_{correlation_id}_{_uuid_quote.uuid4()}"
     response = await client._request(
@@ -711,10 +872,44 @@ async def execute_stripe_quote_create(
         )
     )
 
-    outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
-    reason = "EXECUTED" if response.success else (
-        response.error_code.value if response.error_code else "FAILED"
+    if not response.success:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.quote.create",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=response.error_code.value if response.error_code else "FAILED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+            provider_response=response,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.create",
+            error=response.error_message or f"Stripe API error: HTTP {response.status_code}",
+            receipt_data=receipt,
+        )
+
+    quote = response.body
+    quote_id = quote.get("id", "")
+
+    # Auto-finalize to generate quote PDF (same pattern as invoice auto-finalize)
+    finalize_response = await client._request(
+        ProviderRequest(
+            method="POST",
+            path=f"/quotes/{quote_id}/finalize",
+            body={},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            idempotency_key=f"quote_autofinalize_{quote_id}_{_uuid_quote.uuid4()}",
+        )
     )
+
+    finalized_quote = finalize_response.body if finalize_response.success else quote
+    final_status = finalized_quote.get("status", quote.get("status", "draft"))
 
     receipt = client.make_receipt_data(
         correlation_id=correlation_id,
@@ -722,33 +917,26 @@ async def execute_stripe_quote_create(
         office_id=office_id,
         tool_id="stripe.quote.create",
         risk_tier=risk_tier,
-        outcome=outcome,
-        reason_code=reason,
+        outcome=Outcome.SUCCESS,
+        reason_code="EXECUTED",
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
         provider_response=response,
     )
 
-    if response.success:
-        quote = response.body
-        return ToolExecutionResult(
-            outcome=Outcome.SUCCESS,
-            tool_id="stripe.quote.create",
-            data={
-                "quote_id": quote.get("id", ""),
-                "status": quote.get("status", "draft"),
-                "amount_total": quote.get("amount_total", 0),
-                "currency": quote.get("currency", "usd"),
-            },
-            receipt_data=receipt,
-        )
-    else:
-        return ToolExecutionResult(
-            outcome=Outcome.FAILED,
-            tool_id="stripe.quote.create",
-            error=response.error_message or f"Stripe API error: HTTP {response.status_code}",
-            receipt_data=receipt,
-        )
+    return ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="stripe.quote.create",
+        data={
+            "quote_id": quote_id,
+            "status": final_status,
+            "amount_total": finalized_quote.get("amount_total", 0),
+            "currency": finalized_quote.get("currency", "usd"),
+            "customer_id": customer_id,
+            "expires_at": finalized_quote.get("expires_at"),
+        },
+        receipt_data=receipt,
+    )
 
 
 async def execute_stripe_quote_send(
@@ -878,3 +1066,605 @@ async def execute_stripe_quote_send(
             error=accept_response.error_message or "Failed to accept quote",
             receipt_data=receipt,
         )
+
+
+async def execute_stripe_quote_cancel(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "yellow",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Execute stripe.quote.cancel — cancel a draft or open quote.
+
+    Per Stripe docs: POST /quotes/{quote_id}/cancel
+    A quote can only be canceled if status is 'draft' or 'open'.
+
+    Required payload:
+      - quote_id: str — Stripe quote ID (qt_xxx)
+    """
+    client = _get_client()
+
+    quote_id = payload.get("quote_id", "")
+    if not quote_id:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.quote.cancel",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.cancel",
+            error="Missing required parameter: quote_id",
+            receipt_data=receipt,
+        )
+
+    import uuid as _uuid_qc
+    response = await client._request(
+        ProviderRequest(
+            method="POST",
+            path=f"/quotes/{quote_id}/cancel",
+            body={},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            idempotency_key=f"quote_cancel_{quote_id}_{_uuid_qc.uuid4()}",
+        )
+    )
+
+    outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
+    reason = "EXECUTED" if response.success else (
+        response.error_code.value if response.error_code else "FAILED"
+    )
+
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        tool_id="stripe.quote.cancel",
+        risk_tier=risk_tier,
+        outcome=outcome,
+        reason_code=reason,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        provider_response=response,
+    )
+
+    if response.success:
+        quote = response.body
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id="stripe.quote.cancel",
+            data={
+                "quote_id": quote.get("id", ""),
+                "status": quote.get("status", "canceled"),
+            },
+            receipt_data=receipt,
+        )
+    else:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.cancel",
+            error=response.error_message or "Failed to cancel quote",
+            receipt_data=receipt,
+        )
+
+
+async def execute_stripe_quote_update(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "yellow",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Execute stripe.quote.update — update a draft quote.
+
+    Per Stripe docs: POST /quotes/{quote_id}
+    Only draft quotes can be updated.
+
+    Required payload:
+      - quote_id: str — Stripe quote ID (qt_xxx)
+
+    Optional payload:
+      - line_items: list[dict] — updated line items
+      - description: str — displayed on quote PDF (max 500 chars)
+      - header: str — displayed on quote PDF (max 50 chars)
+      - footer: str — displayed on quote PDF (max 500 chars)
+      - expires_at: int — Unix timestamp for quote expiration
+      - expiry_days: int — alternative to expires_at
+    """
+    client = _get_client()
+
+    quote_id = payload.get("quote_id", "")
+    if not quote_id:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.quote.update",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.update",
+            error="Missing required parameter: quote_id",
+            receipt_data=receipt,
+        )
+
+    body: dict[str, Any] = {}
+
+    if payload.get("line_items"):
+        body["line_items"] = payload["line_items"]
+    if payload.get("description"):
+        body["description"] = str(payload["description"])[:500]
+    if payload.get("header"):
+        body["header"] = str(payload["header"])[:50]
+    if payload.get("footer"):
+        body["footer"] = str(payload["footer"])[:500]
+    if payload.get("expires_at"):
+        body["expires_at"] = int(payload["expires_at"])
+    elif payload.get("expiry_days"):
+        import time as _time_qu
+        body["expires_at"] = int(_time_qu.time()) + (int(payload["expiry_days"]) * 86400)
+
+    import uuid as _uuid_qu
+    response = await client._request(
+        ProviderRequest(
+            method="POST",
+            path=f"/quotes/{quote_id}",
+            body=body,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            idempotency_key=f"quote_update_{quote_id}_{_uuid_qu.uuid4()}",
+        )
+    )
+
+    outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
+    reason = "EXECUTED" if response.success else (
+        response.error_code.value if response.error_code else "FAILED"
+    )
+
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        tool_id="stripe.quote.update",
+        risk_tier=risk_tier,
+        outcome=outcome,
+        reason_code=reason,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        provider_response=response,
+    )
+
+    if response.success:
+        quote = response.body
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id="stripe.quote.update",
+            data={
+                "quote_id": quote.get("id", ""),
+                "status": quote.get("status", "draft"),
+                "amount_total": quote.get("amount_total", 0),
+                "currency": quote.get("currency", "usd"),
+            },
+            receipt_data=receipt,
+        )
+    else:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.update",
+            error=response.error_message or "Failed to update quote",
+            receipt_data=receipt,
+        )
+
+
+async def execute_stripe_quote_finalize(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "yellow",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Execute stripe.quote.finalize — finalize a draft quote (standalone).
+
+    Per Stripe docs: POST /quotes/{quote_id}/finalize
+    Makes the quote 'open' — customer can then accept or it expires.
+    Generates PDF. Optional expires_at override.
+
+    Required payload:
+      - quote_id: str — Stripe quote ID (qt_xxx)
+
+    Optional payload:
+      - expires_at: int — Unix timestamp to override expiration on finalize
+    """
+    client = _get_client()
+
+    quote_id = payload.get("quote_id", "")
+    if not quote_id:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.quote.finalize",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.finalize",
+            error="Missing required parameter: quote_id",
+            receipt_data=receipt,
+        )
+
+    body: dict[str, Any] = {}
+    if payload.get("expires_at"):
+        body["expires_at"] = int(payload["expires_at"])
+
+    import uuid as _uuid_qfin
+    response = await client._request(
+        ProviderRequest(
+            method="POST",
+            path=f"/quotes/{quote_id}/finalize",
+            body=body,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            idempotency_key=f"quote_finalize_{quote_id}_{_uuid_qfin.uuid4()}",
+        )
+    )
+
+    outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
+    reason = "EXECUTED" if response.success else (
+        response.error_code.value if response.error_code else "FAILED"
+    )
+
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        tool_id="stripe.quote.finalize",
+        risk_tier=risk_tier,
+        outcome=outcome,
+        reason_code=reason,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        provider_response=response,
+    )
+
+    if response.success:
+        quote = response.body
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id="stripe.quote.finalize",
+            data={
+                "quote_id": quote.get("id", ""),
+                "status": quote.get("status", "open"),
+                "amount_total": quote.get("amount_total", 0),
+                "currency": quote.get("currency", "usd"),
+                "expires_at": quote.get("expires_at"),
+            },
+            receipt_data=receipt,
+        )
+    else:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.finalize",
+            error=response.error_message or "Failed to finalize quote",
+            receipt_data=receipt,
+        )
+
+
+async def execute_stripe_quote_pdf(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Execute stripe.quote.pdf — get the PDF download URL for a finalized quote.
+
+    Per Stripe docs: GET /quotes/{quote_id}/pdf
+    Returns binary PDF. We return the download URL for the client to fetch.
+    Only works for finalized (open/accepted) quotes.
+
+    Required payload:
+      - quote_id: str — Stripe quote ID (qt_xxx)
+    """
+    client = _get_client()
+
+    quote_id = payload.get("quote_id", "")
+    if not quote_id:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.quote.pdf",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.quote.pdf",
+            error="Missing required parameter: quote_id",
+            receipt_data=receipt,
+        )
+
+    # The Stripe quote PDF endpoint returns binary — we construct the URL
+    # for the client to download directly via authenticated Stripe API call.
+    # The actual PDF fetch requires the Stripe API key, so we return metadata
+    # indicating the PDF is available and the quote_id for downstream use.
+    pdf_url = f"https://files.stripe.com/v1/quotes/{quote_id}/pdf"
+
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        tool_id="stripe.quote.pdf",
+        risk_tier=risk_tier,
+        outcome=Outcome.SUCCESS,
+        reason_code="EXECUTED",
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+    return ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="stripe.quote.pdf",
+        data={
+            "quote_id": quote_id,
+            "pdf_url": pdf_url,
+            "note": "PDF available for finalized quotes. Use Stripe API key to download.",
+        },
+        receipt_data=receipt,
+    )
+
+
+# ── Payout Tools (GREEN, read-only) ─────────────────────────────
+
+
+async def execute_stripe_payout_list(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Execute stripe.payout.list — list payouts for the connected account.
+
+    Per Stripe docs: GET /v1/payouts
+    Returns list of payouts sorted by most recent first.
+
+    Optional payload:
+      - status: str — filter by 'pending', 'paid', 'failed', 'canceled'
+      - limit: int — max results (1-100, default 10)
+      - starting_after: str — pagination cursor (payout ID)
+      - arrival_date_gte: int — arrival date >= (unix timestamp)
+      - arrival_date_lte: int — arrival date <= (unix timestamp)
+    """
+    client = _get_client()
+
+    params: list[tuple[str, str]] = []
+
+    status = payload.get("status")
+    if status:
+        params.append(("status", str(status)))
+
+    limit = payload.get("limit", 10)
+    params.append(("limit", str(min(int(limit), 100))))
+
+    starting_after = payload.get("starting_after")
+    if starting_after:
+        params.append(("starting_after", str(starting_after)))
+
+    arrival_gte = payload.get("arrival_date_gte")
+    if arrival_gte:
+        params.append(("arrival_date[gte]", str(arrival_gte)))
+
+    arrival_lte = payload.get("arrival_date_lte")
+    if arrival_lte:
+        params.append(("arrival_date[lte]", str(arrival_lte)))
+
+    try:
+        resp = await client._request(
+            ProviderRequest(
+                method="GET",
+                url="https://api.stripe.com/v1/payouts",
+                params=params,
+                suite_id=suite_id,
+                correlation_id=correlation_id,
+                idempotency_key=None,
+            )
+        )
+    except ProviderError as exc:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.payout.list",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=exc.code.value if exc.code else "PROVIDER_ERROR",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.payout.list",
+            error=str(exc),
+            receipt_data=receipt,
+        )
+
+    raw_payouts = resp.body.get("data", [])
+    payouts = [
+        {
+            "id": p.get("id"),
+            "amount": p.get("amount"),
+            "currency": p.get("currency"),
+            "status": p.get("status"),
+            "arrival_date": p.get("arrival_date"),
+            "created": p.get("created"),
+            "method": p.get("method"),
+            "description": p.get("description"),
+            "automatic": p.get("automatic"),
+        }
+        for p in raw_payouts
+    ]
+
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        tool_id="stripe.payout.list",
+        risk_tier=risk_tier,
+        outcome=Outcome.SUCCESS,
+        reason_code="EXECUTED",
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+    return ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="stripe.payout.list",
+        data={
+            "payouts": payouts,
+            "count": len(payouts),
+            "has_more": resp.body.get("has_more", False),
+        },
+        receipt_data=receipt,
+    )
+
+
+async def execute_stripe_payout_retrieve(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Execute stripe.payout.read — retrieve a single payout by ID.
+
+    Per Stripe docs: GET /v1/payouts/{payout_id}
+
+    Required payload:
+      - payout_id: str — Stripe payout ID (po_xxx)
+    """
+    client = _get_client()
+
+    payout_id = payload.get("payout_id", "")
+    if not payout_id:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.payout.read",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.payout.read",
+            error="Missing required parameter: payout_id",
+            receipt_data=receipt,
+        )
+
+    try:
+        resp = await client._request(
+            ProviderRequest(
+                method="GET",
+                url=f"https://api.stripe.com/v1/payouts/{payout_id}",
+                suite_id=suite_id,
+                correlation_id=correlation_id,
+                idempotency_key=None,
+            )
+        )
+    except ProviderError as exc:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id="stripe.payout.read",
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=exc.code.value if exc.code else "PROVIDER_ERROR",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id="stripe.payout.read",
+            error=str(exc),
+            receipt_data=receipt,
+        )
+
+    body = resp.body
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        tool_id="stripe.payout.read",
+        risk_tier=risk_tier,
+        outcome=Outcome.SUCCESS,
+        reason_code="EXECUTED",
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+    return ToolExecutionResult(
+        outcome=Outcome.SUCCESS,
+        tool_id="stripe.payout.read",
+        data={
+            "payout_id": body.get("id"),
+            "amount": body.get("amount"),
+            "currency": body.get("currency"),
+            "status": body.get("status"),
+            "arrival_date": body.get("arrival_date"),
+            "created": body.get("created"),
+            "method": body.get("method"),
+            "description": body.get("description"),
+            "automatic": body.get("automatic"),
+            "failure_code": body.get("failure_code"),
+            "failure_message": body.get("failure_message"),
+            "destination": body.get("destination"),
+            "source_type": body.get("source_type"),
+        },
+        receipt_data=receipt,
+    )

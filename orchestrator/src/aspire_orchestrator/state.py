@@ -129,5 +129,8 @@ class OrchestratorState(TypedDict, total=False):
     governance: dict[str, Any] | None  # Governance metadata (receipt_ids, risk_tier)
     requested_agent: str | None  # Agent requested by user (from intake)
 
+    # --- SSE Activity Streaming (reasoning steps) ---
+    _activity_callback: Any | None  # SSE event callback (injected by stream, not persisted)
+
     # --- Accumulated receipts for the full pipeline ---
     pipeline_receipts: list[dict[str, Any]]

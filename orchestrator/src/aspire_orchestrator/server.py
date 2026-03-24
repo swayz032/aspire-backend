@@ -612,6 +612,10 @@ async def stream_agent_activity(
         "timestamp": int(time.time() * 1000),
     })
 
+    # Inject SSE activity callback into state so agent_dispatch can stream
+    # reasoning steps through the same SSE channel.
+    initial_state["_activity_callback"] = collect_event
+
     last_heartbeat = time.monotonic()
     try:
         graph_task = asyncio.create_task(
@@ -637,6 +641,38 @@ async def stream_agent_activity(
                 last_heartbeat = time.monotonic()
 
             if graph_task.done() and event_queue.empty():
+                # Emit final response event before closing stream
+                try:
+                    graph_result = graph_task.result()
+                    response = graph_result.get("response")
+                    response_text = ""
+                    if isinstance(response, dict):
+                        response_text = response.get("text", "")
+                    elif isinstance(response, str):
+                        response_text = response
+                    # Also check conversation_response (from agent_dispatch)
+                    if not response_text and graph_result.get("conversation_response"):
+                        response_text = graph_result["conversation_response"]
+
+                    yield format_sse_event({
+                        "type": "response",
+                        "message": response_text,
+                        "agent": graph_result.get("agent_target", "ava"),
+                        "timestamp": int(time.time() * 1000),
+                        "data": {
+                            "text": response_text,
+                            "correlation_id": correlation_id,
+                            "receipt_ids": graph_result.get("receipt_ids", []),
+                            "assigned_agent": graph_result.get("agent_target", "ava"),
+                        },
+                    })
+                except Exception as e:
+                    logger.error("SSE: failed to emit final response: %s", e)
+                    yield format_sse_event({
+                        "type": "error",
+                        "message": str(e)[:200],
+                        "timestamp": int(time.time() * 1000),
+                    })
                 break
 
         result = await graph_task
@@ -1629,6 +1665,94 @@ async def resume_execution(approval_id: str, request: Request) -> JSONResponse:
 
     except Exception as e:
         logger.exception("Resume endpoint failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "INTERNAL_ERROR", "message": str(e)})
+
+
+@app.post("/v1/void-invoice/{invoice_id}")
+async def void_invoice_endpoint(invoice_id: str, request: Request) -> JSONResponse:
+    """Void a finalized invoice — called when user denies in Authority Queue.
+
+    Since invoice.create auto-finalizes to generate preview URLs, denial must
+    void the invoice in Stripe so it doesn't sit as 'open' forever.
+    """
+    import re
+
+    if not re.match(r'^in_[a-zA-Z0-9]+$', invoice_id):
+        return JSONResponse(status_code=400, content={"error": "INVALID_ID", "message": "Invalid invoice ID format"})
+
+    suite_id = request.headers.get("x-suite-id", "")
+    correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
+
+    if not suite_id:
+        return JSONResponse(status_code=401, content={"error": "AUTH_REQUIRED", "message": "Missing x-suite-id header"})
+
+    try:
+        from aspire_orchestrator.providers.stripe_client import execute_stripe_invoice_void
+
+        result = await execute_stripe_invoice_void(
+            payload={"invoice_id": invoice_id},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=request.headers.get("x-office-id", ""),
+            risk_tier="yellow",
+        )
+
+        if result.outcome.value == "success":
+            return JSONResponse(content={
+                "status": "voided",
+                "invoice_id": invoice_id,
+            })
+        else:
+            return JSONResponse(status_code=400, content={
+                "error": "VOID_FAILED",
+                "message": result.error or "Failed to void invoice",
+            })
+    except Exception as e:
+        logger.exception("Void invoice failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "INTERNAL_ERROR", "message": str(e)})
+
+
+@app.post("/v1/cancel-quote/{quote_id}")
+async def cancel_quote_endpoint(quote_id: str, request: Request) -> JSONResponse:
+    """Cancel a finalized quote — called when user denies in Authority Queue.
+
+    Since quote.create auto-finalizes, denial must cancel the quote in Stripe
+    so it doesn't sit as 'open' forever.
+    """
+    import re
+
+    if not re.match(r'^qt_[a-zA-Z0-9]+$', quote_id):
+        return JSONResponse(status_code=400, content={"error": "INVALID_ID", "message": "Invalid quote ID format"})
+
+    suite_id = request.headers.get("x-suite-id", "")
+    correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
+
+    if not suite_id:
+        return JSONResponse(status_code=401, content={"error": "AUTH_REQUIRED", "message": "Missing x-suite-id header"})
+
+    try:
+        from aspire_orchestrator.providers.stripe_client import execute_stripe_quote_cancel
+
+        result = await execute_stripe_quote_cancel(
+            payload={"quote_id": quote_id},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=request.headers.get("x-office-id", ""),
+            risk_tier="yellow",
+        )
+
+        if result.outcome.value == "success":
+            return JSONResponse(content={
+                "status": "canceled",
+                "quote_id": quote_id,
+            })
+        else:
+            return JSONResponse(status_code=400, content={
+                "error": "CANCEL_FAILED",
+                "message": result.error or "Failed to cancel quote",
+            })
+    except Exception as e:
+        logger.exception("Cancel quote failed: %s", e)
         return JSONResponse(status_code=500, content={"error": "INTERNAL_ERROR", "message": str(e)})
 
 

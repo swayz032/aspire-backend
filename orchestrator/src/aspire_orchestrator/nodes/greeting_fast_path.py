@@ -19,9 +19,10 @@ from aspire_orchestrator.services.llm_cache import get_llm_cache
 logger = logging.getLogger(__name__)
 
 GREETING_PATTERNS = [
-    r"^(hi|hello|hey|howdy|yo|sup|good\s*(morning|afternoon|evening|day)|what'?s?\s*up|greetings)[\s!?.]*$",
-    r"^(how\s*(are\s*you(\s*doing)?|you\s*doing|is\s*it\s*going))[\s!?.]*$",
+    r"^(hi|hello|hey|howdy|yo|sup|hiya|heya|good\s*(morning|afternoon|evening|day)|what'?s?\s*(up|good)|greetings)(\s+(there|ava|finn|nora|eli|sarah|adam))?[\s!?.]*$",
+    r"^(how\s*(are\s*you(\s*doing)?|you\s*doing|is\s*it\s*going|do\s*you\s*do))[\s!?.]*$",
     r"^(can\s*you\s*hear\s*me|are\s*you\s*there|testing|test)[\s!?.]*$",
+    r"^(morning|afternoon|evening)[\s!?.]*$",
 ]
 
 GREETING_RESPONSES: dict[str, list[str]] = {
@@ -115,7 +116,16 @@ async def greeting_fast_path_node(state: dict[str, Any]) -> dict[str, Any]:
     logger.info("greeting_check: utterance=%r agent=%s", utterance, agent)
 
     if not is_greeting(utterance):
-        logger.info("greeting_check: not a greeting, continuing to full pipeline")
+        # First-interaction boost: if no message history and utterance is short,
+        # flag for greeting prefix injection in respond node. This ensures the
+        # agent greets even when the user's first message isn't a greeting.
+        message_history = state.get("message_history") or []
+        is_first = len(message_history) == 0
+        stripped = utterance.strip()
+        word_count = len(stripped.split()) if stripped else 0
+        if is_first and stripped and word_count < 15:
+            logger.info("greeting_check: first interaction (non-greeting), flagging for greeting prefix")
+            state["_inject_greeting_prefix"] = True
         state["_greeting_fast_path"] = False
         return state
 

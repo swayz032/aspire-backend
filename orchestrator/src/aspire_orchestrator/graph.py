@@ -364,6 +364,18 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         "current_agent": requested_agent,
     }
 
+    activity_callback = state.get("_activity_callback")
+    if activity_callback:
+        import time as _time
+        activity_callback({
+            "type": "thinking",
+            "message": "Ava is understanding your request...",
+            "icon": "bulb-outline",
+            "agent": "ava",
+            "status": "active",
+            "timestamp": int(_time.time() * 1000),
+        })
+
     classifier = get_intent_classifier()
     intent_result = await classifier.classify(utterance, context)
     lower_utt = str(utterance or "").lower()
@@ -503,6 +515,19 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         explicit_task_type,
     )
 
+    if activity_callback:
+        import time as _time
+        task_type = result.get("task_type") or intent_result.action_type or "unknown"
+        confidence = float(intent_result.confidence or 0.0)
+        activity_callback({
+            "type": "step",
+            "message": f"Identified: {task_type} (confidence: {confidence:.0%})",
+            "icon": "checkmark-circle",
+            "agent": "ava",
+            "status": "complete",
+            "timestamp": int(_time.time() * 1000),
+        })
+
     # If caller requested a specific specialist desk (Finn/Eli/etc),
     # preserve that persona target for conversational path handling.
     if (
@@ -626,6 +651,24 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
             "tool_used": "route_node",
         }
         result["pipeline_receipts"] = state.get("pipeline_receipts", []) + [empty_receipt]
+
+    activity_callback = state.get("_activity_callback")
+    if activity_callback:
+        import time as _time
+        agent_name = "the specialist"
+        routing_plan_dict = result.get("routing_plan")
+        if routing_plan_dict and isinstance(routing_plan_dict, dict):
+            steps = routing_plan_dict.get("steps", [])
+            if steps:
+                agent_name = steps[0].get("skill_pack", "specialist").replace("_", " ").title()
+        activity_callback({
+            "type": "step",
+            "message": f"Routing to {agent_name}...",
+            "icon": "arrow-forward-circle",
+            "agent": "ava",
+            "status": "complete",
+            "timestamp": int(_time.time() * 1000),
+        })
 
     logger.info(
         "Route: steps=%d, risk=%s, strategy=%s",

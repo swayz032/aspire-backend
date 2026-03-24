@@ -134,6 +134,7 @@ async def _dispatch_to_skill_pack(
     task_type: str,
     utterance: str,
     state: OrchestratorState,
+    activity_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Call the right skill pack method based on agent + task_type.
 
@@ -160,7 +161,7 @@ async def _dispatch_to_skill_pack(
     # ── Quinn: Invoice/Customer/Quote workflows ──────────────────────
     if agent_id == "quinn" and task_type.startswith(("invoice.", "customer.", "quote.")):
         # Step 1: Parse user intent into structured data
-        parse_result = await pack.parse_invoice_intent(utterance, ctx)
+        parse_result = await pack.parse_invoice_intent(utterance, ctx, activity_callback=activity_callback)
 
         if not parse_result.success:
             # Quinn couldn't parse — ask naturally in his voice
@@ -179,7 +180,7 @@ async def _dispatch_to_skill_pack(
             # Pass empty list for now — in production this would query Stripe
             # via tool_executor for customer.search. The skill pack's LLM
             # determines if a match exists or if onboarding is needed.
-            match_result = await pack.match_customer(customer_name, [], ctx)
+            match_result = await pack.match_customer(customer_name, [], ctx, activity_callback=activity_callback)
             if match_result.success:
                 match_data = match_result.data or {}
                 match_content = match_data.get("content", "")
@@ -197,7 +198,7 @@ async def _dispatch_to_skill_pack(
 
         # Step 3: Draft invoice plan (if we have enough data)
         if hasattr(pack, "draft_invoice_plan"):
-            plan_result = await pack.draft_invoice_plan(parsed_data, ctx)
+            plan_result = await pack.draft_invoice_plan(parsed_data, ctx, activity_callback=activity_callback)
             if plan_result.success:
                 plan_data = plan_result.data or {}
                 # Extract execution params from the plan
@@ -219,7 +220,8 @@ async def _dispatch_to_skill_pack(
             task=f"{task_type}: {utterance}",
             ctx=ctx,
             max_steps=3,
-            timeout_s=25.0,
+            timeout_s=60.0,
+            activity_callback=activity_callback,
         )
 
         if loop_result.success:
@@ -309,6 +311,7 @@ async def agent_dispatch_node(state: OrchestratorState) -> dict[str, Any]:
         }
 
     # Dispatch to the skill pack
+    activity_callback = state.get("_activity_callback")
     try:
         dispatch_result = await _dispatch_to_skill_pack(
             pack=pack,
@@ -316,6 +319,7 @@ async def agent_dispatch_node(state: OrchestratorState) -> dict[str, Any]:
             task_type=task_type,
             utterance=utterance,
             state=state,
+            activity_callback=activity_callback,
         )
     except Exception as exc:
         logger.error(

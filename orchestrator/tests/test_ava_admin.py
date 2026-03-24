@@ -831,3 +831,329 @@ class TestSSEErrorSanitization:
                     assert "File \"" not in msg
             except json.JSONDecodeError:
                 pass  # Non-JSON SSE lines are OK
+
+
+# =========================================================================
+# Wave 2: Data intelligence tool tests (methods 15-24)
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_provider_call_logs() -> None:
+    mock_rows = [
+        {"id": "1", "provider": "openai", "status": "ok", "created_at": "2026-01-01"},
+        {"id": "2", "provider": "openai", "status": "error", "created_at": "2026-01-01"},
+    ]
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        return_value=mock_rows,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_provider_call_logs({"provider": "openai"}, ctx)
+        assert result.success is True
+        assert result.data["count"] == 2
+        assert result.data["voice_id"] == "56bWURjYFHyYyVf490Dp"
+
+
+@pytest.mark.asyncio
+async def test_get_client_events() -> None:
+    mock_rows = [
+        {"id": "1", "event_type": "click", "severity": "low", "created_at": "2026-01-01"},
+    ]
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        return_value=mock_rows,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_client_events({"event_type": "click"}, ctx)
+        assert result.success is True
+        assert result.data["count"] == 1
+        assert result.data["events"][0]["event_type"] == "click"
+
+
+@pytest.mark.asyncio
+async def test_get_db_performance() -> None:
+    async def mock_rpc(fn_name: str, params: dict) -> dict:
+        if fn_name == "get_cache_hit_rate":
+            return {"rate": 0.95}
+        if fn_name == "get_slow_queries":
+            return {"queries": []}
+        if fn_name == "get_cron_jobs":
+            return {"jobs": []}
+        return {}
+
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_rpc",
+        new_callable=AsyncMock,
+        side_effect=mock_rpc,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_db_performance({}, ctx)
+        assert result.success is True
+        assert result.data["cache_hit_rate"]["rate"] == 0.95
+        assert result.data["voice_id"] == "56bWURjYFHyYyVf490Dp"
+
+
+@pytest.mark.asyncio
+async def test_get_trace() -> None:
+    mock_receipts = [{"receipt_hash": "abc", "correlation_id": "corr-123"}]
+    mock_provider_rows = [{"id": "p1", "correlation_id": "corr-123"}]
+
+    with patch(
+        "aspire_orchestrator.services.receipt_store.query_receipts",
+        return_value=mock_receipts,
+    ), patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        return_value=mock_provider_rows,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_trace({"correlation_id": "corr-123"}, ctx)
+        assert result.success is True
+        assert result.data["correlation_id"] == "corr-123"
+        assert result.data["total_events"] == 2
+
+
+@pytest.mark.asyncio
+async def test_list_incidents() -> None:
+    mock_incidents = [
+        {"id": "inc-1", "status": "open", "severity": "high"},
+    ]
+    mock_store = MagicMock()
+    mock_store.query_incidents.return_value = (mock_incidents, {})
+
+    with patch(
+        "aspire_orchestrator.services.admin_store.get_admin_store",
+        return_value=mock_store,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_list_incidents({"state": "open"}, ctx)
+        assert result.success is True
+        assert result.data["count"] == 1
+        assert result.data["incidents"][0]["id"] == "inc-1"
+
+
+@pytest.mark.asyncio
+async def test_get_outbox_status() -> None:
+    mock_rows = [
+        {"id": "1", "status": "pending", "created_at": "2026-01-01"},
+        {"id": "2", "status": "pending", "created_at": "2026-01-01"},
+        {"id": "3", "status": "delivered", "created_at": "2026-01-01"},
+    ]
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        return_value=mock_rows,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_outbox_status({}, ctx)
+        assert result.success is True
+        assert result.data["count"] == 3
+        assert result.data["counts"]["pending"] == 2
+        assert result.data["counts"]["delivered"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_n8n_operations() -> None:
+    mock_rows = [
+        {"id": "1", "action_type": "n8n.webhook_trigger", "created_at": "2026-01-01"},
+        {"id": "2", "action_type": "n8n.webhook_trigger", "created_at": "2026-01-01"},
+        {"id": "3", "action_type": "n8n.workflow_run", "created_at": "2026-01-01"},
+    ]
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        return_value=mock_rows,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_n8n_operations({}, ctx)
+        assert result.success is True
+        assert result.data["count"] == 3
+        assert result.data["by_type"]["n8n.webhook_trigger"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_webhook_health() -> None:
+    mock_rows = [
+        {"id": "1", "action_type": "webhook.stripe", "created_at": "2026-01-01"},
+    ]
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        return_value=mock_rows,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_webhook_health({"provider": "stripe"}, ctx)
+        assert result.success is True
+        assert result.data["count"] == 1
+        assert result.data["webhooks"][0]["action_type"] == "webhook.stripe"
+
+
+@pytest.mark.asyncio
+async def test_get_model_policy() -> None:
+    pack = AvaAdminSkillPack()
+    ctx = _make_ctx()
+    result = await pack.admin_ops_model_policy({}, ctx)
+    assert result.success is True
+    assert result.data["brain_model"] == "gpt-5.2"
+    assert result.data["safety_model"] == "llama3:8b"
+    assert "gpt-5.2" in result.data["council_advisors"]
+    assert result.data["voice_id"] == "56bWURjYFHyYyVf490Dp"
+
+
+@pytest.mark.asyncio
+async def test_get_business_snapshot() -> None:
+    mock_finance = [
+        {"id": "1", "type": "invoice", "created_at": "2026-01-01"},
+    ]
+    mock_suites = [
+        {"id": "s1", "status": "active"},
+        {"id": "s2", "status": "active"},
+    ]
+
+    call_count = 0
+
+    async def mock_select(table: str, filters, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if table == "finance_events":
+            return mock_finance
+        if table == "suite_profiles":
+            return mock_suites
+        return []
+
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        side_effect=mock_select,
+    ):
+        pack = AvaAdminSkillPack()
+        ctx = _make_ctx()
+        result = await pack.admin_ops_business_snapshot({}, ctx)
+        assert result.success is True
+        assert len(result.data["finance_events"]) == 1
+        assert result.data["active_suites"] == 2
+        assert result.data["suite_count"] == 2
+
+
+# =========================================================================
+# Council Advisors + run_council tests
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_advisor_generates_proposal() -> None:
+    """Each advisor model generates a structured proposal from evidence."""
+    from aspire_orchestrator.services.council_advisors import query_advisor
+
+    mock_response = {
+        "root_cause": "Stripe webhook timeout causing invoice status desync",
+        "fix_plan": "Add idempotency key to webhook handler, increase timeout to 30s",
+        "tests": ["test_webhook_idempotency", "test_timeout_recovery"],
+        "risk_tier": "yellow",
+        "confidence": 0.85,
+    }
+
+    with patch(
+        "aspire_orchestrator.services.council_advisors._call_openai",
+        new_callable=AsyncMock,
+        return_value=mock_response,
+    ):
+        result = await query_advisor(
+            advisor="gpt",
+            evidence_pack={"incident_id": "inc-1", "error": "webhook timeout"},
+            incident_id="inc-1",
+        )
+        assert result["root_cause"] == mock_response["root_cause"]
+        assert result["confidence"] == 0.85
+        assert result["advisor"] == "gpt"
+        assert result["model_used"] == "gpt-5.2"
+
+
+@pytest.mark.asyncio
+async def test_advisor_handles_error_gracefully() -> None:
+    """Advisor returns degraded result on API failure."""
+    from aspire_orchestrator.services.council_advisors import query_advisor
+
+    with patch(
+        "aspire_orchestrator.services.council_advisors._call_openai",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("API down"),
+    ):
+        result = await query_advisor(
+            advisor="gpt",
+            evidence_pack={"error": "test"},
+            incident_id="inc-err",
+        )
+        assert result["confidence"] == 0.0
+        assert "error" in result
+        assert result["advisor"] == "gpt"
+
+
+@pytest.mark.asyncio
+async def test_run_council_full_flow() -> None:
+    """run_council spawns session, queries advisors, adjudicates."""
+    mock_advisor_result = {
+        "advisor": "gpt",
+        "root_cause": "timeout",
+        "fix_plan": "increase timeout",
+        "tests": [],
+        "risk_tier": "green",
+        "confidence": 0.8,
+        "reasoning": "clear evidence",
+        "model_used": "gpt-5.2",
+        "tokens_used": 0,
+        "latency_ms": 500,
+    }
+    mock_adjudication = {
+        "selected_member": "gpt",
+        "adjudication_method": "llm_reasoning",
+        "root_cause": "timeout",
+        "fix_plan": "increase timeout",
+        "tests": [],
+        "risk_tier": "green",
+        "confidence": 0.9,
+        "total_proposals": 3,
+        "adjudication_reasoning": "clear",
+        "selected_proposal_id": "",
+    }
+
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_insert",
+        new_callable=AsyncMock,
+        return_value={"id": "s-uuid", "created_at": "2026-03-23T00:00:00Z"},
+    ), patch(
+        "aspire_orchestrator.services.council_advisors.query_advisor",
+        new_callable=AsyncMock,
+        return_value=mock_advisor_result,
+    ), patch(
+        "aspire_orchestrator.services.council_service._insert_proposal",
+        new_callable=AsyncMock,
+        return_value={"id": "p-uuid"},
+    ), patch(
+        "aspire_orchestrator.services.council_service._adjudicate_with_llm",
+        new_callable=AsyncMock,
+        return_value=mock_adjudication,
+    ), patch(
+        "aspire_orchestrator.services.supabase_client.supabase_update",
+        new_callable=AsyncMock,
+    ):
+        from aspire_orchestrator.services.council_service import run_council
+
+        result = await run_council(
+            incident_id="inc-test",
+            evidence_pack={"error": "timeout"},
+        )
+        assert result["status"] == "decided"
+        assert len(result["proposals"]) == 3
+        assert result["decision"]["selected_member"] == "gpt"

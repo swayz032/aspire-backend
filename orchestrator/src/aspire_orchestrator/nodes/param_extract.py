@@ -9,15 +9,18 @@ Also builds advisor_context via context_builder.
 from __future__ import annotations
 
 _AGENT_MISSING_PARAM_TEMPLATES: dict[str, dict[str, str]] = {
-    # Quinn — invoicing
+    # Quinn — invoicing (customer onboarding fields match Stripe Create Customer API)
     "invoice": {
-        "customer_email": "Who is this invoice for? I need their name and email so I can either look them up or set them up as a new client.",
+        "customer_email": "I'd love to get this invoice started for you. I just need a few details about the client — what's their first and last name, and their email address? If they have a business name, that would be great too. And whenever you're ready, their address so we can keep everything tidy on the invoice.",
         "amount": "What's the total for this invoice? I need at least one line item with a description and amount.",
-        "customer_email,amount": "I need a couple of things to draft this invoice — who's the client (name and email), and what services or items should I include with amounts?",
-        "_default": "I'm missing a few details to put this invoice together. {fields} — can you fill me in?",
+        "customer_email,amount": "Let's get this invoice together. First, tell me about the client — their name, email, and business name if they have one. Then I'll need the services or items with amounts. Take your time, just give me what you have and I'll ask for the rest.",
+        "_default": "I need a few more details for this invoice — {fields}. Just share what you have and we'll go from there.",
         "_agent": "quinn",
     },
     "quote": {
+        "customer_email": "I'd love to get this quote started for you. I just need a few details about the client — what's their first and last name, and their email address? If they have a business name, that would be great too.",
+        "line_items": "What services or items should I include on this quote? I need a description and price for each line item.",
+        "customer_email,line_items": "Let's get this quote together. First, tell me about the client — their name, email, and business name if they have one. Then I'll need the services or items with prices. Take your time, just give me what you have and I'll ask for the rest.",
         "_default": "To draft this quote, I need a bit more from you — {fields}. What do you have?",
         "_agent": "quinn",
     },
@@ -89,6 +92,11 @@ def _build_agent_aware_missing_message(task_type: str, missing_fields: list[str]
     # Friendly field names
     _friendly: dict[str, str] = {
         "customer_email": "the client's email",
+        "customer_first_name": "the client's first name",
+        "customer_last_name": "the client's last name",
+        "customer_business_name": "the business name (if they have one)",
+        "customer_address": "the client's address",
+        "customer_phone": "the client's phone number",
         "customer_name": "the client's name",
         "amount_cents": "the amount",
         "amount": "the amount",
@@ -104,6 +112,11 @@ def _build_agent_aware_missing_message(task_type: str, missing_fields: list[str]
         "document_title": "a document title",
         "start_time": "a start time",
         "end_time": "an end time",
+        "line_items": "the services or items with prices",
+        "quote_id": "the quote ID",
+        "header": "a quote header",
+        "footer": "a quote footer",
+        "expiry_days": "how many days until the quote expires",
     }
     friendly_list = [_friendly.get(f, f.replace("_", " ")) for f in missing_fields]
     fields_str = ", ".join(friendly_list)
@@ -147,16 +160,46 @@ logger = logging.getLogger(__name__)
 # Tool parameter schemas: required + optional fields per tool_id
 _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "stripe.invoice.create": {
-        "required": ["customer_email", "amount_cents"],
-        "optional": ["customer_name", "description", "currency", "due_days"],
+        "required": ["customer_email", "customer_first_name", "customer_last_name"],
+        "optional": [
+            "customer_business_name", "customer_address", "customer_phone",
+            "amount_cents", "description", "currency", "due_days", "line_items",
+        ],
     },
     "stripe.invoice.send": {
         "required": ["invoice_id"],
         "optional": [],
     },
     "stripe.quote.create": {
-        "required": ["customer_email", "line_items"],
-        "optional": ["customer_name", "expiry_days"],
+        "required": ["customer_email", "customer_first_name", "customer_last_name", "line_items"],
+        "optional": [
+            "customer_business_name", "customer_address", "customer_phone",
+            "description", "header", "footer", "expiry_days",
+        ],
+    },
+    "stripe.quote.send": {
+        "required": ["quote_id"],
+        "optional": [],
+    },
+    "stripe.quote.cancel": {
+        "required": ["quote_id"],
+        "optional": [],
+    },
+    "stripe.quote.update": {
+        "required": ["quote_id"],
+        "optional": ["line_items", "description", "header", "footer", "expiry_days"],
+    },
+    "stripe.quote.finalize": {
+        "required": ["quote_id"],
+        "optional": ["expires_at"],
+    },
+    "stripe.payout.list": {
+        "required": [],
+        "optional": ["status", "limit", "starting_after", "arrival_date_gte", "arrival_date_lte"],
+    },
+    "stripe.payout.read": {
+        "required": ["payout_id"],
+        "optional": [],
     },
     "calendar.event.create": {
         "required": ["title", "start_time"],
@@ -396,6 +439,41 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
 
     # Tool-specific extraction hints for complex field structures
     _TOOL_HINTS: dict[str, str] = {
+        "stripe.invoice.create": (
+            "\n\nCustomer onboarding fields:"
+            "\n- 'customer_first_name': The client's first name (e.g. 'John')"
+            "\n- 'customer_last_name': The client's last name (e.g. 'Smith')"
+            "\n- 'customer_email': The client's email address"
+            "\n- 'customer_business_name': The client's company/business name (only if mentioned)"
+            "\n- 'customer_address': The client's address as a string"
+            "\n- 'customer_phone': The client's phone number (only if mentioned)"
+            "\n- 'amount_cents': Convert dollar amounts to cents (e.g. $500 = 50000)"
+            "\n- 'description': What the invoice is for"
+            "\nExtract name parts separately — first name and last name as distinct fields."
+            "\nDo NOT combine into a single 'customer_name' field."
+        ),
+        "stripe.quote.create": (
+            "\n\nCustomer onboarding fields (same as invoice):"
+            "\n- 'customer_first_name': The client's first name (e.g. 'John')"
+            "\n- 'customer_last_name': The client's last name (e.g. 'Smith')"
+            "\n- 'customer_email': The client's email address"
+            "\n- 'customer_business_name': The client's company/business name (only if mentioned)"
+            "\n- 'customer_address': The client's address as a string"
+            "\n- 'customer_phone': The client's phone number (only if mentioned)"
+            "\nExtract name parts separately — first name and last name as distinct fields."
+            "\n\nLine items format:"
+            "\n- 'line_items': Array of objects with {price_data: {currency: 'usd', unit_amount: <cents>, product_data: {name: '<description>'}}, quantity: 1}"
+            "\n- Convert dollar amounts to cents (e.g. $500 = 50000)"
+            "\n\nQuote fields:"
+            "\n- 'description': What the quote is for (shown on PDF)"
+            "\n- 'header': Short header for the quote PDF (max 50 chars)"
+            "\n- 'footer': Footer for the quote PDF (max 500 chars)"
+            "\n- 'expiry_days': How many days until the quote expires (default 30)"
+        ),
+        "stripe.quote.update": (
+            "\n\nFor 'quote_id': Extract the Stripe quote ID (qt_xxx) if mentioned."
+            "\nLine items format same as quote.create."
+        ),
         "pandadoc.contract.generate": (
             "\n\nIMPORTANT for 'parties' field: Return an array of party objects. "
             "Each party MUST have separate fields — NEVER combine person name and company name.\n"
@@ -737,6 +815,9 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             "document_title": "document title",
             "start_time": "start time",
             "end_time": "end time",
+            "payout_id": "payout ID",
+            "arrival_date_gte": "earliest arrival date",
+            "arrival_date_lte": "latest arrival date",
         }
         friendly_fields = [_friendly_names.get(f, f.replace("_", " ")) for f in missing_fields]
         field_list = ", ".join(friendly_fields)

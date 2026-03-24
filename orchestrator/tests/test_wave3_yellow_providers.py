@@ -553,7 +553,7 @@ class TestStripeQuoteCreate:
     """Test stripe.quote.create executor (YELLOW tier)."""
 
     @pytest.mark.asyncio
-    async def test_missing_customer_id(self, suite_id, office_id, correlation_id):
+    async def test_missing_customer(self, suite_id, office_id, correlation_id):
         from aspire_orchestrator.providers.stripe_client import execute_stripe_quote_create
 
         result = await execute_stripe_quote_create(
@@ -563,7 +563,7 @@ class TestStripeQuoteCreate:
             office_id=office_id,
         )
         assert result.outcome == Outcome.FAILED
-        assert "customer_id" in (result.error or "")
+        assert "customer_email" in (result.error or "") or "customer_id" in (result.error or "")
         assert result.receipt_data
 
     @pytest.mark.asyncio
@@ -647,7 +647,8 @@ class TestStripeQuoteCreate:
 
             assert result.outcome == Outcome.SUCCESS
             assert result.data["quote_id"] == "qt_abc123"
-            assert result.data["status"] == "draft"
+            # Auto-finalize returns the finalized status (mock returns same "draft" since same mock)
+            assert result.data["status"] in ("draft", "open")
             assert result.data["amount_total"] == 10000
             assert result.data["currency"] == "usd"
             assert result.receipt_data
@@ -687,8 +688,9 @@ class TestStripeQuoteCreate:
                 office_id=office_id,
             )
 
-            call_args = client_instance._request.call_args
-            request_obj = call_args[0][0]
+            # First call is quote creation (with metadata), second is auto-finalize
+            create_call = client_instance._request.call_args_list[0]
+            request_obj = create_call[0][0]
             assert request_obj.body["metadata"]["aspire_suite_id"] == suite_id
             assert request_obj.body["metadata"]["aspire_office_id"] == office_id
             stripe_mod._client = None

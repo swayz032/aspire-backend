@@ -768,7 +768,13 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
             invoice_data = execution_result.get("data", {})
             exec_params = state.get("execution_params") or {}
             invoice_id = invoice_data["invoice_id"]
-            customer_name = exec_params.get("customer_name") or exec_params.get("client_name") or "client"
+            hosted_invoice_url = invoice_data.get("hosted_invoice_url")
+            # Build customer name from new onboarding fields or legacy field
+            first = exec_params.get("customer_first_name", "")
+            last = exec_params.get("customer_last_name", "")
+            customer_name = f"{first} {last}".strip() if (first or last) else (
+                exec_params.get("customer_name") or exec_params.get("client_name") or "client"
+            )
             amount_cents = exec_params.get("amount_cents") or exec_params.get("amount") or invoice_data.get("amount_due", 0)
             currency = exec_params.get("currency", "usd").upper()
 
@@ -829,6 +835,7 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
                     "customer_name": customer_name,
                     "amount_cents": int(amount_cents) if amount_cents else 0,
                     "currency": currency,
+                    "hosted_invoice_url": hosted_invoice_url,
                 },
             }
 
@@ -857,6 +864,122 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
                 e, suite_id[:8] if len(suite_id) > 8 else suite_id,
             )
             # Non-fatal: invoice draft was created successfully, queue failure doesn't block
+
+    # -------------------------------------------------------------------
+    # Post-execute: Queue quote.send in Authority Queue (draft-first pattern)
+    #
+    # When quote.create succeeds (GREEN), we immediately queue quote.send
+    # (YELLOW) so the user can approve accepting from the Authority Queue.
+    # -------------------------------------------------------------------
+    if (
+        task_type == "quote.create"
+        and outcome_val == Outcome.SUCCESS
+        and execution_result.get("data", {}).get("quote_id")
+    ):
+        try:
+            import hashlib
+            import json
+            from datetime import timedelta
+
+            from aspire_orchestrator.services.supabase_client import supabase_insert
+
+            quote_data = execution_result.get("data", {})
+            exec_params = state.get("execution_params") or {}
+            quote_id = quote_data["quote_id"]
+            # Build customer name from onboarding fields or legacy field
+            first = exec_params.get("customer_first_name", "")
+            last = exec_params.get("customer_last_name", "")
+            customer_name = f"{first} {last}".strip() if (first or last) else (
+                exec_params.get("customer_name") or exec_params.get("client_name") or "client"
+            )
+            amount_total = quote_data.get("amount_total", 0)
+            currency = (exec_params.get("currency") or quote_data.get("currency", "usd")).upper()
+
+            # Build send params for resume execution
+            send_params = {
+                "quote_id": quote_id,
+                "customer_name": customer_name,
+                "customer_email": exec_params.get("customer_email", ""),
+                "amount_total": int(amount_total) if amount_total else 0,
+                "currency": currency,
+                "description": exec_params.get("description", ""),
+            }
+
+            amount_display = f"${int(amount_total) / 100:.2f}" if amount_total else ""
+            draft_summary = f"Accept quote for {customer_name}" + (f" — {amount_display}" if amount_display else "")
+
+            params_hash = hashlib.sha256(
+                json.dumps(send_params, sort_keys=True, default=str).encode()
+            ).hexdigest()
+
+            from aspire_orchestrator.services.approval_service import compute_payload_hash
+
+            approval_hash = compute_payload_hash({
+                "task_type": "quote.send",
+                "parameters": send_params,
+                "suite_id": suite_id,
+                "office_id": office_id,
+            })
+
+            # created_by_user_id is UUID-typed — only pass a valid UUID or None
+            actor_id_raw = state.get("actor_id")
+            created_by: str | None = None
+            if actor_id_raw and actor_id_raw != "unknown":
+                try:
+                    uuid.UUID(actor_id_raw)
+                    created_by = actor_id_raw
+                except (ValueError, AttributeError):
+                    created_by = None
+
+            send_approval_data = {
+                "approval_id": str(uuid.uuid4()),
+                "tenant_id": suite_id,
+                "run_id": correlation_id,
+                "tool": "stripe.quote.send",
+                "operation": "quote.send",
+                "risk_tier": "yellow",
+                "policy_version": "v1",
+                "approval_hash": approval_hash,
+                "status": "pending",
+                "created_by_user_id": created_by,
+                "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+                "execution_payload": send_params,
+                "draft_summary": draft_summary,
+                "assigned_agent": assigned_agent,
+                "execution_params_hash": params_hash,
+                "payload_redacted": {
+                    "quote_id": quote_id,
+                    "customer_name": customer_name,
+                    "amount_total": int(amount_total) if amount_total else 0,
+                    "currency": currency,
+                },
+            }
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None and loop.is_running():
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    aq_result = pool.submit(
+                        asyncio.run, supabase_insert("approval_requests", send_approval_data)
+                    ).result(timeout=8)
+            else:
+                aq_result = asyncio.run(supabase_insert("approval_requests", send_approval_data))
+
+            authority_queue_id = aq_result.get("approval_id") or aq_result.get("id")
+            execution_result["authority_queue_id"] = authority_queue_id
+            logger.info(
+                "quote.send queued in Authority Queue: aq_id=%s quote=%s suite=%s",
+                authority_queue_id, quote_id[:12] if quote_id else "?",
+                suite_id[:8] if len(suite_id) > 8 else suite_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to queue quote.send in Authority Queue: %s (suite=%s)",
+                e, suite_id[:8] if len(suite_id) > 8 else suite_id,
+            )
+            # Non-fatal: quote draft was created successfully, queue failure doesn't block
 
     # -------------------------------------------------------------------
     # A2A Complete — Agent reports task done (Law #2)

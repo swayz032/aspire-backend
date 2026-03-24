@@ -515,44 +515,30 @@ class AvaAdminDesk(AgenticSkillPack):
           - Gemini 3: Research cross-check, alternative approaches
           - Opus 4.6: Implementation plan ($5 budget — testing only)
 
+        Production flow: spawn -> 3 advisors concurrently -> LLM adjudicate.
         Council advisors are read-only (no tool execution).
         Evidence packs are read-only snapshots.
         Ava adjudicates after receiving proposals.
         """
-        council_session_id = str(uuid.uuid4())
-
-        # Build read-only evidence snapshot for council
-        evidence_snapshot = {
-            "council_session_id": council_session_id,
-            "incident_id": incident_id,
-            "evidence_pack": evidence_pack,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "read_only": True,  # Council CANNOT execute
-        }
-
-        # Dispatch A2A triage message
         try:
-            from aspire_orchestrator.services.a2a_service import get_a2a_service
-            a2a = get_a2a_service()
+            from aspire_orchestrator.services.council_service import run_council
 
-            # Dispatch to council agent (if registered)
-            result = a2a.dispatch(
-                suite_id="system",
-                office_id="system",
-                correlation_id=ctx.correlation_id,
-                task_type="ops.triage.council",
-                assigned_to_agent="meeting_of_minds",
-                payload=evidence_snapshot,
-                priority=1,  # Highest priority for incident triage
+            council_result = await run_council(
+                incident_id=incident_id,
+                evidence_pack=evidence_pack,
+                suite_id=ctx.suite_id,
+                office_id=ctx.office_id,
             )
 
-            if result.receipt_data:
-                from aspire_orchestrator.services.receipt_store import store_receipts
-                store_receipts([result.receipt_data])
+            council_session_id = council_result.get("session_id", str(uuid.uuid4()))
+            proposals = council_result.get("proposals", [])
+            decision = council_result.get("decision")
 
         except Exception as e:
-            logger.warning("Council dispatch failed (non-blocking): %s", e)
-            result = None
+            logger.warning("Council run_council failed, falling back: %s", e)
+            council_session_id = str(uuid.uuid4())
+            proposals = []
+            decision = None
 
         receipt = self.build_receipt(
             ctx=ctx,
@@ -562,6 +548,7 @@ class AvaAdminDesk(AgenticSkillPack):
             metadata={
                 "advisors": ["gpt-5.2", "gemini-3", "opus-4.6"],
                 "evidence_keys": list(evidence_pack.keys()),
+                "proposal_count": len(proposals),
             },
         )
         await self.emit_receipt(receipt)
@@ -571,8 +558,10 @@ class AvaAdminDesk(AgenticSkillPack):
             data={
                 "council_session_id": council_session_id,
                 "incident_id": incident_id,
-                "dispatched": result.success if result else False,
+                "dispatched": True,
                 "advisors": ["gpt-5.2", "gemini-3", "opus-4.6"],
+                "proposals": proposals,
+                "decision": decision,
                 "voice_id": AVA_ADMIN_VOICE_ID,
             },
             receipt=receipt,
@@ -1058,6 +1047,477 @@ class AvaAdminDesk(AgenticSkillPack):
         return AgentResult(
             success=True,
             data={"metrics": snapshot, "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 15. Provider Call Logs (GREEN — read-only Supabase query)
+    # =========================================================================
+
+    async def get_provider_call_logs(
+        self,
+        ctx: AgentContext,
+        *,
+        provider: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> AgentResult:
+        """Get recent provider call logs with optional provider/status filters."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            parts: list[str] = []
+            if provider:
+                parts.append(f"provider=eq.{provider}")
+            if status:
+                parts.append(f"status=eq.{status}")
+            filters = "&".join(parts)
+
+            rows = await supabase_select(
+                "provider_call_log",
+                filters,
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            rows = rows if isinstance(rows, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"Provider call logs query failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.provider_call_logs",
+            status="ok",
+            inputs={"provider": provider, "status": status, "limit": limit},
+            metadata={"count": len(rows)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"calls": rows, "count": len(rows), "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 16. Client Events (GREEN — read-only Supabase query)
+    # =========================================================================
+
+    async def get_client_events(
+        self,
+        ctx: AgentContext,
+        *,
+        event_type: str | None = None,
+        severity: str | None = None,
+        limit: int = 50,
+    ) -> AgentResult:
+        """Get recent client events with optional type/severity filters."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            parts: list[str] = []
+            if event_type:
+                parts.append(f"event_type=eq.{event_type}")
+            if severity:
+                parts.append(f"severity=eq.{severity}")
+            filters = "&".join(parts)
+
+            rows = await supabase_select(
+                "client_events",
+                filters,
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            rows = rows if isinstance(rows, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"Client events query failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.client_events",
+            status="ok",
+            inputs={"event_type": event_type, "severity": severity, "limit": limit},
+            metadata={"count": len(rows)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"events": rows, "count": len(rows), "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 17. DB Performance (GREEN — read-only Supabase RPC)
+    # =========================================================================
+
+    async def get_db_performance(self, ctx: AgentContext) -> AgentResult:
+        """Get database performance metrics: cache hit rate, slow queries, cron jobs."""
+        from aspire_orchestrator.services.supabase_client import supabase_rpc
+
+        cache_hit_rate: Any = None
+        slow_queries: Any = None
+        cron_jobs: Any = None
+
+        try:
+            cache_hit_rate = await supabase_rpc("get_cache_hit_rate", {})
+        except Exception as e:
+            cache_hit_rate = {"error": str(e)}
+
+        try:
+            slow_queries = await supabase_rpc("get_slow_queries", {})
+        except Exception as e:
+            slow_queries = {"error": str(e)}
+
+        try:
+            cron_jobs = await supabase_rpc("get_cron_jobs", {})
+        except Exception as e:
+            cron_jobs = {"error": str(e)}
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.db_performance",
+            status="ok",
+            inputs={},
+            metadata={"sources": ["cache_hit_rate", "slow_queries", "cron_jobs"]},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "cache_hit_rate": cache_hit_rate,
+                "slow_queries": slow_queries,
+                "cron_jobs": cron_jobs,
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 18. Trace Lookup (GREEN — cross-table correlation)
+    # =========================================================================
+
+    async def get_trace(
+        self,
+        ctx: AgentContext,
+        *,
+        correlation_id: str,
+    ) -> AgentResult:
+        """Trace a correlation ID across receipts and provider call logs."""
+        if not correlation_id:
+            return AgentResult(success=False, error="Missing required parameter: correlation_id")
+
+        receipts: list[dict[str, Any]] = []
+        provider_calls: list[dict[str, Any]] = []
+
+        try:
+            from aspire_orchestrator.services.receipt_store import query_receipts
+            receipts = query_receipts(
+                suite_id=ctx.suite_id,
+                correlation_id=correlation_id,
+            )
+        except Exception as e:
+            logger.warning("Trace receipt lookup failed: %s", e)
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            rows = await supabase_select(
+                "provider_call_log",
+                f"correlation_id=eq.{correlation_id}",
+                order_by="created_at.desc",
+                limit=100,
+            )
+            provider_calls = rows if isinstance(rows, list) else []
+        except Exception as e:
+            logger.warning("Trace provider_call_log lookup failed: %s", e)
+
+        total_events = len(receipts) + len(provider_calls)
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.trace_lookup",
+            status="ok",
+            inputs={"correlation_id": correlation_id},
+            metadata={"total_events": total_events},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "correlation_id": correlation_id,
+                "receipts": receipts,
+                "provider_calls": provider_calls,
+                "total_events": total_events,
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 19. List Incidents (GREEN — read-only admin store query)
+    # =========================================================================
+
+    async def list_incidents(
+        self,
+        ctx: AgentContext,
+        *,
+        state: str | None = None,
+        severity: str | None = None,
+        limit: int = 20,
+    ) -> AgentResult:
+        """List incidents with optional state/severity filters."""
+        try:
+            from aspire_orchestrator.services.admin_store import get_admin_store
+            store = get_admin_store()
+            incidents, _cursor = store.query_incidents(
+                state=state, severity=severity, limit=limit,
+            )
+        except Exception as e:
+            return AgentResult(success=False, error=f"Incidents query failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.list_incidents",
+            status="ok",
+            inputs={"state": state, "severity": severity, "limit": limit},
+            metadata={"count": len(incidents)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"incidents": incidents, "count": len(incidents), "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 20. Outbox Status (GREEN — read-only Supabase query)
+    # =========================================================================
+
+    async def get_outbox_status(
+        self,
+        ctx: AgentContext,
+        *,
+        limit: int = 50,
+    ) -> AgentResult:
+        """Get outbox job status with counts by status."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            rows = await supabase_select(
+                "outbox_jobs",
+                {},
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            rows = rows if isinstance(rows, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"Outbox status query failed: {e}")
+
+        counts: dict[str, int] = {}
+        for row in rows:
+            s = row.get("status", "unknown")
+            counts[s] = counts.get(s, 0) + 1
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.outbox_status",
+            status="ok",
+            inputs={"limit": limit},
+            metadata={"count": len(rows), "counts": counts},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "jobs": rows,
+                "count": len(rows),
+                "counts": counts,
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 21. n8n Operations (GREEN — read-only receipts query)
+    # =========================================================================
+
+    async def get_n8n_operations(
+        self,
+        ctx: AgentContext,
+        *,
+        limit: int = 50,
+    ) -> AgentResult:
+        """Get n8n-related receipts grouped by action type."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            rows = await supabase_select(
+                "receipts",
+                "action_type=like.n8n%",
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            rows = rows if isinstance(rows, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"n8n operations query failed: {e}")
+
+        by_type: dict[str, int] = {}
+        for row in rows:
+            at = row.get("action_type", "unknown")
+            by_type[at] = by_type.get(at, 0) + 1
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.n8n_operations",
+            status="ok",
+            inputs={"limit": limit},
+            metadata={"count": len(rows), "by_type": by_type},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "operations": rows,
+                "count": len(rows),
+                "by_type": by_type,
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 22. Webhook Health (GREEN — read-only receipts query)
+    # =========================================================================
+
+    async def get_webhook_health(
+        self,
+        ctx: AgentContext,
+        *,
+        provider: str | None = None,
+    ) -> AgentResult:
+        """Get webhook-related receipts with optional provider filter."""
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            filters = "action_type=like.webhook%"
+            if provider:
+                filters += f"&provider=eq.{provider}"
+
+            rows = await supabase_select(
+                "receipts",
+                filters,
+                order_by="created_at.desc",
+                limit=50,
+            )
+            rows = rows if isinstance(rows, list) else []
+        except Exception as e:
+            return AgentResult(success=False, error=f"Webhook health query failed: {e}")
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.webhook_health",
+            status="ok",
+            inputs={"provider": provider},
+            metadata={"count": len(rows)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={"webhooks": rows, "count": len(rows), "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 23. Model Policy (GREEN — read-only config inspection)
+    # =========================================================================
+
+    async def get_model_policy(self, ctx: AgentContext) -> AgentResult:
+        """Get current LLM model configuration policy."""
+        try:
+            import os
+            builder_model = os.getenv("ASPIRE_BUILDER_MODEL", "gpt-5-mini")
+        except Exception:
+            builder_model = "gpt-5-mini"
+
+        policy = {
+            "builder_model": builder_model,
+            "brain_model": "gpt-5.2",
+            "safety_model": "llama3:8b",
+            "council_advisors": ["gpt-5.2", "gemini-3", "opus-4.6"],
+        }
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.model_policy",
+            status="ok",
+            inputs={},
+            metadata={"builder_model": builder_model},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={**policy, "voice_id": AVA_ADMIN_VOICE_ID},
+            receipt=receipt,
+        )
+
+    # =========================================================================
+    # 24. Business Snapshot (GREEN — read-only Supabase query)
+    # =========================================================================
+
+    async def get_business_snapshot(
+        self,
+        ctx: AgentContext,
+        *,
+        limit: int = 100,
+    ) -> AgentResult:
+        """Get business snapshot: finance events and active suite profiles."""
+        finance_events: list[dict[str, Any]] = []
+        active_suites: list[dict[str, Any]] = []
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            rows = await supabase_select(
+                "finance_events",
+                {},
+                order_by="created_at.desc",
+                limit=limit,
+            )
+            finance_events = rows if isinstance(rows, list) else []
+        except Exception as e:
+            logger.warning("Business snapshot finance_events failed: %s", e)
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+            rows = await supabase_select(
+                "suite_profiles",
+                "status=eq.active",
+                limit=500,
+            )
+            active_suites = rows if isinstance(rows, list) else []
+        except Exception as e:
+            logger.warning("Business snapshot suite_profiles failed: %s", e)
+
+        receipt = self.build_receipt(
+            ctx=ctx,
+            event_type="admin.business_snapshot",
+            status="ok",
+            inputs={"limit": limit},
+            metadata={"finance_count": len(finance_events), "suite_count": len(active_suites)},
+        )
+        await self.emit_receipt(receipt)
+
+        return AgentResult(
+            success=True,
+            data={
+                "finance_events": finance_events,
+                "active_suites": len(active_suites),
+                "suite_count": len(active_suites),
+                "voice_id": AVA_ADMIN_VOICE_ID,
+            },
             receipt=receipt,
         )
 

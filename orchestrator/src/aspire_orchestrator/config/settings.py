@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     task_queue_max_pending: int = 500
 
     # --- Timeouts ---
-    openai_timeout_seconds: int = 45  # GPT-5 class models need 30-45s; Railway adds latency
+    openai_timeout_seconds: int = 90  # GPT-5 reasoning models need 60-90s; Railway env override: ASPIRE_OPENAI_TIMEOUT_SECONDS
 
     # --- Ava v1.5 Features ---
     ava_user_prompt_version: str | None = None     # AVA_USER_PROMPT_VERSION env var

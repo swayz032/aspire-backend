@@ -477,11 +477,18 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel:
         if persona:
             messages.append({"role": "system", "content": persona})
         messages.append({"role": "user", "content": prompt})
-        content = _call_openai_sync(messages, model=settings.router_model_general, channel=channel)
+        # generate_text_sync already iterates ASPIRE_MODEL_FALLBACK_MAP chain
+        # (gpt-5 → gpt-5-mini) via _candidate_models(), so no manual retry needed.
+        # Avatar/voice channels use shorter timeout — filler talk buys time but
+        # user experience degrades fast. Default 120s is for reasoning models.
+        avatar_timeout = 20.0 if channel in ("avatar", "voice") else settings.openai_timeout_seconds
+        content = _call_openai_sync(
+            messages, model=settings.router_model_general, channel=channel, timeout=avatar_timeout,
+        )
         if content:
             return content
     except Exception as e:
-        logger.warning("Conversational LLM failed: %s", e)
+        logger.warning("Conversational LLM failed (all fallback models exhausted): %s", e)
 
     # Deterministic fallback
     return "Hey! I'm here to help. What would you like me to work on today?"
@@ -926,6 +933,14 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
     # Skip template/LLM summarize — the agent already reasoned.
     conversation_response = state.get("conversation_response")
     if conversation_response:
+        # Wave 3B: Prepend greeting on first interaction (non-greeting utterance)
+        if state.get("_inject_greeting_prefix"):
+            from aspire_orchestrator.nodes.greeting_fast_path import greeting_response
+            _agent_for_greet = _resolve_assigned_agent(state)
+            _greet = greeting_response(_agent_for_greet, state.get("user_profile"))
+            conversation_response = f"{_greet} {conversation_response}"
+            logger.info("Injected greeting prefix into conversation_response (agent=%s)", _agent_for_greet)
+
         response: dict[str, Any] = {
             "text": conversation_response,
             "correlation_id": correlation_id,
@@ -1101,6 +1116,16 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
         template_text = _generate_response_text(state)
         # Step 3: Use LLM with agent persona for natural response (preferred)
         response_text = _llm_summarize(state, fallback_text=template_text, channel=_channel)
+
+    # Wave 3B: If first interaction flagged for greeting prefix, prepend agent greeting
+    if state.get("_inject_greeting_prefix"):
+        from aspire_orchestrator.nodes.greeting_fast_path import greeting_response
+        agent = _resolve_assigned_agent(state)
+        user_profile = state.get("user_profile")
+        greeting = greeting_response(agent, user_profile)
+        # Prepend greeting with natural separator
+        response_text = f"{greeting} {response_text}"
+        logger.info("Injected greeting prefix for first interaction (agent=%s)", agent)
 
     # Output guard: strip phantom execution claims
     response_text = guard_output(

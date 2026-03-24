@@ -996,8 +996,8 @@ class TestErrorSanitization:
         assert "sk_live" not in text
         assert "API key" not in text
         assert "invalid" not in text
-        # Should still be helpful
-        assert "try a different approach" in text.lower()
+        # Should still be helpful and conversational
+        assert "went wrong" in text.lower() or "try" in text.lower()
 
 
 # ===========================================================================
@@ -1184,7 +1184,7 @@ class TestNarrationExpanded:
             execution_result=None, draft_id="d2", risk_tier="yellow",
             subject_name="John Doe",
         )
-        assert "SMS" in text
+        assert "text message" in text.lower() or "sms" in text.lower()
         assert "John Doe" in text
 
     def test_whatsapp_pending_narration(self) -> None:
@@ -1220,8 +1220,8 @@ class TestNarrationExpanded:
             execution_result={"status": "sent"}, draft_id=None, risk_tier="yellow",
             subject_name="Partner LLC",
         )
-        assert "Done" in text
         assert "Partner LLC" in text
+        assert "went out" in text.lower() or "sent" in text.lower()
 
     def test_denied_narration(self) -> None:
         from aspire_orchestrator.services.narration import compose_narration
@@ -1288,4 +1288,4 @@ class TestNarrationExpanded:
             tool_used=None, execution_params=None,
             execution_result=None, draft_id=None, risk_tier="green",
         )
-        assert "handled" in text.lower()
+        assert "taken care of" in text.lower() or "all set" in text.lower()

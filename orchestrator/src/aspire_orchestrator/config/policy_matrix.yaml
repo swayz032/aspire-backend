@@ -863,16 +863,15 @@ actions:
 
   # ── Quotes (Quinn) ─────────────────────────────────────────
   quote.create:
-    risk_tier: yellow
+    risk_tier: green
     tools: [stripe.quote.create]
     capability_scope: quotes:create
     category: invoicing
     approval:
-      type: explicit
-      binding_fields: [customer_id, amount, currency, line_items]
+      type: none
     params:
-      required: [customer_id]
-    redact_fields: [customer_id]
+      required: [customer_email, line_items]
+    redact_fields: [customer_email]
 
   quote.read:
     risk_tier: green

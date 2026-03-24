@@ -18,13 +18,22 @@ Law compliance:
 from __future__ import annotations
 
 import logging
-from typing import Any
+import time
+from typing import Any, Callable
 
 from aspire_orchestrator.config.templates.agent_memory_mixin import AgentMemoryMixin
 from aspire_orchestrator.services.agent_sdk_base import AgentContext, AgentResult
 from aspire_orchestrator.skillpacks.base_skill_pack import EnhancedSkillPack
 
 logger = logging.getLogger(__name__)
+
+_STEP_ICONS: dict[str, str] = {
+    "thinking": "bulb-outline",
+    "step": "chevron-forward-circle",
+    "tool_call": "construct",
+    "done": "checkmark-circle",
+    "memory": "server-outline",
+}
 
 
 class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
@@ -190,6 +199,7 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
         plan_step_type: str = "plan",
         execute_step_type: str = "draft",
         reflect_step_type: str = "verify",
+        activity_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentResult:
         """Execute a bounded multi-step reasoning loop.
 
@@ -226,12 +236,26 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
                 (default "draft" -> fast_general via router)
             reflect_step_type: LLM router step_type for the reflection phase
                 (default "verify" -> cheap_classifier via router)
+            activity_callback: Optional callback for SSE activity events.
+                Called with a dict containing type, message, icon, agent,
+                status, and timestamp fields.
 
         Returns:
             AgentResult with accumulated data and receipt chain
         """
         import asyncio
-        import time
+
+        def _emit_activity(event_type: str, label: str, status: str = "active", **extra: Any) -> None:
+            if activity_callback is not None:
+                activity_callback({
+                    "type": event_type,
+                    "message": label,
+                    "icon": _STEP_ICONS.get(event_type, "sparkles"),
+                    "agent": self._agent_id,
+                    "status": status,
+                    "timestamp": int(time.time() * 1000),
+                    **extra,
+                })
 
         autonomy_cfg = {}
         if hasattr(self, "get_autonomy_policy"):
@@ -275,6 +299,8 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
                     f"- {e['summary']}" for e in episodes
                 )
 
+        _emit_activity("thinking", f"{self._agent_name} is recalling context...")
+
         # Step 2: Plan (LLM call to break task into steps)
         plan_prompt = (
             f"You are {self._agent_name}. Plan how to accomplish this task.\n\n"
@@ -286,6 +312,8 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
 
         # Planning gets at most 1/3 of total budget, leaving 2/3 for execution
         plan_budget = min(timeout_s / 3, 10.0)
+
+        _emit_activity("thinking", f"{self._agent_name} is planning approach...")
 
         try:
             plan_result = await asyncio.wait_for(
@@ -317,6 +345,8 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
         plan_content = plan_result.data.get("content", "")
         accumulated_data["plan"] = plan_content
 
+        _emit_activity("step", "Plan ready", status="complete")
+
         # Step 3: Execute steps (each gets its own receipt)
         early_exit = False
         for step_num in range(1, max_steps + 1):
@@ -326,6 +356,8 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
                 logger.info("Agentic loop timeout reached after %d steps", step_num - 1)
                 interruption_reason = "Loop timed out before another step could complete"
                 break
+            _emit_activity("step", f"Executing step {step_num}...")
+
             step_prompt = (
                 f"You are {self._agent_name}. Execute step {step_num} of your plan.\n\n"
                 f"Original task: {task}\n"
@@ -364,6 +396,8 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
                 "content": step_result.data.get("content", ""),
                 "success": step_result.success,
             })
+
+            _emit_activity("step", f"Step {step_num} complete", status="complete" if step_result.success else "error")
 
             if not step_result.success:
                 interruption_reason = f"Step {step_num} failed"
@@ -435,6 +469,8 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
         else:
             final_status = "partial" if successful_steps else "failed"
             final_error = interruption_reason or "One or more execution steps failed"
+
+        _emit_activity("done", f"{self._agent_name} finished", status="complete")
 
         final_receipt = self.build_receipt(
             ctx=ctx,

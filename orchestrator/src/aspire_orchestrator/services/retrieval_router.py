@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 _DOMAIN_SERVICE_MAP: dict[str, str] = {
     "legal": "legal",
     "finance": "finance",
+    "stripe_api": "finance",
     "general": "general",
     "communication": "communication",
     "conference": "conference",
@@ -54,7 +55,7 @@ _AGENT_DOMAINS: dict[str, list[str]] = {
     "clara": ["legal"],
     "eli": ["communication"],
     "adam": ["general"],
-    "quinn": ["finance"],
+    "quinn": ["finance", "stripe_api"],
     "teressa": ["finance"],
     "milo": ["finance"],
     "nora": ["conference"],
