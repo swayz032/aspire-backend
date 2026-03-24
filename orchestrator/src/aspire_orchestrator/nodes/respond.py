@@ -481,7 +481,9 @@ def _llm_conversational_reply(state: OrchestratorState, utterance: str, channel:
         # (gpt-5 → gpt-5-mini) via _candidate_models(), so no manual retry needed.
         # Avatar/voice channels use shorter timeout — filler talk buys time but
         # user experience degrades fast. Default 120s is for reasoning models.
-        avatar_timeout = 20.0 if channel in ("avatar", "voice") else settings.openai_timeout_seconds
+        # All channels use fast timeout — 20s voice/avatar, 30s text/chat.
+        # Users won't wait 90s staring at a chat bubble.
+        avatar_timeout = 20.0 if channel in ("avatar", "voice") else min(30.0, settings.openai_timeout_seconds)
         content = _call_openai_sync(
             messages, model=settings.router_model_general, channel=channel, timeout=avatar_timeout,
         )

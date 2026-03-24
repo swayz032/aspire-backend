@@ -647,7 +647,9 @@ async def generate_text_streaming_async(
             kwargs["temperature"] = effective_temp
 
         accumulated = []
-        async for event in await client.responses.create(**kwargs):
+        token_count = 0
+        stream = client.responses.create(**kwargs)
+        async for event in stream:
             # OpenAI Responses API streaming events:
             # - response.output_text.delta → text chunk
             # - response.output_text.done  → final text
@@ -656,6 +658,7 @@ async def generate_text_streaming_async(
                 delta = getattr(event, "delta", "")
                 if delta:
                     accumulated.append(delta)
+                    token_count += 1
                     if on_token:
                         try:
                             on_token(delta)
@@ -664,6 +667,10 @@ async def generate_text_streaming_async(
 
         latency_ms = round((time.monotonic() - call_start) * 1000, 1)
         _openai_circuit_breaker.record_success()
+        logger.info(
+            "Streaming complete: model=%s tokens=%d latency=%sms",
+            resolved_model, token_count, latency_ms,
+        )
         METRICS.record_llm_request(
             endpoint="responses_stream",
             resolved_model=resolved_model,
