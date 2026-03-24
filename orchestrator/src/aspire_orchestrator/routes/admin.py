@@ -4426,6 +4426,7 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
         )
 
     text = body.get("text", "").strip()
+    previous_text = body.get("previous_text", "")
     if not text:
         return _ops_error(
             code="VALIDATION_ERROR",
@@ -4496,6 +4497,10 @@ async def voice_tts_stream(request: Request) -> StreamingResponse:
                                     "use_speaker_boost": False,  # Reduces latency for real-time
                                     "speed": 0.94,
                                 },
+                                # Lower first-chunk latency: generate audio after 50 chars instead of default 120
+                                "chunk_length_schedule": [50, 80, 120, 160],
+                                # Multi-turn prosody continuity
+                                **({"previous_text": str(previous_text)[:1000]} if previous_text else {}),
                             },
                         ) as resp:
                             elevenlabs_request_id = resp.headers.get("request-id")
