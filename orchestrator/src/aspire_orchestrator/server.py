@@ -654,17 +654,30 @@ async def stream_agent_activity(
                     if not response_text and graph_result.get("conversation_response"):
                         response_text = graph_result["conversation_response"]
 
+                    # Resolve agent identity using canonical precedence chain
+                    # (requested_agent > agent_target > domain fallback).
+                    # BUG FIX: was using raw graph_result["agent_target"] which
+                    # comes from the LLM classifier — it can return "ava_admin"
+                    # for business/ops questions even on Desktop user-Ava sessions.
+                    from aspire_orchestrator.services.agent_identity import resolve_assigned_agent
+                    _resolved_agent = resolve_assigned_agent(graph_result)
+                    # Fall back to response-level assigned_agent if available
+                    if _resolved_agent == "ava" and isinstance(response, dict):
+                        _resp_agent = response.get("assigned_agent")
+                        if isinstance(_resp_agent, str) and _resp_agent.strip():
+                            _resolved_agent = _resp_agent.strip().lower()
+
                     yield format_sse_event({
                         "type": "response",
                         "content": response_text,
                         "message": response_text,
-                        "agent": graph_result.get("agent_target", "ava"),
+                        "agent": _resolved_agent,
                         "timestamp": int(time.time() * 1000),
                         "data": {
                             "text": response_text,
                             "correlation_id": correlation_id,
                             "receipt_ids": graph_result.get("receipt_ids", []),
-                            "assigned_agent": graph_result.get("agent_target", "ava"),
+                            "assigned_agent": _resolved_agent,
                         },
                     })
                 except Exception as e:
