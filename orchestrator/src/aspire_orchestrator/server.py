@@ -670,12 +670,22 @@ async def stream_agent_activity(
                     logger.error("SSE: failed to emit final response: %s", e)
                     yield format_sse_event({
                         "type": "error",
-                        "message": str(e)[:200],
+                        "message": "I processed that but had trouble sending the result. The action may have completed — check your dashboard.",
                         "timestamp": int(time.time() * 1000),
                     })
                 break
 
-        result = await graph_task
+        try:
+            result = await graph_task
+        except Exception as e:
+            logger.error("Graph task failed: %s", e)
+            yield format_sse_event({
+                "type": "error",
+                "message": f"I hit an issue processing that request. Let me try again — {str(e)[:150]}",
+                "icon": "error",
+                "timestamp": int(time.time() * 1000),
+            })
+            return
 
         while not event_queue.empty():
             event = event_queue.get_nowait()
@@ -684,11 +694,11 @@ async def stream_agent_activity(
                 tracker.increment_event_count(stream_id)
                 yield format_sse_event(event)
 
-        response = result.get("response", {})
+        response = result.get("response", {}) if isinstance(result, dict) else {}
         if response.get("error"):
             yield format_sse_event({
                 "type": "error",
-                "message": response.get("message", "Request failed"),
+                "message": response.get("message", "Something went wrong on my end. Try again in a moment."),
                 "icon": "error",
                 "timestamp": int(time.time() * 1000),
             })

@@ -33,7 +33,10 @@ def aws_rotation_adapter_names() -> set[str]:
 
 @lru_cache(maxsize=1)
 def terraform_rotation_config() -> set[str]:
-    text = _terraform_path().read_text(encoding="utf-8")
+    tf_path = _terraform_path()
+    if not tf_path.exists():
+        return set()
+    text = tf_path.read_text(encoding="utf-8")
     marker = "rotation_config = {"
     start = text.find(marker)
     if start < 0:

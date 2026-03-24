@@ -237,7 +237,7 @@ def _persist_to_supabase(receipts: list[dict[str, Any]]) -> None:
             suite_id = str(row.get("suite_id") or "")
             # Skip known-invalid suites after first validation failure to avoid
             # repeated noisy errors while preserving in-memory receipts.
-            if suite_id in _invalid_suite_ids or suite_id == _UUID_NIL:
+            if suite_id in _invalid_suite_ids:
                 continue
             rows.append(row)
         except Exception as e:
@@ -374,7 +374,7 @@ class _AsyncReceiptWriter:
                 try:
                     row = _map_receipt_to_row(receipt)
                     suite_id = str(row.get("suite_id") or "")
-                    if suite_id in _invalid_suite_ids or suite_id == _UUID_NIL:
+                    if suite_id in _invalid_suite_ids:
                         continue
                     rows.append(row)
                 except Exception as e:
