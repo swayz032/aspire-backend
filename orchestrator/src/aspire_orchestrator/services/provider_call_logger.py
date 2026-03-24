@@ -154,18 +154,20 @@ class ProviderCallLogger:
             if client:
                 db_row = {
                     "call_id": record["call_id"],
-                    "tenant_id": record.get("suite_id"),
+                    "tenant_id": record.get("suite_id") or "system",
+                    "run_id": record.get("correlation_id"),
                     "trace_id": record.get("correlation_id"),
                     "tool": record.get("provider", ""),
                     "operation": record.get("action", ""),
                     "external_provider": record.get("provider", ""),
+                    "params_hash": "",
                     "status": record.get("status", "error"),
                     "http_status": record.get("http_status", 0),
                     "error_code": record.get("error_code", "") or None,
                     "error_detail": record.get("error_message", "") or None,
                     "started_at": record.get("started_at"),
                     "completed_at": record.get("finished_at"),
-                    "request_summary": record.get("response_summary", "") or None,
+                    "request_summary": record.get("response_summary", "") or "{}",
                 }
                 client.table("provider_call_log").insert(db_row).execute()
         except Exception as e:

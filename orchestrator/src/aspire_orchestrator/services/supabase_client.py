@@ -123,7 +123,8 @@ def _handle_response(resp: httpx.Response, operation: str) -> Any:
                     detail = " | ".join(parts)
         except Exception:
             pass
-        logger.error(
+        log_fn = logger.warning if resp.status_code in (404, 409) else logger.error
+        log_fn(
             "Supabase %s failed: status=%d body=%s",
             operation, resp.status_code, resp.text[:200],
         )
