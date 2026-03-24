@@ -1003,7 +1003,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
             "do you know", "can you tell me", "explain ", "describe ",
         )
         is_conversational = (
-            intent_type in ("greeting", "chitchat", "conversational")
+            intent_type in ("greeting", "chitchat", "conversational", "conversation", "knowledge", "advice", "hybrid")
             or normalized in _GREETING_PATTERNS
             or any(sub in normalized for sub in _IDENTITY_SUBSTRINGS)
         )

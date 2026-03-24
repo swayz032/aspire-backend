@@ -697,6 +697,7 @@ async def _agent_reason_inner(
         # Persona-specific fallback (NOT generic "I wasn't sure")
         fallback_map = {
             "ava": "I hit a snag on my end — let me try that differently. Can you say that again or give me a bit more context?",
+            "ava_admin": "I hit a snag pulling that data. Can you say that again? I'll re-run the check.",
             "finn": "I hit a bump pulling that together — can you give me a bit more context? I want to make sure I get the numbers right.",
             "eli": "I stumbled on that one — can you rephrase it? I want to make sure I handle the message correctly.",
             "nora": "I hit a snag setting that up — can you give me a bit more detail so I can get it right?",
@@ -726,6 +727,7 @@ async def _agent_reason_inner(
 
     fallback_map = {
         "ava": "I can give you a safe first pass now. Which exact detail should I verify first?",
+        "ava_admin": "I can give you an initial read now. Which system or metric should I check first?",
         "finn": "I can give you a conservative finance read now. Which number or timeframe should I verify first?",
         "eli": "I can draft a safe first pass now. Which exact thread or message should I verify first?",
         "nora": "I can give you a safe scheduling direction now. Which meeting detail should I verify first?",
