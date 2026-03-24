@@ -4378,7 +4378,7 @@ async def _stt_elevenlabs(audio: bytes, correlation_id: str) -> str:
             "https://api.elevenlabs.io/v1/speech-to-text",
             headers={"xi-api-key": api_key},
             files={"file": ("audio.webm", audio, "audio/webm")},
-            data={"model_id": "scribe_v1"},
+            data={"model_id": "scribe_v2"},
         )
         resp.raise_for_status()
         data = resp.json()

@@ -47,7 +47,7 @@ class ElevenLabsClient(BaseProviderClient):
                 message="ElevenLabs API key not configured (ASPIRE_ELEVENLABS_API_KEY)",
                 provider_id=self.provider_id,
             )
-        return {"xi-api-key": api_key}
+        return {"xi-api-key": api_key, "Accept": "audio/mpeg"}
 
     def _parse_error(
         self, status_code: int, body: dict[str, Any]
@@ -107,6 +107,9 @@ async def execute_elevenlabs_speak(
       - model_id: str — model (default "eleven_flash_v2_5")
       - stability: float — voice stability 0.0-1.0 (default 0.5)
       - similarity_boost: float — similarity 0.0-1.0 (default 0.75)
+      - style: float — style exaggeration 0.0-1.0 (default 0.0)
+      - use_speaker_boost: bool — boost speaker similarity (default True)
+      - speed: float — speech speed 0.7-1.2 (default 1.0)
     """
     client = _get_client()
 
@@ -160,13 +163,16 @@ async def execute_elevenlabs_speak(
         "voice_settings": {
             "stability": payload.get("stability", 0.5),
             "similarity_boost": payload.get("similarity_boost", 0.75),
+            "style": payload.get("style", 0.0),
+            "use_speaker_boost": payload.get("use_speaker_boost", True),
+            "speed": payload.get("speed", 1.0),
         },
     }
 
     response = await client._request(
         ProviderRequest(
             method="POST",
-            path=f"/text-to-speech/{voice_id}",
+            path=f"/text-to-speech/{voice_id}?output_format=mp3_44100_128",
             body=body,
             correlation_id=correlation_id,
             suite_id=suite_id,
