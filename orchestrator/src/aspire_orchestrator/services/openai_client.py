@@ -453,6 +453,7 @@ async def generate_text_async(
     top_k: int | None = None,
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Generate text from a chat-style message list."""
     # ... (circuit breaker check)
@@ -496,8 +497,9 @@ async def generate_text_async(
             kwargs["temperature"] = effective_temp
         if effective_top_p is not None:
             kwargs["top_p"] = effective_top_p
-        # Note: top_k is handled via system instructions or provider-specific extensions 
-        # in some SDKs, but for OpenAI it's usually top_p. We'll pass it if supported.
+        # Reasoning effort: "low" cuts TTFT dramatically for GPT-5 on simple tasks
+        if reasoning_effort and reasoning_model:
+            kwargs["reasoning"] = {"effort": reasoning_effort}
         response = await client.responses.create(**kwargs)
         return _extract_output_text(response), response
 
@@ -614,6 +616,7 @@ async def generate_text_streaming_async(
     temperature: float | None = None,
     on_token: Any | None = None,
     model_profile: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Stream text from OpenAI Responses API, calling on_token(str) per chunk.
 
@@ -645,6 +648,8 @@ async def generate_text_streaming_async(
         }
         if effective_temp is not None:
             kwargs["temperature"] = effective_temp
+        if reasoning_effort and reasoning_model:
+            kwargs["reasoning"] = {"effort": reasoning_effort}
 
         accumulated = []
         token_count = 0
@@ -744,6 +749,7 @@ def generate_text_sync(
     temperature: float | None = None,
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Sync version for sync call sites (respond node)."""
     profile = model_profile or _profile_for_model(model)
@@ -761,6 +767,9 @@ def generate_text_sync(
         }
         if effective_temp is not None:
             kwargs["temperature"] = effective_temp
+        # Reasoning effort: "low" cuts TTFT dramatically for GPT-5 on simple tasks
+        if reasoning_effort and reasoning_model:
+            kwargs["reasoning"] = {"effort": reasoning_effort}
         response = client.responses.create(**kwargs)
         return _extract_output_text(response)
 

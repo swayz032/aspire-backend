@@ -561,6 +561,9 @@ def _call_openai_sync(
     # Use provided temperature or default to 0.1 for precision if not specified
     effective_temp = temperature if temperature is not None else 0.1
 
+    # GPT-5 reasoning_effort="low" cuts TTFT dramatically for summarization
+    effort = "low" if _is_reasoning else None
+
     return generate_text_sync(
         model=model,
         messages=processed_messages,
@@ -570,6 +573,7 @@ def _call_openai_sync(
         max_output_tokens=4096,
         temperature=None if _is_reasoning else effective_temp,
         prefer_responses_api=True,
+        reasoning_effort=effort,
     ).strip()
 
 
