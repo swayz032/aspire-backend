@@ -627,7 +627,16 @@ async def stream_agent_activity(
 
         while True:
             now = time.monotonic()
-            timeout = max(0.0, HEARTBEAT_INTERVAL_SECONDS - (now - last_heartbeat))
+            heartbeat_remaining = max(0.0, HEARTBEAT_INTERVAL_SECONDS - (now - last_heartbeat))
+            # Fast-flush: if the graph already finished (e.g. greeting fast path),
+            # poll with 100ms timeout instead of waiting the full heartbeat interval.
+            # For in-progress graphs, poll every 0.5s so responses flush quickly.
+            if graph_task.done():
+                timeout = 0.1
+            elif heartbeat_remaining > 0.5:
+                timeout = 0.5
+            else:
+                timeout = heartbeat_remaining
             try:
                 event = await asyncio.wait_for(event_queue.get(), timeout=timeout)
                 if rate_limiter.check():
