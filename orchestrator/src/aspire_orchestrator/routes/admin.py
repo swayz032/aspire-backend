@@ -4619,6 +4619,7 @@ async def _stream_ava_chat(
     message: str,
     history: list[dict[str, str]],
     user_profile: dict[str, str] | None = None,
+    channel: str = "chat",
 ) -> AsyncGenerator[str, None]:
     """Stream Ava admin chat response via SSE.
 
@@ -4679,6 +4680,15 @@ async def _stream_ava_chat(
 
     # --- Build OpenAI messages ---
     system_prompt = _load_ava_system_prompt()
+
+    # Inject channel context so prompt rules apply correctly
+    system_prompt += f"\n\n[Channel: {channel}]"
+
+    # Inject whether this is first message (empty history = greeting allowed)
+    if not history:
+        system_prompt += "\n\nThis is the first message in the conversation. You may greet the admin."
+    else:
+        system_prompt += "\n\nThis is a follow-up message. Do NOT greet — answer directly."
 
     # Inject temporal context (RC1)
     _now = datetime.now(timezone.utc)
@@ -4856,6 +4866,10 @@ async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
     message = message.strip()
     history = _validate_chat_history(body.get("history", []))
     user_profile = body.get("user_profile") if isinstance(body.get("user_profile"), dict) else None
+    context = body.get("context") if isinstance(body.get("context"), dict) else {}
+    channel = context.get("channel", "chat") if isinstance(context.get("channel"), str) else "chat"
+    # Normalize: only "voice" or "chat" allowed
+    channel = "voice" if channel in ("admin_voice", "voice") else "chat"
 
     return StreamingResponse(
         _stream_ava_chat(
@@ -4864,6 +4878,7 @@ async def admin_ava_chat(request: Request) -> StreamingResponse | JSONResponse:
             message=message,
             history=history,
             user_profile=user_profile,
+            channel=channel,
         ),
         media_type="text/event-stream",
         headers={
