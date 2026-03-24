@@ -4291,13 +4291,10 @@ async def voice_stt_proxy(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        # Determine STT provider
-        stt_provider = os.environ.get("ASPIRE_STT_PROVIDER", "elevenlabs")
-
-        if stt_provider == "elevenlabs":
-            transcript = await _stt_elevenlabs(body, correlation_id)
-        else:
-            transcript = await _stt_deepgram(body, correlation_id)
+        # Admin Ava always uses ElevenLabs STT.
+        # Deepgram is Nora-only (conference transcription via LiveKit).
+        stt_provider = "elevenlabs"
+        transcript = await _stt_elevenlabs(body, correlation_id)
 
         receipt = _build_access_receipt(
             correlation_id=correlation_id,
