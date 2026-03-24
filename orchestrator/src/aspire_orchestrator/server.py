@@ -612,9 +612,9 @@ async def stream_agent_activity(
         "timestamp": int(time.time() * 1000),
     })
 
-    # Inject SSE activity callback into state so agent_dispatch can stream
-    # reasoning steps through the same SSE channel.
-    initial_state["_activity_callback"] = collect_event
+    # Activity callback is set via set_activity_event_callback() above (line 605).
+    # Do NOT inject into state — functions can't be msgpack-serialized by the
+    # LangGraph Postgres checkpointer. Nodes use get_activity_event_callback().
 
     last_heartbeat = time.monotonic()
     try:

@@ -52,6 +52,11 @@ def set_activity_event_callback(callback: callable | None) -> None:
     _activity_event_callback = callback
 
 
+def get_activity_event_callback() -> callable | None:
+    """Return the current global activity event callback (if set)."""
+    return _activity_event_callback
+
+
 def _emit_activity_event(event_type: str, message: str, icon: str = "info") -> None:
     """Emit activity event to Canvas Chat Mode stream (Wave 5)."""
     if _activity_event_callback:

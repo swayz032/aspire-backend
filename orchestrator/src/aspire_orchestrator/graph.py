@@ -364,7 +364,8 @@ async def classify_node(state: OrchestratorState) -> dict[str, Any]:
         "current_agent": requested_agent,
     }
 
-    activity_callback = state.get("_activity_callback")
+    from aspire_orchestrator.skillpacks.adam_research import get_activity_event_callback
+    activity_callback = get_activity_event_callback()
     if activity_callback:
         import time as _time
         activity_callback({
@@ -652,7 +653,8 @@ async def route_node(state: OrchestratorState) -> dict[str, Any]:
         }
         result["pipeline_receipts"] = state.get("pipeline_receipts", []) + [empty_receipt]
 
-    activity_callback = state.get("_activity_callback")
+    from aspire_orchestrator.skillpacks.adam_research import get_activity_event_callback as _get_cb
+    activity_callback = _get_cb()
     if activity_callback:
         import time as _time
         agent_name = "the specialist"

@@ -369,7 +369,8 @@ async def agent_dispatch_node(state: OrchestratorState) -> dict[str, Any]:
         }
 
     # Dispatch to the skill pack
-    activity_callback = state.get("_activity_callback")
+    from aspire_orchestrator.skillpacks.adam_research import get_activity_event_callback
+    activity_callback = get_activity_event_callback()
     try:
         dispatch_result = await _dispatch_to_skill_pack(
             pack=pack,
