@@ -777,6 +777,11 @@ def _route_after_classify(state: OrchestratorState) -> str:
     if state.get("error_code"):
         return "respond"
 
+    # Ava Admin: ALWAYS conversation path — no skill router mappings exist.
+    requested_agent = state.get("requested_agent", "")
+    if isinstance(requested_agent, str) and requested_agent.strip().lower() == "ava_admin":
+        return "agent_reason"
+
     # Prefer conversational reasoning for advanced advisory prompts.
     if _should_force_conversational_reasoning(
         utterance=str(utterance),

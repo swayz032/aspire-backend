@@ -549,10 +549,13 @@ class IntentClassifier:
         # The skill router has no admin.ops mappings, so the action path would
         # fail with "could not be routed to a valid skill path".
         if current_agent == "ava_admin":
+            # action_type MUST be "unknown" — _route_after_classify checks
+            # action_type != "unknown" BEFORE intent_type, so "admin.chat"
+            # would fall into the ACTION path → skill router → ROUTING_DENIED.
             return IntentResult(
-                action_type="admin.chat",
+                action_type="unknown",
                 skill_pack="ava_admin",
-                confidence=0.95,
+                confidence=0.0,
                 entities={},
                 risk_tier=self._risk_tiers.get("admin.chat", RiskTier.GREEN),
                 requires_clarification=False,
