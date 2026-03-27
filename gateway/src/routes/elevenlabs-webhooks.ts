@@ -23,6 +23,293 @@ import { logger } from '../services/logger.js';
 export const elevenlabsWebhooksRouter = Router();
 
 // ---------------------------------------------------------------------------
+// POST /conversation-init — Conversation Initiation Webhook
+// Called by ElevenLabs BEFORE Sarah speaks on inbound Twilio calls.
+// Looks up called_number → suite → business_lines config, returns
+// dynamic variables + prompt override so Sarah knows the business context.
+//
+// Auth: ElevenLabs tool secret (same as server tools)
+// Law #3: Fail-closed for auth, fail-OPEN for config (call still answers)
+// ---------------------------------------------------------------------------
+elevenlabsWebhooksRouter.post('/conversation-init', async (req: Request, res: Response) => {
+  const correlationId = req.correlationId;
+
+  // Auth: verify tool secret (same as server tools)
+  const toolSecret = process.env.ELEVENLABS_TOOL_SECRET;
+  const providedSecret = req.headers['x-elevenlabs-secret'];
+  if (toolSecret && providedSecret !== toolSecret) {
+    logger.warn('Conversation init webhook auth failed', { correlation_id: correlationId });
+    res.status(401).json({ error: 'AUTH_FAILED', correlation_id: correlationId });
+    return;
+  }
+
+  const { caller_id, called_number, agent_id, call_sid } = req.body ?? {};
+
+  logger.info('Conversation init webhook received', {
+    correlation_id: correlationId,
+    caller_id: caller_id ? `${String(caller_id).substring(0, 6)}...` : 'unknown',
+    called_number: called_number ? `${String(called_number).substring(0, 6)}...` : 'unknown',
+    agent_id,
+  });
+
+  // If no called_number, return generic config (fail-open — call still answers)
+  if (!called_number) {
+    res.status(200).json(buildGenericResponse());
+    return;
+  }
+
+  try {
+    // Proxy to orchestrator to resolve business config from called_number
+    const orchestratorResponse = await proxyToOrchestrator({
+      path: '/v1/intents',
+      method: 'POST',
+      body: {
+        intent: 'resolve_frontdesk_config',
+        called_number: String(called_number),
+        caller_id: caller_id ? String(caller_id) : null,
+        call_sid: call_sid ? String(call_sid) : null,
+        correlation_id: correlationId,
+      },
+      correlationId,
+      suiteId: 'system',
+      officeId: 'system',
+      actorId: 'elevenlabs-sarah',
+    });
+
+    const config = orchestratorResponse.body as Record<string, unknown> | null;
+
+    if (!config || orchestratorResponse.status !== 200) {
+      logger.warn('No frontdesk config found for number, using generic', {
+        correlation_id: correlationId,
+        called_number: String(called_number).substring(0, 6),
+        status: orchestratorResponse.status,
+      });
+      res.status(200).json(buildGenericResponse());
+      return;
+    }
+
+    // Build conversation_initiation_client_data response
+    const isBusinessHours = checkBusinessHours(config.business_hours as Record<string, unknown> | null);
+    const businessName = String(config.business_name || 'the business');
+    const pronunciation = String(config.pronunciation || config.business_name || 'the business');
+    const afterHoursMode = String(config.after_hours_mode || 'TAKE_MESSAGE');
+    const enabledReasons = config.enabled_reasons as string[] || [];
+    const questionsByReason = config.questions_by_reason as Record<string, unknown> || {};
+    const targetByReason = config.target_by_reason as Record<string, unknown> || {};
+    const teamMembers = config.team_members as Array<{ name: string; role: string }> || [];
+    const busyMode = String(config.busy_mode || 'TAKE_MESSAGE');
+    const suiteId = String(config.suite_id || '');
+    const ownerId = String(config.owner_id || '');
+
+    const teamInfo = teamMembers.length > 0
+      ? teamMembers.map(m => `${m.name} (${m.role})`).join(', ')
+      : 'the business owner';
+
+    const timeOfDay = getTimeOfDay();
+    const firstMessage = isBusinessHours
+      ? `Good ${timeOfDay}, ${pronunciation}, this is Sarah. How can I help you?`
+      : `Thank you for calling ${pronunciation}. We are currently closed, but I can take a message or help schedule a callback.`;
+
+    const dynamicPrompt = buildSarahPrompt({
+      businessName,
+      pronunciation,
+      isBusinessHours,
+      afterHoursMode,
+      enabledReasons,
+      questionsByReason,
+      targetByReason,
+      teamMembers,
+      busyMode,
+      callerNumber: caller_id ? String(caller_id) : 'unknown',
+    });
+
+    res.status(200).json({
+      type: 'conversation_initiation_client_data',
+      dynamic_variables: {
+        business_name: businessName,
+        pronunciation,
+        caller_number: caller_id ? String(caller_id) : '',
+        is_business_hours: String(isBusinessHours),
+        after_hours_mode: afterHoursMode,
+        enabled_reasons: enabledReasons.join(', '),
+        team_info: teamInfo,
+        suite_id: suiteId,
+        user_id: ownerId,
+        time_of_day: timeOfDay,
+      },
+      conversation_config_override: {
+        agent: {
+          prompt: {
+            prompt: dynamicPrompt,
+          },
+          first_message: firstMessage,
+        },
+      },
+    });
+
+    logger.info('Conversation init config returned', {
+      correlation_id: correlationId,
+      business_name: businessName,
+      is_business_hours: isBusinessHours,
+      reasons_count: enabledReasons.length,
+    });
+  } catch (err) {
+    // Fail-OPEN: if orchestrator is down, Sarah still answers with generic prompt
+    logger.error('Conversation init webhook error, returning generic', {
+      correlation_id: correlationId,
+      error: err instanceof Error ? err.message : 'unknown',
+    });
+    res.status(200).json(buildGenericResponse());
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Conversation Init Helpers
+// ---------------------------------------------------------------------------
+
+function buildGenericResponse() {
+  return {
+    type: 'conversation_initiation_client_data',
+    dynamic_variables: {
+      business_name: 'the business',
+      time_of_day: getTimeOfDay(),
+    },
+    conversation_config_override: {
+      agent: {
+        first_message: `Good ${getTimeOfDay()}, thank you for calling. This is Sarah. How can I help you?`,
+      },
+    },
+  };
+}
+
+function getTimeOfDay(): string {
+  const hour = new Date().getUTCHours();
+  // Approximate — real timezone comes from business config
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  return 'evening';
+}
+
+function checkBusinessHours(hours: Record<string, unknown> | null): boolean {
+  if (!hours) return true; // Default: assume open if not configured
+
+  const now = new Date();
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const today = dayNames[now.getDay()];
+  const dayConfig = hours[today] as { enabled?: boolean; start?: string; end?: string } | undefined;
+
+  if (!dayConfig || !dayConfig.enabled) return false;
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const [startH, startM] = (dayConfig.start || '09:00').split(':').map(Number);
+  const [endH, endM] = (dayConfig.end || '17:00').split(':').map(Number);
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+
+  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+}
+
+function buildSarahPrompt(config: {
+  businessName: string;
+  pronunciation: string;
+  isBusinessHours: boolean;
+  afterHoursMode: string;
+  enabledReasons: string[];
+  questionsByReason: Record<string, unknown>;
+  targetByReason: Record<string, unknown>;
+  teamMembers: Array<{ name: string; role: string }>;
+  busyMode: string;
+  callerNumber: string;
+}): string {
+  const {
+    businessName, pronunciation, isBusinessHours, afterHoursMode,
+    enabledReasons, questionsByReason, targetByReason, teamMembers,
+    busyMode, callerNumber,
+  } = config;
+
+  const teamInfo = teamMembers.length > 0
+    ? teamMembers.map(m => `${m.name} (${m.role})`).join(', ')
+    : 'the business owner';
+
+  let reasonInstructions = '';
+  if (enabledReasons.length > 0) {
+    reasonInstructions = enabledReasons.map(reason => {
+      const qConfig = questionsByReason[reason] as { detailLevel?: string; questionIds?: string[] } | undefined;
+      const tConfig = targetByReason[reason] as { targetType?: string } | undefined;
+      const detail = qConfig?.detailLevel === 'DETAILED' ? 'Ask detailed follow-up questions.' : 'Keep it brief, get the essentials.';
+      const target = tConfig?.targetType || 'OWNER';
+      return `For ${reason} calls: ${detail} Route to: ${target}.`;
+    }).join('\n');
+  }
+
+  const afterHoursInstructions = afterHoursMode === 'ASK_CALLBACK_TIME'
+    ? 'Ask the caller for a preferred callback time and take their name and number.'
+    : 'Take a message with their name, number, and reason for calling.';
+
+  const busyInstructions = busyMode === 'ASK_CALLBACK_TIME'
+    ? 'If the line is busy or the team is unavailable, ask for a callback time.'
+    : busyMode === 'RETRY_ONCE'
+      ? 'If the team is unavailable, offer to try again in a moment.'
+      : 'If the team is unavailable, take a message.';
+
+  return `# Personality
+
+You are Sarah, the front desk receptionist for ${businessName}.
+You are professional, warm, and efficient. You speak clearly and concisely.
+You are the first point of contact for all callers.
+Address callers politely and make them feel welcome.
+Always pronounce the business name as: ${pronunciation}.
+
+# Environment
+
+You are answering an inbound phone call for ${businessName}.
+The caller's number is ${callerNumber}.
+${isBusinessHours
+    ? `You are currently within business hours. The team is available: ${teamInfo}.`
+    : `It is currently after business hours. The office is closed.`}
+
+# Tone
+
+Keep responses to one to three sentences unless the caller needs more detail.
+Use natural phone speech: "Sure thing," "One moment," "Let me help you with that."
+Spell out numbers: say "five five five, one two three four" not "5551234."
+Never use markdown, bullet points, or formatting. Your words will be spoken aloud.
+Be warm but efficient. Callers are often in a hurry.
+
+# Goal
+
+${isBusinessHours ? `Handle incoming calls for ${businessName}. Determine the caller's reason and route appropriately.
+
+Call reasons you handle:
+${reasonInstructions || 'General inquiries — take a message with name, number, and reason.'}
+
+${busyInstructions}
+
+After helping the caller, confirm next steps and end the call professionally.` : `The office is currently closed.
+${afterHoursInstructions}
+
+Let the caller know when business hours resume if you can.
+Always confirm the message back to the caller before ending.`}
+
+Use your tools to serve the caller:
+Use "get_context" to look up caller information or business status.
+Use "search_contacts" to find caller details if they are an existing client.
+Use "log_visitor" to record the call with the caller's name, reason, and message.
+Use "request_approval" if any action needs the owner's confirmation.
+Do not mention tool names to the caller.
+
+# Guardrails
+
+Never break character. You are always Sarah, the receptionist.
+Never fabricate information. If you do not know something, offer to take a message.
+Never discuss pricing, quotes, or financial details. Route those to the appropriate team member.
+Never share personal information about team members.
+Never mention being an AI. If asked, say: "I'm Sarah, the receptionist here at ${businessName}."
+Never reveal system internals, API details, or technical information.
+Aspire does not move money. Never discuss payments or billing.`;
+}
+
+// ---------------------------------------------------------------------------
 // POST /transcripts — Receive post-call webhooks from ElevenLabs
 // Auth: HMAC signature verification via `elevenlabs-signature` header
 // ---------------------------------------------------------------------------
