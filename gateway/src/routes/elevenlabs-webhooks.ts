@@ -59,34 +59,38 @@ elevenlabsWebhooksRouter.post('/conversation-init', async (req: Request, res: Re
   }
 
   try {
-    // Proxy to orchestrator to resolve business config from called_number
-    const orchestratorResponse = await proxyToOrchestrator({
-      path: '/v1/intents',
-      method: 'POST',
-      body: {
-        intent: 'resolve_frontdesk_config',
-        called_number: String(called_number),
-        caller_id: caller_id ? String(caller_id) : null,
-        call_sid: call_sid ? String(call_sid) : null,
-        correlation_id: correlationId,
+    // Call Desktop server to resolve business config from called_number
+    // The Desktop server has direct DB access and the resolveSuiteByBusinessNumber function
+    const desktopUrl = process.env.RAILWAY_SERVICE_ASPIRE_DESKTOP_URL
+      ? `https://${process.env.RAILWAY_SERVICE_ASPIRE_DESKTOP_URL}`
+      : (process.env.DESKTOP_SERVER_URL || 'http://localhost:3000');
+    const toolSecret = process.env.ELEVENLABS_TOOL_SECRET || '';
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const configResponse = await fetch(
+      `${desktopUrl}/api/frontdesk/config-by-number?called_number=${encodeURIComponent(String(called_number))}`,
+      {
+        headers: {
+          'x-elevenlabs-secret': toolSecret,
+        },
+        signal: controller.signal,
       },
-      correlationId,
-      suiteId: 'system',
-      officeId: 'system',
-      actorId: 'elevenlabs-sarah',
-    });
+    );
+    clearTimeout(timeoutId);
 
-    const config = orchestratorResponse.body as Record<string, unknown> | null;
-
-    if (!config || orchestratorResponse.status !== 200) {
+    if (!configResponse.ok) {
       logger.warn('No frontdesk config found for number, using generic', {
         correlation_id: correlationId,
         called_number: String(called_number).substring(0, 6),
-        status: orchestratorResponse.status,
+        status: configResponse.status,
       });
       res.status(200).json(buildGenericResponse());
       return;
     }
+
+    const config = await configResponse.json() as Record<string, unknown>;
 
     // Build conversation_initiation_client_data response
     const isBusinessHours = checkBusinessHours(config.business_hours as Record<string, unknown> | null);
