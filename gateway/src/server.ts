@@ -37,6 +37,9 @@ import { receiptsRouter } from './routes/receipts.js';
 import { policyRouter } from './routes/policy.js';
 import { registryRouter } from './routes/registry.js';
 import { a2aRouter } from './routes/a2a.js';
+import { elevenlabsToolsRouter } from './routes/elevenlabs-tools.js';
+import { elevenlabsWebhooksRouter } from './routes/elevenlabs-webhooks.js';
+import { elevenlabsToolAuthMiddleware } from './middleware/elevenlabs-auth.js';
 import { 
   checkOrchestratorReadiness,
   proxyToOrchestrator 
@@ -99,6 +102,20 @@ app.get('/readyz', async (_req, res) => {
 });
 
 // =============================================================================
+// ElevenLabs Agent Tool Endpoints (shared secret auth, no JWT)
+// =============================================================================
+
+// POST /v1/tools/* — ElevenLabs server tools call these endpoints
+app.use('/v1/tools', standardRateLimiter, elevenlabsToolAuthMiddleware, elevenlabsToolsRouter);
+
+// =============================================================================
+// ElevenLabs Webhooks (HMAC signature verification, no JWT)
+// =============================================================================
+
+// POST /v1/webhooks/elevenlabs/* — Post-call transcript ingestion
+app.use('/v1/webhooks/elevenlabs', standardRateLimiter, elevenlabsWebhooksRouter);
+
+// =============================================================================
 // Webhooks (NO JWT auth — use provider signatures)
 // =============================================================================
 
@@ -156,6 +173,13 @@ app.all('/admin/*', elevatedRateLimiter, async (req, res) => {
     res.status(502).json({ error: 'INTERNAL_ERROR', message: 'Failed to proxy admin request' });
   }
 });
+
+// POST /v1/sessions/signed-url — ElevenLabs session creation (requires JWT)
+// SECURITY: Only expose /signed-url at this mount point. Do NOT mount the full
+// elevenlabsToolsRouter here — that would expose /execute, /draft, /approve
+// to any JWT-authenticated user without the tool-secret gate (THREAT-002 fix).
+import { elevenlabsSessionsRouter } from './routes/elevenlabs-sessions.js';
+app.use('/v1/sessions', standardRateLimiter, elevenlabsSessionsRouter);
 
 // POST /v1/intents — Main endpoint
 app.use('/v1/intents', standardRateLimiter, schemaValidationMiddleware, intentsRouter);
