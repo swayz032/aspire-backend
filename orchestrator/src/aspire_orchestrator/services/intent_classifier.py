@@ -424,8 +424,6 @@ class IntentClassifier:
             temperature=None if _is_reasoning else temperature,
             prefer_responses_api=True,
             reasoning_effort="low" if _is_reasoning else None,
-            prompt_cache_key="aspire-classify",
-            prompt_cache_retention="24h",
         )
         if not parsed:
             logger.error("LLM returned empty/invalid JSON for intent classifier (model=%s)", model)

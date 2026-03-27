@@ -694,10 +694,6 @@ async def _agent_reason_inner(
         else:
             _max_tokens = 1200 if intent_type in ("knowledge", "advice") else 500
 
-        # OpenAI prompt cache key: same agent = same persona prefix = same server.
-        # ~15 RPM per key is optimal. agent_id groups requests with identical prefixes.
-        _cache_key = f"aspire-reason-{agent_id}"
-
         # Voice/avatar channels: stream tokens as SSE deltas for progressive TTS.
         # Chat channel: standard non-streaming call (no latency benefit from streaming).
         _is_voice = _channel_for_stream in ("voice", "avatar")
@@ -723,8 +719,6 @@ async def _agent_reason_inner(
                 max_output_tokens=_max_tokens,
                 temperature=0.7,
                 on_token=_on_token,
-                prompt_cache_key=_cache_key,
-                prompt_cache_retention="24h",
             )
         else:
             response_text = await generate_text_async(
@@ -736,8 +730,6 @@ async def _agent_reason_inner(
                 max_output_tokens=_max_tokens,
                 temperature=None if _is_reasoning else 0.7,
                 prefer_responses_api=True,
-                prompt_cache_key=_cache_key,
-                prompt_cache_retention="24h",
             )
 
     except Exception as e:

@@ -126,8 +126,6 @@ class SemanticMemory:
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=400,
                 prefer_responses_api=True,
-                prompt_cache_key="aspire-memory",
-                prompt_cache_retention="24h",
             ) or "[]"
 
             # 3. Parse extracted facts

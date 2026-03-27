@@ -1072,8 +1072,6 @@ async def _intelligent_compliance_assessment(
             max_output_tokens=400,
             temperature=None if _is_reasoning else 0.1,
             prefer_responses_api=True,
-            prompt_cache_key="aspire-legal-compliance",
-            prompt_cache_retention="24h",
         )
 
         llm_data = parse_json_text(content)

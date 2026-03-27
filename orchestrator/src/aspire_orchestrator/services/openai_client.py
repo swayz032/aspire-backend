@@ -454,8 +454,6 @@ async def generate_text_async(
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
-    prompt_cache_key: str | None = None,
-    prompt_cache_retention: str | None = None,
 ) -> str:
     """Generate text from a chat-style message list."""
     # ... (circuit breaker check)
@@ -504,10 +502,8 @@ async def generate_text_async(
             kwargs["reasoning"] = {"effort": reasoning_effort}
         # OpenAI prompt caching: route same-prefix requests to same server,
         # extend cache lifetime to 24h. Reduces TTFT up to 80%, cost up to 90%.
-        if prompt_cache_key:
-            kwargs["prompt_cache_key"] = prompt_cache_key
-        if prompt_cache_retention:
-            kwargs["prompt_cache_retention"] = prompt_cache_retention
+        # Note: OpenAI prompt caching is automatic (no API params needed).
+        # Requests with matching prefixes are cached server-side automatically.
         response = await client.responses.create(**kwargs)
         return _extract_output_text(response), response
 
@@ -626,8 +622,6 @@ async def generate_text_streaming_async(
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
     text_verbosity: str | None = None,
-    prompt_cache_key: str | None = None,
-    prompt_cache_retention: str | None = None,
 ) -> str:
     """Stream text from OpenAI Responses API, calling on_token(str) per chunk.
 
@@ -663,10 +657,8 @@ async def generate_text_streaming_async(
             kwargs["reasoning"] = {"effort": reasoning_effort}
         if text_verbosity:
             kwargs["text"] = {"format": {"type": "text"}, "verbosity": text_verbosity}
-        if prompt_cache_key:
-            kwargs["prompt_cache_key"] = prompt_cache_key
-        if prompt_cache_retention:
-            kwargs["prompt_cache_retention"] = prompt_cache_retention
+        # Note: OpenAI prompt caching is automatic (no API params needed).
+        # Requests with matching prefixes are cached server-side automatically.
 
         accumulated = []
         token_count = 0
@@ -740,8 +732,6 @@ async def generate_json_async(
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
-    prompt_cache_key: str | None = None,
-    prompt_cache_retention: str | None = None,
 ) -> dict[str, Any]:
     """Generate JSON by prompting model for JSON and parsing output robustly."""
     text = await generate_text_async(
@@ -755,8 +745,6 @@ async def generate_json_async(
         prefer_responses_api=prefer_responses_api,
         model_profile=model_profile,
         reasoning_effort=reasoning_effort,
-        prompt_cache_key=prompt_cache_key,
-        prompt_cache_retention=prompt_cache_retention,
     )
     return parse_json_text(text)
 
@@ -773,8 +761,6 @@ def generate_text_sync(
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
-    prompt_cache_key: str | None = None,
-    prompt_cache_retention: str | None = None,
 ) -> str:
     """Sync version for sync call sites (respond node)."""
     profile = model_profile or _profile_for_model(model)
@@ -795,10 +781,8 @@ def generate_text_sync(
         # Reasoning effort: "low" cuts TTFT dramatically for GPT-5 on simple tasks
         if reasoning_effort and reasoning_model:
             kwargs["reasoning"] = {"effort": reasoning_effort}
-        if prompt_cache_key:
-            kwargs["prompt_cache_key"] = prompt_cache_key
-        if prompt_cache_retention:
-            kwargs["prompt_cache_retention"] = prompt_cache_retention
+        # Note: OpenAI prompt caching is automatic (no API params needed).
+        # Requests with matching prefixes are cached server-side automatically.
         response = client.responses.create(**kwargs)
         return _extract_output_text(response)
 

@@ -75,8 +75,6 @@ async def _call_openai(prompt: str, model: str = "gpt-5.2") -> dict[str, Any]:
         max_output_tokens=1000,
         temperature=None if _is_reasoning else 0.3,
         prefer_responses_api=True,
-        prompt_cache_key="aspire-council",
-        prompt_cache_retention="24h",
     )
 
     parsed = parse_json_text(content)

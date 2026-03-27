@@ -382,8 +382,6 @@ class AspireAgentBase:
                 max_output_tokens=effective_max_tokens,
                 temperature=None if _is_reasoning else route_temperature,
                 prefer_responses_api=True,
-                prompt_cache_key=f"aspire-agent-{self._agent_id}",
-                prompt_cache_retention="24h",
             )
             content, quality_report = enforce_response_quality(
                 text=content,
