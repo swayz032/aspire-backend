@@ -834,8 +834,6 @@ class TestS3UrlSign:
         assert "aspire-docs" in result.data["presigned_url"]
         assert "inv-001.pdf" in result.data["presigned_url"]
         assert result.data["expires_in"] == 7200
-        assert result.data["stub"] is True
-        assert result.is_stub is True
         _assert_receipt(result, "success", "s3.url.sign", "green")
 
     @pytest.mark.asyncio

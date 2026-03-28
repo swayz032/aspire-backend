@@ -3,6 +3,9 @@
 import os
 import uuid
 
+# MUST be set before any app/middleware imports — rate_limiter reads at import time
+os.environ.setdefault("ASPIRE_RATE_LIMIT", "100000")
+
 import pytest
 
 # Set signing key for token_mint tests — fail-closed requires this (Law #3)
@@ -24,19 +27,32 @@ def _clean_approval_state():
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """Reset rate limiter state between tests to prevent 429 accumulation across modules.
+    """Reset rate limiter state AND limits between tests.
 
     Without this, test modules sharing a TestClient accumulate requests against
-    the sliding window (default 500/60s, CI uses ASPIRE_RATE_LIMIT=10000),
-    causing later tests to get 429 instead of their expected responses.
+    the sliding window, causing later tests to get 429 instead of expected responses.
+
+    Critical: _ENDPOINT_LIMITS hardcodes /v1/intents to 100 — we override it to
+    match the test rate limit so endpoint-specific caps don't mask real failures.
     """
     import aspire_orchestrator.middleware.rate_limiter as rl
 
+    test_limit = int(os.environ.get("ASPIRE_RATE_LIMIT", "100000"))
+
+    # Reset window state
     rl._window = rl._SlidingWindow()
     rl._last_cleanup = 0.0
+
+    # Override per-endpoint limits to match test limit (prevents 429 masking)
+    saved_endpoint_limits = dict(rl._ENDPOINT_LIMITS)
+    rl._ENDPOINT_LIMITS = {k: test_limit for k in saved_endpoint_limits}
+
     yield
+
+    # Restore originals
     rl._window = rl._SlidingWindow()
     rl._last_cleanup = 0.0
+    rl._ENDPOINT_LIMITS = saved_endpoint_limits
 
 
 @pytest.fixture

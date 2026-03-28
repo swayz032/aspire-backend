@@ -99,16 +99,12 @@ class TestPandaDocCredentialExpiryDatetimeType:
                 # This is the CORRECT behavior: strict mode + expired cred = RuntimeError
                 pass  # Fixed — this path means the bug is resolved
 
-    def test_check_credential_expiry_with_naive_date_swallows_runtimeerror(self):
-        """Documents BUG in _check_credential_expiry: broad except swallows RuntimeError.
+    def test_check_credential_expiry_with_naive_date_raises_runtimeerror(self):
+        """FIXED: _check_credential_expiry now correctly propagates RuntimeError.
 
-        Even with a naive ISO date (no timezone), the RuntimeError raised on line 409
-        is caught by 'except Exception as e' on line 417 and only logged.
-        The strict-mode enforcement is silently bypassed in ALL cases.
-
-        This test confirms the current broken behavior:
-          - Naive expired date -> datetime arithmetic works -> RuntimeError raised -> caught silently
-          - Fix: change 'except Exception' to 'except ValueError' so RuntimeError propagates.
+        Previously (BUG-P6-01), a broad 'except Exception' swallowed the RuntimeError.
+        After fix (except ValueError), RuntimeError propagates as expected when
+        credentials are expired in strict mode.
         """
         from aspire_orchestrator.providers.pandadoc_client import PandaDocClient
 
@@ -125,10 +121,9 @@ class TestPandaDocCredentialExpiryDatetimeType:
 
             client = PandaDocClient.__new__(PandaDocClient)
 
-            # BUG: This should raise RuntimeError but it doesn't — broad except catches it
-            # After fix (change except Exception -> except ValueError), this call WILL raise
-            client._check_credential_expiry()
-            # If we reach here, the RuntimeError was swallowed — bug confirmed
+            # FIXED: RuntimeError now propagates correctly (Law #3: fail-closed)
+            with pytest.raises(RuntimeError, match="expired"):
+                client._check_credential_expiry()
 
     def test_utc_aware_comparison_is_correct_approach(self):
         """Positive test: demonstrates the fixed approach using datetime.now(tz.utc).

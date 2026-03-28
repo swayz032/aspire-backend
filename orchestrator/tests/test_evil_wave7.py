@@ -119,15 +119,23 @@ class TestE12RateLimitEvasion:
         """429 responses must include Retry-After and rate limit headers."""
         import aspire_orchestrator.middleware.rate_limiter as rl
 
+        # Temporarily set a low endpoint limit to trigger 429 without 100k iterations
+        saved = dict(rl._ENDPOINT_LIMITS)
+        rl._ENDPOINT_LIMITS["/v1/intents"] = 5
+
         # Pre-exhaust the limit for the testclient IP
-        for _ in range(100):
-            rl._window.check_and_record("ip:testclient", 100, 60)
+        for _ in range(5):
+            rl._window.check_and_record("ip:testclient", 5, 60)
 
         # Next request should be 429
         resp = client.post(
             "/v1/intents",
             json=_make_request(suite_id="evil-rate-001", task_type="calendar.read"),
         )
+
+        # Restore limits
+        rl._ENDPOINT_LIMITS.update(saved)
+
         assert resp.status_code == 429
         assert "Retry-After" in resp.headers
         assert "X-RateLimit-Limit" in resp.headers
