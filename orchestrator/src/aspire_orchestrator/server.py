@@ -1455,6 +1455,120 @@ async def a2a_dispatch(request: Request) -> JSONResponse:
     )
 
 
+# =============================================================================
+# POST /v1/agents/invoke-sync — Thin sync API (no LangGraph, no task queue)
+# =============================================================================
+
+
+SYNC_INVOKE_AGENTS = {"quinn", "adam", "tec"}
+
+
+@app.post("/v1/agents/invoke-sync")
+async def agents_invoke_sync(request: Request) -> JSONResponse:
+    """Call a skillpack agent directly and return the response inline.
+
+    This is the v1 voice-friendly endpoint — synchronous, no LangGraph,
+    no task queue. Calls the agent's run_agentic_loop directly and returns
+    the conversational response within the request lifecycle.
+
+    Used by ElevenLabs Ava's invoke_quinn/invoke_adam/invoke_tec tools
+    via the Desktop server proxy.
+
+    Law #1: Ava (the orchestrator) decides who to call.
+    Law #2: Agent emits receipts internally.
+    Law #7: Agent executes bounded commands only.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "INVALID_JSON", "message": "Invalid JSON body"},
+        )
+
+    suite_id = body.get("suite_id", "")
+    office_id = body.get("office_id", suite_id)
+    correlation_id = body.get("correlation_id", "")
+    agent = body.get("agent", "")
+    task = body.get("task", "")
+    details = body.get("details", "")
+
+    if not agent or agent not in SYNC_INVOKE_AGENTS:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "INVALID_AGENT",
+                "message": f"Agent must be one of: {', '.join(sorted(SYNC_INVOKE_AGENTS))}",
+            },
+        )
+
+    if not task:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "MISSING_TASK", "message": "Task is required"},
+        )
+
+    try:
+        from aspire_orchestrator.nodes.agent_dispatch import _init_registry
+        from aspire_orchestrator.services.agent_sdk_base import AgentContext
+
+        registry = _init_registry()
+        skill_pack = registry.get(agent)
+
+        if not skill_pack:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "AGENT_NOT_LOADED",
+                    "message": f"Agent '{agent}' could not be loaded",
+                },
+            )
+
+        ctx = AgentContext(
+            suite_id=suite_id or "default",
+            office_id=office_id or suite_id or "default",
+            correlation_id=correlation_id or f"sync-{agent}-{__import__('uuid').uuid4().hex[:8]}",
+            risk_tier="yellow" if agent == "quinn" else "green",
+        )
+
+        # Combine task + details into a single prompt
+        full_task = task
+        if details:
+            full_task = f"{task}. Additional details: {details}"
+
+        # Call run_agentic_loop — multi-step reasoning, bounded
+        result = await skill_pack.run_agentic_loop(
+            task=full_task,
+            ctx=ctx,
+            max_steps=5,
+            timeout_s=14,  # 14s — leaves 1s buffer within 15s Node proxy timeout
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": result.success,
+                "agent": agent,
+                "result": result.data.get("response", result.data.get("summary", "")),
+                "data": result.data,
+                "receipt_id": result.receipt.get("id", result.receipt.get("receipt_id")) if result.receipt else None,
+                "error": result.error,
+            },
+        )
+
+    except Exception as e:
+        logger.error("invoke-sync error for %s: %s", agent, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "agent": agent,
+                "result": f"I was not able to reach {agent} right now. Please try again.",
+                "error": str(e),
+            },
+        )
+
+
 @app.post("/v1/a2a/claim")
 async def a2a_claim(request: Request) -> JSONResponse:
     """Claim available tasks for an agent.
