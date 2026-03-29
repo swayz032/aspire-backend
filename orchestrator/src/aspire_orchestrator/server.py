@@ -1536,27 +1536,32 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if details:
             full_task = f"{task}. Additional details: {details}"
 
-        # For Quinn: use parse_invoice_intent (single LLM call, fast)
-        # For others: use run_agentic_loop with generous timeout
-        if agent == "quinn" and hasattr(skill_pack, "parse_invoice_intent"):
-            result = await skill_pack.parse_invoice_intent(
-                user_request=full_task,
-                ctx=ctx,
-            )
-        else:
-            result = await skill_pack.run_agentic_loop(
-                task=full_task,
-                ctx=ctx,
-                max_steps=3,
-                timeout_s=25,
-            )
+        # Call run_agentic_loop — uses the agent's full persona prompt,
+        # RAG knowledge, and multi-step reasoning. The agent decides
+        # what steps to take (e.g., Quinn checks Stripe for customer first).
+        result = await skill_pack.run_agentic_loop(
+            task=full_task,
+            ctx=ctx,
+            max_steps=5,
+            timeout_s=55,  # 55s — leaves buffer within 60s LLM timeout
+        )
+
+        # Extract the conversational response from the agent result.
+        # Agents may return it in different fields depending on the step.
+        response_text = (
+            result.data.get("response")
+            or result.data.get("content")
+            or result.data.get("summary")
+            or result.data.get("plan", {}).get("summary") if isinstance(result.data.get("plan"), dict) else None
+            or ""
+        )
 
         return JSONResponse(
             status_code=200,
             content={
                 "success": result.success,
                 "agent": agent,
-                "result": result.data.get("response", result.data.get("summary", "")),
+                "result": response_text,
                 "data": result.data,
                 "receipt_id": result.receipt.get("id", result.receipt.get("receipt_id")) if result.receipt else None,
                 "error": result.error,
