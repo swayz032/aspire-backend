@@ -316,7 +316,7 @@ class AspireAgentBase:
         api_key = None
         route_max_tokens = max_tokens or 1024
         route_temperature = temperature if temperature is not None else 0.1
-        timeout = 15
+        timeout = 60
         profile_used = "fallback"
         route_receipt = None
 
