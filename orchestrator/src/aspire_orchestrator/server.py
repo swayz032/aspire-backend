@@ -1524,10 +1524,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 },
             )
 
+        # Validate suite_id — Supabase requires a real UUID, not empty string
+        import uuid as _uuid
+        def _ensure_uuid(val: str) -> str:
+            if not val:
+                return str(_uuid.uuid4())
+            try:
+                _uuid.UUID(val)
+                return val
+            except ValueError:
+                return str(_uuid.uuid4())
+
+        safe_suite_id = _ensure_uuid(suite_id)
+        safe_office_id = _ensure_uuid(office_id) if office_id else safe_suite_id
+
         ctx = AgentContext(
-            suite_id=suite_id or "default",
-            office_id=office_id or suite_id or "default",
-            correlation_id=correlation_id or f"sync-{agent}-{__import__('uuid').uuid4().hex[:8]}",
+            suite_id=safe_suite_id,
+            office_id=safe_office_id,
+            correlation_id=correlation_id or f"sync-{agent}-{_uuid.uuid4().hex[:8]}",
             risk_tier="yellow" if agent == "quinn" else "green",
         )
 
@@ -1547,7 +1561,6 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         )
 
         # Extract the conversational response from the agent result.
-        # Agents may return it in different fields depending on the step.
         response_text = (
             result.data.get("response")
             or result.data.get("content")
@@ -1555,6 +1568,50 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             or result.data.get("plan", {}).get("summary") if isinstance(result.data.get("plan"), dict) else None
             or ""
         )
+
+        # If Quinn drafted an invoice/quote, submit to authority queue for user approval
+        approval_id = None
+        if agent == "quinn" and result.success:
+            draft_data = result.data
+            if any(k in str(draft_data).lower() for k in ["invoice", "quote", "drafted"]):
+                try:
+                    from aspire_orchestrator.services.supabase_client import supabase_upsert
+                    import hashlib
+
+                    _approval_id = f"appr-{agent}-{_uuid.uuid4().hex[:12]}"
+                    payload = {
+                        "agent": agent,
+                        "task": full_task,
+                        "result": draft_data,
+                    }
+                    payload_json = __import__("json").dumps(payload, default=str)
+
+                    await supabase_upsert(
+                        "approval_requests",
+                        {
+                            "approval_id": _approval_id,
+                            "tenant_id": safe_suite_id,
+                            "run_id": ctx.correlation_id,
+                            "orchestrator": "invoke-sync",
+                            "tool": f"invoke_{agent}",
+                            "operation": "create_invoice",
+                            "resource_type": "invoice",
+                            "risk_tier": "yellow",
+                            "policy_version": "v1",
+                            "approval_hash": hashlib.sha256(payload_json.encode()).hexdigest(),
+                            "payload_redacted": payload,
+                            "constraints": {"max_amount": 50000, "currency": "usd"},
+                            "status": "pending",
+                            "expires_at": (__import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=24)).isoformat(),
+                            "draft_summary": response_text[:500] if response_text else full_task,
+                            "assigned_agent": agent,
+                        },
+                        conflict_columns=["approval_id"],
+                    )
+                    approval_id = _approval_id
+                    logger.info("Submitted to authority queue: %s", _approval_id)
+                except Exception as aq_err:
+                    logger.warning("Authority queue write failed (non-fatal): %s", aq_err)
 
         return JSONResponse(
             status_code=200,
@@ -1564,6 +1621,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 "result": response_text,
                 "data": result.data,
                 "receipt_id": result.receipt.get("id", result.receipt.get("receipt_id")) if result.receipt else None,
+                "approval_id": approval_id,
                 "error": result.error,
             },
         )

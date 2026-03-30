@@ -271,33 +271,37 @@ class AgenticSkillPack(EnhancedSkillPack, AgentMemoryMixin):
         # Memory search cache — local to this loop run to avoid repeated DB hits
         _memory_cache: dict[str, Any] = {}
 
-        # Step 1: Recall relevant memory
+        # Step 1: Recall relevant memory (fail-safe — memory errors never crash the loop)
         memory_context = ""
         if self._memory_enabled:
-            cache_key_facts = f"search:{task}:None:3"
-            if cache_key_facts in _memory_cache:
-                facts = _memory_cache[cache_key_facts]
-            else:
-                facts = await self.search_memory(task, ctx, limit=3)
-                _memory_cache[cache_key_facts] = facts
+            try:
+                cache_key_facts = f"search:{task}:None:3"
+                if cache_key_facts in _memory_cache:
+                    facts = _memory_cache[cache_key_facts]
+                else:
+                    facts = await self.search_memory(task, ctx, limit=3)
+                    _memory_cache[cache_key_facts] = facts
 
-            cache_key_episodes = f"episodes:{ctx.suite_id}:2"
-            if cache_key_episodes in _memory_cache:
-                episodes = _memory_cache[cache_key_episodes]
-            else:
-                episodes = await self.recall_episodes(ctx, limit=2)
-                _memory_cache[cache_key_episodes] = episodes
+                cache_key_episodes = f"episodes:{ctx.suite_id}:2"
+                if cache_key_episodes in _memory_cache:
+                    episodes = _memory_cache[cache_key_episodes]
+                else:
+                    episodes = await self.recall_episodes(ctx, limit=2)
+                    _memory_cache[cache_key_episodes] = episodes
 
-            if facts:
-                memory_context += "\nRelevant facts:\n"
-                memory_context += "\n".join(
-                    f"- {f['fact_key']}: {f['fact_value']}" for f in facts
-                )
-            if episodes:
-                memory_context += "\nRecent episodes:\n"
-                memory_context += "\n".join(
-                    f"- {e['summary']}" for e in episodes
-                )
+                if facts:
+                    memory_context += "\nRelevant facts:\n"
+                    memory_context += "\n".join(
+                        f"- {f['fact_key']}: {f['fact_value']}" for f in facts
+                    )
+                if episodes:
+                    memory_context += "\nRecent episodes:\n"
+                    memory_context += "\n".join(
+                        f"- {e['summary']}" for e in episodes
+                    )
+            except Exception as mem_err:
+                logger.warning("Memory recall failed (non-fatal): %s", mem_err)
+                # Continue without memory — agent can still do its job
 
         _emit_activity("thinking", f"{self._agent_name} is recalling context...")
 
