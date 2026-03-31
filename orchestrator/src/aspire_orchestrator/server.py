@@ -1638,7 +1638,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 try:
                     result = await _asyncio.wait_for(
                         executor_fn(payload=payload, **common_kwargs),
-                        timeout=15.0,
+                        timeout=10.0,
                     )
                     if result.outcome == Outcome.SUCCESS and result.data:
                         return (provider_name, result.data)
@@ -1685,8 +1685,9 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         p_payload["lat"] = str(coordinates["lat"])
                         p_payload["lon"] = str(coordinates["lng"])
                 elif provider_name == "osm_overpass":
-                    # OSM uses location as text
-                    p_payload["location"] = location_fallback
+                    # Skip OSM — 10s+ response time blows the Railway 30s proxy timeout
+                    # OSM is open data last resort; Google Places + HERE + Foursquare cover it
+                    continue
 
                 search_tasks.append(
                     _safe_search(provider_name, executor_fn, p_payload)
@@ -1836,12 +1837,12 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 synthesis = await generate_text_async(
                     model="gpt-5.2",
                     messages=[
-                        {"role": "developer", "content": "You are Adam, a research specialist for small business owners. Be concise, evidence-first, and specific. Name real businesses. Include ratings. Flag uncertainty."},
+                        {"role": "developer", "content": "You are Adam, a research specialist for small business owners. Be concise, evidence-first, and specific. Name real businesses. Include phone numbers and emails. Flag uncertainty."},
                         {"role": "user", "content": synthesis_prompt},
                     ],
                     api_key=api_key,
                     base_url="https://api.openai.com/v1",
-                    timeout_seconds=30.0,
+                    timeout_seconds=20.0,
                     max_output_tokens=4096,
                     prefer_responses_api=True,
                 )
