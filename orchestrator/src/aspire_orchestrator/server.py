@@ -1600,17 +1600,45 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 search_subject = search_subject.replace(filler, "")
             search_subject = _re.sub(r'\s+', ' ', search_subject).strip().rstrip('.')
 
-            # Build 3 query variants — template-based, instant, no LLM needed
+            # Build query variants — different for web vs places
             loc_str = clean_location or ""
-            queries = [
+
+            # Web queries: detailed, include context (Brave/Tavily handle long queries well)
+            web_queries = [
                 f"{search_subject} {loc_str}".strip(),
                 f"{search_subject} near {loc_str}".strip() if loc_str else search_subject,
                 f"{search_subject} wholesale supplier {loc_str}".strip(),
             ]
-            # Remove dupes while preserving order
+
+            # Places queries: SIMPLE business type + location (Google/HERE/Foursquare need clean queries)
+            # Extract just the core business type (first 4-5 meaningful words)
+            _places_subject = search_subject
+            # Remove technical specs, details, and extra context
+            for noise in [" new ", " brand new ", " GMA ", " 48x40 ", " 48 by 40 ",
+                          " style ", " grade ", " that buy ", " who buy ", " who deal ",
+                          " who only ", " that only ", " targeting ", " looking to ",
+                          " month profit", " month revenue"]:
+                _places_subject = _places_subject.replace(noise, " ")
+            _places_subject = _re.sub(r'\s+', ' ', _places_subject).strip()
+            # Take the first meaningful chunk (usually the business type)
+            _places_words = _places_subject.split()[:6]
+            _places_query = " ".join(_places_words).strip()
+
+            places_queries = [
+                f"{_places_query} {loc_str}".strip(),
+            ]
+            if _places_query != search_subject:
+                places_queries.append(f"{search_subject.split()[0]} {loc_str}".strip() if search_subject else loc_str)
+
+            # Remove dupes
             seen_q: set[str] = set()
-            queries = [q for q in queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
-            logger.info("Adam queries: %s", queries)
+            web_queries = [q for q in web_queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
+            places_queries = [q for q in places_queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
+
+            logger.info("Adam web queries: %s", web_queries)
+            logger.info("Adam places queries: %s", places_queries)
+            # Combined for metadata
+            queries = web_queries + places_queries
 
             # ── Step 2: Geocode location (Mapbox primary → HERE fallback) ──
             coordinates = None
@@ -1675,15 +1703,15 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
 
             search_tasks = []
 
-            # Web: Brave + Tavily × all query variants
-            for query in queries:
+            # Web: Brave + Tavily × web query variants (detailed, context-rich)
+            for query in web_queries:
                 for pname, executor_fn in _web_search_chain():
                     search_tasks.append(_safe_search(pname, executor_fn, {"query": query}))
 
-            # Places: EVERY provider fires — no skipping. Use coords when available,
+            # Places: EVERY provider fires with CLEAN business-type queries.
             # text location as fallback. Production grade = all providers contribute.
             for pname, executor_fn in _places_search_chain():
-                p_payload: dict[str, Any] = {"query": queries[0]}
+                p_payload: dict[str, Any] = {"query": places_queries[0] if places_queries else web_queries[0]}
 
                 if pname == "google_places":
                     if coord_str:
