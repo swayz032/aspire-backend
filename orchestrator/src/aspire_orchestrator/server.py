@@ -1550,65 +1550,232 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if details:
             full_task = f"{task}. Additional details: {details}"
 
-        # ── Adam: Direct search bypass (no agentic loop) ──
-        # Adam doesn't need LLM planning to decide to search. Run searches
-        # directly in parallel, then use one LLM call to synthesize results.
+        # ── Adam: Enterprise-grade parallel multi-provider search ──
+        # 1. LLM expands query into trade-specific variants
+        # 2. Mapbox geocodes location → coordinates
+        # 3. All providers searched in parallel (not fallback chain)
+        # 4. Results merged, deduped, cross-validated, confidence-scored
+        # 5. GPT-5.2 synthesizes into conversational response
         if agent == "adam":
             import asyncio as _asyncio
-            from aspire_orchestrator.skillpacks.adam_research import AdamResearchSkillPack, AdamResearchContext
+            import json as _json
+            import os as _os
+            import hashlib as _hashlib
+            from aspire_orchestrator.services.openai_client import generate_text_async
+            from aspire_orchestrator.services.search_router import (
+                _web_search_chain, _places_search_chain, _geocode_chain,
+            )
+            from aspire_orchestrator.models import Outcome
 
-            adam_pack = AdamResearchSkillPack()
-            adam_ctx = AdamResearchContext(
+            api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
+            common_kwargs = dict(
+                correlation_id=ctx.correlation_id,
                 suite_id=safe_suite_id,
                 office_id=safe_office_id,
-                correlation_id=ctx.correlation_id,
+                risk_tier="green",
             )
 
-            # Run web search + places search in parallel
-            web_coro = adam_pack.search_web(query=full_task, context=adam_ctx)
-            places_coro = adam_pack.search_places(query=full_task, location=full_task, context=adam_ctx)
-            web_result, places_result = await _asyncio.gather(web_coro, places_coro)
+            # ── Step 1: Query expansion (one fast LLM call) ──
+            queries = [full_task]
+            try:
+                expand_resp = await generate_text_async(
+                    model="gpt-5-mini",
+                    messages=[
+                        {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
+                        {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
+                    ],
+                    api_key=api_key,
+                    base_url="https://api.openai.com/v1",
+                    timeout_seconds=10.0,
+                    max_output_tokens=4096,
+                    prefer_responses_api=True,
+                )
+                parsed = _json.loads(expand_resp.strip().removeprefix("```json").removesuffix("```").strip())
+                if isinstance(parsed, list) and len(parsed) >= 2:
+                    queries = [str(q) for q in parsed[:4]]
+                    logger.info("Adam query expansion: %s", queries)
+            except Exception as qe:
+                logger.warning("Adam query expansion failed (using original): %s", qe)
 
-            # Collect raw results
-            web_items = web_result.data.get("results", [])[:5] if web_result.success else []
-            places_items = places_result.data.get("results", [])[:5] if places_result.success else []
+            # ── Step 2: Geocode location ──
+            coordinates = None
+            geocode_chain = _geocode_chain()
+            for provider_name, geocode_fn in geocode_chain:
+                try:
+                    geo_result = await geocode_fn(
+                        payload={"query": full_task},
+                        **common_kwargs,
+                    )
+                    if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
+                        results = geo_result.data.get("results", [])
+                        if results:
+                            first = results[0]
+                            lat = first.get("lat") or first.get("latitude")
+                            lng = first.get("lng") or first.get("longitude")
+                            if lat and lng:
+                                coordinates = {"lat": lat, "lng": lng}
+                                logger.info("Adam geocoded: %s → %s", full_task, coordinates)
+                    break
+                except Exception as geo_err:
+                    logger.warning("Adam geocode %s failed: %s", provider_name, geo_err)
+
+            # ── Step 3: Multi-provider parallel search ──
+            # Fire ALL providers simultaneously — not fallback chain
+            async def _safe_search(provider_name: str, executor_fn, payload: dict) -> tuple[str, dict | None]:
+                """Run one provider search, return (provider, result_data) or (provider, None) on failure."""
+                try:
+                    result = await executor_fn(payload=payload, **common_kwargs)
+                    if result.outcome == Outcome.SUCCESS and result.data:
+                        return (provider_name, result.data)
+                except Exception as e:
+                    logger.debug("Adam provider %s failed: %s", provider_name, e)
+                return (provider_name, None)
+
+            # Build search tasks — all queries × all providers
+            search_tasks = []
+
+            # Web searches (Brave + Tavily) × all query variants
+            for query in queries:
+                for provider_name, executor_fn in _web_search_chain():
+                    search_tasks.append(
+                        _safe_search(provider_name, executor_fn, {"query": query})
+                    )
+
+            # Places searches (Google + TomTom + HERE + Foursquare + OSM) × primary query
+            places_payload = {"query": queries[0]}
+            if coordinates:
+                places_payload["location"] = f"{coordinates['lat']},{coordinates['lng']}"
+            elif "atlanta" in full_task.lower():
+                places_payload["location"] = "Atlanta, GA"
+            else:
+                # Extract location hint from task
+                places_payload["location"] = full_task
+
+            for provider_name, executor_fn in _places_search_chain():
+                search_tasks.append(
+                    _safe_search(provider_name, executor_fn, places_payload)
+                )
+
+            # Fire all searches in parallel
+            all_results = await _asyncio.gather(*search_tasks)
+
+            # ── Step 4: Merge, dedup, cross-validate ──
+            web_items_all = []
+            places_items_all = []
+            providers_used = set()
+            provider_counts = {}
+
+            for provider_name, data in all_results:
+                if data is None:
+                    continue
+                providers_used.add(provider_name)
+                results_list = data.get("results", [])
+                provider_counts[provider_name] = len(results_list)
+
+                web_providers = {"brave", "tavily"}
+                if provider_name in web_providers:
+                    for r in results_list[:5]:
+                        web_items_all.append({
+                            "name": r.get("title", r.get("name", "")),
+                            "url": r.get("url", ""),
+                            "snippet": r.get("snippet", r.get("description", "")),
+                            "source": provider_name,
+                        })
+                else:
+                    for r in results_list[:5]:
+                        places_items_all.append({
+                            "name": r.get("name", ""),
+                            "address": r.get("address", r.get("formatted_address", "")),
+                            "rating": r.get("rating"),
+                            "phone": r.get("phone", r.get("formatted_phone_number", "")),
+                            "source": provider_name,
+                        })
+
+            # Dedup by name (case-insensitive) — keep first occurrence, track cross-validation
+            seen_names: dict[str, dict] = {}
+            for item in places_items_all:
+                key = item["name"].lower().strip()
+                if not key:
+                    continue
+                if key in seen_names:
+                    seen_names[key]["sources"].add(item["source"])
+                    if item.get("rating") and not seen_names[key].get("rating"):
+                        seen_names[key]["rating"] = item["rating"]
+                    if item.get("address") and not seen_names[key].get("address"):
+                        seen_names[key]["address"] = item["address"]
+                    if item.get("phone") and not seen_names[key].get("phone"):
+                        seen_names[key]["phone"] = item["phone"]
+                else:
+                    seen_names[key] = {**item, "sources": {item["source"]}}
+
+            # Cross-validation: also check if places appear in web results
+            web_text_lower = " ".join(w.get("name", "").lower() + " " + w.get("snippet", "").lower() for w in web_items_all)
+            for key, item in seen_names.items():
+                if key in web_text_lower:
+                    item["sources"].add("web_mention")
+
+            # Confidence scoring
+            for item in seen_names.values():
+                source_count = len(item["sources"])
+                has_rating = bool(item.get("rating"))
+                has_address = bool(item.get("address"))
+                if source_count >= 3 or (source_count >= 2 and has_rating):
+                    item["confidence"] = "high"
+                elif source_count >= 2 or has_rating:
+                    item["confidence"] = "medium"
+                else:
+                    item["confidence"] = "low"
+                item["sources"] = list(item["sources"])  # Convert set for JSON
+
+            # Dedup web results by URL
+            seen_urls: set[str] = set()
+            deduped_web = []
+            for w in web_items_all:
+                url = w.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped_web.append(w)
+
+            # Sort places by confidence then rating
+            confidence_order = {"high": 0, "medium": 1, "low": 2}
+            sorted_places = sorted(
+                seen_names.values(),
+                key=lambda x: (confidence_order.get(x.get("confidence", "low"), 3), -(x.get("rating") or 0)),
+            )
 
             raw_findings = {
-                "web_results": [
-                    {"name": r.get("title", r.get("name", "")), "url": r.get("url", ""), "snippet": r.get("snippet", r.get("description", ""))}
-                    for r in web_items
-                ],
-                "places_results": [
-                    {"name": r.get("name", ""), "address": r.get("address", ""), "rating": r.get("rating")}
-                    for r in places_items
-                ],
-                "web_provider": web_result.data.get("provider_used", "none"),
-                "places_provider": places_result.data.get("provider_used", "none"),
+                "web_results": deduped_web[:10],
+                "places_results": [{k: v for k, v in p.items()} for p in sorted_places[:10]],
+                "providers_used": list(providers_used),
+                "provider_counts": provider_counts,
+                "queries_used": queries,
+                "geocoded": coordinates,
+                "total_raw_results": len(web_items_all) + len(places_items_all),
+                "total_deduped": len(deduped_web) + len(sorted_places),
             }
 
-            # One LLM call to synthesize findings into a conversational response
+            # ── Step 5: GPT-5.2 synthesis ──
             try:
-                from aspire_orchestrator.services.openai_client import generate_text_async
-                import json as _json
-                import os as _os
-
                 synthesis_prompt = (
                     f"You are Adam, the Research Specialist at Aspire.\n"
                     f"Task: {full_task}\n\n"
-                    f"Search results:\n{_json.dumps(raw_findings, indent=2)}\n\n"
-                    f"Summarize findings for a small business owner. Be specific:\n"
-                    f"- Lead with the top 3-5 results by name and location\n"
-                    f"- Include ratings and why each is relevant\n"
-                    f"- Flag any gaps (no reviews, unverified, etc.)\n"
-                    f"- End with a suggested next step\n"
-                    f"Keep it under 100 words. No markdown. No bullet points. Natural speech."
+                    f"I searched {len(providers_used)} providers ({', '.join(providers_used)}) "
+                    f"with {len(queries)} query variants. Found {raw_findings['total_deduped']} unique results.\n\n"
+                    f"Top places results (with confidence):\n{_json.dumps(sorted_places[:8], indent=2, default=str)}\n\n"
+                    f"Top web results:\n{_json.dumps(deduped_web[:5], indent=2, default=str)}\n\n"
+                    f"Synthesize for a small business owner:\n"
+                    f"- Lead with top 3-5 real businesses by name, location, and rating\n"
+                    f"- Note confidence level: high = found on multiple sources, low = unverified\n"
+                    f"- Cross-reference: if a places result also appears in web results, say so\n"
+                    f"- Flag gaps: missing addresses, no reviews, unverified businesses\n"
+                    f"- End with a concrete next step\n"
+                    f"Under 150 words. No markdown. Natural speech for voice relay."
                 )
 
-                api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
                 synthesis = await generate_text_async(
                     model="gpt-5.2",
                     messages=[
-                        {"role": "developer", "content": "You are Adam, a research specialist for small business owners. Be concise and evidence-first."},
+                        {"role": "developer", "content": "You are Adam, a research specialist for small business owners. Be concise, evidence-first, and specific. Name real businesses. Include ratings. Flag uncertainty."},
                         {"role": "user", "content": synthesis_prompt},
                     ],
                     api_key=api_key,
@@ -1620,17 +1787,17 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 response_text = synthesis
             except Exception as synth_err:
                 logger.warning("Adam synthesis LLM failed: %s", synth_err)
-                # Fallback: return raw results without synthesis
-                if places_items:
-                    names = [r.get("name", "Unknown") for r in places_items[:3]]
-                    response_text = f"Found {len(places_items)} results. Top matches: {', '.join(names)}."
-                elif web_items:
-                    names = [r.get("title", r.get("name", "Unknown")) for r in web_items[:3]]
-                    response_text = f"Found {len(web_items)} web results. Top matches: {', '.join(names)}."
+                if sorted_places:
+                    top = sorted_places[:3]
+                    parts = [f"{p['name']} ({p.get('confidence','?')} confidence)" for p in top]
+                    response_text = f"Found {len(sorted_places)} businesses across {len(providers_used)} providers. Top matches: {', '.join(parts)}."
+                elif deduped_web:
+                    names = [w.get("name", "Unknown") for w in deduped_web[:3]]
+                    response_text = f"Found {len(deduped_web)} web results. Top matches: {', '.join(names)}."
                 else:
                     response_text = f"No results found for: {task}. Try broadening the search area or adjusting the query."
 
-            any_success = web_result.success or places_result.success
+            any_success = len(providers_used) > 0
 
             return JSONResponse(
                 status_code=200,
@@ -1639,7 +1806,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     "agent": "adam",
                     "result": response_text,
                     "data": raw_findings,
-                    "receipt_id": web_result.receipt.get("receipt_id") if web_result.success else places_result.receipt.get("receipt_id"),
+                    "receipt_id": ctx.correlation_id,
                     "error": None if any_success else "All search providers failed",
                 },
             )
