@@ -1964,7 +1964,216 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 },
             )
 
-        # ── Quinn / Tec: Use agentic loop ──
+        # ── Quinn: Direct Stripe pipeline (bypass agentic loop) ──
+        # Parse intent → verify math → search/create customer → draft invoice → authority queue
+        if agent == "quinn":
+            import json as _json
+            import os as _os
+            from aspire_orchestrator.services.openai_client import generate_text_async
+            from aspire_orchestrator.skillpacks.quinn_invoicing import (
+                QuinnInvoicingSkillPack, QuinnContext,
+            )
+
+            api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
+
+            # Step 1: GPT-5.2 parses invoice intent from natural language
+            try:
+                parse_prompt = (
+                    "You are Quinn, an invoicing specialist. Extract structured invoice data from the user's request.\n\n"
+                    f"Request: {full_task}\n\n"
+                    "Return ONLY a JSON object with these fields:\n"
+                    '{\n'
+                    '  "customer_name": "string — business or person name",\n'
+                    '  "customer_email": "string or null — email if mentioned",\n'
+                    '  "line_items": [{"description": "string", "quantity": number, "unit_price_cents": number}],\n'
+                    '  "total_cents": number — total in cents (e.g., 475000 for $4,750.00),\n'
+                    '  "due_days": number — days until due (default 30),\n'
+                    '  "currency": "usd",\n'
+                    '  "notes": "string or empty",\n'
+                    '  "is_quote": false\n'
+                    '}\n\n'
+                    "Convert dollars to cents (9.50 = 950 cents). If any required field is unclear, set it to null."
+                )
+
+                parse_resp = await generate_text_async(
+                    model="gpt-5.2",
+                    messages=[
+                        {"role": "developer", "content": "Extract invoice data. Return ONLY valid JSON. No explanation."},
+                        {"role": "user", "content": parse_prompt},
+                    ],
+                    api_key=api_key,
+                    base_url="https://api.openai.com/v1",
+                    timeout_seconds=15.0,
+                    max_output_tokens=4096,
+                    prefer_responses_api=True,
+                )
+
+                # Clean and parse JSON
+                cleaned = parse_resp.strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+                    cleaned = cleaned.rsplit("```", 1)[0]
+                invoice_data = _json.loads(cleaned.strip())
+
+            except Exception as parse_err:
+                logger.warning("Quinn parse failed: %s", parse_err)
+                return JSONResponse(status_code=200, content={
+                    "success": False, "agent": "quinn",
+                    "result": "I couldn't understand the invoice details. Can you tell me who it's for, what you're billing, and how much?",
+                    "error": str(parse_err),
+                })
+
+            customer_name = invoice_data.get("customer_name", "")
+            customer_email = invoice_data.get("customer_email")
+            line_items = invoice_data.get("line_items", [])
+            total_cents = invoice_data.get("total_cents", 0)
+            due_days = invoice_data.get("due_days", 30)
+            currency = invoice_data.get("currency", "usd")
+            notes = invoice_data.get("notes", "")
+            is_quote = invoice_data.get("is_quote", False)
+
+            if not customer_name:
+                return JSONResponse(status_code=200, content={
+                    "success": False, "agent": "quinn",
+                    "result": "I need a customer name for this invoice. Who are you billing?",
+                })
+
+            if not line_items:
+                return JSONResponse(status_code=200, content={
+                    "success": False, "agent": "quinn",
+                    "result": f"I've got {customer_name} as the customer, but I need the line items. What are you billing them for and how much?",
+                })
+
+            # Step 2: Verify math
+            computed_total = sum(
+                item.get("quantity", 0) * item.get("unit_price_cents", 0)
+                for item in line_items
+            )
+            if total_cents and abs(computed_total - total_cents) > 100:  # Allow $1 rounding
+                # Math mismatch — ask user to clarify
+                computed_dollars = computed_total / 100
+                stated_dollars = total_cents / 100
+                return JSONResponse(status_code=200, content={
+                    "success": False, "agent": "quinn",
+                    "result": f"The math doesn't add up. Items total {computed_dollars:.0f} dollars but you said {stated_dollars:.0f}. Which one's right?",
+                })
+
+            if not total_cents:
+                total_cents = computed_total
+
+            # Step 3: Format amounts for voice
+            total_dollars = total_cents / 100
+            items_summary = []
+            for item in line_items:
+                qty = item.get("quantity", 0)
+                price = item.get("unit_price_cents", 0) / 100
+                desc = item.get("description", "item")
+                items_summary.append(f"{qty} {desc} at {price:.2f} each")
+
+            # Step 4: Build invoice plan (YELLOW tier — approval required, not sent yet)
+            quinn_ctx = QuinnContext(
+                suite_id=safe_suite_id,
+                office_id=safe_office_id,
+                correlation_id=ctx.correlation_id,
+            )
+            quinn_pack = QuinnInvoicingSkillPack()
+
+            # Use create_invoice which returns approval_required=True (no Stripe call yet)
+            result = await quinn_pack.create_invoice(
+                customer=customer_name,  # Name for now — Stripe lookup happens at execution
+                line_items=line_items,
+                context=quinn_ctx,
+                amount=total_cents,
+                currency=currency,
+                description=notes or ", ".join(items_summary),
+                due_days=due_days,
+            )
+
+            # Step 5: Submit to authority queue
+            approval_id = None
+            try:
+                from aspire_orchestrator.services.supabase_client import supabase_upsert
+                import hashlib as _hashlib
+
+                _approval_id = f"appr-quinn-{_uuid.uuid4().hex[:12]}"
+                payload = {
+                    "customer_name": customer_name,
+                    "customer_email": customer_email,
+                    "line_items": line_items,
+                    "total_cents": total_cents,
+                    "total_dollars": total_dollars,
+                    "due_days": due_days,
+                    "currency": currency,
+                    "notes": notes,
+                    "is_quote": is_quote,
+                }
+                payload_json = _json.dumps(payload, default=str)
+
+                await supabase_upsert(
+                    "approval_requests",
+                    {
+                        "approval_id": _approval_id,
+                        "tenant_id": safe_suite_id,
+                        "run_id": ctx.correlation_id,
+                        "orchestrator": "invoke-sync",
+                        "tool": "invoke_quinn",
+                        "operation": "quote.create" if is_quote else "invoice.create",
+                        "resource_type": "quote" if is_quote else "invoice",
+                        "risk_tier": "yellow",
+                        "policy_version": "v1",
+                        "approval_hash": _hashlib.sha256(payload_json.encode()).hexdigest(),
+                        "payload_redacted": payload,
+                        "constraints": {"max_amount": total_cents + 10000, "currency": currency},
+                        "status": "pending",
+                        "expires_at": (
+                            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+                            + __import__("datetime").timedelta(hours=24)
+                        ).isoformat(),
+                        "draft_summary": f"{'Quote' if is_quote else 'Invoice'} for {customer_name} — {', '.join(items_summary)}, {total_dollars:.0f} dollars total, due in {due_days} days",
+                        "assigned_agent": "quinn",
+                        "execution_payload": payload,
+                    },
+                )
+                approval_id = _approval_id
+                logger.info("Quinn submitted to authority queue: %s", _approval_id)
+            except Exception as aq_err:
+                logger.warning("Quinn authority queue write failed: %s", aq_err)
+
+            # Step 6: Build voice-friendly response for Ava
+            doc_type = "quote" if is_quote else "invoice"
+            response_text = (
+                f"Alright, I've drafted that {doc_type} for {customer_name}. "
+                f"{', '.join(items_summary)} — {total_dollars:.0f} dollars total, due in {due_days} days. "
+                f"It's in your approval queue. Take a look and approve it when you're ready."
+            )
+
+            if not customer_email:
+                response_text += f" One thing — I'll need {customer_name}'s email to send it. Can you get me that?"
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "agent": "quinn",
+                    "result": response_text,
+                    "data": {
+                        "customer_name": customer_name,
+                        "customer_email": customer_email,
+                        "line_items": line_items,
+                        "total_cents": total_cents,
+                        "total_dollars": total_dollars,
+                        "due_days": due_days,
+                        "currency": currency,
+                        "is_quote": is_quote,
+                        "approval_id": approval_id,
+                        "approval_required": True,
+                    },
+                    "receipt_id": result.receipt.get("receipt_id") if result.receipt else None,
+                    "approval_id": approval_id,
+                },
+            )
+
+        # ── Tec: Use agentic loop ──
         result = await skill_pack.run_agentic_loop(
             task=full_task,
             ctx=ctx,
