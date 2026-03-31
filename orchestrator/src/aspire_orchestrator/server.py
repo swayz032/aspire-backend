@@ -1808,33 +1808,53 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                                 item["email"] = em.group(0)
                         break
 
-            # Confidence scoring
+            # ── Confidence scoring: provider quality + contact completeness ──
+            _PROVIDER_WEIGHT = {
+                "google_places": 3,  # Verified businesses with ratings
+                "here": 3,          # Rich contact data (phone + email + website)
+                "foursquare": 1,    # Venue-heavy, often noisy
+                "tomtom": 2,        # Good commercial/industrial data
+                "web_mention": 2,   # Cross-validated in web search
+            }
+
             for item in seen_names.values():
-                src_count = len(item["sources"])
-                has_rating = bool(item.get("rating"))
-                has_phone = bool(item.get("phone"))
-                has_address = bool(item.get("address"))
-                if src_count >= 3 or (src_count >= 2 and has_rating and has_phone):
+                sources = item["sources"]
+                # Provider quality score (weighted sum, not just count)
+                provider_score = sum(_PROVIDER_WEIGHT.get(s, 1) for s in sources)
+
+                # Contact completeness score (0-5)
+                contact_score = sum([
+                    2 if item.get("phone") else 0,
+                    1 if item.get("email") else 0,
+                    1 if item.get("website") else 0,
+                    1 if item.get("address") else 0,
+                ])
+
+                # Rating bonus
+                rating_score = 1 if item.get("rating") else 0
+
+                # Total quality score
+                total_score = provider_score + contact_score + rating_score
+                item["_quality_score"] = total_score
+
+                # Confidence label based on total score
+                if total_score >= 8:
                     item["confidence"] = "high"
-                elif src_count >= 2 or (has_rating and has_address):
+                elif total_score >= 5:
                     item["confidence"] = "medium"
                 else:
                     item["confidence"] = "low"
-                item["sources"] = list(item["sources"])
+
+                item["sources"] = list(sources)
 
             # Dedup web by URL
             seen_urls: set[str] = set()
             deduped_web = [w for w in web_items_all if w.get("url") and w["url"] not in seen_urls and not seen_urls.add(w["url"])]
 
-            # Sort: confidence → rating → has phone
-            conf_order = {"high": 0, "medium": 1, "low": 2}
+            # Sort by quality score (highest first) — captures provider quality + contact completeness + rating
             sorted_places = sorted(
                 seen_names.values(),
-                key=lambda x: (
-                    conf_order.get(x.get("confidence", "low"), 3),
-                    -(x.get("rating") or 0),
-                    0 if x.get("phone") else 1,
-                ),
+                key=lambda x: -x.get("_quality_score", 0),
             )
 
             raw_findings = {
