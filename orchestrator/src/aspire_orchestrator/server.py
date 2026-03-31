@@ -1580,7 +1580,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             try:
                 expand_resp = await _asyncio.wait_for(
                     generate_text_async(
-                        model="gpt-5-mini",
+                        model="gpt-5.2",
                         messages=[
                             {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
                             {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
@@ -1649,19 +1649,38 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         _safe_search(provider_name, executor_fn, {"query": query})
                     )
 
-            # Places searches (Google + TomTom + HERE + Foursquare + OSM) × primary query
-            places_payload = {"query": queries[0]}
-            if coordinates:
-                places_payload["location"] = f"{coordinates['lat']},{coordinates['lng']}"
-            elif "atlanta" in full_task.lower():
-                places_payload["location"] = "Atlanta, GA"
-            else:
-                # Extract location hint from task
-                places_payload["location"] = full_task
+            # Places searches — each provider needs coordinates in its own format
+            coord_str = f"{coordinates['lat']},{coordinates['lng']}" if coordinates else ""
+            location_fallback = full_task  # Raw text fallback for providers that accept it
 
             for provider_name, executor_fn in _places_search_chain():
+                p_payload: dict[str, Any] = {"query": queries[0]}
+
+                if provider_name == "google_places":
+                    # Google accepts location as "lat,lng" string
+                    if coord_str:
+                        p_payload["location"] = coord_str
+                        p_payload["radius"] = "32000"  # ~20 miles
+                elif provider_name == "here":
+                    # HERE requires "at" as "lat,lng"
+                    if coord_str:
+                        p_payload["at"] = coord_str
+                elif provider_name == "foursquare":
+                    # Foursquare requires "ll" as "lat,lng"
+                    if coord_str:
+                        p_payload["ll"] = coord_str
+                        p_payload["radius"] = "32000"
+                elif provider_name == "tomtom":
+                    # TomTom accepts lat/lon params
+                    if coordinates:
+                        p_payload["lat"] = str(coordinates["lat"])
+                        p_payload["lon"] = str(coordinates["lng"])
+                elif provider_name == "osm_overpass":
+                    # OSM uses location as text
+                    p_payload["location"] = location_fallback
+
                 search_tasks.append(
-                    _safe_search(provider_name, executor_fn, places_payload)
+                    _safe_search(provider_name, executor_fn, p_payload)
                 )
 
             # Fire all searches in parallel
@@ -1695,7 +1714,10 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             "name": r.get("name", ""),
                             "address": r.get("address", r.get("formatted_address", "")),
                             "rating": r.get("rating"),
-                            "phone": r.get("phone", r.get("formatted_phone_number", "")),
+                            "phone": r.get("phone", r.get("formatted_phone_number", r.get("tel", ""))),
+                            "website": r.get("website", r.get("url", "")),
+                            "categories": r.get("categories", []),
+                            "place_id": r.get("place_id", r.get("fsq_id", r.get("id", ""))),
                             "source": provider_name,
                         })
 
@@ -1707,20 +1729,35 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     continue
                 if key in seen_names:
                     seen_names[key]["sources"].add(item["source"])
-                    if item.get("rating") and not seen_names[key].get("rating"):
-                        seen_names[key]["rating"] = item["rating"]
-                    if item.get("address") and not seen_names[key].get("address"):
-                        seen_names[key]["address"] = item["address"]
-                    if item.get("phone") and not seen_names[key].get("phone"):
-                        seen_names[key]["phone"] = item["phone"]
+                    # Merge fields — fill gaps from additional sources
+                    for field in ("rating", "address", "phone", "website", "place_id"):
+                        if item.get(field) and not seen_names[key].get(field):
+                            seen_names[key][field] = item[field]
+                    # Merge categories
+                    existing_cats = set(seen_names[key].get("categories", []))
+                    for cat in item.get("categories", []):
+                        if cat and cat not in existing_cats:
+                            seen_names[key].setdefault("categories", []).append(cat)
+                            existing_cats.add(cat)
                 else:
                     seen_names[key] = {**item, "sources": {item["source"]}}
 
-            # Cross-validation: also check if places appear in web results
-            web_text_lower = " ".join(w.get("name", "").lower() + " " + w.get("snippet", "").lower() for w in web_items_all)
+            # Cross-validation + enrichment from web results
+            import re as _re
             for key, item in seen_names.items():
-                if key in web_text_lower:
-                    item["sources"].add("web_mention")
+                for web in web_items_all:
+                    web_text = (web.get("name", "") + " " + web.get("snippet", "")).lower()
+                    if key in web_text:
+                        item["sources"].add("web_mention")
+                        # Extract website URL if places result doesn't have one
+                        if not item.get("website") and web.get("url"):
+                            item["website"] = web["url"]
+                        # Try to extract email from snippet
+                        if not item.get("email") and web.get("snippet"):
+                            email_match = _re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', web["snippet"])
+                            if email_match:
+                                item["email"] = email_match.group(0)
+                        break  # One web match is enough per place
 
             # Confidence scoring
             for item in seen_names.values():
@@ -1773,10 +1810,11 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     f"Top web results:\n{_json.dumps(deduped_web[:5], indent=2, default=str)}\n\n"
                     f"Synthesize for a small business owner:\n"
                     f"- Lead with top 3-5 real businesses by name, location, and rating\n"
+                    f"- Include phone numbers, websites, and emails when available\n"
                     f"- Note confidence level: high = found on multiple sources, low = unverified\n"
                     f"- Cross-reference: if a places result also appears in web results, say so\n"
-                    f"- Flag gaps: missing addresses, no reviews, unverified businesses\n"
-                    f"- End with a concrete next step\n"
+                    f"- Flag gaps: missing phone, no reviews, unverified businesses\n"
+                    f"- End with a concrete next step (who to call first and what to ask)\n"
                     f"Under 150 words. No markdown. Natural speech for voice relay."
                 )
 
