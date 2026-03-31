@@ -1550,9 +1550,101 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if details:
             full_task = f"{task}. Additional details: {details}"
 
-        # Call run_agentic_loop — uses the agent's full persona prompt,
-        # RAG knowledge, and multi-step reasoning. The agent decides
-        # what steps to take (e.g., Quinn checks Stripe for customer first).
+        # ── Adam: Direct search bypass (no agentic loop) ──
+        # Adam doesn't need LLM planning to decide to search. Run searches
+        # directly in parallel, then use one LLM call to synthesize results.
+        if agent == "adam":
+            import asyncio as _asyncio
+            from aspire_orchestrator.skillpacks.adam_research import AdamResearchSkillPack, AdamResearchContext
+
+            adam_pack = AdamResearchSkillPack()
+            adam_ctx = AdamResearchContext(
+                suite_id=safe_suite_id,
+                office_id=safe_office_id,
+                correlation_id=ctx.correlation_id,
+            )
+
+            # Run web search + places search in parallel
+            web_coro = adam_pack.search_web(query=full_task, context=adam_ctx)
+            places_coro = adam_pack.search_places(query=full_task, location=full_task, context=adam_ctx)
+            web_result, places_result = await _asyncio.gather(web_coro, places_coro)
+
+            # Collect raw results
+            web_items = web_result.data.get("results", [])[:5] if web_result.success else []
+            places_items = places_result.data.get("results", [])[:5] if places_result.success else []
+
+            raw_findings = {
+                "web_results": [
+                    {"name": r.get("title", r.get("name", "")), "url": r.get("url", ""), "snippet": r.get("snippet", r.get("description", ""))}
+                    for r in web_items
+                ],
+                "places_results": [
+                    {"name": r.get("name", ""), "address": r.get("address", ""), "rating": r.get("rating")}
+                    for r in places_items
+                ],
+                "web_provider": web_result.data.get("provider_used", "none"),
+                "places_provider": places_result.data.get("provider_used", "none"),
+            }
+
+            # One LLM call to synthesize findings into a conversational response
+            try:
+                from aspire_orchestrator.services.llm_helpers import generate_text_async
+                import json as _json
+                import os as _os
+
+                synthesis_prompt = (
+                    f"You are Adam, the Research Specialist at Aspire.\n"
+                    f"Task: {full_task}\n\n"
+                    f"Search results:\n{_json.dumps(raw_findings, indent=2)}\n\n"
+                    f"Summarize findings for a small business owner. Be specific:\n"
+                    f"- Lead with the top 3-5 results by name and location\n"
+                    f"- Include ratings and why each is relevant\n"
+                    f"- Flag any gaps (no reviews, unverified, etc.)\n"
+                    f"- End with a suggested next step\n"
+                    f"Keep it under 100 words. No markdown. No bullet points. Natural speech."
+                )
+
+                api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
+                synthesis = await generate_text_async(
+                    model="gpt-5.2",
+                    messages=[
+                        {"role": "developer", "content": "You are Adam, a research specialist for small business owners. Be concise and evidence-first."},
+                        {"role": "user", "content": synthesis_prompt},
+                    ],
+                    api_key=api_key,
+                    base_url="https://api.openai.com/v1",
+                    timeout_seconds=30.0,
+                    max_output_tokens=4096,
+                    prefer_responses_api=True,
+                )
+                response_text = synthesis
+            except Exception as synth_err:
+                logger.warning("Adam synthesis LLM failed: %s", synth_err)
+                # Fallback: return raw results without synthesis
+                if places_items:
+                    names = [r.get("name", "Unknown") for r in places_items[:3]]
+                    response_text = f"Found {len(places_items)} results. Top matches: {', '.join(names)}."
+                elif web_items:
+                    names = [r.get("title", r.get("name", "Unknown")) for r in web_items[:3]]
+                    response_text = f"Found {len(web_items)} web results. Top matches: {', '.join(names)}."
+                else:
+                    response_text = f"No results found for: {task}. Try broadening the search area or adjusting the query."
+
+            any_success = web_result.success or places_result.success
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": any_success,
+                    "agent": "adam",
+                    "result": response_text,
+                    "data": raw_findings,
+                    "receipt_id": web_result.receipt.get("receipt_id") if web_result.success else places_result.receipt.get("receipt_id"),
+                    "error": None if any_success else "All search providers failed",
+                },
+            )
+
+        # ── Quinn / Tec: Use agentic loop ──
         result = await skill_pack.run_agentic_loop(
             task=full_task,
             ctx=ctx,
