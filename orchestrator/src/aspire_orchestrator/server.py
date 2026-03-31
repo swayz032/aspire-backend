@@ -2038,11 +2038,59 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     "result": "I need a customer name for this invoice. Who are you billing?",
                 })
 
-            if not line_items:
-                return JSONResponse(status_code=200, content={
-                    "success": False, "agent": "quinn",
-                    "result": f"I've got {customer_name} as the customer, but I need the line items. What are you billing them for and how much?",
-                })
+            # ── Customer lookup mode: just a name, no line items yet ──
+            # Ava calls Quinn early with just the customer name to check Stripe
+            if not line_items or not total_cents:
+                # Search Stripe for the customer by name
+                from aspire_orchestrator.providers.stripe_client import _get_client as _get_stripe
+                stripe_client = _get_stripe()
+                try:
+                    search_resp = await stripe_client._request(
+                        __import__("aspire_orchestrator.providers.base_client", fromlist=["ProviderRequest"]).ProviderRequest(
+                            method="GET",
+                            path=f"/customers/search?query=name%3A%27{customer_name}%27&limit=3",
+                            body={},
+                            correlation_id=ctx.correlation_id,
+                            suite_id=safe_suite_id,
+                            office_id=safe_office_id,
+                        )
+                    )
+                    found_customers = []
+                    if search_resp.success:
+                        found_customers = search_resp.body.get("data", [])
+                except Exception as stripe_err:
+                    logger.warning("Quinn Stripe customer search failed: %s", stripe_err)
+                    found_customers = []
+
+                if found_customers:
+                    cust = found_customers[0]
+                    cust_name = cust.get("name", customer_name)
+                    cust_email = cust.get("email", "")
+                    return JSONResponse(status_code=200, content={
+                        "success": True,
+                        "agent": "quinn",
+                        "result": f"{cust_name} is in the system. Email on file is {cust_email}. Go ahead — what are you billing them for and how much?",
+                        "data": {
+                            "status": "customer_found",
+                            "customer_name": cust_name,
+                            "customer_id": cust.get("id"),
+                            "customer_email": cust_email,
+                        },
+                    })
+                else:
+                    return JSONResponse(status_code=200, content={
+                        "success": True,
+                        "agent": "quinn",
+                        "result": (
+                            f"{customer_name} isn't in the system yet. "
+                            f"It's a one-time setup — I just need their first name, last name, and email. "
+                            f"Company, phone, and billing address are nice to have but we can skip them."
+                        ),
+                        "data": {
+                            "status": "needs_onboarding",
+                            "customer_name": customer_name,
+                        },
+                    })
 
             # Step 2: Verify math
             computed_total = sum(
