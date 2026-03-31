@@ -1578,33 +1578,36 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             # ── Step 1: Query expansion (one fast LLM call) ──
             queries = [full_task]
             try:
-                expand_resp = await generate_text_async(
-                    model="gpt-5-mini",
-                    messages=[
-                        {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
-                        {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
-                    ],
-                    api_key=api_key,
-                    base_url="https://api.openai.com/v1",
-                    timeout_seconds=10.0,
-                    max_output_tokens=4096,
-                    prefer_responses_api=True,
+                expand_resp = await _asyncio.wait_for(
+                    generate_text_async(
+                        model="gpt-5-mini",
+                        messages=[
+                            {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
+                            {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
+                        ],
+                        api_key=api_key,
+                        base_url="https://api.openai.com/v1",
+                        timeout_seconds=20.0,
+                        max_output_tokens=4096,
+                        prefer_responses_api=True,
+                    ),
+                    timeout=15.0,
                 )
                 parsed = _json.loads(expand_resp.strip().removeprefix("```json").removesuffix("```").strip())
                 if isinstance(parsed, list) and len(parsed) >= 2:
                     queries = [str(q) for q in parsed[:4]]
                     logger.info("Adam query expansion: %s", queries)
-            except Exception as qe:
-                logger.warning("Adam query expansion failed (using original): %s", qe)
+            except (Exception, _asyncio.TimeoutError) as qe:
+                logger.warning("Adam query expansion skipped (using original query): %s", type(qe).__name__)
 
             # ── Step 2: Geocode location ──
             coordinates = None
             geocode_chain = _geocode_chain()
             for provider_name, geocode_fn in geocode_chain:
                 try:
-                    geo_result = await geocode_fn(
-                        payload={"query": full_task},
-                        **common_kwargs,
+                    geo_result = await _asyncio.wait_for(
+                        geocode_fn(payload={"query": full_task}, **common_kwargs),
+                        timeout=10.0,
                     )
                     if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
                         results = geo_result.data.get("results", [])
@@ -1616,19 +1619,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                                 coordinates = {"lat": lat, "lng": lng}
                                 logger.info("Adam geocoded: %s → %s", full_task, coordinates)
                     break
-                except Exception as geo_err:
-                    logger.warning("Adam geocode %s failed: %s", provider_name, geo_err)
+                except (_asyncio.TimeoutError, Exception) as geo_err:
+                    logger.warning("Adam geocode %s failed: %s", provider_name, type(geo_err).__name__)
 
             # ── Step 3: Multi-provider parallel search ──
             # Fire ALL providers simultaneously — not fallback chain
             async def _safe_search(provider_name: str, executor_fn, payload: dict) -> tuple[str, dict | None]:
                 """Run one provider search, return (provider, result_data) or (provider, None) on failure."""
                 try:
-                    result = await executor_fn(payload=payload, **common_kwargs)
+                    result = await _asyncio.wait_for(
+                        executor_fn(payload=payload, **common_kwargs),
+                        timeout=15.0,
+                    )
                     if result.outcome == Outcome.SUCCESS and result.data:
                         return (provider_name, result.data)
+                except _asyncio.TimeoutError:
+                    logger.debug("Adam provider %s timed out (15s)", provider_name)
                 except Exception as e:
-                    logger.debug("Adam provider %s failed: %s", provider_name, e)
+                    logger.debug("Adam provider %s failed: %s", provider_name, type(e).__name__)
                 return (provider_name, None)
 
             # Build search tasks — all queries × all providers
