@@ -181,22 +181,58 @@ async def execute_google_places_search(
 
     if api_success:
         raw_results = response.body.get("results", [])
+
+        # Enrich top results with Place Details (phone, website) — parallel
+        import asyncio
+        enriched_results = []
+        top_results = raw_results[:10]
+
+        async def _enrich_place(r: dict) -> dict:
+            place = {
+                "name": r.get("name", ""),
+                "formatted_address": r.get("formatted_address", ""),
+                "address": r.get("formatted_address", ""),
+                "location": r.get("geometry", {}).get("location", {}),
+                "rating": r.get("rating"),
+                "place_id": r.get("place_id", ""),
+                "phone": "",
+                "website": "",
+            }
+            pid = r.get("place_id")
+            if pid:
+                try:
+                    detail_resp = await client._request(
+                        ProviderRequest(
+                            method="GET",
+                            path="/details/json",
+                            query_params={
+                                "key": settings.google_maps_api_key,
+                                "place_id": pid,
+                                "fields": "formatted_phone_number,website,url",
+                            },
+                            correlation_id=correlation_id,
+                            suite_id=suite_id,
+                            office_id=office_id,
+                        )
+                    )
+                    if detail_resp.success:
+                        detail = detail_resp.body.get("result", {})
+                        place["phone"] = detail.get("formatted_phone_number", "")
+                        place["website"] = detail.get("website", detail.get("url", ""))
+                except Exception:
+                    pass  # Best-effort enrichment
+            return place
+
+        enriched_results = await asyncio.gather(*[_enrich_place(r) for r in top_results])
+
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id="google_places.search",
             data={
-                "results": [
-                    {
-                        "name": r.get("name", ""),
-                        "formatted_address": r.get("formatted_address", ""),
-                        "location": r.get("geometry", {}).get("location", {}),
-                        "rating": r.get("rating"),
-                        "place_id": r.get("place_id", ""),
-                    }
-                    for r in raw_results
-                ],
+                "results": enriched_results,
                 "query": query,
-                "result_count": len(raw_results),
+                "result_count": len(enriched_results),
+                "provider_used": "google_places",
             },
             receipt_data=receipt,
         )

@@ -174,6 +174,18 @@ async def execute_here_search(
                             c.get("name", "")
                             for c in item.get("categories", [])
                         ],
+                        "phone": (
+                            (item.get("contacts", [{}])[0].get("phone", [{}])[0].get("value", ""))
+                            if item.get("contacts") else ""
+                        ),
+                        "website": (
+                            (item.get("contacts", [{}])[0].get("www", [{}])[0].get("value", ""))
+                            if item.get("contacts") else ""
+                        ),
+                        "email": (
+                            (item.get("contacts", [{}])[0].get("email", [{}])[0].get("value", ""))
+                            if item.get("contacts") else ""
+                        ),
                         "id": item.get("id", ""),
                     }
                     for item in raw_items

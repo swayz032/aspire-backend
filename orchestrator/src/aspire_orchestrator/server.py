@@ -1575,52 +1575,61 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 risk_tier="green",
             )
 
-            # ── Step 1: Query expansion (one fast LLM call) ──
+            # ── Steps 1+2: Query expansion + Geocoding in PARALLEL ──
             queries = [full_task]
-            try:
-                expand_resp = await _asyncio.wait_for(
-                    generate_text_async(
-                        model="gpt-5",
-                        messages=[
-                            {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
-                            {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
-                        ],
-                        api_key=api_key,
-                        base_url="https://api.openai.com/v1",
-                        timeout_seconds=20.0,
-                        max_output_tokens=4096,
-                        prefer_responses_api=True,
-                    ),
-                    timeout=15.0,
-                )
-                parsed = _json.loads(expand_resp.strip().removeprefix("```json").removesuffix("```").strip())
-                if isinstance(parsed, list) and len(parsed) >= 2:
-                    queries = [str(q) for q in parsed[:4]]
-                    logger.info("Adam query expansion: %s", queries)
-            except (Exception, _asyncio.TimeoutError) as qe:
-                logger.warning("Adam query expansion skipped (using original query): %s", type(qe).__name__)
-
-            # ── Step 2: Geocode location ──
             coordinates = None
-            geocode_chain = _geocode_chain()
-            for provider_name, geocode_fn in geocode_chain:
+
+            async def _expand_queries() -> list[str]:
+                """GPT-5 generates 3 search query variants."""
                 try:
-                    geo_result = await _asyncio.wait_for(
-                        geocode_fn(payload={"query": full_task}, **common_kwargs),
-                        timeout=10.0,
+                    resp = await _asyncio.wait_for(
+                        generate_text_async(
+                            model="gpt-5",
+                            messages=[
+                                {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
+                                {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
+                            ],
+                            api_key=api_key,
+                            base_url="https://api.openai.com/v1",
+                            timeout_seconds=20.0,
+                            max_output_tokens=4096,
+                            prefer_responses_api=True,
+                        ),
+                        timeout=15.0,
                     )
-                    if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
-                        results = geo_result.data.get("results", [])
-                        if results:
-                            first = results[0]
-                            lat = first.get("lat") or first.get("latitude")
-                            lng = first.get("lng") or first.get("longitude")
-                            if lat and lng:
-                                coordinates = {"lat": lat, "lng": lng}
-                                logger.info("Adam geocoded: %s → %s", full_task, coordinates)
-                    break
-                except (_asyncio.TimeoutError, Exception) as geo_err:
-                    logger.warning("Adam geocode %s failed: %s", provider_name, type(geo_err).__name__)
+                    parsed = _json.loads(resp.strip().removeprefix("```json").removesuffix("```").strip())
+                    if isinstance(parsed, list) and len(parsed) >= 2:
+                        return [str(q) for q in parsed[:4]]
+                except Exception as e:
+                    logger.warning("Adam query expansion skipped: %s", type(e).__name__)
+                return [full_task]
+
+            async def _geocode() -> dict | None:
+                """Mapbox geocodes the task location."""
+                for pname, geo_fn in _geocode_chain():
+                    try:
+                        geo_result = await _asyncio.wait_for(
+                            geo_fn(payload={"query": full_task}, **common_kwargs),
+                            timeout=10.0,
+                        )
+                        if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
+                            results = geo_result.data.get("results", [])
+                            if results:
+                                first = results[0]
+                                lat = first.get("lat") or first.get("latitude")
+                                lng = first.get("lng") or first.get("longitude")
+                                if lat and lng:
+                                    return {"lat": lat, "lng": lng}
+                        break
+                    except Exception as e:
+                        logger.warning("Adam geocode %s failed: %s", pname, type(e).__name__)
+                return None
+
+            # Run both in parallel — saves 5-10s
+            queries, coordinates = await _asyncio.gather(_expand_queries(), _geocode())
+            if coordinates:
+                logger.info("Adam geocoded: %s", coordinates)
+            logger.info("Adam queries: %s", queries)
 
             # ── Step 3: Multi-provider parallel search ──
             # Fire ALL providers simultaneously — not fallback chain
@@ -1710,12 +1719,18 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         })
                 else:
                     for r in results_list[:5]:
+                        # Extract phone/email/website — different providers use different fields
+                        phone = r.get("phone", "") or r.get("formatted_phone_number", "") or r.get("tel", "")
+                        website = r.get("website", "") or r.get("url", "")
+                        email = r.get("email", "")
+
                         places_items_all.append({
                             "name": r.get("name", ""),
                             "address": r.get("address", r.get("formatted_address", "")),
                             "rating": r.get("rating"),
-                            "phone": r.get("phone", r.get("formatted_phone_number", r.get("tel", ""))),
-                            "website": r.get("website", r.get("url", "")),
+                            "phone": phone,
+                            "website": website,
+                            "email": email,
                             "categories": r.get("categories", []),
                             "place_id": r.get("place_id", r.get("fsq_id", r.get("id", ""))),
                             "source": provider_name,
@@ -1730,7 +1745,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 if key in seen_names:
                     seen_names[key]["sources"].add(item["source"])
                     # Merge fields — fill gaps from additional sources
-                    for field in ("rating", "address", "phone", "website", "place_id"):
+                    for field in ("rating", "address", "phone", "website", "email", "place_id"):
                         if item.get(field) and not seen_names[key].get(field):
                             seen_names[key][field] = item[field]
                     # Merge categories
