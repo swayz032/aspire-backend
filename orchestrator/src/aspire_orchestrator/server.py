@@ -1767,9 +1767,55 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             "categories": categories, "place_id": place_id, "source": pname,
                         })
 
+            # ── Filter out irrelevant venues (restaurants, parks, stadiums, museums) ──
+            _NOISE_CATEGORIES = {
+                # Restaurants / food venues (NOT food distributors)
+                "restaurant", "fast food", "pizza", "cafe", "coffee shop", "bakery",
+                "bar", "pub", "brewery", "diner", "food court", "ice cream",
+                "greek restaurant", "falafel restaurant", "southern food restaurant",
+                "bbq", "barbecue", "sushi", "mexican restaurant", "italian restaurant",
+                "chinese restaurant", "thai restaurant", "indian restaurant",
+                "seafood restaurant", "steakhouse", "burger", "sandwich",
+                # Entertainment / tourism
+                "stadium", "arena", "aquarium", "museum", "park", "zoo",
+                "theater", "theatre", "cinema", "concert hall", "amusement park",
+                "tourist attraction", "monument", "memorial", "historic site",
+                # Other noise
+                "hotel", "motel", "gym", "fitness", "spa", "salon",
+                "church", "school", "university", "hospital", "clinic",
+                "gas station", "parking", "car wash", "laundromat",
+            }
+
+            def _is_noise(item: dict) -> bool:
+                """Check if a places result is irrelevant venue noise."""
+                cats = item.get("categories", [])
+                name_lower = item.get("name", "").lower()
+                # Check category names
+                for cat in cats:
+                    cat_lower = cat.lower() if isinstance(cat, str) else ""
+                    if any(noise in cat_lower for noise in _NOISE_CATEGORIES):
+                        return True
+                # Check name against known noise patterns
+                noise_names = ["aquarium", "stadium", "arena", "park", "museum",
+                               "memorial", "monument", "church", "school",
+                               "bbq", "grill", "pizza", "cafe", "coffee"]
+                if any(n in name_lower for n in noise_names):
+                    return True
+                return False
+
+            filtered_places = [p for p in places_items_all if not _is_noise(p)]
+            noise_count = len(places_items_all) - len(filtered_places)
+            if noise_count:
+                logger.info("Adam filtered %d noise venues (restaurants/parks/stadiums)", noise_count)
+
+            # ── Provider priority: Google Places + HERE > Foursquare > TomTom ──
+            # Sort so higher-quality providers appear first in dedup (first occurrence wins)
+            _PROVIDER_PRIORITY = {"google_places": 0, "here": 1, "foursquare": 2, "tomtom": 3}
+            filtered_places.sort(key=lambda x: _PROVIDER_PRIORITY.get(x.get("source", ""), 9))
+
             # Dedup by name — merge contact data across providers
             seen_names: dict[str, dict] = {}
-            for item in places_items_all:
+            for item in filtered_places:
                 key = item["name"].lower().strip()
                 if not key or len(key) < 3:
                     continue
