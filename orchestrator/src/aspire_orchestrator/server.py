@@ -1588,7 +1588,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
 
             # One LLM call to synthesize findings into a conversational response
             try:
-                from aspire_orchestrator.services.llm_helpers import generate_text_async
+                from aspire_orchestrator.services.openai_client import generate_text_async
                 import json as _json
                 import os as _os
 
