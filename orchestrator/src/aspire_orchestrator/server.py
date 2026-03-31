@@ -1580,7 +1580,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             try:
                 expand_resp = await _asyncio.wait_for(
                     generate_text_async(
-                        model="gpt-5.2",
+                        model="gpt-5",
                         messages=[
                             {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
                             {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
