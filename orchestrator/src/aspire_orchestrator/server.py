@@ -1550,17 +1550,15 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if details:
             full_task = f"{task}. Additional details: {details}"
 
-        # ── Adam: Enterprise-grade parallel multi-provider search ──
-        # 1. LLM expands query into trade-specific variants
-        # 2. Mapbox geocodes location → coordinates
-        # 3. All providers searched in parallel (not fallback chain)
-        # 4. Results merged, deduped, cross-validated, confidence-scored
-        # 5. GPT-5.2 synthesizes into conversational response
+        # ── Adam: Enterprise-grade multi-provider search (v5) ──
+        # Production pipeline — no LLM for query expansion (too slow/unreliable).
+        # Template-based expansion + Mapbox geocoding + 6 providers parallel +
+        # cross-validation + GPT-5.2 synthesis. Target: <25s total.
         if agent == "adam":
             import asyncio as _asyncio
             import json as _json
             import os as _os
-            import hashlib as _hashlib
+            import re as _re
             from aspire_orchestrator.services.openai_client import generate_text_async
             from aspire_orchestrator.services.search_router import (
                 _web_search_chain, _places_search_chain, _geocode_chain,
@@ -1575,82 +1573,71 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 risk_tier="green",
             )
 
-            # ── Extract clean location from task ──
-            import re as _re
-            # Match patterns like "Atlanta Georgia", "Atlanta, GA", "in Dallas TX"
-            _loc_match = _re.search(
-                r'(?:in|near|around)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:[,\s]+(?:Georgia|GA|Texas|TX|Florida|FL|California|CA|New York|NY|Illinois|IL|Ohio|OH|North Carolina|NC|Virginia|VA|Tennessee|TN|Alabama|AL|South Carolina|SC|Louisiana|LA|Maryland|MD|Arizona|AZ|Colorado|CO|Oregon|OR|Washington|WA|Michigan|MI|Indiana|IN|Missouri|MO|Wisconsin|WI|Minnesota|MN|Iowa|IA|Mississippi|MS|Arkansas|AR|Kansas|KS|Utah|UT|Nevada|NV|New Mexico|NM|Nebraska|NE|Idaho|ID|Maine|ME|Montana|MT|Rhode Island|RI|Delaware|DE|New Hampshire|NH|Vermont|VT|Wyoming|WY|Hawaii|HI|Alaska|AK|Connecticut|CT|Oklahoma|OK|Kentucky|KY|[A-Z]{2}))?)',
-                full_task, _re.IGNORECASE,
-            )
-            clean_location = _loc_match.group(1).strip() if _loc_match else ""
-            if not clean_location:
-                # Fallback: look for "City, STATE" or "City STATE" pattern anywhere
-                _city_match = _re.search(r'([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)[,\s]+([A-Z]{2}|[A-Z][a-z]+)\b', full_task)
-                if _city_match:
-                    clean_location = f"{_city_match.group(1)}, {_city_match.group(2)}"
-            logger.info("Adam extracted location: '%s' from task", clean_location)
+            # ── Step 1: Extract location + build query variants (instant, no LLM) ──
 
-            # ── Steps 1+2: Query expansion + Geocoding in PARALLEL ──
-            queries = [full_task]
+            # Extract clean location: "in Atlanta Georgia" → "Atlanta, Georgia"
+            clean_location = ""
+            _loc_patterns = [
+                r'(?:in|near|around|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+[A-Z][A-Za-z]+)',
+                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+([A-Z]{2})\b',
+                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+(Georgia|Texas|Florida|California|New York|Illinois|Ohio|North Carolina|Virginia|Tennessee|Alabama|South Carolina|Louisiana|Maryland|Arizona|Colorado|Oregon|Washington|Michigan|Indiana|Missouri|Wisconsin|Minnesota|Mississippi|Arkansas|Kansas|Utah|Nevada|Nebraska|Idaho|Maine|Montana|Delaware|New Hampshire|Vermont|Wyoming|Hawaii|Alaska|Connecticut|Oklahoma|Kentucky|Iowa|New Mexico|Rhode Island)',
+            ]
+            for pattern in _loc_patterns:
+                m = _re.search(pattern, full_task)
+                if m:
+                    clean_location = m.group(0).strip().lstrip("in ").lstrip("near ").lstrip("around ").lstrip("from ")
+                    break
+            logger.info("Adam location: '%s'", clean_location)
+
+            # Extract search subject (remove location and filler words)
+            search_subject = full_task
+            if clean_location:
+                search_subject = full_task.replace(clean_location, "").strip()
+            # Remove common filler
+            for filler in ["Find ", "find ", "Search for ", "search for ", "Look for ", "look for ",
+                           "that buy ", "who buy ", "that sell ", "who sell ",
+                           "Additional details:", ". Additional details:"]:
+                search_subject = search_subject.replace(filler, "")
+            search_subject = _re.sub(r'\s+', ' ', search_subject).strip().rstrip('.')
+
+            # Build 3 query variants — template-based, instant, no LLM needed
+            loc_str = clean_location or ""
+            queries = [
+                f"{search_subject} {loc_str}".strip(),
+                f"{search_subject} near {loc_str}".strip() if loc_str else search_subject,
+                f"{search_subject} wholesale supplier {loc_str}".strip(),
+            ]
+            # Remove dupes while preserving order
+            seen_q: set[str] = set()
+            queries = [q for q in queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
+            logger.info("Adam queries: %s", queries)
+
+            # ── Step 2: Geocode location via Mapbox ──
             coordinates = None
-
-            async def _expand_queries() -> list[str]:
-                """GPT-5 generates 3 search query variants."""
-                try:
-                    resp = await _asyncio.wait_for(
-                        generate_text_async(
-                            model="gpt-5",
-                            messages=[
-                                {"role": "developer", "content": "Return ONLY a JSON array of 3 search query strings. No explanation."},
-                                {"role": "user", "content": f"Generate 3 different search queries for this research task. Vary the wording to catch different business listings.\nTask: {full_task}"},
-                            ],
-                            api_key=api_key,
-                            base_url="https://api.openai.com/v1",
-                            timeout_seconds=20.0,
-                            max_output_tokens=4096,
-                            prefer_responses_api=True,
-                        ),
-                        timeout=15.0,
-                    )
-                    parsed = _json.loads(resp.strip().removeprefix("```json").removesuffix("```").strip())
-                    if isinstance(parsed, list) and len(parsed) >= 2:
-                        return [str(q) for q in parsed[:4]]
-                except Exception as e:
-                    logger.warning("Adam query expansion skipped: %s", type(e).__name__)
-                return [full_task]
-
-            async def _geocode() -> dict | None:
-                """Mapbox geocodes the extracted location (not the full task)."""
-                geocode_query = clean_location or full_task
+            if clean_location:
                 for pname, geo_fn in _geocode_chain():
                     try:
                         geo_result = await _asyncio.wait_for(
-                            geo_fn(payload={"query": geocode_query}, **common_kwargs),
-                            timeout=10.0,
+                            geo_fn(payload={"query": clean_location}, **common_kwargs),
+                            timeout=5.0,
                         )
                         if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
-                            results = geo_result.data.get("results", [])
-                            if results:
-                                first = results[0]
+                            geo_results = geo_result.data.get("results", [])
+                            if geo_results:
+                                first = geo_results[0]
                                 lat = first.get("lat") or first.get("latitude")
                                 lng = first.get("lng") or first.get("longitude")
                                 if lat and lng:
-                                    return {"lat": lat, "lng": lng}
+                                    coordinates = {"lat": float(lat), "lng": float(lng)}
+                                    logger.info("Adam geocoded '%s' → %s", clean_location, coordinates)
                         break
                     except Exception as e:
-                        logger.warning("Adam geocode %s failed: %s", pname, type(e).__name__)
-                return None
+                        logger.warning("Adam geocode failed: %s", type(e).__name__)
 
-            # Run both in parallel — saves 5-10s
-            queries, coordinates = await _asyncio.gather(_expand_queries(), _geocode())
-            if coordinates:
-                logger.info("Adam geocoded: %s", coordinates)
-            logger.info("Adam queries: %s", queries)
+            coord_str = f"{coordinates['lat']},{coordinates['lng']}" if coordinates else ""
 
             # ── Step 3: Multi-provider parallel search ──
-            # Fire ALL providers simultaneously — not fallback chain
             async def _safe_search(provider_name: str, executor_fn, payload: dict) -> tuple[str, dict | None]:
-                """Run one provider search, return (provider, result_data) or (provider, None) on failure."""
                 try:
                     result = await _asyncio.wait_for(
                         executor_fn(payload=payload, **common_kwargs),
@@ -1659,142 +1646,103 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     if result.outcome == Outcome.SUCCESS and result.data:
                         return (provider_name, result.data)
                 except _asyncio.TimeoutError:
-                    logger.debug("Adam provider %s timed out (15s)", provider_name)
+                    logger.debug("Adam %s timed out", provider_name)
                 except Exception as e:
-                    logger.debug("Adam provider %s failed: %s", provider_name, type(e).__name__)
+                    logger.debug("Adam %s failed: %s", provider_name, type(e).__name__)
                 return (provider_name, None)
 
-            # Build search tasks — all queries × all providers
             search_tasks = []
 
-            # Web searches (Brave + Tavily) × all query variants
+            # Web: Brave + Tavily × all query variants
             for query in queries:
-                for provider_name, executor_fn in _web_search_chain():
-                    search_tasks.append(
-                        _safe_search(provider_name, executor_fn, {"query": query})
-                    )
+                for pname, executor_fn in _web_search_chain():
+                    search_tasks.append(_safe_search(pname, executor_fn, {"query": query}))
 
-            # Places searches — each provider needs coordinates in its own format
-            coord_str = f"{coordinates['lat']},{coordinates['lng']}" if coordinates else ""
-            location_fallback = full_task  # Raw text fallback for providers that accept it
-
-            for provider_name, executor_fn in _places_search_chain():
+            # Places: each provider with proper coordinate format
+            for pname, executor_fn in _places_search_chain():
                 p_payload: dict[str, Any] = {"query": queries[0]}
 
-                if provider_name == "google_places":
-                    # Google accepts location as "lat,lng" string
+                if pname == "google_places":
                     if coord_str:
                         p_payload["location"] = coord_str
-                        p_payload["radius"] = "32000"  # ~20 miles
-                elif provider_name == "here":
-                    # HERE requires "at" as "lat,lng" — critical for relevant results
+                        p_payload["radius"] = "32000"
+                elif pname == "here":
                     if coord_str:
                         p_payload["at"] = coord_str
-                    elif clean_location:
-                        # Fallback: use well-known city coordinates
-                        _city_coords = {
-                            "atlanta": "33.749,-84.388", "dallas": "32.777,-96.797",
-                            "houston": "29.760,-95.370", "chicago": "41.878,-87.630",
-                            "miami": "25.762,-80.192", "new york": "40.713,-74.006",
-                            "los angeles": "34.052,-118.244", "phoenix": "33.449,-112.074",
-                            "philadelphia": "39.953,-75.164", "san antonio": "29.425,-98.495",
-                            "charlotte": "35.227,-80.843", "nashville": "36.163,-86.781",
-                            "denver": "39.740,-104.990", "seattle": "47.607,-122.332",
-                        }
-                        for city, coords in _city_coords.items():
-                            if city in clean_location.lower():
-                                p_payload["at"] = coords
-                                break
-                elif provider_name == "foursquare":
-                    # Foursquare requires "ll" as "lat,lng"
+                    else:
+                        continue  # HERE requires coordinates — skip if none
+                elif pname == "foursquare":
                     if coord_str:
                         p_payload["ll"] = coord_str
                         p_payload["radius"] = "32000"
-                    elif clean_location:
-                        # Same city fallback
-                        _city_coords_fsq = {
-                            "atlanta": "33.749,-84.388", "dallas": "32.777,-96.797",
-                            "houston": "29.760,-95.370", "chicago": "41.878,-87.630",
-                            "miami": "25.762,-80.192", "new york": "40.713,-74.006",
-                            "los angeles": "34.052,-118.244", "phoenix": "33.449,-112.074",
-                            "charlotte": "35.227,-80.843", "nashville": "36.163,-86.781",
-                        }
-                        for city, coords in _city_coords_fsq.items():
-                            if city in clean_location.lower():
-                                p_payload["ll"] = coords
-                                p_payload["radius"] = "32000"
-                                break
-                elif provider_name == "tomtom":
-                    # TomTom accepts lat/lon params
+                    else:
+                        continue  # Foursquare without coords returns global noise — skip
+                elif pname == "tomtom":
                     if coordinates:
                         p_payload["lat"] = str(coordinates["lat"])
                         p_payload["lon"] = str(coordinates["lng"])
-                elif provider_name == "osm_overpass":
-                    # Skip OSM — 10s+ response time blows the Railway 30s proxy timeout
-                    # OSM is open data last resort; Google Places + HERE + Foursquare cover it
-                    continue
+                elif pname == "osm_overpass":
+                    continue  # Too slow (10s+), other providers cover it
 
-                search_tasks.append(
-                    _safe_search(provider_name, executor_fn, p_payload)
-                )
+                search_tasks.append(_safe_search(pname, executor_fn, p_payload))
 
-            # Fire all searches in parallel
+            # Fire all in parallel
             all_results = await _asyncio.gather(*search_tasks)
 
-            # ── Step 4: Merge, dedup, cross-validate ──
-            web_items_all = []
-            places_items_all = []
-            providers_used = set()
-            provider_counts = {}
+            # ── Step 4: Merge, dedup, cross-validate, score ──
+            web_items_all: list[dict] = []
+            places_items_all: list[dict] = []
+            providers_used: set[str] = set()
+            provider_counts: dict[str, int] = {}
 
-            for provider_name, data in all_results:
+            web_providers = {"brave", "tavily"}
+            for pname, data in all_results:
                 if data is None:
                     continue
-                providers_used.add(provider_name)
+                providers_used.add(pname)
                 results_list = data.get("results", [])
-                provider_counts[provider_name] = len(results_list)
+                provider_counts[pname] = len(results_list)
 
-                web_providers = {"brave", "tavily"}
-                if provider_name in web_providers:
+                if pname in web_providers:
                     for r in results_list[:5]:
                         web_items_all.append({
                             "name": r.get("title", r.get("name", "")),
                             "url": r.get("url", ""),
                             "snippet": r.get("snippet", r.get("description", "")),
-                            "source": provider_name,
+                            "source": pname,
                         })
                 else:
-                    for r in results_list[:5]:
-                        # Extract phone/email/website — different providers use different fields
+                    for r in results_list[:8]:
+                        # Normalize fields across providers (Google, HERE, Foursquare, TomTom)
+                        name = r.get("name", r.get("title", ""))
                         phone = r.get("phone", "") or r.get("formatted_phone_number", "") or r.get("tel", "")
                         website = r.get("website", "") or r.get("url", "")
                         email = r.get("email", "")
+                        address = r.get("address", "") or r.get("formatted_address", "")
+                        rating = r.get("rating")
+                        categories = r.get("categories", [])
+                        place_id = r.get("place_id", r.get("fsq_id", r.get("fsq_place_id", r.get("id", ""))))
+
+                        if not name:
+                            continue
 
                         places_items_all.append({
-                            "name": r.get("name", ""),
-                            "address": r.get("address", r.get("formatted_address", "")),
-                            "rating": r.get("rating"),
-                            "phone": phone,
-                            "website": website,
-                            "email": email,
-                            "categories": r.get("categories", []),
-                            "place_id": r.get("place_id", r.get("fsq_id", r.get("id", ""))),
-                            "source": provider_name,
+                            "name": name, "address": address, "rating": rating,
+                            "phone": phone, "website": website, "email": email,
+                            "categories": categories, "place_id": place_id, "source": pname,
                         })
 
-            # Dedup by name (case-insensitive) — keep first occurrence, track cross-validation
+            # Dedup by name — merge contact data across providers
             seen_names: dict[str, dict] = {}
             for item in places_items_all:
                 key = item["name"].lower().strip()
-                if not key:
+                if not key or len(key) < 3:
                     continue
                 if key in seen_names:
                     seen_names[key]["sources"].add(item["source"])
-                    # Merge fields — fill gaps from additional sources
                     for field in ("rating", "address", "phone", "website", "email", "place_id"):
                         if item.get(field) and not seen_names[key].get(field):
                             seen_names[key][field] = item[field]
-                    # Merge categories
                     existing_cats = set(seen_names[key].get("categories", []))
                     for cat in item.get("categories", []):
                         if cat and cat not in existing_cats:
@@ -1803,59 +1751,57 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 else:
                     seen_names[key] = {**item, "sources": {item["source"]}}
 
-            # Cross-validation + enrichment from web results
-            import re as _re
+            # Cross-validate with web results + enrich
             for key, item in seen_names.items():
                 for web in web_items_all:
                     web_text = (web.get("name", "") + " " + web.get("snippet", "")).lower()
-                    if key in web_text:
+                    if key in web_text or any(word in web_text for word in key.split() if len(word) > 4):
                         item["sources"].add("web_mention")
-                        # Extract website URL if places result doesn't have one
                         if not item.get("website") and web.get("url"):
                             item["website"] = web["url"]
-                        # Try to extract email from snippet
                         if not item.get("email") and web.get("snippet"):
-                            email_match = _re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', web["snippet"])
-                            if email_match:
-                                item["email"] = email_match.group(0)
-                        break  # One web match is enough per place
+                            em = _re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', web["snippet"])
+                            if em:
+                                item["email"] = em.group(0)
+                        break
 
             # Confidence scoring
             for item in seen_names.values():
-                source_count = len(item["sources"])
+                src_count = len(item["sources"])
                 has_rating = bool(item.get("rating"))
+                has_phone = bool(item.get("phone"))
                 has_address = bool(item.get("address"))
-                if source_count >= 3 or (source_count >= 2 and has_rating):
+                if src_count >= 3 or (src_count >= 2 and has_rating and has_phone):
                     item["confidence"] = "high"
-                elif source_count >= 2 or has_rating:
+                elif src_count >= 2 or (has_rating and has_address):
                     item["confidence"] = "medium"
                 else:
                     item["confidence"] = "low"
-                item["sources"] = list(item["sources"])  # Convert set for JSON
+                item["sources"] = list(item["sources"])
 
-            # Dedup web results by URL
+            # Dedup web by URL
             seen_urls: set[str] = set()
-            deduped_web = []
-            for w in web_items_all:
-                url = w.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    deduped_web.append(w)
+            deduped_web = [w for w in web_items_all if w.get("url") and w["url"] not in seen_urls and not seen_urls.add(w["url"])]
 
-            # Sort places by confidence then rating
-            confidence_order = {"high": 0, "medium": 1, "low": 2}
+            # Sort: confidence → rating → has phone
+            conf_order = {"high": 0, "medium": 1, "low": 2}
             sorted_places = sorted(
                 seen_names.values(),
-                key=lambda x: (confidence_order.get(x.get("confidence", "low"), 3), -(x.get("rating") or 0)),
+                key=lambda x: (
+                    conf_order.get(x.get("confidence", "low"), 3),
+                    -(x.get("rating") or 0),
+                    0 if x.get("phone") else 1,
+                ),
             )
 
             raw_findings = {
                 "web_results": deduped_web[:10],
                 "places_results": [{k: v for k, v in p.items()} for p in sorted_places[:10]],
-                "providers_used": list(providers_used),
+                "providers_used": sorted(providers_used),
                 "provider_counts": provider_counts,
                 "queries_used": queries,
                 "geocoded": coordinates,
+                "location_extracted": clean_location,
                 "total_raw_results": len(web_items_all) + len(places_items_all),
                 "total_deduped": len(deduped_web) + len(sorted_places),
             }
@@ -1864,57 +1810,62 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             try:
                 synthesis_prompt = (
                     f"You are Adam, the Research Specialist at Aspire.\n"
-                    f"Task: {full_task}\n\n"
-                    f"I searched {len(providers_used)} providers ({', '.join(providers_used)}) "
-                    f"with {len(queries)} query variants. Found {raw_findings['total_deduped']} unique results.\n\n"
-                    f"Top places results (with confidence):\n{_json.dumps(sorted_places[:8], indent=2, default=str)}\n\n"
+                    f"Task: {full_task}\n"
+                    f"Location: {clean_location or 'not specified'}\n\n"
+                    f"Searched {len(providers_used)} providers ({', '.join(sorted(providers_used))}) "
+                    f"with {len(queries)} queries. {raw_findings['total_deduped']} unique results.\n\n"
+                    f"Top places (with contact data + confidence):\n{_json.dumps(sorted_places[:8], indent=2, default=str)}\n\n"
                     f"Top web results:\n{_json.dumps(deduped_web[:5], indent=2, default=str)}\n\n"
                     f"Synthesize for a small business owner:\n"
-                    f"- Lead with top 3-5 real businesses by name, location, and rating\n"
-                    f"- Include phone numbers, websites, and emails when available\n"
-                    f"- Note confidence level: high = found on multiple sources, low = unverified\n"
-                    f"- Cross-reference: if a places result also appears in web results, say so\n"
-                    f"- Flag gaps: missing phone, no reviews, unverified businesses\n"
-                    f"- End with a concrete next step (who to call first and what to ask)\n"
-                    f"Under 150 words. No markdown. Natural speech for voice relay."
+                    f"- Top 3-5 businesses: name, full address, phone, email, website\n"
+                    f"- Confidence level per result\n"
+                    f"- Flag irrelevant results (restaurants/parks/stadiums are NOT what the user wants)\n"
+                    f"- Flag gaps: missing phone, no email, unverified\n"
+                    f"- Concrete next step: who to call first and what to say\n"
+                    f"Under 150 words. No markdown. Natural speech."
                 )
 
                 synthesis = await generate_text_async(
                     model="gpt-5.2",
                     messages=[
-                        {"role": "developer", "content": "You are Adam, a research specialist for small business owners. Be concise, evidence-first, and specific. Name real businesses. Include phone numbers and emails. Flag uncertainty."},
+                        {"role": "developer", "content": "You are Adam, Aspire's research specialist. Be specific — name businesses, include phone numbers and emails. Filter out irrelevant results (restaurants, parks, stadiums). Flag uncertainty honestly."},
                         {"role": "user", "content": synthesis_prompt},
                     ],
                     api_key=api_key,
                     base_url="https://api.openai.com/v1",
-                    timeout_seconds=20.0,
+                    timeout_seconds=18.0,
                     max_output_tokens=4096,
                     prefer_responses_api=True,
                 )
                 response_text = synthesis
             except Exception as synth_err:
-                logger.warning("Adam synthesis LLM failed: %s", synth_err)
-                if sorted_places:
-                    top = sorted_places[:3]
-                    parts = [f"{p['name']} ({p.get('confidence','?')} confidence)" for p in top]
-                    response_text = f"Found {len(sorted_places)} businesses across {len(providers_used)} providers. Top matches: {', '.join(parts)}."
+                logger.warning("Adam synthesis failed: %s", synth_err)
+                relevant = [p for p in sorted_places if p.get("confidence") != "low"][:3]
+                if not relevant:
+                    relevant = sorted_places[:3]
+                if relevant:
+                    parts = []
+                    for p in relevant:
+                        part = p["name"]
+                        if p.get("phone"):
+                            part += f", {p['phone']}"
+                        parts.append(part)
+                    response_text = f"Found {len(sorted_places)} businesses. Top matches: {'; '.join(parts)}."
                 elif deduped_web:
                     names = [w.get("name", "Unknown") for w in deduped_web[:3]]
-                    response_text = f"Found {len(deduped_web)} web results. Top matches: {', '.join(names)}."
+                    response_text = f"Found {len(deduped_web)} web results. Top: {', '.join(names)}."
                 else:
-                    response_text = f"No results found for: {task}. Try broadening the search area or adjusting the query."
-
-            any_success = len(providers_used) > 0
+                    response_text = f"No results found for: {task}. Try a different location or broader search terms."
 
             return JSONResponse(
                 status_code=200,
                 content={
-                    "success": any_success,
+                    "success": len(providers_used) > 0,
                     "agent": "adam",
                     "result": response_text,
                     "data": raw_findings,
                     "receipt_id": ctx.correlation_id,
-                    "error": None if any_success else "All search providers failed",
+                    "error": None if providers_used else "All search providers failed",
                 },
             )
 
