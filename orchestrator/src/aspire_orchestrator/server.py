@@ -2133,6 +2133,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "assigned_agent": "quinn",
                         "execution_payload": payload,
                     },
+                    on_conflict="approval_id",
                 )
                 approval_id = _approval_id
                 logger.info("Quinn submitted to authority queue: %s", _approval_id)
