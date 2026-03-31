@@ -1964,8 +1964,8 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 },
             )
 
-        # ── Quinn: Direct Stripe pipeline (bypass agentic loop) ──
-        # Parse intent → verify math → search/create customer → draft invoice → authority queue
+        # ── Quinn: Direct Stripe pipeline (v2 — real Stripe calls) ──
+        # Parse intent → verify math → Stripe customer resolve → Stripe draft invoice → authority queue
         if agent == "quinn":
             import json as _json
             import os as _os
@@ -2070,26 +2070,75 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 desc = item.get("description", "item")
                 items_summary.append(f"{qty} {desc} at {price:.2f} each")
 
-            # Step 4: Build invoice plan (YELLOW tier — approval required, not sent yet)
-            quinn_ctx = QuinnContext(
+            # Step 4: Check if we have email — required for Stripe
+            if not customer_email:
+                # No email — can't create Stripe customer. Tell Ava to ask for onboarding info.
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": True,
+                        "agent": "quinn",
+                        "result": (
+                            f"{customer_name} isn't in your system yet. "
+                            f"It's a one-time setup — I just need their first name, last name, and email. "
+                            f"Company, phone, and billing address are nice to have but we can skip them if you don't have them."
+                        ),
+                        "data": {
+                            "status": "needs_onboarding",
+                            "customer_name": customer_name,
+                            "line_items": line_items,
+                            "total_cents": total_cents,
+                            "total_dollars": total_dollars,
+                            "due_days": due_days,
+                        },
+                    },
+                )
+
+            # Step 5: Create REAL draft invoice in Stripe
+            from aspire_orchestrator.providers.stripe_client import execute_stripe_invoice_create
+
+            stripe_result = await execute_stripe_invoice_create(
+                payload={
+                    "customer_email": customer_email,
+                    "customer_name": customer_name,
+                    "customer_first_name": invoice_data.get("customer_first_name"),
+                    "customer_last_name": invoice_data.get("customer_last_name"),
+                    "customer_business_name": invoice_data.get("customer_company"),
+                    "customer_phone": invoice_data.get("customer_phone"),
+                    "customer_address": invoice_data.get("customer_address"),
+                    "amount_cents": total_cents,
+                    "currency": currency,
+                    "description": notes or ", ".join(items_summary),
+                    "due_days": due_days,
+                    "metadata": {"aspire_correlation": ctx.correlation_id},
+                },
+                correlation_id=ctx.correlation_id,
                 suite_id=safe_suite_id,
                 office_id=safe_office_id,
-                correlation_id=ctx.correlation_id,
-            )
-            quinn_pack = QuinnInvoicingSkillPack()
-
-            # Use create_invoice which returns approval_required=True (no Stripe call yet)
-            result = await quinn_pack.create_invoice(
-                customer=customer_name,  # Name for now — Stripe lookup happens at execution
-                line_items=line_items,
-                context=quinn_ctx,
-                amount=total_cents,
-                currency=currency,
-                description=notes or ", ".join(items_summary),
-                due_days=due_days,
+                risk_tier="yellow",
             )
 
-            # Step 5: Submit to authority queue
+            if stripe_result.outcome != __import__("aspire_orchestrator.models", fromlist=["Outcome"]).Outcome.SUCCESS:
+                # Stripe call failed — tell Ava
+                error_msg = stripe_result.error or "Stripe returned an error"
+                logger.error("Quinn Stripe invoice creation failed: %s", error_msg)
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": False,
+                        "agent": "quinn",
+                        "result": f"I ran into an issue creating the invoice in Stripe. {error_msg}. Want me to try again?",
+                        "error": error_msg,
+                    },
+                )
+
+            # Extract Stripe data
+            stripe_data = stripe_result.data or {}
+            stripe_invoice_id = stripe_data.get("invoice_id", "")
+            hosted_invoice_url = stripe_data.get("hosted_invoice_url", "")
+            invoice_pdf = stripe_data.get("invoice_pdf", "")
+
+            # Step 6: Submit to authority queue WITH real Stripe data
             approval_id = None
             try:
                 from aspire_orchestrator.services.supabase_client import supabase_upsert
@@ -2106,6 +2155,9 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     "currency": currency,
                     "notes": notes,
                     "is_quote": is_quote,
+                    "stripe_invoice_id": stripe_invoice_id,
+                    "hosted_invoice_url": hosted_invoice_url,
+                    "invoice_pdf": invoice_pdf,
                 }
                 payload_json = _json.dumps(payload, default=str)
 
@@ -2119,6 +2171,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "tool": "invoke_quinn",
                         "operation": "quote.create" if is_quote else "invoice.create",
                         "resource_type": "quote" if is_quote else "invoice",
+                        "resource_id": stripe_invoice_id,
                         "risk_tier": "yellow",
                         "policy_version": "v1",
                         "approval_hash": _hashlib.sha256(payload_json.encode()).hexdigest(),
@@ -2136,20 +2189,17 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     on_conflict="approval_id",
                 )
                 approval_id = _approval_id
-                logger.info("Quinn submitted to authority queue: %s", _approval_id)
+                logger.info("Quinn submitted to authority queue: %s (stripe: %s)", _approval_id, stripe_invoice_id)
             except Exception as aq_err:
                 logger.warning("Quinn authority queue write failed: %s", aq_err)
 
-            # Step 6: Build voice-friendly response for Ava
+            # Step 7: Build voice-friendly response for Ava
             doc_type = "quote" if is_quote else "invoice"
             response_text = (
                 f"Alright, I've drafted that {doc_type} for {customer_name}. "
                 f"{', '.join(items_summary)} — {total_dollars:.0f} dollars total, due in {due_days} days. "
-                f"It's in your approval queue. Take a look and approve it when you're ready."
+                f"It's in your approval queue with a preview. Take a look and approve it when you're ready."
             )
-
-            if not customer_email:
-                response_text += f" One thing — I'll need {customer_name}'s email to send it. Can you get me that?"
 
             return JSONResponse(
                 status_code=200,
@@ -2166,10 +2216,13 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "due_days": due_days,
                         "currency": currency,
                         "is_quote": is_quote,
+                        "stripe_invoice_id": stripe_invoice_id,
+                        "hosted_invoice_url": hosted_invoice_url,
+                        "invoice_pdf": invoice_pdf,
                         "approval_id": approval_id,
                         "approval_required": True,
                     },
-                    "receipt_id": result.receipt.get("receipt_id") if result.receipt else None,
+                    "receipt_id": stripe_result.receipt_data.get("receipt_id") if stripe_result.receipt_data else None,
                     "approval_id": approval_id,
                 },
             )
