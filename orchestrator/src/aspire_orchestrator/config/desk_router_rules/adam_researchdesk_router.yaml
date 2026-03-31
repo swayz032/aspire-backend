@@ -24,11 +24,11 @@ route:
   skillpack: adam-research
   default_mode: VERIFIED
 model_overrides:
-  # Adam uses cheap classifier for search queries, primary reasoner for synthesis
-  classify.low: cheap_classifier
-  extract.low: cheap_classifier
+  # Adam uses GPT-5.2 across the board for quality research output
+  classify.low: primary_reasoner
+  extract.low: primary_reasoner
   draft.low: primary_reasoner
-  summarize.low: fast_general
+  summarize.low: primary_reasoner
   verify.low: primary_reasoner
 notes:
   - "If user request includes external send, Ava should also involve Eli and require approvals."

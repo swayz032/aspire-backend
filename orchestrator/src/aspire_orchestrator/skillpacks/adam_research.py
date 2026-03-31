@@ -7,7 +7,7 @@ Phase 3 W3: Enhanced with LLM-powered reasoning via EnhancedSkillPack base.
   - plan_search: LLM plans search strategy before executing
   - verify_evidence: LLM verifies and scores search results
   - generate_outreach_packet: LLM generates vendor outreach documents
-  - Model routing: cheap_classifier (GPT-5-mini) for queries, primary_reasoner (GPT-5.2) for synthesis
+  - Model routing: primary_reasoner (GPT-5.2) for all steps — quality over cost for research
 
 Law compliance:
   - Law #1: Skill pack orchestrates tool calls; orchestrator decides when to invoke.
@@ -18,6 +18,7 @@ Law compliance:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -310,8 +311,8 @@ class AdamResearchSkillPack:
                 error="Missing required criteria.query for vendor comparison",
             )
 
-        # Multi-search: web search for general info + places for local results
-        web_result = await route_web_search(
+        # Parallel search: web + places run simultaneously for speed
+        web_coro = route_web_search(
             payload={"query": search_query},
             correlation_id=context.correlation_id,
             suite_id=context.suite_id,
@@ -323,7 +324,7 @@ class AdamResearchSkillPack:
 
         places_result: ToolExecutionResult | None = None
         if location:
-            places_result = await route_places_search(
+            places_coro = route_places_search(
                 payload={"query": search_query, "location": location},
                 correlation_id=context.correlation_id,
                 suite_id=context.suite_id,
@@ -332,6 +333,9 @@ class AdamResearchSkillPack:
                 capability_token_id=context.capability_token_id,
                 capability_token_hash=context.capability_token_hash,
             )
+            web_result, places_result = await asyncio.gather(web_coro, places_coro)
+        else:
+            web_result = await web_coro
 
         # Build comparison data from results
         comparison = _build_comparison(
