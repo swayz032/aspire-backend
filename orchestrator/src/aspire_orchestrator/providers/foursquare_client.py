@@ -1,7 +1,8 @@
 """Foursquare Places Provider Client — Location search for Adam (Research) skill pack.
 
-Provider: Foursquare Places API v3 (https://api.foursquare.com/v3)
-Auth: API key in `Authorization` header (no Bearer prefix)
+Provider: Foursquare Places API (https://places-api.foursquare.com)
+Auth: Bearer JWT token in Authorization header
+Version: X-Places-Api-Version: 2025-06-17
 Risk tier: GREEN (search is read-only)
 Idempotency: N/A (read-only)
 
@@ -9,7 +10,9 @@ Tools:
   - foursquare.search: Search for places via Foursquare Places API
 
 Per ecosystem providers.yaml:
-  adam_research places routing: google_places -> tomtom -> here -> foursquare (fallback 3) -> osm_overpass
+  adam_research places routing: google_places -> tomtom -> here -> foursquare -> osm_overpass
+
+Returns: name, address, phone (tel), email, website, categories, social_media
 """
 
 from __future__ import annotations
@@ -32,14 +35,15 @@ logger = logging.getLogger(__name__)
 
 
 class FoursquareClient(BaseProviderClient):
-    """Foursquare Places API v3 client.
+    """Foursquare Places API client (new endpoint — places-api.foursquare.com).
 
-    Auth: API key in Authorization header (no Bearer prefix, just the key).
-    Endpoint: GET /places/search?query=X
+    Auth: Bearer JWT token in Authorization header.
+    Version: X-Places-Api-Version header required.
+    Endpoint: GET /places/search?query=X&ll=lat,lng
     """
 
     provider_id = "foursquare"
-    base_url = "https://api.foursquare.com/v3"
+    base_url = "https://places-api.foursquare.com"
     timeout_seconds = 10.0
     max_retries = 1
     idempotency_support = False
@@ -54,7 +58,10 @@ class FoursquareClient(BaseProviderClient):
                 message="Foursquare API key not configured (ASPIRE_FOURSQUARE_API_KEY)",
                 provider_id=self.provider_id,
             )
-        return {"Authorization": api_key}  # No Bearer prefix per FSQ v3
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "X-Places-Api-Version": "2025-06-17",
+        }
 
     def _parse_error(
         self, status_code: int, body: dict[str, Any]
@@ -89,7 +96,7 @@ async def execute_foursquare_search(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Execute foursquare.search — place search via Foursquare Places API v3.
+    """Execute foursquare.search — place search via Foursquare Places API.
 
     Required payload:
       - query: str — search query
@@ -97,7 +104,6 @@ async def execute_foursquare_search(
     Optional payload:
       - ll: str — "lat,lng" center point
       - radius: int — search radius in meters (max 100000)
-      - categories: str — comma-separated FSQ category IDs
       - limit: int — max results (default 10, max 50)
     """
     client = _get_client()
@@ -130,8 +136,6 @@ async def execute_foursquare_search(
         query_params["ll"] = payload["ll"]
     if payload.get("radius"):
         query_params["radius"] = str(min(int(payload["radius"]), 100000))
-    if payload.get("categories"):
-        query_params["categories"] = payload["categories"]
 
     response = await client._request(
         ProviderRequest(
@@ -173,19 +177,23 @@ async def execute_foursquare_search(
                         "name": r.get("name", ""),
                         "address": r.get("location", {}).get("formatted_address", ""),
                         "location": {
-                            "lat": r.get("geocodes", {}).get("main", {}).get("latitude"),
-                            "lng": r.get("geocodes", {}).get("main", {}).get("longitude"),
+                            "lat": r.get("latitude"),
+                            "lng": r.get("longitude"),
                         },
                         "categories": [
                             c.get("name", "")
                             for c in r.get("categories", [])
                         ],
-                        "fsq_id": r.get("fsq_id", ""),
+                        "phone": r.get("tel", ""),
+                        "email": r.get("email", ""),
+                        "website": r.get("website", ""),
+                        "fsq_id": r.get("fsq_place_id", ""),
                     }
                     for r in raw_results
                 ],
                 "query": query,
                 "result_count": len(raw_results),
+                "provider_used": "foursquare",
             },
             receipt_data=receipt,
         )
