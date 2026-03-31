@@ -1575,6 +1575,21 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 risk_tier="green",
             )
 
+            # ── Extract clean location from task ──
+            import re as _re
+            # Match patterns like "Atlanta Georgia", "Atlanta, GA", "in Dallas TX"
+            _loc_match = _re.search(
+                r'(?:in|near|around)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:[,\s]+(?:Georgia|GA|Texas|TX|Florida|FL|California|CA|New York|NY|Illinois|IL|Ohio|OH|North Carolina|NC|Virginia|VA|Tennessee|TN|Alabama|AL|South Carolina|SC|Louisiana|LA|Maryland|MD|Arizona|AZ|Colorado|CO|Oregon|OR|Washington|WA|Michigan|MI|Indiana|IN|Missouri|MO|Wisconsin|WI|Minnesota|MN|Iowa|IA|Mississippi|MS|Arkansas|AR|Kansas|KS|Utah|UT|Nevada|NV|New Mexico|NM|Nebraska|NE|Idaho|ID|Maine|ME|Montana|MT|Rhode Island|RI|Delaware|DE|New Hampshire|NH|Vermont|VT|Wyoming|WY|Hawaii|HI|Alaska|AK|Connecticut|CT|Oklahoma|OK|Kentucky|KY|[A-Z]{2}))?)',
+                full_task, _re.IGNORECASE,
+            )
+            clean_location = _loc_match.group(1).strip() if _loc_match else ""
+            if not clean_location:
+                # Fallback: look for "City, STATE" or "City STATE" pattern anywhere
+                _city_match = _re.search(r'([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)[,\s]+([A-Z]{2}|[A-Z][a-z]+)\b', full_task)
+                if _city_match:
+                    clean_location = f"{_city_match.group(1)}, {_city_match.group(2)}"
+            logger.info("Adam extracted location: '%s' from task", clean_location)
+
             # ── Steps 1+2: Query expansion + Geocoding in PARALLEL ──
             queries = [full_task]
             coordinates = None
@@ -1605,11 +1620,12 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 return [full_task]
 
             async def _geocode() -> dict | None:
-                """Mapbox geocodes the task location."""
+                """Mapbox geocodes the extracted location (not the full task)."""
+                geocode_query = clean_location or full_task
                 for pname, geo_fn in _geocode_chain():
                     try:
                         geo_result = await _asyncio.wait_for(
-                            geo_fn(payload={"query": full_task}, **common_kwargs),
+                            geo_fn(payload={"query": geocode_query}, **common_kwargs),
                             timeout=10.0,
                         )
                         if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
@@ -1671,14 +1687,43 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         p_payload["location"] = coord_str
                         p_payload["radius"] = "32000"  # ~20 miles
                 elif provider_name == "here":
-                    # HERE requires "at" as "lat,lng"
+                    # HERE requires "at" as "lat,lng" — critical for relevant results
                     if coord_str:
                         p_payload["at"] = coord_str
+                    elif clean_location:
+                        # Fallback: use well-known city coordinates
+                        _city_coords = {
+                            "atlanta": "33.749,-84.388", "dallas": "32.777,-96.797",
+                            "houston": "29.760,-95.370", "chicago": "41.878,-87.630",
+                            "miami": "25.762,-80.192", "new york": "40.713,-74.006",
+                            "los angeles": "34.052,-118.244", "phoenix": "33.449,-112.074",
+                            "philadelphia": "39.953,-75.164", "san antonio": "29.425,-98.495",
+                            "charlotte": "35.227,-80.843", "nashville": "36.163,-86.781",
+                            "denver": "39.740,-104.990", "seattle": "47.607,-122.332",
+                        }
+                        for city, coords in _city_coords.items():
+                            if city in clean_location.lower():
+                                p_payload["at"] = coords
+                                break
                 elif provider_name == "foursquare":
                     # Foursquare requires "ll" as "lat,lng"
                     if coord_str:
                         p_payload["ll"] = coord_str
                         p_payload["radius"] = "32000"
+                    elif clean_location:
+                        # Same city fallback
+                        _city_coords_fsq = {
+                            "atlanta": "33.749,-84.388", "dallas": "32.777,-96.797",
+                            "houston": "29.760,-95.370", "chicago": "41.878,-87.630",
+                            "miami": "25.762,-80.192", "new york": "40.713,-74.006",
+                            "los angeles": "34.052,-118.244", "phoenix": "33.449,-112.074",
+                            "charlotte": "35.227,-80.843", "nashville": "36.163,-86.781",
+                        }
+                        for city, coords in _city_coords_fsq.items():
+                            if city in clean_location.lower():
+                                p_payload["ll"] = coords
+                                p_payload["radius"] = "32000"
+                                break
                 elif provider_name == "tomtom":
                     # TomTom accepts lat/lon params
                     if coordinates:
