@@ -2070,6 +2070,13 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 desc = item.get("description", "item")
                 items_summary.append(f"{qty} {desc} at {price:.2f} each")
 
+            # Auto-create tenant if needed (prevents FK violation on authority queue write)
+            try:
+                from aspire_orchestrator.services.supabase_client import supabase_upsert as _su
+                await _su("tenants", {"tenant_id": safe_suite_id, "name": customer_name or "Auto-created"}, on_conflict="tenant_id")
+            except Exception:
+                pass
+
             # Step 4: Check if we have email — required for Stripe
             if not customer_email:
                 # No email — can't create Stripe customer. Tell Ava to ask for onboarding info.
@@ -2198,7 +2205,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             response_text = (
                 f"Alright, I've drafted that {doc_type} for {customer_name}. "
                 f"{', '.join(items_summary)} — {total_dollars:.0f} dollars total, due in {due_days} days. "
-                f"It's in your approval queue with a preview. Take a look and approve it when you're ready."
+                f"It's in your approval queue with a preview. Go check it out when you get a chance."
             )
 
             return JSONResponse(
