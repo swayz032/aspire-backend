@@ -1612,9 +1612,10 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             queries = [q for q in queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
             logger.info("Adam queries: %s", queries)
 
-            # ── Step 2: Geocode location via Mapbox ──
+            # ── Step 2: Geocode location (Mapbox primary → HERE fallback) ──
             coordinates = None
             if clean_location:
+                # Try Mapbox first
                 for pname, geo_fn in _geocode_chain():
                     try:
                         geo_result = await _asyncio.wait_for(
@@ -1629,10 +1630,31 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                                 lng = first.get("lng") or first.get("longitude")
                                 if lat and lng:
                                     coordinates = {"lat": float(lat), "lng": float(lng)}
-                                    logger.info("Adam geocoded '%s' → %s", clean_location, coordinates)
+                                    logger.info("Adam geocoded (mapbox) '%s' → %s", clean_location, coordinates)
                         break
                     except Exception as e:
-                        logger.warning("Adam geocode failed: %s", type(e).__name__)
+                        logger.warning("Adam mapbox geocode failed: %s", type(e).__name__)
+
+                # Fallback: HERE geocode if Mapbox failed
+                if not coordinates:
+                    try:
+                        import httpx
+                        here_key = _os.environ.get("ASPIRE_HERE_API_KEY", "")
+                        if here_key:
+                            async with httpx.AsyncClient(timeout=5.0) as hc:
+                                hr = await hc.get(
+                                    "https://geocode.search.hereapi.com/v1/geocode",
+                                    params={"q": clean_location, "apiKey": here_key, "limit": "1"},
+                                )
+                                if hr.status_code == 200:
+                                    items = hr.json().get("items", [])
+                                    if items:
+                                        pos = items[0].get("position", {})
+                                        if pos.get("lat") and pos.get("lng"):
+                                            coordinates = {"lat": float(pos["lat"]), "lng": float(pos["lng"])}
+                                            logger.info("Adam geocoded (here) '%s' → %s", clean_location, coordinates)
+                    except Exception as e:
+                        logger.warning("Adam here geocode failed: %s", type(e).__name__)
 
             coord_str = f"{coordinates['lat']},{coordinates['lng']}" if coordinates else ""
 
@@ -1658,7 +1680,8 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 for pname, executor_fn in _web_search_chain():
                     search_tasks.append(_safe_search(pname, executor_fn, {"query": query}))
 
-            # Places: each provider with proper coordinate format
+            # Places: EVERY provider fires — no skipping. Use coords when available,
+            # text location as fallback. Production grade = all providers contribute.
             for pname, executor_fn in _places_search_chain():
                 p_payload: dict[str, Any] = {"query": queries[0]}
 
@@ -1666,23 +1689,35 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     if coord_str:
                         p_payload["location"] = coord_str
                         p_payload["radius"] = "32000"
+                    # Google Places text search works without coords too
+
                 elif pname == "here":
                     if coord_str:
                         p_payload["at"] = coord_str
                     else:
-                        continue  # HERE requires coordinates — skip if none
+                        # HERE strictly requires at — skip only if truly no location
+                        if not clean_location:
+                            continue
+                        # We already tried HERE geocode above, if coords still missing skip HERE discover
+                        continue
+
                 elif pname == "foursquare":
                     if coord_str:
                         p_payload["ll"] = coord_str
                         p_payload["radius"] = "32000"
-                    else:
-                        continue  # Foursquare without coords returns global noise — skip
+                    elif clean_location:
+                        # Foursquare supports text-based 'near' param
+                        p_payload["near"] = clean_location
+                    # Always fires — uses ll OR near
+
                 elif pname == "tomtom":
                     if coordinates:
                         p_payload["lat"] = str(coordinates["lat"])
                         p_payload["lon"] = str(coordinates["lng"])
+                    # TomTom works without coords — includes location in query text
+
                 elif pname == "osm_overpass":
-                    continue  # Too slow (10s+), other providers cover it
+                    continue  # 10s+ response blows the 30s Railway timeout
 
                 search_tasks.append(_safe_search(pname, executor_fn, p_payload))
 

@@ -134,6 +134,8 @@ async def execute_foursquare_search(
     }
     if payload.get("ll"):
         query_params["ll"] = payload["ll"]
+    if payload.get("near"):
+        query_params["near"] = payload["near"]
     if payload.get("radius"):
         query_params["radius"] = str(min(int(payload["radius"]), 100000))
 
