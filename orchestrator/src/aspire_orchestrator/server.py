@@ -1550,10 +1550,9 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if details:
             full_task = f"{task}. Additional details: {details}"
 
-        # ── Adam: Enterprise-grade multi-provider search (v5) ──
-        # Production pipeline — no LLM for query expansion (too slow/unreliable).
-        # Template-based expansion + Mapbox geocoding + 6 providers parallel +
-        # cross-validation + GPT-5.2 synthesis. Target: <25s total.
+        # ── Adam: Next-Gen Research Engine (v6) ──
+        # Multi-mode: vendor (places-first), strategy (web-first 3-stream),
+        # competitive (places+web), topic (web-only). Mode detected by GPT-5.2.
         if agent == "adam":
             import asyncio as _asyncio
             import json as _json
@@ -1564,6 +1563,250 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 _web_search_chain, _places_search_chain, _geocode_chain,
             )
             from aspire_orchestrator.models import Outcome
+
+            api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
+
+            # ── Step 0: Mode Detection (GPT-5.2) ──
+            mode = "vendor"  # default
+            try:
+                mode_resp = await _asyncio.wait_for(
+                    generate_text_async(
+                        model="gpt-5.2",
+                        messages=[
+                            {"role": "developer", "content": "Classify this research task into exactly one mode. Return ONLY the mode name, nothing else: vendor, strategy, competitive, or topic"},
+                            {"role": "user", "content": f"Task: {full_task}\n\nvendor = find specific businesses/stores/suppliers\nstrategy = plan/start/grow a business, build a strategy\ncompetitive = analyze competitors, competitive landscape\ntopic = specific question about regulations/licenses/how-to"},
+                        ],
+                        api_key=api_key,
+                        base_url="https://api.openai.com/v1",
+                        timeout_seconds=8.0,
+                        max_output_tokens=50,
+                        prefer_responses_api=True,
+                    ),
+                    timeout=6.0,
+                )
+                detected = mode_resp.strip().lower().split()[0] if mode_resp else "vendor"
+                if detected in ("vendor", "strategy", "competitive", "topic"):
+                    mode = detected
+                logger.info("Adam mode detected: %s for task: %s", mode, full_task[:80])
+            except Exception as mode_err:
+                logger.warning("Adam mode detection failed, defaulting to vendor: %s", type(mode_err).__name__)
+
+            # ── STRATEGY MODE: 3 parallel research streams ──
+            if mode == "strategy":
+                common_kwargs_web = dict(
+                    correlation_id=ctx.correlation_id,
+                    suite_id=safe_suite_id,
+                    office_id=safe_office_id,
+                    risk_tier="green",
+                )
+
+                # Plan 3 research streams
+                try:
+                    plan_resp = await _asyncio.wait_for(
+                        generate_text_async(
+                            model="gpt-5.2",
+                            messages=[
+                                {"role": "developer", "content": "Return ONLY a JSON object with 3 keys: stream_a (market queries), stream_b (operations queries), stream_c (revenue queries). Each key has an array of 2 search query strings. No explanation."},
+                                {"role": "user", "content": f"Plan 3 research streams for this task. Each stream needs 2 web search queries.\nTask: {full_task}"},
+                            ],
+                            api_key=api_key,
+                            base_url="https://api.openai.com/v1",
+                            timeout_seconds=12.0,
+                            max_output_tokens=4096,
+                            prefer_responses_api=True,
+                        ),
+                        timeout=10.0,
+                    )
+                    cleaned = plan_resp.strip()
+                    if cleaned.startswith("```"):
+                        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+                        cleaned = cleaned.rsplit("```", 1)[0]
+                    streams = _json.loads(cleaned.strip())
+                except Exception as plan_err:
+                    logger.warning("Adam strategy plan failed: %s, using template", type(plan_err).__name__)
+                    streams = {
+                        "stream_a": [f"{full_task} market demand competitors", f"{full_task} industry trends 2026"],
+                        "stream_b": [f"{full_task} startup costs equipment licenses", f"{full_task} hiring requirements insurance"],
+                        "stream_c": [f"{full_task} pricing rates revenue benchmarks", f"{full_task} profit margins growth path"],
+                    }
+
+                # Execute all streams in parallel (web-first — Brave + Tavily)
+                async def _web_search(query: str) -> list[dict]:
+                    results = []
+                    for pname, executor_fn in _web_search_chain():
+                        try:
+                            result = await _asyncio.wait_for(
+                                executor_fn(payload={"query": query}, **common_kwargs_web),
+                                timeout=10.0,
+                            )
+                            if result.outcome == Outcome.SUCCESS and result.data:
+                                for r in result.data.get("results", [])[:5]:
+                                    results.append({
+                                        "title": r.get("title", r.get("name", "")),
+                                        "url": r.get("url", ""),
+                                        "snippet": r.get("snippet", r.get("description", "")),
+                                        "source": pname,
+                                    })
+                            if results:
+                                break  # Got results from first provider, skip fallback
+                        except Exception:
+                            continue
+                    return results
+
+                # Flatten all queries and search in parallel
+                all_queries = []
+                stream_labels = []
+                for label in ("stream_a", "stream_b", "stream_c"):
+                    for q in streams.get(label, [])[:2]:
+                        all_queries.append(q)
+                        stream_labels.append(label)
+
+                search_results = await _asyncio.gather(*[_web_search(q) for q in all_queries])
+
+                # Group results by stream
+                stream_data = {"stream_a": [], "stream_b": [], "stream_c": []}
+                for i, results in enumerate(search_results):
+                    label = stream_labels[i] if i < len(stream_labels) else "stream_a"
+                    stream_data[label].extend(results)
+
+                total_results = sum(len(v) for v in stream_data.values())
+                logger.info("Adam strategy search: %d total results across 3 streams", total_results)
+
+                # Synthesize with GPT-5.2
+                try:
+                    synthesis_prompt = (
+                        f"You are Adam, a strategic research specialist for small business owners.\n"
+                        f"Task: {full_task}\n\n"
+                        f"Stream A (Market):\n{_json.dumps(stream_data['stream_a'][:8], indent=2, default=str)}\n\n"
+                        f"Stream B (Operations):\n{_json.dumps(stream_data['stream_b'][:8], indent=2, default=str)}\n\n"
+                        f"Stream C (Revenue):\n{_json.dumps(stream_data['stream_c'][:8], indent=2, default=str)}\n\n"
+                        f"Create a strategic brief for a small business owner. Structure as JSON:\n"
+                        f'{{"market": {{"summary": "...", "competitors": ["..."], "demand": "..."}},\n'
+                        f' "operations": {{"startup_costs": "...", "equipment": ["..."], "licenses": ["..."], "hiring": "..."}},\n'
+                        f' "revenue": {{"pricing": "...", "contract_value": "...", "targets": "...", "margins": "..."}},\n'
+                        f' "recommended_approach": "one paragraph recommendation",\n'
+                        f' "confidence": "high/medium/low",\n'
+                        f' "flags": ["anything only found in 1 source"]}}\n\n'
+                        f"Use ONLY data from the search results. If you estimate a number, say so. Be specific."
+                    )
+
+                    synthesis = await generate_text_async(
+                        model="gpt-5.2",
+                        messages=[
+                            {"role": "developer", "content": "Create a strategic research brief. Return valid JSON. Be specific with numbers from the search results."},
+                            {"role": "user", "content": synthesis_prompt},
+                        ],
+                        api_key=api_key,
+                        base_url="https://api.openai.com/v1",
+                        timeout_seconds=18.0,
+                        max_output_tokens=4096,
+                        prefer_responses_api=True,
+                    )
+
+                    # Parse the brief
+                    brief_text = synthesis.strip()
+                    if brief_text.startswith("```"):
+                        brief_text = brief_text.split("\n", 1)[1] if "\n" in brief_text else brief_text[3:]
+                        brief_text = brief_text.rsplit("```", 1)[0]
+                    try:
+                        brief = _json.loads(brief_text.strip())
+                    except _json.JSONDecodeError:
+                        brief = {"recommended_approach": brief_text, "confidence": "medium"}
+
+                    # Build voice-friendly summary from the brief
+                    rec = brief.get("recommended_approach", "")
+                    market_summary = brief.get("market", {}).get("summary", "")
+                    response_text = rec if rec else market_summary if market_summary else synthesis[:500]
+
+                except Exception as synth_err:
+                    logger.warning("Adam strategy synthesis failed: %s", synth_err)
+                    brief = {}
+                    response_text = f"I researched {full_task} but had trouble synthesizing the results. Here's what I found across {total_results} sources."
+
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": total_results > 0,
+                        "agent": "adam",
+                        "result": response_text,
+                        "data": {
+                            "mode": "strategy",
+                            "brief": brief,
+                            "stream_results": {k: len(v) for k, v in stream_data.items()},
+                            "total_results": total_results,
+                            "queries_used": all_queries,
+                        },
+                        "receipt_id": ctx.correlation_id,
+                        "error": None if total_results > 0 else "No results found",
+                    },
+                )
+
+            # ── TOPIC MODE: web-only focused research ──
+            if mode == "topic":
+                common_kwargs_web = dict(
+                    correlation_id=ctx.correlation_id,
+                    suite_id=safe_suite_id,
+                    office_id=safe_office_id,
+                    risk_tier="green",
+                )
+
+                # Search with 2 query variants
+                queries = [full_task, f"{full_task} guide requirements 2026"]
+                all_results = []
+                for q in queries:
+                    for pname, executor_fn in _web_search_chain():
+                        try:
+                            result = await _asyncio.wait_for(
+                                executor_fn(payload={"query": q}, **common_kwargs_web),
+                                timeout=10.0,
+                            )
+                            if result.outcome == Outcome.SUCCESS and result.data:
+                                for r in result.data.get("results", [])[:5]:
+                                    all_results.append({
+                                        "title": r.get("title", r.get("name", "")),
+                                        "url": r.get("url", ""),
+                                        "snippet": r.get("snippet", r.get("description", "")),
+                                        "source": pname,
+                                    })
+                                break
+                        except Exception:
+                            continue
+
+                # Synthesize
+                try:
+                    synthesis = await generate_text_async(
+                        model="gpt-5.2",
+                        messages=[
+                            {"role": "developer", "content": "Summarize research findings for a small business owner. Be specific and cite sources. Under 200 words."},
+                            {"role": "user", "content": f"Task: {full_task}\n\nSearch results:\n{_json.dumps(all_results[:10], indent=2, default=str)}\n\nSummarize the key findings. Include specific requirements, steps, or answers."},
+                        ],
+                        api_key=api_key,
+                        base_url="https://api.openai.com/v1",
+                        timeout_seconds=18.0,
+                        max_output_tokens=4096,
+                        prefer_responses_api=True,
+                    )
+                    response_text = synthesis
+                except Exception as synth_err:
+                    logger.warning("Adam topic synthesis failed: %s", synth_err)
+                    if all_results:
+                        response_text = f"Found {len(all_results)} results. Top: {all_results[0].get('title', 'Unknown')}."
+                    else:
+                        response_text = f"No results found for: {full_task}"
+
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": len(all_results) > 0,
+                        "agent": "adam",
+                        "result": response_text,
+                        "data": {"mode": "topic", "results": all_results[:10], "total": len(all_results)},
+                        "receipt_id": ctx.correlation_id,
+                    },
+                )
+
+            # ── VENDOR MODE (existing v5 pipeline) ──
+            # Falls through for vendor and competitive modes
 
             api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
             common_kwargs = dict(

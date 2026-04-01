@@ -1,0 +1,174 @@
+ADAM INDUSTRY RESEARCH TEMPLATES
+
+When researching a specific trade or industry, use these templates to know WHAT to research. Each template lists the key questions that matter for that industry.
+
+---
+
+LANDSCAPING
+
+Market stream:
+- Commercial vs residential demand in [city]
+- Top landscaping competitors and what they charge
+- Property management companies that hire landscapers
+- Seasonal demand patterns (peak months vs slow months)
+
+Operations stream:
+- Equipment needed: mowers, edgers, blowers, trailers, trucks
+- Licensing requirements by state (landscape contractor license)
+- Insurance requirements (general liability, workers comp)
+- Crew size and roles (foreman, laborers, equipment operator)
+- Typical startup investment range
+
+Revenue stream:
+- Hourly rates for commercial maintenance
+- Average annual contract value for commercial clients
+- Per-visit vs monthly contract pricing
+- Revenue per crew per day
+- Break-even analysis (how many accounts to cover costs)
+
+---
+
+PAINTING
+
+Market stream:
+- Residential vs commercial demand in [city]
+- Top painting contractors and their pricing
+- Property managers and GCs who hire painters
+- Seasonal patterns (exterior vs interior seasons)
+
+Operations stream:
+- Equipment: sprayers, rollers, brushes, ladders, scaffolding, drop cloths
+- Licensing requirements by state
+- Insurance (general liability, bonding)
+- Crew structure (lead painter, helpers)
+- Vehicle and storage needs
+
+Revenue stream:
+- Per square foot rates (interior vs exterior)
+- Room-based pricing for residential
+- Commercial bid pricing strategies
+- Material markup percentages
+- Revenue per painter per day
+- Subcontractor vs employee economics
+
+---
+
+PLUMBING
+
+Market stream:
+- Service call demand in [city]
+- Top plumbing companies and their pricing
+- Emergency vs scheduled service demand
+- New construction vs repair/maintenance split
+
+Operations stream:
+- Truck stock inventory and cost
+- Licensing (master plumber, journeyman requirements)
+- Insurance and bonding requirements
+- Common tools and diagnostic equipment
+- Apprenticeship pipeline
+
+Revenue stream:
+- Hourly rates (standard vs emergency)
+- Average service call ticket
+- Water heater replacement pricing
+- Maintenance agreement models
+- Revenue per technician per year
+- First-call completion rate targets
+
+---
+
+HVAC
+
+Market stream:
+- Seasonal demand patterns (summer cooling vs winter heating)
+- Top HVAC companies in [city]
+- New construction vs retrofit/replacement market
+- Energy efficiency trends and regulations
+
+Operations stream:
+- Equipment and diagnostic tools
+- EPA 608 certification and state licensing
+- Insurance requirements
+- Seasonal workforce management
+- Vehicle fleet needs
+
+Revenue stream:
+- Diagnostic fee and service call rates
+- Equipment installation pricing (by tonnage and SEER rating)
+- Maintenance contract pricing and retention rates
+- Counter-seasonal revenue strategies
+- Revenue per technician targets
+
+---
+
+PALLET AND WAREHOUSE
+
+Market stream:
+- GMA pallet demand in [city]
+- Major buyers: food distributors, pharma, 3PLs, export companies
+- New vs recycled pallet market dynamics
+- Regional logistics corridors
+
+Operations stream:
+- Warehouse space requirements and lease rates
+- Pallet building equipment (nail guns, saws, jigs)
+- Forklift and material handling equipment
+- ISPM-15 heat treatment requirements for export
+- Staffing: builders, forklift operators, supervisor
+
+Revenue stream:
+- New pallet pricing (48x40 GMA standard)
+- Recycled pallet buy/repair/sell margins
+- Volume thresholds for profitability
+- Customer contract structures (weekly, monthly)
+- Break-even volume calculations
+
+---
+
+GENERAL CONTRACTOR
+
+Market stream:
+- Construction activity and permit data in [city]
+- Top GCs and their specialties
+- Residential remodel vs commercial buildout demand
+- Subcontractor availability
+
+Operations stream:
+- Licensing and registration requirements
+- Insurance (general liability, builders risk, bonding)
+- Project management tools and processes
+- Subcontractor recruitment and management
+- Safety and OSHA compliance
+
+Revenue stream:
+- Gross margin targets by project type
+- Subcontractor markup standards
+- Change order revenue contribution
+- Revenue per project manager
+- Cash flow management (progress billing, retainage)
+
+---
+
+GENERAL (ANY INDUSTRY)
+
+When the industry is not in the templates above, research these universal categories:
+
+Market stream:
+- Demand indicators in [city] for this service/product
+- Existing competitors and their pricing
+- Target customer profile
+- Market trends and growth signals
+
+Operations stream:
+- Startup requirements (licenses, insurance, equipment)
+- Staffing needs and labor costs
+- Physical space or vehicle requirements
+- Key vendor/supplier relationships
+
+Revenue stream:
+- Typical pricing models for this industry
+- Average transaction/contract value
+- Revenue per employee or unit benchmarks
+- Break-even analysis framework
+- Growth path from startup to scale

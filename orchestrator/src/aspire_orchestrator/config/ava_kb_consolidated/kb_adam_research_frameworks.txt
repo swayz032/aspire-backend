@@ -1,0 +1,135 @@
+ADAM RESEARCH FRAMEWORKS
+
+How Adam approaches different types of research tasks. Follow these frameworks when processing research requests.
+
+---
+
+MODE DETECTION
+
+Classify every research task into one of these modes before searching:
+
+VENDOR MODE — User wants to find specific businesses, stores, suppliers, or service providers.
+Triggers: "find", "locate", "search for", "where can I find", "who sells", "suppliers near"
+Strategy: Places-first (Google Places, HERE, Foursquare, TomTom) + web enrichment
+Output: Business list with names, addresses, phone numbers, emails, ratings, websites
+
+STRATEGY MODE — User wants to plan, start, grow, or analyze a business or project.
+Triggers: "help me start", "build a plan", "how to", "research starting", "what would it take", "strategy for"
+Strategy: Web-first (Brave + Tavily), 3 parallel research streams, NO places search
+Output: Strategic brief with market analysis, startup costs, revenue model, recommended approach
+
+COMPETITIVE MODE — User wants to understand their competition.
+Triggers: "who are my competitors", "competition in", "what are others charging", "competitive landscape"
+Strategy: Places search for local competitors + web search for their pricing and reviews
+Output: Competitor profiles with names, pricing, ratings, strengths, weaknesses
+
+TOPIC MODE — User wants specific information on a topic, regulation, or question.
+Triggers: "what licenses", "how does", "explain", "what are the requirements", "tax implications", "insurance for"
+Strategy: Web-first (Brave + Tavily), educational and regulatory sources
+Output: Summarized findings with source attribution
+
+---
+
+STRATEGY MODE RESEARCH STREAMS
+
+For strategy research, ALWAYS plan 3 parallel streams covering different facets:
+
+Stream A — MARKET: demand, competitors, trends, customer types, market size
+Stream B — OPERATIONS: startup costs, equipment, licensing, hiring, insurance, space
+Stream C — REVENUE: pricing benchmarks, contract values, revenue targets, margins, growth path
+
+Each stream searches independently. The synthesis step combines all three into one cohesive brief.
+
+---
+
+QUERY PLANNING
+
+For each stream, generate 2-3 search queries that are:
+- Specific to the user's industry and location
+- Include the current year for freshness (2026)
+- Use different wording to catch different sources
+
+Good queries:
+- "commercial landscaping market demand Atlanta Georgia 2026"
+- "landscaping business startup costs equipment list"
+- "commercial landscaping contract value average revenue per customer"
+
+Bad queries:
+- "landscaping" (too vague)
+- "how to start a business" (too generic, not trade-specific)
+- "landscaping companies Atlanta" (this is vendor mode, not strategy mode)
+
+---
+
+RESULT EVALUATION
+
+After each search, evaluate the results:
+
+SUFFICIENT: Results directly answer the research question with specific numbers or facts.
+INSUFFICIENT: Results are too generic, wrong industry, or missing key data.
+WRONG TYPE: Results are businesses when we wanted market data, or vice versa.
+
+If INSUFFICIENT or WRONG TYPE: reformulate the query and search again. Change the wording, add specifics, try a different angle. Maximum 2 reformulations per stream.
+
+---
+
+SYNTHESIS RULES
+
+When combining research streams into a brief:
+
+1. Lead with the most actionable finding (what the user should DO)
+2. Support with specific numbers (not ranges when possible)
+3. Include confidence level per section:
+   - HIGH: data confirmed across multiple search results
+   - MEDIUM: data from one strong source
+   - LOW: estimated or extrapolated, flag for user
+4. Always include a recommended approach
+5. Always include a concrete next step
+
+---
+
+VERIFICATION
+
+After synthesis, verify key claims:
+
+- If a number appears in Stream A AND Stream C results → HIGH confidence
+- If a number appears in only one stream → MEDIUM, note the source
+- If a number is estimated by the LLM (not found in search results) → LOW, flag explicitly
+
+Never present LLM-estimated numbers as research findings. If you estimated it, say so.
+
+---
+
+OUTPUT STRUCTURE
+
+VENDOR MODE output:
+{ "mode": "vendor", "results": [...], "providers_used": [...], "confidence": "..." }
+
+STRATEGY MODE output:
+{
+  "mode": "strategy",
+  "market": { "demand": "...", "competitors": [...], "trends": "..." },
+  "operations": { "startup_costs": "...", "equipment": [...], "licenses": [...], "hiring": "..." },
+  "revenue": { "pricing": "...", "contract_value": "...", "targets": "...", "margins": "..." },
+  "recommended_approach": "...",
+  "confidence": "high/medium/low",
+  "flags": [...],
+  "sources_count": number
+}
+
+COMPETITIVE MODE output:
+{
+  "mode": "competitive",
+  "competitors": [{ "name": "...", "pricing": "...", "rating": "...", "strengths": "...", "weaknesses": "..." }],
+  "market_position": "...",
+  "recommended_differentiation": "..."
+}
+
+TOPIC MODE output:
+{
+  "mode": "topic",
+  "summary": "...",
+  "key_points": [...],
+  "sources": [...],
+  "confidence": "..."
+}
