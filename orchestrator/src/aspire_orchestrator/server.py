@@ -1597,16 +1597,16 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 try:
                     plan_resp = await _asyncio.wait_for(
                         generate_text_async(
-                            model="gpt-5",
+                            model="gpt-4o",
                             messages=[
-                                {"role": "developer", "content": "Return ONLY a JSON object with 3 keys: stream_a (market queries), stream_b (operations queries), stream_c (revenue queries). Each key has an array of 2 search query strings. No explanation."},
+                                {"role": "system", "content": "Return ONLY a JSON object with 3 keys: stream_a (market queries), stream_b (operations queries), stream_c (revenue queries). Each key has an array of 2 search query strings. No explanation."},
                                 {"role": "user", "content": f"Plan 3 research streams for this task. Each stream needs 2 web search queries.\nTask: {full_task}"},
                             ],
                             api_key=api_key,
                             base_url="https://api.openai.com/v1",
-                            timeout_seconds=10.0,
+                            timeout_seconds=8.0,
                             max_output_tokens=4096,
-                            prefer_responses_api=True,
+                            prefer_responses_api=False,
                         ),
                         timeout=8.0,
                     )
@@ -1684,16 +1684,16 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     )
 
                     synthesis = await generate_text_async(
-                        model="gpt-5.2",
+                        model="gpt-4o",
                         messages=[
-                            {"role": "developer", "content": "Create a strategic research brief. Return valid JSON. Be specific with numbers from the search results."},
+                            {"role": "system", "content": "Create a strategic research brief. Return valid JSON. Be specific with numbers from the search results."},
                             {"role": "user", "content": synthesis_prompt},
                         ],
                         api_key=api_key,
                         base_url="https://api.openai.com/v1",
-                        timeout_seconds=18.0,
+                        timeout_seconds=15.0,
                         max_output_tokens=4096,
-                        prefer_responses_api=True,
+                        prefer_responses_api=False,
                     )
 
                     # Parse the brief
@@ -1768,16 +1768,16 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 # Synthesize
                 try:
                     synthesis = await generate_text_async(
-                        model="gpt-5.2",
+                        model="gpt-4o",
                         messages=[
-                            {"role": "developer", "content": "Summarize research findings for a small business owner. Be specific and cite sources. Under 200 words."},
+                            {"role": "system", "content": "Summarize research findings for a small business owner. Be specific and cite sources. Under 200 words."},
                             {"role": "user", "content": f"Task: {full_task}\n\nSearch results:\n{_json.dumps(all_results[:10], indent=2, default=str)}\n\nSummarize the key findings. Include specific requirements, steps, or answers."},
                         ],
                         api_key=api_key,
                         base_url="https://api.openai.com/v1",
-                        timeout_seconds=18.0,
+                        timeout_seconds=12.0,
                         max_output_tokens=4096,
-                        prefer_responses_api=True,
+                        prefer_responses_api=False,
                     )
                     response_text = synthesis
                 except Exception as synth_err:
