@@ -2092,9 +2092,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "success": True,
                         "agent": "quinn",
                         "result": (
-                            f"{customer_name} isn't in the system yet. "
-                            f"It's a one-time setup — I just need their first name, last name, and email. "
-                            f"Company, phone, and billing address are nice to have but we can skip them."
+                            f"{customer_name} isn't in the system yet. One-time setup — what's their first name, last name, and email? Phone and address are optional."
                         ),
                         "data": {
                             "status": "needs_onboarding",
