@@ -45,22 +45,22 @@ class TestSettingsPrefixAlignment:
             assert os.environ.get("ASPIRE_TWILIO_AUTH_TOKEN") == "test-auth-token"
 
     def test_provider_keys_bridged(self):
-        """ElevenLabs, Deepgram, LiveKit, PandaDoc, Anam keys bridged."""
+        """ElevenLabs, Deepgram, Zoom, PandaDoc, Anam keys bridged."""
         from aspire_orchestrator.config.secrets import _align_settings_prefix
 
         env_patch = {
             "ELEVENLABS_API_KEY": "el-test-key",
             "DEEPGRAM_API_KEY": "dg-test-key",
-            "LIVEKIT_API_KEY": "lk-test-key",
-            "LIVEKIT_SECRET": "lk-test-secret",
+            "ZOOM_API_KEY": "zk-test-key",
+            "ZOOM_API_SECRET": "zk-test-secret",
             "PANDADOC_API_KEY": "pd-test-key",
             "ANAM_API_KEY": "anam-test-key",
         }
         aspire_keys = [
             "ASPIRE_ELEVENLABS_API_KEY",
             "ASPIRE_DEEPGRAM_API_KEY",
-            "ASPIRE_LIVEKIT_API_KEY",
-            "ASPIRE_LIVEKIT_API_SECRET",
+            "ASPIRE_ZOOM_API_KEY",
+            "ASPIRE_ZOOM_API_SECRET",
             "ASPIRE_PANDADOC_API_KEY",
             "ASPIRE_ANAM_API_KEY",
         ]
@@ -70,8 +70,8 @@ class TestSettingsPrefixAlignment:
             _align_settings_prefix()
             assert os.environ.get("ASPIRE_ELEVENLABS_API_KEY") == "el-test-key"
             assert os.environ.get("ASPIRE_DEEPGRAM_API_KEY") == "dg-test-key"
-            assert os.environ.get("ASPIRE_LIVEKIT_API_KEY") == "lk-test-key"
-            assert os.environ.get("ASPIRE_LIVEKIT_API_SECRET") == "lk-test-secret"
+            assert os.environ.get("ASPIRE_ZOOM_API_KEY") == "zk-test-key"
+            assert os.environ.get("ASPIRE_ZOOM_API_SECRET") == "zk-test-secret"
             assert os.environ.get("ASPIRE_PANDADOC_API_KEY") == "pd-test-key"
             assert os.environ.get("ASPIRE_ANAM_API_KEY") == "anam-test-key"
 
@@ -122,8 +122,8 @@ class TestVerifySettingsCoverage:
             "stripe_api_key": "sk_test",
             "elevenlabs_api_key": "el-key",
             "deepgram_api_key": "dg-key",
-            "livekit_api_key": "lk-key",
-            "livekit_api_secret": "lk-sec",
+            "zoom_api_key": "zk-key",
+            "zoom_api_secret": "zk-sec",
             "twilio_account_sid": "AC-sid",
             "twilio_auth_token": "tw-tok",
             "pandadoc_api_key": "pd-key",
@@ -152,7 +152,7 @@ class TestVerifySettingsCoverage:
             "ASPIRE_OPENAI_API_KEY": "sk-key",
             "ASPIRE_ELEVENLABS_API_KEY": "el-key",
             "ASPIRE_DEEPGRAM_API_KEY": "dg-key",
-            "ASPIRE_LIVEKIT_API_KEY": "lk-key",
+            "ASPIRE_ZOOM_API_KEY": "zk-key",
             "ASPIRE_TWILIO_ACCOUNT_SID": "AC-sid",
             "ASPIRE_PANDADOC_API_KEY": "pd-key",
             "STRIPE_SECRET_KEY": "sk_test_stripe",
@@ -179,8 +179,10 @@ class TestSettingsPrefixMapCompleteness:
             "ASPIRE_TWILIO_AUTH_TOKEN",
             "ASPIRE_ELEVENLABS_API_KEY",
             "ASPIRE_DEEPGRAM_API_KEY",
-            "ASPIRE_LIVEKIT_API_KEY",
-            "ASPIRE_LIVEKIT_API_SECRET",
+            "ASPIRE_ZOOM_SDK_KEY",
+            "ASPIRE_ZOOM_SDK_SECRET",
+            "ASPIRE_ZOOM_API_KEY",
+            "ASPIRE_ZOOM_API_SECRET",
             "ASPIRE_PANDADOC_API_KEY",
             "ASPIRE_ANAM_API_KEY",
             "ASPIRE_TOKEN_SIGNING_KEY",

@@ -50,28 +50,27 @@ def nora() -> NoraConferenceSkillPack:
     return NoraConferenceSkillPack()
 
 
-def _mock_livekit_success() -> ToolExecutionResult:
-    """Simulated successful LiveKit room creation."""
+def _mock_zoom_success() -> ToolExecutionResult:
+    """Simulated successful Zoom session creation."""
     return ToolExecutionResult(
         outcome=Outcome.SUCCESS,
-        tool_id="livekit.room.create",
+        tool_id="zoom.session.create",
         data={
-            "room_name": "test-room",
-            "sid": "RM_abc123",
-            "empty_timeout": 300,
-            "max_participants": 20,
-            "creation_time": "2026-02-14T12:00:00Z",
+            "session_name": "test-room",
+            "session_id": "ZS_abc123",
+            "session_key": "",
+            "status": "available",
         },
         receipt_data={},
     )
 
 
-def _mock_livekit_failure() -> ToolExecutionResult:
-    """Simulated failed LiveKit room creation."""
+def _mock_zoom_failure() -> ToolExecutionResult:
+    """Simulated failed Zoom session creation."""
     return ToolExecutionResult(
         outcome=Outcome.FAILED,
-        tool_id="livekit.room.create",
-        error="LiveKit API error: HTTP 500",
+        tool_id="zoom.session.create",
+        error="Zoom API error: HTTP 500",
         receipt_data={},
     )
 
@@ -119,7 +118,7 @@ class TestCreateRoom:
         with patch(
             "aspire_orchestrator.skillpacks.nora_conference.execute_tool",
             new_callable=AsyncMock,
-            return_value=_mock_livekit_success(),
+            return_value=_mock_zoom_success(),
         ):
             result = await nora.create_room("standup-daily", None, ctx)
 
@@ -137,7 +136,7 @@ class TestCreateRoom:
         with patch(
             "aspire_orchestrator.skillpacks.nora_conference.execute_tool",
             new_callable=AsyncMock,
-            return_value=_mock_livekit_success(),
+            return_value=_mock_zoom_success(),
         ):
             result = await nora.create_room("standup-daily", None, ctx)
 
@@ -271,7 +270,7 @@ class TestTierEnforcement:
         with patch(
             "aspire_orchestrator.skillpacks.nora_conference.execute_tool",
             new_callable=AsyncMock,
-            return_value=_mock_livekit_success(),
+            return_value=_mock_zoom_success(),
         ):
             result = await nora.create_room("daily", None, ctx)
 
@@ -301,11 +300,11 @@ class TestToolExecutorIntegration:
     """Verify tool_executor is called (Law #7: tools are hands)."""
 
     @pytest.mark.asyncio
-    async def test_tool_executor_livekit_called(
+    async def test_tool_executor_zoom_called(
         self, nora: NoraConferenceSkillPack, ctx: NoraContext,
     ) -> None:
-        """create_room calls execute_tool with livekit.room.create."""
-        mock_execute = AsyncMock(return_value=_mock_livekit_success())
+        """create_room calls execute_tool with zoom.session.create."""
+        mock_execute = AsyncMock(return_value=_mock_zoom_success())
         with patch(
             "aspire_orchestrator.skillpacks.nora_conference.execute_tool",
             mock_execute,
@@ -314,7 +313,7 @@ class TestToolExecutorIntegration:
 
         mock_execute.assert_called_once()
         call_kwargs = mock_execute.call_args.kwargs
-        assert call_kwargs["tool_id"] == "livekit.room.create"
+        assert call_kwargs["tool_id"] == "zoom.session.create"
         assert call_kwargs["correlation_id"] == CORR_ID
         assert call_kwargs["suite_id"] == SUITE_ID
 

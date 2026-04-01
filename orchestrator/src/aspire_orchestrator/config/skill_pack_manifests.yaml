@@ -115,9 +115,9 @@ skill_packs:
     status: active
     description: "Meeting room creation, scheduling, and meeting summarization"
     actions: [meeting.schedule, meeting.create_room, meeting.summarize, nora.summarize_meeting]
-    providers: [livekit, deepgram]
+    providers: [zoom, deepgram]
     capability_scopes: [meetings:schedule, meeting:create_room, meeting:summarize]
-    tools: [livekit.meeting.schedule, livekit.room.create, livekit.room.list, deepgram.transcribe]
+    tools: [zoom.meeting.schedule, zoom.session.create, zoom.session.list, deepgram.transcribe]
     per_suite_enabled: true
     knowledge_domains:
       - domain: conference
@@ -391,12 +391,16 @@ tools:
     provider: stripe
     category: invoicing
     risk_tier: yellow
-  livekit.meeting.schedule:
-    provider: livekit
+  zoom.meeting.schedule:
+    provider: zoom
     category: meetings
     risk_tier: yellow
-  livekit.room.create:
-    provider: livekit
+  zoom.session.create:
+    provider: zoom
+    category: conference
+    risk_tier: green
+  zoom.session.list:
+    provider: zoom
     category: conference
     risk_tier: green
   deepgram.transcribe:
@@ -696,12 +700,12 @@ providers:
     retry_strategy: exponential_backoff
     idempotency_support: false
 
-  livekit:
-    id: livekit
-    name: "LiveKit"
+  zoom:
+    id: zoom
+    name: "Zoom Video SDK"
     category: communication
-    auth_type: api_key
-    base_url: "https://cloud-api.livekit.io"
+    auth_type: jwt
+    base_url: "https://api.zoom.us/v2"
     rate_limit_rpm: 200
     timeout_ms: 5000
     retry_strategy: exponential_backoff

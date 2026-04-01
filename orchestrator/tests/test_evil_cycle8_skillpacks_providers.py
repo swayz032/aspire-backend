@@ -506,8 +506,8 @@ class TestNoraConferenceUnusedImport(unittest.TestCase):
 
         mock_result = ToolExecutionResult(
             outcome=Outcome.SUCCESS,
-            tool_id="livekit.room.create",
-            data={"room_name": "test-room", "sid": "RM-001"},
+            tool_id="zoom.session.create",
+            data={"session_name": "test-room", "session_id": "ZS-001"},
         )
 
         with patch(
@@ -694,7 +694,7 @@ class TestProviderCircuitBreakerCoverage(unittest.TestCase):
         "plaid_client",
         "elevenlabs_client",
         "deepgram_client",
-        "livekit_client",
+        "zoom_videosdk_client",
         "s3_client",
         "polaris_email_client",
         "osm_overpass_client",

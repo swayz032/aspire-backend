@@ -6,7 +6,7 @@ Nora is the Conference desk. She handles:
   - Meeting summarization (GREEN — read-only transcription + AI summary)
 
 Providers:
-  - LiveKit: Room creation and management
+  - Zoom Video SDK: Session creation and management
   - Deepgram: Audio transcription (Nova-3)
   - ElevenLabs: Text-to-speech (for voice summaries, future)
 
@@ -144,7 +144,7 @@ class NoraConferenceSkillPack:
         settings: dict[str, Any] | None,
         context: NoraContext,
     ) -> SkillPackResult:
-        """Create a conference room via LiveKit (GREEN — auto-approved).
+        """Create a conference session via Zoom Video SDK (GREEN — auto-approved).
 
         Args:
             room_name: Name for the conference room
@@ -161,7 +161,7 @@ class NoraConferenceSkillPack:
                 risk_tier="green",
                 outcome="failed",
                 reason_code="MISSING_ROOM_NAME",
-                tool_used="livekit.room.create",
+                tool_used="zoom.session.create",
             )
             return SkillPackResult(
                 success=False,
@@ -177,10 +177,10 @@ class NoraConferenceSkillPack:
             "max_participants": room_settings.get("max_participants", 20),
         }
 
-        # Law #7: Use tool_executor for the actual LiveKit call
+        # Law #7: Use tool_executor for the actual Zoom call
         try:
             result = await execute_tool(
-                tool_id="livekit.room.create",
+                tool_id="zoom.session.create",
                 payload=payload,
                 correlation_id=context.correlation_id,
                 suite_id=context.suite_id,
@@ -197,7 +197,7 @@ class NoraConferenceSkillPack:
                     risk_tier="green",
                     outcome="success",
                     reason_code="EXECUTED",
-                    tool_used="livekit.room.create",
+                    tool_used="zoom.session.create",
                     metadata={"room_name": room_name},
                 )
                 return SkillPackResult(
@@ -212,7 +212,7 @@ class NoraConferenceSkillPack:
                     risk_tier="green",
                     outcome="failed",
                     reason_code=result.error or "TOOL_EXECUTION_FAILED",
-                    tool_used="livekit.room.create",
+                    tool_used="zoom.session.create",
                 )
                 return SkillPackResult(
                     success=False,
@@ -228,7 +228,7 @@ class NoraConferenceSkillPack:
                 risk_tier="green",
                 outcome="failed",
                 reason_code="INTERNAL_ERROR",
-                tool_used="livekit.room.create",
+                tool_used="zoom.session.create",
             )
             return SkillPackResult(
                 success=False,
@@ -265,7 +265,7 @@ class NoraConferenceSkillPack:
                 risk_tier="yellow",
                 outcome="failed",
                 reason_code="MISSING_PARTICIPANTS",
-                tool_used="livekit.meeting.schedule",
+                tool_used="zoom.meeting.schedule",
             )
             return SkillPackResult(
                 success=False,
@@ -281,7 +281,7 @@ class NoraConferenceSkillPack:
                 risk_tier="yellow",
                 outcome="failed",
                 reason_code="MISSING_TIME",
-                tool_used="livekit.meeting.schedule",
+                tool_used="zoom.meeting.schedule",
             )
             return SkillPackResult(
                 success=False,
@@ -306,7 +306,7 @@ class NoraConferenceSkillPack:
             risk_tier="yellow",
             outcome="success",
             reason_code="APPROVAL_REQUIRED",
-            tool_used="livekit.meeting.schedule",
+            tool_used="zoom.meeting.schedule",
             metadata={
                 "participant_count": len(participants),
                 "scheduled_time": time,
@@ -331,7 +331,7 @@ class NoraConferenceSkillPack:
         a structured summary. This is a read-only operation.
 
         Args:
-            room_id: LiveKit room SID or recording URL
+            room_id: Zoom session ID or recording URL
             context: Tenant-scoped execution context
 
         Returns:

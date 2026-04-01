@@ -8,7 +8,7 @@ Providers and their compliance:
 - Gusto: SOC2 Type II, HIPAA
 - QuickBooks: SOC1/SOC2 Type II
 - PandaDoc: SOC2 Type II
-- LiveKit: SOC2 Type II
+- Zoom: SOC2 Type II
 - Twilio: SOC2 Type II, HIPAA
 - Plaid: SOC2 Type II
 
@@ -75,8 +75,8 @@ SUBPROCESSORS: list[SubprocessorEntry] = [
         True, "2025-10-15", "green",
     ),
     SubprocessorEntry(
-        "livekit", ["communications"], ["SOC2 Type II"],
-        True, "2025-09-01", "green",
+        "zoom", ["communications"], ["SOC2 Type II"],
+        True, "2026-04-01", "green",
     ),
     SubprocessorEntry(
         "twilio", ["communications", "personal"], ["SOC2 Type II", "HIPAA"],

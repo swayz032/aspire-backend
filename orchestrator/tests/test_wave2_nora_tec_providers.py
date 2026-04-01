@@ -1,7 +1,7 @@
 """Tests for Wave 2 — Nora (Conference) and Tec (Documents) provider clients.
 
 Wave 2 providers:
-  Nora: LiveKit (rooms), Deepgram (STT), ElevenLabs (TTS)
+  Nora: Zoom (rooms), Deepgram (STT), ElevenLabs (TTS)
   Tec:  Puppeteer (PDF), S3 (document storage)
 
 Test coverage:
@@ -81,102 +81,101 @@ def _mock_httpx_response(status_code: int = 200, body: dict | None = None, conte
 
 
 # =============================================================================
-# LiveKit Tests (Nora — Conference rooms)
+# Zoom Tests (Nora — Conference rooms)
 # =============================================================================
 
 
-class TestLiveKitRoomCreate:
-    """Tests for livekit.room.create executor."""
+class TestZoomSessionCreate:
+    """Tests for zoom.session.create executor."""
 
     @pytest.mark.asyncio
     async def test_success(self):
         """Room creation succeeds with valid payload."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None  # Reset singleton
 
         mock_resp = _mock_httpx_response(200, {
-            "name": "standup-room",
-            "sid": "RM_abc123",
-            "empty_timeout": 300,
-            "max_participants": 20,
-            "creation_time": 1700000000,
+            "session_name": "standup-room",
+            "id": "ZS_abc123",
+            "session_key": "key-123",
+            "status": "available",
         })
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="lk-key", livekit_api_secret="lk-secret")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="zk-key", zoom_api_secret="zk-secret")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False,
                 post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_create(
+                result = await mod.execute_zoom_session_create(
                     payload={"name": "standup-room"},
                     **_std_kwargs(risk_tier="green"),
                 )
 
         assert result.outcome == Outcome.SUCCESS
-        assert result.tool_id == "livekit.room.create"
-        assert result.data["room_name"] == "standup-room"
-        assert result.data["sid"] == "RM_abc123"
-        _assert_receipt(result, "success", "livekit.room.create", "green")
+        assert result.tool_id == "zoom.session.create"
+        assert result.data["session_name"] == "standup-room"
+        assert result.data["session_id"] == "ZS_abc123"
+        _assert_receipt(result, "success", "zoom.session.create", "green")
 
     @pytest.mark.asyncio
     async def test_missing_name(self):
         """Missing room name returns FAILED with receipt."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="lk-key", livekit_api_secret="lk-secret")):
-            result = await mod.execute_livekit_room_create(
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="zk-key", zoom_api_secret="zk-secret")):
+            result = await mod.execute_zoom_session_create(
                 payload={},
                 **_std_kwargs(risk_tier="green"),
             )
 
         assert result.outcome == Outcome.FAILED
         assert "name" in result.error.lower()
-        _assert_receipt(result, "failed", "livekit.room.create", "green")
+        _assert_receipt(result, "failed", "zoom.session.create", "green")
 
     @pytest.mark.asyncio
     async def test_missing_api_key(self):
         """Missing API key returns AUTH_INVALID_KEY with receipt."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="", livekit_api_secret="")):
-            result = await mod.execute_livekit_room_create(
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="", zoom_api_secret="")):
+            result = await mod.execute_zoom_session_create(
                 payload={"name": "test-room"},
                 **_std_kwargs(risk_tier="green"),
             )
 
         assert result.outcome == Outcome.FAILED
-        _assert_receipt(result, "failed", "livekit.room.create", "green")
+        _assert_receipt(result, "failed", "zoom.session.create", "green")
         assert result.receipt_data["reason_code"] == "AUTH_INVALID_KEY"
 
     @pytest.mark.asyncio
     async def test_api_error_401(self):
         """401 response maps to AUTH_INVALID_KEY."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
         mock_resp = _mock_httpx_response(401, {"error": "unauthorized"})
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="bad-key", livekit_api_secret="bad-secret")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="bad-key", zoom_api_secret="bad-secret")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False,
                 post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_create(
+                result = await mod.execute_zoom_session_create(
                     payload={"name": "test"},
                     **_std_kwargs(risk_tier="green"),
                 )
 
         assert result.outcome == Outcome.FAILED
-        _assert_receipt(result, "failed", "livekit.room.create", "green")
+        _assert_receipt(result, "failed", "zoom.session.create", "green")
 
     @pytest.mark.asyncio
     async def test_custom_params(self):
         """Custom empty_timeout and max_participants are sent."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
         mock_resp = _mock_httpx_response(200, {
@@ -186,13 +185,13 @@ class TestLiveKitRoomCreate:
             "max_participants": 100,
         })
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="lk-key", livekit_api_secret="lk-secret")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="zk-key", zoom_api_secret="zk-secret")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False,
                 post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_create(
+                result = await mod.execute_zoom_session_create(
                     payload={"name": "big-room", "empty_timeout": 600, "max_participants": 100},
                     **_std_kwargs(risk_tier="green"),
                 )
@@ -201,13 +200,13 @@ class TestLiveKitRoomCreate:
         assert result.data["max_participants"] == 100
 
 
-class TestLiveKitRoomList:
-    """Tests for livekit.room.list executor."""
+class TestZoomSessionList:
+    """Tests for zoom.session.list executor."""
 
     @pytest.mark.asyncio
     async def test_success_with_rooms(self):
         """Room list succeeds with rooms in response."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
         mock_resp = _mock_httpx_response(200, {
@@ -217,13 +216,13 @@ class TestLiveKitRoomList:
             ],
         })
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="lk-key", livekit_api_secret="lk-secret")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="zk-key", zoom_api_secret="zk-secret")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False,
                 post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_list(
+                result = await mod.execute_zoom_session_list(
                     payload={},
                     **_std_kwargs(risk_tier="green"),
                 )
@@ -231,67 +230,67 @@ class TestLiveKitRoomList:
         assert result.outcome == Outcome.SUCCESS
         assert result.data["room_count"] == 2
         assert result.data["rooms"][0]["name"] == "room-1"
-        _assert_receipt(result, "success", "livekit.room.list", "green")
+        _assert_receipt(result, "success", "zoom.session.list", "green")
 
     @pytest.mark.asyncio
     async def test_success_empty(self):
         """Room list succeeds with no rooms."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
         mock_resp = _mock_httpx_response(200, {"rooms": []})
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="lk-key", livekit_api_secret="lk-secret")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="zk-key", zoom_api_secret="zk-secret")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False,
                 post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_list(
+                result = await mod.execute_zoom_session_list(
                     payload={},
                     **_std_kwargs(risk_tier="green"),
                 )
 
         assert result.outcome == Outcome.SUCCESS
         assert result.data["room_count"] == 0
-        _assert_receipt(result, "success", "livekit.room.list", "green")
+        _assert_receipt(result, "success", "zoom.session.list", "green")
 
     @pytest.mark.asyncio
     async def test_missing_api_key(self):
         """Missing API key returns FAILED with receipt."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="", livekit_api_secret="")):
-            result = await mod.execute_livekit_room_list(
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="", zoom_api_secret="")):
+            result = await mod.execute_zoom_session_list(
                 payload={},
                 **_std_kwargs(risk_tier="green"),
             )
 
         assert result.outcome == Outcome.FAILED
-        _assert_receipt(result, "failed", "livekit.room.list", "green")
+        _assert_receipt(result, "failed", "zoom.session.list", "green")
 
     @pytest.mark.asyncio
     async def test_api_error_429(self):
         """429 rate limit maps correctly."""
-        import aspire_orchestrator.providers.livekit_client as mod
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
         mock_resp = _mock_httpx_response(429, {"error": "rate limited"})
 
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="lk-key", livekit_api_secret="lk-secret")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="zk-key", zoom_api_secret="zk-secret")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False,
                 post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_list(
+                result = await mod.execute_zoom_session_list(
                     payload={},
                     **_std_kwargs(risk_tier="green"),
                 )
 
         assert result.outcome == Outcome.FAILED
-        _assert_receipt(result, "failed", "livekit.room.list", "green")
+        _assert_receipt(result, "failed", "zoom.session.list", "green")
 
 
 # =============================================================================
@@ -917,8 +916,8 @@ class TestToolExecutorRegistry:
         """Nora conference tools are in the live registry."""
         from aspire_orchestrator.services.tool_executor import is_live_tool
 
-        assert is_live_tool("livekit.room.create")
-        assert is_live_tool("livekit.room.list")
+        assert is_live_tool("zoom.session.create")
+        assert is_live_tool("zoom.session.list")
         assert is_live_tool("deepgram.transcribe")
         assert is_live_tool("elevenlabs.speak")
 
@@ -936,7 +935,7 @@ class TestToolExecutorRegistry:
 
         live = get_live_tools()
         wave2_tools = [
-            "livekit.room.create", "livekit.room.list",
+            "zoom.session.create", "zoom.session.list",
             "deepgram.transcribe", "elevenlabs.speak",
             "puppeteer.pdf.generate", "s3.document.upload", "s3.url.sign",
         ]
@@ -953,18 +952,18 @@ class TestLaw2ReceiptCompleteness:
     """Verify ALL outcomes emit receipts with required fields."""
 
     @pytest.mark.asyncio
-    async def test_livekit_success_receipt_fields(self):
-        """LiveKit success receipt has all required fields."""
-        import aspire_orchestrator.providers.livekit_client as mod
+    async def test_zoom_success_receipt_fields(self):
+        """Zoom success receipt has all required fields."""
+        import aspire_orchestrator.providers.zoom_videosdk_client as mod
         mod._client = None
 
         mock_resp = _mock_httpx_response(200, {"name": "r", "sid": "s"})
-        with patch.object(mod, "settings", MagicMock(livekit_api_key="k", livekit_api_secret="s")):
+        with patch.object(mod, "settings", MagicMock(zoom_api_key="k", zoom_api_secret="s")):
             client = mod._get_client()
             with patch.object(client, "_get_client", new_callable=AsyncMock, return_value=MagicMock(
                 is_closed=False, post=AsyncMock(return_value=mock_resp),
             )):
-                result = await mod.execute_livekit_room_create(
+                result = await mod.execute_zoom_session_create(
                     payload={"name": "r"}, **_std_kwargs(risk_tier="green"),
                 )
 

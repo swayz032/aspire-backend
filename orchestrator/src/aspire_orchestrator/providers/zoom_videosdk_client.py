@@ -1,13 +1,13 @@
-"""LiveKit Provider Client — Conference rooms for Nora (Conference) skill pack.
+"""Zoom Video SDK Provider Client — Conference sessions for Nora (Conference) skill pack.
 
-Provider: LiveKit Server API (https://cloud-api.livekit.io)
-Auth: API key + secret — Bearer token in Authorization header
-Risk tier: GREEN (room management is non-destructive)
+Provider: Zoom Video SDK API (https://api.zoom.us/v2)
+Auth: JWT signed with API Key + Secret — Bearer token in Authorization header
+Risk tier: GREEN (session management is non-destructive)
 Idempotency: N/A (read + create operations)
 
 Tools:
-  - livekit.room.create: Create a conference room
-  - livekit.room.list: List active rooms
+  - zoom.session.create: Create a video conference session
+  - zoom.session.list: List active sessions
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ from aspire_orchestrator.services.tool_types import ToolExecutionResult
 logger = logging.getLogger(__name__)
 
 
-class LiveKitClient(BaseProviderClient):
-    """LiveKit Server API client."""
+class ZoomVideoSDKClient(BaseProviderClient):
+    """Zoom Video SDK API client."""
 
-    provider_id = "livekit"
-    base_url = "https://cloud-api.livekit.io"
+    provider_id = "zoom"
+    base_url = "https://api.zoom.us/v2"
     timeout_seconds = 5.0
     max_retries = 1
     idempotency_support = False
@@ -44,27 +44,20 @@ class LiveKitClient(BaseProviderClient):
         import time as _time
         import jwt
 
-        api_key = settings.livekit_api_key
-        api_secret = settings.livekit_api_secret
+        api_key = settings.zoom_api_key
+        api_secret = settings.zoom_api_secret
         if not api_key or not api_secret:
             raise ProviderError(
                 code=InternalErrorCode.AUTH_INVALID_KEY,
-                message="LiveKit API key/secret not configured (ASPIRE_LIVEKIT_API_KEY, ASPIRE_LIVEKIT_API_SECRET)",
+                message="Zoom API key/secret not configured (ASPIRE_ZOOM_API_KEY, ASPIRE_ZOOM_API_SECRET)",
                 provider_id=self.provider_id,
             )
-        # LiveKit requires a JWT signed with api_key (issuer) + api_secret
         now = _time.time()
         token = jwt.encode(
             {
                 "iss": api_key,
-                "sub": api_key,
                 "exp": int(now) + 600,
-                "nbf": int(now),
-                "video": {
-                    "roomCreate": True,
-                    "roomList": True,
-                    "roomAdmin": True,
-                },
+                "iat": int(now),
             },
             api_secret,
             algorithm="HS256",
@@ -81,17 +74,17 @@ class LiveKitClient(BaseProviderClient):
         return super()._parse_error(status_code, body)
 
 
-_client: LiveKitClient | None = None
+_client: ZoomVideoSDKClient | None = None
 
 
-def _get_client() -> LiveKitClient:
+def _get_client() -> ZoomVideoSDKClient:
     global _client
     if _client is None:
-        _client = LiveKitClient()
+        _client = ZoomVideoSDKClient()
     return _client
 
 
-async def execute_livekit_room_create(
+async def execute_zoom_session_create(
     *,
     payload: dict[str, Any],
     correlation_id: str,
@@ -101,14 +94,14 @@ async def execute_livekit_room_create(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Execute livekit.room.create — create a conference room.
+    """Execute zoom.session.create — create a video conference session.
 
     Required payload:
-      - name: str — room name
+      - name: str — session topic name
 
     Optional payload:
-      - empty_timeout: int — seconds before empty room is closed (default 300)
-      - max_participants: int — max participants allowed (default 20)
+      - session_key: str — custom session key for joining
+      - settings: dict — session settings (auto_recording, etc.)
     """
     client = _get_client()
 
@@ -118,7 +111,7 @@ async def execute_livekit_room_create(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
-            tool_id="livekit.room.create",
+            tool_id="zoom.session.create",
             risk_tier=risk_tier,
             outcome=Outcome.FAILED,
             reason_code="INPUT_MISSING_REQUIRED",
@@ -127,21 +120,26 @@ async def execute_livekit_room_create(
         )
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
-            tool_id="livekit.room.create",
+            tool_id="zoom.session.create",
             error="Missing required parameter: name",
             receipt_data=receipt,
         )
 
     body: dict[str, Any] = {
-        "name": name,
-        "empty_timeout": payload.get("empty_timeout", 300),
-        "max_participants": payload.get("max_participants", 20),
+        "session_name": name,
+        "type": 1,  # Instant session
     }
+    session_key = payload.get("session_key")
+    if session_key:
+        body["session_key"] = session_key
+    session_settings = payload.get("settings")
+    if session_settings:
+        body["settings"] = session_settings
 
     response = await client._request(
         ProviderRequest(
             method="POST",
-            path="/twirp/livekit.RoomService/CreateRoom",
+            path="/videosdk/sessions",
             body=body,
             correlation_id=correlation_id,
             suite_id=suite_id,
@@ -158,7 +156,7 @@ async def execute_livekit_room_create(
         correlation_id=correlation_id,
         suite_id=suite_id,
         office_id=office_id,
-        tool_id="livekit.room.create",
+        tool_id="zoom.session.create",
         risk_tier=risk_tier,
         outcome=outcome,
         reason_code=reason,
@@ -168,29 +166,28 @@ async def execute_livekit_room_create(
     )
 
     if response.success:
-        room = response.body
+        session = response.body
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
-            tool_id="livekit.room.create",
+            tool_id="zoom.session.create",
             data={
-                "room_name": room.get("name", name),
-                "sid": room.get("sid", ""),
-                "empty_timeout": room.get("empty_timeout", 300),
-                "max_participants": room.get("max_participants", 20),
-                "creation_time": room.get("creation_time"),
+                "session_name": session.get("session_name", name),
+                "session_id": session.get("id", ""),
+                "session_key": session.get("session_key", ""),
+                "status": session.get("status", ""),
             },
             receipt_data=receipt,
         )
     else:
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
-            tool_id="livekit.room.create",
-            error=response.error_message or f"LiveKit API error: HTTP {response.status_code}",
+            tool_id="zoom.session.create",
+            error=response.error_message or f"Zoom API error: HTTP {response.status_code}",
             receipt_data=receipt,
         )
 
 
-async def execute_livekit_room_list(
+async def execute_zoom_session_list(
     *,
     payload: dict[str, Any],
     correlation_id: str,
@@ -200,7 +197,7 @@ async def execute_livekit_room_list(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Execute livekit.room.list — list active conference rooms.
+    """Execute zoom.session.list — list active video conference sessions.
 
     No required payload fields.
     """
@@ -208,9 +205,9 @@ async def execute_livekit_room_list(
 
     response = await client._request(
         ProviderRequest(
-            method="POST",
-            path="/twirp/livekit.RoomService/ListRooms",
-            body={},
+            method="GET",
+            path="/videosdk/sessions",
+            body=None,
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
@@ -226,7 +223,7 @@ async def execute_livekit_room_list(
         correlation_id=correlation_id,
         suite_id=suite_id,
         office_id=office_id,
-        tool_id="livekit.room.list",
+        tool_id="zoom.session.list",
         risk_tier=risk_tier,
         outcome=outcome,
         reason_code=reason,
@@ -236,28 +233,28 @@ async def execute_livekit_room_list(
     )
 
     if response.success:
-        rooms = response.body.get("rooms", [])
+        sessions = response.body.get("sessions", [])
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
-            tool_id="livekit.room.list",
+            tool_id="zoom.session.list",
             data={
-                "rooms": [
+                "sessions": [
                     {
-                        "name": r.get("name", ""),
-                        "sid": r.get("sid", ""),
-                        "num_participants": r.get("num_participants", 0),
-                        "creation_time": r.get("creation_time"),
+                        "session_name": s.get("session_name", ""),
+                        "session_id": s.get("id", ""),
+                        "session_key": s.get("session_key", ""),
+                        "status": s.get("status", ""),
                     }
-                    for r in rooms
+                    for s in sessions
                 ],
-                "room_count": len(rooms),
+                "session_count": len(sessions),
             },
             receipt_data=receipt,
         )
     else:
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
-            tool_id="livekit.room.list",
-            error=response.error_message or f"LiveKit API error: HTTP {response.status_code}",
+            tool_id="zoom.session.list",
+            error=response.error_message or f"Zoom API error: HTTP {response.status_code}",
             receipt_data=receipt,
         )

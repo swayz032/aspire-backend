@@ -81,10 +81,10 @@ from aspire_orchestrator.services.search_router import (
     route_geocode,
 )
 
-# Wave 2: Nora (Conference) providers — LiveKit + Deepgram + ElevenLabs
-from aspire_orchestrator.providers.livekit_client import (
-    execute_livekit_room_create,
-    execute_livekit_room_list,
+# Wave 2: Nora (Conference) providers — Zoom Video SDK + Deepgram + ElevenLabs
+from aspire_orchestrator.providers.zoom_videosdk_client import (
+    execute_zoom_session_create,
+    execute_zoom_session_list,
 )
 from aspire_orchestrator.providers.deepgram_client import execute_deepgram_transcribe
 from aspire_orchestrator.providers.elevenlabs_client import execute_elevenlabs_speak
@@ -739,8 +739,8 @@ _INVOICING_EXECUTORS: dict[str, ToolExecutorFn] = {
 
 # Phase 2: Conference tools (GREEN/YELLOW — Nora Conference pack)
 _CONFERENCE_EXECUTORS: dict[str, ToolExecutorFn] = {
-    "livekit.room.create": execute_livekit_room_create,
-    "livekit.room.list": execute_livekit_room_list,
+    "zoom.session.create": execute_zoom_session_create,
+    "zoom.session.list": execute_zoom_session_list,
     "deepgram.transcribe": execute_deepgram_transcribe,
     "elevenlabs.speak": execute_elevenlabs_speak,
 }

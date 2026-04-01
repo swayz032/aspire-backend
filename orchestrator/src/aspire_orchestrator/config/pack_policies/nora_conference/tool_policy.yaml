@@ -1,11 +1,11 @@
 tool_policy:
   "meeting.create_room":
-    tool_id: livekit.room.create
+    tool_id: zoom.session.create
     allowed: true
     risk_tier: green
 
   "meeting.schedule":
-    tool_id: livekit.meeting.schedule
+    tool_id: zoom.meeting.schedule
     allowed: true
     risk_tier: yellow
 
@@ -15,11 +15,11 @@ tool_policy:
     risk_tier: green
 
   "meeting.list_rooms":
-    tool_id: livekit.room.list
+    tool_id: zoom.session.list
     allowed: true
     risk_tier: green
 
-# tool: livekit.room.create
-# tool: livekit.room.list
-# tool: livekit.meeting.schedule
+# tool: zoom.session.create
+# tool: zoom.session.list
+# tool: zoom.meeting.schedule
 # tool: deepgram.transcribe

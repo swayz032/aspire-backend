@@ -372,7 +372,7 @@ actions:
   # Conference (Nora — room management + summarization)
   meeting.create_room:
     risk_tier: green
-    tools: [livekit.room.create]
+    tools: [zoom.session.create]
     capability_scope: meeting:create_room
     category: conference
     approval:
@@ -982,7 +982,7 @@ actions:
   # Meeting
   meeting.schedule:
     risk_tier: yellow
-    tools: [livekit.meeting.schedule]
+    tools: [zoom.meeting.schedule]
     capability_scope: meetings:schedule
     category: meetings
     approval:

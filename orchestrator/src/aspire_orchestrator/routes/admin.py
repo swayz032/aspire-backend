@@ -4302,7 +4302,7 @@ async def voice_stt_proxy(request: Request) -> JSONResponse:
             )
 
         # Admin Ava always uses ElevenLabs STT.
-        # Deepgram is Nora-only (conference transcription via LiveKit).
+        # Deepgram is Nora-only (conference transcription via Zoom).
         stt_provider = "elevenlabs"
         transcript = await _stt_elevenlabs(body, correlation_id)
 

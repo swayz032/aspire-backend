@@ -139,7 +139,7 @@ def _generate_response_text(state: OrchestratorState) -> str:
             "pandadoc": "PandaDoc",
             "brave": "Brave Search",
             "tavily": "Tavily",
-            "livekit": "LiveKit",
+            "zoom": "Zoom Video SDK",
             "deepgram": "Deepgram",
             "twilio": "Twilio",
             "plaid": "Plaid",

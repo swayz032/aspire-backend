@@ -9,7 +9,7 @@ actions:
   meeting.create_room:
     risk_tier: green
     approval_required: false
-    description: "Create conference room via LiveKit"
+    description: "Create conference session via Zoom Video SDK"
 
   meeting.schedule:
     risk_tier: yellow

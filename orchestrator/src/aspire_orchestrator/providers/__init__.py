@@ -9,7 +9,7 @@ Each provider client inherits from BaseProviderClient and implements:
 
 Provider hierarchy:
   BaseProviderClient (abstract)
-    +-- ApiKeyClient (Stripe, PandaDoc, Brave, Tavily, LiveKit, Twilio,
+    +-- ApiKeyClient (Stripe, PandaDoc, Brave, Tavily, Zoom, Twilio,
     |                 Deepgram, ElevenLabs, Google Places, TomTom, HERE,
     |                 Foursquare, Mapbox, Plaid)
     +-- OAuth2Client (QuickBooks, Gusto, Google)

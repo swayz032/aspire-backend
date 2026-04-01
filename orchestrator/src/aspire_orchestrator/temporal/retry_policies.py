@@ -82,7 +82,7 @@ _PROVIDER_CONFIGS: Final[dict[str, ProviderRetryConfig]] = {
         initial_interval=timedelta(seconds=1),
         max_interval=timedelta(seconds=10),
     ),
-    "livekit": ProviderRetryConfig(
+    "zoom": ProviderRetryConfig(
         max_attempts=3,
         initial_interval=timedelta(seconds=1),
         max_interval=timedelta(seconds=15),

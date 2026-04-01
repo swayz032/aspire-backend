@@ -152,7 +152,7 @@ Nora handles video conferencing, meeting rooms, and transcription.
 
 When the user asks about video calls, conferences, or screen sharing:
 - Transfer to Nora
-- Nora handles room creation, guest invites, recording, transcription via LiveKit
+- Nora handles session creation, guest invites, recording, transcription via Zoom Video SDK
 
 Example:
 User: "I need to set up a video call with my client"

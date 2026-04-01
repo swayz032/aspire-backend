@@ -245,13 +245,13 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["query"],
         "optional": [],
     },
-    "livekit.room.create": {
+    "zoom.session.create": {
         "required": ["name"],
-        "optional": ["empty_timeout", "max_participants"],
+        "optional": ["session_key", "settings"],
     },
-    "livekit.meeting.schedule": {
+    "zoom.meeting.schedule": {
         "required": ["participants", "time"],
-        "optional": ["agenda", "room_name"],
+        "optional": ["agenda", "session_name"],
     },
     "deepgram.transcribe": {
         "required": ["audio_url"],
@@ -586,7 +586,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
     # Tool-specific post-processing before required-field validation.
     # 1) conference room creation: normalize `room_name` -> `name` and
     #    synthesize if missing to avoid needless hard-fail.
-    if tool_used == "livekit.room.create" and isinstance(extracted_params, dict):
+    if tool_used == "zoom.session.create" and isinstance(extracted_params, dict):
         if extracted_params.get("name") in (None, "") and extracted_params.get("room_name"):
             extracted_params["name"] = extracted_params.get("room_name")
         extracted_params.pop("room_name", None)

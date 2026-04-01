@@ -34,7 +34,7 @@ _DEFAULT_WINDOW_SECONDS = int(os.environ.get("ASPIRE_RATE_WINDOW", "60"))
 _ENDPOINT_LIMITS: dict[str, int] = {  # longest prefix first
     "/v1/intents/stream": 50,    # Heavy: SSE streaming, long-lived
     "/v1/intents": 100,          # Heavy: full orchestrator pipeline
-    "/v1/voice/session": 30,     # Heavy: LiveKit session creation
+    "/v1/voice/session": 30,     # Heavy: Zoom session creation
 }
 
 # Light endpoints use the default limit (500/min)

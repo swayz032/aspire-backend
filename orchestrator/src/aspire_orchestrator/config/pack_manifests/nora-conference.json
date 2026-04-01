@@ -18,13 +18,13 @@
     "max_risk_tier": "yellow"
   },
   "tools": [
-    "livekit.room.create",
-    "livekit.room.list",
-    "livekit.meeting.schedule",
+    "zoom.session.create",
+    "zoom.session.list",
+    "zoom.meeting.schedule",
     "deepgram.transcribe"
   ],
   "providers": [
-    "livekit",
+    "zoom",
     "deepgram"
   ],
   "actions": [

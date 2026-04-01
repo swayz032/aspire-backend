@@ -50,8 +50,10 @@ KEY_MAP: dict[str, str] = {
     # Providers
     "elevenlabs_key": "ELEVENLABS_API_KEY",
     "deepgram_key": "DEEPGRAM_API_KEY",
-    "livekit_key": "LIVEKIT_API_KEY",
-    "livekit_secret": "LIVEKIT_SECRET",
+    "zoom_sdk_key": "ZOOM_SDK_KEY",
+    "zoom_sdk_secret": "ZOOM_SDK_SECRET",
+    "zoom_api_key": "ZOOM_API_KEY",
+    "zoom_api_secret": "ZOOM_API_SECRET",
     "anam_key": "ANAM_API_KEY",
 }
 
@@ -79,9 +81,11 @@ _SETTINGS_PREFIX_MAP: dict[str, str] = {
     "ASPIRE_ELEVENLABS_API_KEY": "ELEVENLABS_API_KEY",
     # Deepgram
     "ASPIRE_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
-    # LiveKit
-    "ASPIRE_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
-    "ASPIRE_LIVEKIT_API_SECRET": "LIVEKIT_SECRET",
+    # Zoom Video SDK
+    "ASPIRE_ZOOM_SDK_KEY": "ZOOM_SDK_KEY",
+    "ASPIRE_ZOOM_SDK_SECRET": "ZOOM_SDK_SECRET",
+    "ASPIRE_ZOOM_API_KEY": "ZOOM_API_KEY",
+    "ASPIRE_ZOOM_API_SECRET": "ZOOM_API_SECRET",
     # PandaDoc
     "ASPIRE_PANDADOC_API_KEY": "PANDADOC_API_KEY",
     # Anam
@@ -134,7 +138,7 @@ def verify_settings_coverage() -> list[str]:
         ("openai_api_key", "ASPIRE_OPENAI_API_KEY"),
         ("elevenlabs_api_key", "ASPIRE_ELEVENLABS_API_KEY"),
         ("deepgram_api_key", "ASPIRE_DEEPGRAM_API_KEY"),
-        ("livekit_api_key", "ASPIRE_LIVEKIT_API_KEY"),
+        ("zoom_api_key", "ASPIRE_ZOOM_API_KEY"),
         ("twilio_account_sid", "ASPIRE_TWILIO_ACCOUNT_SID"),
         ("pandadoc_api_key", "ASPIRE_PANDADOC_API_KEY"),
         ("stripe_secret_key", "STRIPE_SECRET_KEY"),
