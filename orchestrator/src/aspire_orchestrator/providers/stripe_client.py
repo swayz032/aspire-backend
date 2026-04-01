@@ -362,6 +362,14 @@ async def execute_stripe_invoice_create(
     if payload.get("description"):
         body["description"] = payload["description"]
 
+    # Custom invoice number (premium format: INV-YYYYMMDD-XXXX)
+    if payload.get("invoice_number"):
+        body["number"] = payload["invoice_number"]
+
+    # Handle due_days = 0 (due immediately / upon receipt)
+    if payload.get("due_days") == 0:
+        body["days_until_due"] = 0
+
     # 5e: Auto-generate idempotency key if not provided
     import uuid as _uuid_create
     create_idem_key = payload.get("idempotency_key") or f"inv_create_{correlation_id}_{_uuid_create.uuid4()}"

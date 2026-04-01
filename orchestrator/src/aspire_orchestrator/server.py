@@ -1985,14 +1985,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     '{\n'
                     '  "customer_name": "string — business or person name",\n'
                     '  "customer_email": "string or null — email if mentioned",\n'
-                    '  "line_items": [{"description": "string", "quantity": number, "unit_price_cents": number}],\n'
+                    '  "customer_first_name": "string or null",\n'
+                    '  "customer_last_name": "string or null",\n'
+                    '  "customer_company": "string or null — business/company name if different from person name",\n'
+                    '  "customer_phone": "string or null",\n'
+                    '  "customer_address": "string or null — billing address only",\n'
+                    '  "line_items": [{"description": "string — the SERVICE or PRODUCT being billed, NOT the address", "quantity": number, "unit_price_cents": number}],\n'
                     '  "total_cents": number — total in cents (e.g., 475000 for $4,750.00),\n'
-                    '  "due_days": number — days until due (default 30),\n'
+                    '  "due_days": number — days until due. Use 0 for "immediately", "due now", or "upon receipt". Default 30 if not specified.,\n'
                     '  "currency": "usd",\n'
                     '  "notes": "string or empty",\n'
                     '  "is_quote": false\n'
                     '}\n\n'
-                    "Convert dollars to cents (9.50 = 950 cents). If any required field is unclear, set it to null."
+                    "IMPORTANT:\n"
+                    "- line_items description must be the SERVICE or PRODUCT (e.g. 'Painting job', 'Roofing repair', '500 GMA pallets'). NEVER put an address in the description.\n"
+                    "- customer_address is a SEPARATE field — do not mix it with line item descriptions.\n"
+                    "- 'due immediately' or 'due now' or 'upon receipt' = due_days: 0\n"
+                    "- Convert dollars to cents (9.50 = 950 cents, 4500 = 450000 cents).\n"
+                    "- If any required field is unclear, set it to null."
                 )
 
                 parse_resp = await generate_text_async(
@@ -2152,6 +2162,15 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             # Step 5: Create REAL draft invoice in Stripe
             from aspire_orchestrator.providers.stripe_client import execute_stripe_invoice_create
 
+            # Generate premium invoice number: INV-YYYYMMDD-XXXX
+            import random as _random
+            _inv_date = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y%m%d")
+            _inv_seq = _random.randint(1000, 9999)
+            invoice_number = f"INV-{_inv_date}-{_inv_seq}" if not is_quote else f"QTE-{_inv_date}-{_inv_seq}"
+
+            # Build line item description from parsed data (NOT address)
+            line_item_desc = ", ".join(items_summary) if items_summary else notes or "Services rendered"
+
             stripe_result = await execute_stripe_invoice_create(
                 payload={
                     "customer_email": customer_email,
@@ -2163,8 +2182,9 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     "customer_address": invoice_data.get("customer_address"),
                     "amount_cents": total_cents,
                     "currency": currency,
-                    "description": notes or ", ".join(items_summary),
+                    "description": line_item_desc,
                     "due_days": due_days,
+                    "invoice_number": invoice_number,
                     "metadata": {"aspire_correlation": ctx.correlation_id},
                 },
                 correlation_id=ctx.correlation_id,
