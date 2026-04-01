@@ -1566,30 +1566,23 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
 
             api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
 
-            # ── Step 0: Mode Detection (GPT-5.2) ──
-            mode = "vendor"  # default
-            try:
-                mode_resp = await _asyncio.wait_for(
-                    generate_text_async(
-                        model="gpt-5.2",
-                        messages=[
-                            {"role": "developer", "content": "Classify this research task into exactly one mode. Return ONLY the mode name, nothing else: vendor, strategy, competitive, or topic"},
-                            {"role": "user", "content": f"Task: {full_task}\n\nvendor = find specific businesses/stores/suppliers\nstrategy = plan/start/grow a business, build a strategy\ncompetitive = analyze competitors, competitive landscape\ntopic = specific question about regulations/licenses/how-to"},
-                        ],
-                        api_key=api_key,
-                        base_url="https://api.openai.com/v1",
-                        timeout_seconds=8.0,
-                        max_output_tokens=50,
-                        prefer_responses_api=True,
-                    ),
-                    timeout=6.0,
-                )
-                detected = mode_resp.strip().lower().split()[0] if mode_resp else "vendor"
-                if detected in ("vendor", "strategy", "competitive", "topic"):
-                    mode = detected
-                logger.info("Adam mode detected: %s for task: %s", mode, full_task[:80])
-            except Exception as mode_err:
-                logger.warning("Adam mode detection failed, defaulting to vendor: %s", type(mode_err).__name__)
+            # ── Step 0: Mode Detection (keyword-based, instant) ──
+            mode = "vendor"
+            task_lower = full_task.lower()
+            _strategy_words = ["start", "plan", "build", "grow", "scale", "strategy", "research starting", "help me start", "how to start", "what would it take", "business plan"]
+            _topic_words = ["license", "requirement", "regulation", "insurance", "how does", "what is", "explain", "tax", "legal", "permit", "certification", "comply"]
+            _competitive_words = ["competitor", "competition", "what are others charging", "competitive", "who else", "market share"]
+            _vendor_words = ["find", "locate", "search for", "where can i", "who sells", "supplier", "store", "near me", "in my area"]
+
+            if any(w in task_lower for w in _strategy_words):
+                mode = "strategy"
+            elif any(w in task_lower for w in _topic_words):
+                mode = "topic"
+            elif any(w in task_lower for w in _competitive_words):
+                mode = "competitive"
+            else:
+                mode = "vendor"
+            logger.info("Adam mode: %s for task: %s", mode, full_task[:80])
 
             # ── STRATEGY MODE: 3 parallel research streams ──
             if mode == "strategy":
@@ -1604,18 +1597,18 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 try:
                     plan_resp = await _asyncio.wait_for(
                         generate_text_async(
-                            model="gpt-5.2",
+                            model="gpt-5",
                             messages=[
                                 {"role": "developer", "content": "Return ONLY a JSON object with 3 keys: stream_a (market queries), stream_b (operations queries), stream_c (revenue queries). Each key has an array of 2 search query strings. No explanation."},
                                 {"role": "user", "content": f"Plan 3 research streams for this task. Each stream needs 2 web search queries.\nTask: {full_task}"},
                             ],
                             api_key=api_key,
                             base_url="https://api.openai.com/v1",
-                            timeout_seconds=12.0,
+                            timeout_seconds=10.0,
                             max_output_tokens=4096,
                             prefer_responses_api=True,
                         ),
-                        timeout=10.0,
+                        timeout=8.0,
                     )
                     cleaned = plan_resp.strip()
                     if cleaned.startswith("```"):
