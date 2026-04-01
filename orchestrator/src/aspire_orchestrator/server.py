@@ -1569,10 +1569,10 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             # ── Step 0: Mode Detection (keyword-based, instant) ──
             mode = "vendor"
             task_lower = full_task.lower()
-            _strategy_words = ["start", "plan", "build", "grow", "scale", "strategy", "research starting", "help me start", "how to start", "what would it take", "business plan"]
-            _topic_words = ["license", "requirement", "regulation", "insurance", "how does", "what is", "explain", "tax", "legal", "permit", "certification", "comply"]
-            _competitive_words = ["competitor", "competition", "what are others charging", "competitive", "who else", "market share"]
-            _vendor_words = ["find", "locate", "search for", "where can i", "who sells", "supplier", "store", "near me", "in my area"]
+            _strategy_words = ["start", "plan", "build", "grow", "scale", "strategy", "research starting", "help me start", "how to start", "what would it take", "business plan", "market", "revenue", "startup cost", "how do i", "how would", "how can i", "what it takes", "research", "launch", "expand", "pricing strategy", "business model"]
+            _topic_words = ["license", "requirement", "regulation", "insurance", "how does", "what is", "explain", "tax", "legal", "permit", "certification", "comply", "zoning", "osha"]
+            _competitive_words = ["competitor", "competition", "what are others charging", "competitive", "who else", "market share", "who are my", "what do others charge", "pricing comparison"]
+            _vendor_words = ["find", "locate", "search for", "where can i", "who sells", "supplier", "store", "near me", "in my area", "phone number", "address for"]
 
             if any(w in task_lower for w in _strategy_words):
                 mode = "strategy"
