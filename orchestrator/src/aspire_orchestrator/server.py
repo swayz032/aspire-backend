@@ -1798,8 +1798,125 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     },
                 )
 
+            # ── COMPETITIVE MODE: places + web cross-reference ──
+            if mode == "competitive":
+                common_kwargs_comp = dict(
+                    correlation_id=ctx.correlation_id,
+                    suite_id=safe_suite_id,
+                    office_id=safe_office_id,
+                    risk_tier="green",
+                )
+
+                # Extract location
+                _loc_patterns_comp = [
+                    _re.search(r'(?:in|near|around)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+[A-Z][A-Za-z]+)', full_task),
+                    _re.search(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+([A-Z]{2})\b', full_task),
+                ]
+                clean_loc = ""
+                for m in _loc_patterns_comp:
+                    if m:
+                        clean_loc = m.group(0).strip().lstrip("in ").lstrip("near ").lstrip("around ")
+                        break
+
+                # Parallel: web search for competitor pricing/reviews + places search for local businesses
+                async def _comp_web(query):
+                    for pname, fn in _web_search_chain():
+                        try:
+                            r = await _asyncio.wait_for(fn(payload={"query": query}, **common_kwargs_comp), timeout=10.0)
+                            if r.outcome == Outcome.SUCCESS and r.data:
+                                return [{"title": x.get("title", x.get("name", "")), "url": x.get("url", ""), "snippet": x.get("snippet", x.get("description", "")), "source": pname} for x in r.data.get("results", [])[:5]]
+                        except Exception:
+                            continue
+                    return []
+
+                async def _comp_places(query, location):
+                    for pname, fn in _places_search_chain():
+                        if pname == "osm_overpass":
+                            continue
+                        try:
+                            payload = {"query": query}
+                            if pname == "google_places" and location:
+                                payload["location"] = location
+                            r = await _asyncio.wait_for(fn(payload=payload, **common_kwargs_comp), timeout=10.0)
+                            if r.outcome == Outcome.SUCCESS and r.data:
+                                return [{"name": x.get("name", ""), "address": x.get("address", x.get("formatted_address", "")), "rating": x.get("rating"), "phone": x.get("phone", ""), "source": pname} for x in r.data.get("results", [])[:8]]
+                        except Exception:
+                            continue
+                    return []
+
+                # Geocode for places search
+                comp_coords = None
+                if clean_loc:
+                    for pname, geo_fn in _geocode_chain():
+                        try:
+                            gr = await _asyncio.wait_for(geo_fn(payload={"query": clean_loc}, **common_kwargs_comp), timeout=5.0)
+                            if gr.outcome == Outcome.SUCCESS and gr.data:
+                                gres = gr.data.get("results", [])
+                                if gres:
+                                    lat = gres[0].get("lat") or gres[0].get("latitude")
+                                    lng = gres[0].get("lng") or gres[0].get("longitude")
+                                    if lat and lng:
+                                        comp_coords = f"{lat},{lng}"
+                            break
+                        except Exception:
+                            break
+
+                # Run web + places in parallel
+                web_task = _comp_web(f"{full_task} pricing rates reviews")
+                places_task = _comp_places(full_task, comp_coords)
+                web_results, places_results = await _asyncio.gather(web_task, places_task)
+
+                # Synthesize competitive analysis
+                try:
+                    comp_synthesis = await generate_text_async(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": "Create a competitive analysis for a small business owner. Return valid JSON. Be specific with competitor names, pricing, and strengths/weaknesses."},
+                            {"role": "user", "content": f"Task: {full_task}\nLocation: {clean_loc}\n\nLocal businesses found:\n{_json.dumps(places_results[:8], indent=2, default=str)}\n\nWeb research:\n{_json.dumps(web_results[:8], indent=2, default=str)}\n\nReturn JSON: {{\"competitors\": [{{\"name\": \"...\", \"pricing\": \"...\", \"rating\": ..., \"strengths\": \"...\", \"weaknesses\": \"...\"}}], \"market_position\": \"...\", \"recommended_differentiation\": \"...\"}}"},
+                        ],
+                        api_key=api_key,
+                        base_url="https://api.openai.com/v1",
+                        timeout_seconds=12.0,
+                        max_output_tokens=4096,
+                        prefer_responses_api=False,
+                    )
+                    comp_text = comp_synthesis.strip()
+                    if comp_text.startswith("```"):
+                        comp_text = comp_text.split("\n", 1)[1] if "\n" in comp_text else comp_text[3:]
+                        comp_text = comp_text.rsplit("```", 1)[0]
+                    try:
+                        comp_brief = _json.loads(comp_text.strip())
+                    except _json.JSONDecodeError:
+                        comp_brief = {"recommended_differentiation": comp_text}
+
+                    response_text = comp_brief.get("recommended_differentiation", comp_brief.get("market_position", comp_synthesis[:300]))
+                except Exception as comp_synth_err:
+                    logger.warning("Adam competitive synthesis failed: %s", comp_synth_err)
+                    comp_brief = {}
+                    if places_results:
+                        names = [p["name"] for p in places_results[:3]]
+                        response_text = f"Top competitors: {', '.join(names)}."
+                    else:
+                        response_text = "Couldn't find enough competitor data. Try a more specific location."
+
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": len(web_results) + len(places_results) > 0,
+                        "agent": "adam",
+                        "result": response_text,
+                        "data": {
+                            "mode": "competitive",
+                            "brief": comp_brief,
+                            "web_results": len(web_results),
+                            "places_results": len(places_results),
+                            "location": clean_loc,
+                        },
+                        "receipt_id": ctx.correlation_id,
+                    },
+                )
+
             # ── VENDOR MODE (existing v5 pipeline) ──
-            # Falls through for vendor and competitive modes
 
             api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
             common_kwargs = dict(
