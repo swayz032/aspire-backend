@@ -451,26 +451,34 @@ def _merge_ta_detail_into_records(
 def _names_match(name_a: str, name_b: str) -> bool:
     """Check if two hotel names refer to the same property.
 
-    More strict than fuzzy merge — prevents cross-hotel contamination
-    during individual TA enrichment lookups.
+    Strict matching — prevents cross-hotel contamination.
+    City/neighborhood/state names are NOT identity words for a hotel.
     """
     a = name_a.lower().strip()
     b = name_b.lower().strip()
     # Exact
     if a == b:
         return True
-    # Substring
+    # Substring (one name fully contains the other)
     if a in b or b in a:
         return True
-    # Significant word overlap (3+ words, excluding common filler)
+    # Significant word overlap — exclude filler AND geographic words
+    # Geographic words (cities, neighborhoods, states) are NOT hotel identity
     stop = {"hotel", "inn", "suites", "by", "the", "&", "and", "a", "an",
-            "extended", "stay", "express", "-", "at", "of", "in"}
-    words_a = set(a.split()) - stop
-    words_b = set(b.split()) - stop
-    overlap = len(words_a & words_b)
-    # Need at least 2 significant words AND >50% of the smaller set
+            "extended", "stay", "express", "-", "at", "of", "in", "near",
+            # State abbreviations and common city/neighborhood words
+            "ga", "fl", "tx", "ca", "ny", "nc", "sc", "va", "oh", "pa",
+            "atlanta", "norcross", "tucker", "chamblee", "stone", "mountain",
+            "northlake", "downtown", "midtown", "airport", "north", "south",
+            "east", "west", "northeast", "northwest", "southeast", "southwest",
+            "central", "metro", "area", "city", "park", "heights", "hills",
+            "village", "plaza", "center", "centre", "square"}
+    words_a = set(a.replace(",", " ").replace("-", " ").split()) - stop
+    words_b = set(b.replace(",", " ").replace("-", " ").split()) - stop
+    overlap = words_a & words_b
+    # Need 2+ identity words AND >60% of the smaller set
     min_words = min(len(words_a), len(words_b))
-    if min_words > 0 and overlap >= 2 and overlap / min_words >= 0.5:
+    if min_words > 0 and len(overlap) >= 2 and len(overlap) / min_words > 0.6:
         return True
     return False
 
