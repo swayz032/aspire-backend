@@ -248,6 +248,17 @@ LANDLORD_TURNOVER_VENDOR_SCOUT = PlaybookSpec(
     required_fields=("name", "normalized_address", "phone"),
 )
 
+LANDLORD_INVESTMENT_OPPORTUNITY_SCAN = PlaybookSpec(
+    name="INVESTMENT_OPPORTUNITY_SCAN",
+    segment="landlord",
+    intents=("investment_scan", "territory_scan"),
+    entity_types=("property",),
+    artifact_type="InvestmentOpportunityPack",
+    description="Scan ZIP for investment: foreclosures, absentee owners, equity spreads",
+    provider_order=("attom",),
+    required_fields=("zip_code",),
+)
+
 # TRAVEL playbook (1)
 TRAVEL_HOTEL_RESEARCH = PlaybookSpec(
     name="BUSINESS_TRIP_HOTEL_RESEARCH",
@@ -286,6 +297,7 @@ ALL_PLAYBOOKS: list[PlaybookSpec] = [
     LANDLORD_NEIGHBORHOOD_DEMAND,
     LANDLORD_SCREENING_COMPLIANCE,
     LANDLORD_TURNOVER_VENDOR_SCOUT,
+    LANDLORD_INVESTMENT_OPPORTUNITY_SCAN,
     # Travel
     TRAVEL_HOTEL_RESEARCH,
 ]

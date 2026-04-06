@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     serpapi_api_key: str = ""          # ASPIRE_SERPAPI_API_KEY — shared by shopping + homedepot engines
     tripadvisor_api_key: str = ""      # ASPIRE_TRIPADVISOR_API_KEY — TripAdvisor Content API
     parallel_api_key: str = ""         # ASPIRE_PARALLEL_API_KEY — Parallel AI deep research
+    parallel_extract_api_key: str = "" # ASPIRE_PARALLEL_EXTRACT_API_KEY — Parallel Extract (v1beta)
 
     # --- Tec Documents (S3) provider keys ---
     aws_access_key_id: str = ""

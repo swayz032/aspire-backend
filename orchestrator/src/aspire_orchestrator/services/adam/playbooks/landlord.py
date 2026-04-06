@@ -66,6 +66,7 @@ from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
     normalize_from_attom_rental,
     normalize_from_attom_sale_detail,
     normalize_from_attom_sales_history,
+    normalize_from_attom_foreclosure,
     normalize_from_attom_schools,
     normalize_from_attom_valuation,
 )
@@ -367,6 +368,25 @@ async def execute_property_facts(
                 prop_dict["nearby_schools"] = schools
     except Exception:
         pass  # Schools are nice-to-have, not critical
+
+    # --- Merge foreclosure filings (NOD, lis pendens, auction dates, trustee info) ---
+    try:
+        from aspire_orchestrator.providers.attom_client import execute_attom_sales_expanded_history
+        fc_result = await execute_attom_sales_expanded_history(payload=attom_payload, **args)
+        if fc_result.outcome == Outcome.SUCCESS and fc_result.data:
+            from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                normalize_from_attom_foreclosure,
+            )
+            fc_data = normalize_from_attom_foreclosure(fc_result.data)
+            if fc_data and prop_dict:
+                prop_dict["foreclosure_records"] = fc_data.get("foreclosure_records", [])
+                prop_dict["prior_foreclosure"] = fc_data.get("prior_foreclosure", False)
+                prop_dict["foreclosure_stage"] = fc_data.get("foreclosure_stage", "none")
+                # Merge expanded sale history if we don't have it yet
+                if not prop_dict.get("sale_history") and fc_data.get("sale_history_expanded"):
+                    prop_dict["sale_history"] = fc_data["sale_history_expanded"]
+    except Exception as exc:
+        logger.warning("landlord.property_facts: foreclosure data failed: %s", exc)
 
     if prop_dict:
         records.append(prop_dict)
@@ -1103,4 +1123,380 @@ async def execute_turnover_vendor_scout(
         intent="turnover_vendor_scout",
         playbook="landlord.turnover_vendor_scout",
         providers_called=list(dict.fromkeys(providers_called)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. Investment Opportunity Scan
+# ---------------------------------------------------------------------------
+
+async def execute_investment_opportunity_scan(
+    query: str,
+    context: PlaybookContext,
+    provider_plan: dict[str, Any] | None = None,
+) -> ResearchResponse:
+    """Scan a ZIP for investment opportunities: foreclosures, absentee owners,
+    below-market sales, equity spreads, and distressed properties.
+
+    Provider plan:
+      attom:  property/snapshot (absentee) + allevents/detail (FC flags) +
+              salestrend/snapshot (market context)
+              Then per-property deep dives: saleshistory/expandedhistory
+              (foreclosure filings + auction dates), homeequity (equity spread),
+              attomavm/detail (current value)
+
+    Returns: InvestmentOpportunityPack artifact with ranked opportunities.
+    """
+    logger.info(
+        "landlord.investment_opportunity_scan start",
+        extra={"correlation_id": context.correlation_id, "query": query[:80]},
+    )
+
+    args = _provider_args(context)
+    records: list[dict[str, Any]] = []
+    sources: list[SourceAttribution] = []
+    providers_called: list[str] = ["attom"]
+
+    # Extract ZIP from query (look for 5-digit ZIP code)
+    import re
+    zip_match = re.search(r'\b(\d{5})\b', query)
+    if not zip_match:
+        return ResearchResponse(
+            artifact_type="InvestmentOpportunityPack",
+            summary="No ZIP code found in query. Please include a 5-digit ZIP code.",
+            records=[],
+            sources=[],
+            freshness={"mode": "live", "provider": "attom"},
+            confidence={"status": "unverified", "score": 0},
+            missing_fields=["zip_code"],
+            next_queries=["Try: 'investment opportunities in 30297'"],
+            segment="landlord",
+            intent="investment_opportunity_scan",
+            playbook="landlord.investment_opportunity_scan",
+            providers_called=[],
+        )
+    zip_code = zip_match.group(1)
+
+    from aspire_orchestrator.providers.attom_client import (
+        execute_attom_sales_expanded_history,
+        execute_attom_home_equity,
+        _attom_request,
+    )
+
+    # Step 1: Parallel scans — absentee owners + ALL FC-flagged + recent activity + live auctions
+    # Use startsalesearchdate=last 18 months to catch current foreclosure pipeline
+    from datetime import datetime, timedelta
+    cutoff_date = (datetime.now() - timedelta(days=540)).strftime("%Y/%m/%d")
+
+    absentee_result, fc_events_result, recent_events_result, trends_result, exa_result = await asyncio.gather(
+        _attom_request(
+            path="/property/snapshot",
+            query_params={
+                "postalcode": zip_code, "propertytype": "SFR",
+                "absenteeowner": "absentee", "pagesize": "50",
+            },
+            tool_id="attom.investment_absentee",
+            correlation_id=context.correlation_id,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+        ),
+        _attom_request(
+            path="/allevents/detail",
+            query_params={
+                "postalcode": zip_code, "propertytype": "SFR", "pagesize": "50",
+            },
+            tool_id="attom.investment_events",
+            correlation_id=context.correlation_id,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+        ),
+        # Recent activity scan — catches properties with new FC filings
+        _attom_request(
+            path="/allevents/detail",
+            query_params={
+                "postalcode": zip_code, "propertytype": "SFR",
+                "startsalesearchdate": cutoff_date,
+                "pagesize": "50",
+                "orderby": "salesearchdate desc",
+            },
+            tool_id="attom.investment_recent",
+            correlation_id=context.correlation_id,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+        ),
+        execute_attom_sales_trends(
+            payload={"postalcode": zip_code},
+            **args,
+        ),
+        # Exa: Live auction listings from Auction.com + county sites
+        execute_exa_search(
+            payload={"query": f"foreclosure auction listings {zip_code} 2026 upcoming auction date property sale"},
+            **args,
+        ),
+        return_exceptions=False,
+    )
+    providers_called.append("exa")
+
+    # Parse absentee owners
+    absentee_addrs: list[dict[str, str]] = []
+    absentee_count = 0
+    if absentee_result.outcome == Outcome.SUCCESS and absentee_result.data:
+        absentee_count = absentee_result.data.get("status", {}).get("total", 0)
+        for p in absentee_result.data.get("property", []):
+            addr = p.get("address", {})
+            absentee_addrs.append({
+                "line1": addr.get("line1", ""),
+                "line2": addr.get("line2", ""),
+                "oneLine": addr.get("oneLine", ""),
+            })
+
+    # Parse foreclosure-flagged properties from allevents
+    fc_flagged: list[dict[str, Any]] = []
+    if fc_events_result.outcome == Outcome.SUCCESS and fc_events_result.data:
+        for p in fc_events_result.data.get("property", []):
+            sale = p.get("sale", {})
+            fc = sale.get("foreclosure", "")
+            trans = sale.get("amount", {}).get("saletranstype", "")
+            addr = p.get("address", {})
+            avm = p.get("avm", {}).get("amount", {})
+            sale_amt = sale.get("amount", {}).get("saleamt")
+            summary = p.get("summary", {})
+
+            is_distressed = bool(fc) or "foreclos" in str(trans).lower() or \
+                "reo" in str(trans).lower() or "sheriff" in str(trans).lower()
+
+            if is_distressed:
+                fc_flagged.append({
+                    "line1": addr.get("line1", ""),
+                    "line2": addr.get("line2", ""),
+                    "oneLine": addr.get("oneLine", ""),
+                    "foreclosure_flag": fc,
+                    "trans_type": trans,
+                    "last_sale_amt": sale_amt,
+                    "avm_value": avm.get("value"),
+                    "avm_confidence": avm.get("scr"),
+                    "year_built": summary.get("yearbuilt"),
+                    "absentee": summary.get("absenteeInd", ""),
+                })
+
+    # Merge recently-active FC-flagged properties (may overlap with above)
+    seen_addrs = {fp.get("oneLine", "") for fp in fc_flagged}
+    if recent_events_result.outcome == Outcome.SUCCESS and recent_events_result.data:
+        for p in recent_events_result.data.get("property", []):
+            sale = p.get("sale", {})
+            fc = sale.get("foreclosure", "")
+            trans = sale.get("amount", {}).get("saletranstype", "")
+            addr = p.get("address", {})
+            one_line = addr.get("oneLine", "")
+            if one_line in seen_addrs:
+                continue
+            is_distressed = bool(fc) or "foreclos" in str(trans).lower() or \
+                "reo" in str(trans).lower() or "sheriff" in str(trans).lower()
+            if is_distressed:
+                avm = p.get("avm", {}).get("amount", {})
+                summary = p.get("summary", {})
+                fc_flagged.append({
+                    "line1": addr.get("line1", ""),
+                    "line2": addr.get("line2", ""),
+                    "oneLine": one_line,
+                    "foreclosure_flag": fc,
+                    "trans_type": trans,
+                    "last_sale_amt": sale.get("amount", {}).get("saleamt"),
+                    "avm_value": avm.get("value"),
+                    "avm_confidence": avm.get("scr"),
+                    "year_built": summary.get("yearbuilt"),
+                    "absentee": summary.get("absenteeInd", ""),
+                    "recent_activity": True,
+                })
+                seen_addrs.add(one_line)
+
+    # Parse Exa live auction listings (Auction.com, county sites)
+    live_auction_listings: list[dict[str, Any]] = []
+    if exa_result.outcome == Outcome.SUCCESS and exa_result.data:
+        for result_item in (exa_result.data.get("results", []))[:10]:
+            url = result_item.get("url", "")
+            title = result_item.get("title", "")
+            snippet = result_item.get("text", result_item.get("highlight", ""))
+            # Only keep auction-related results
+            lower_title = title.lower()
+            if any(kw in lower_title for kw in ["auction", "foreclosure", "sale"]):
+                live_auction_listings.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": str(snippet)[:300] if snippet else "",
+                    "source": "exa",
+                })
+        if live_auction_listings:
+            sources.append(_source("exa"))
+
+    # Step 1b: Parallel Extract — pull structured auction details from Exa URLs
+    # Exa finds the listing pages, Parallel Extract reads the structured content
+    auction_urls = [l["url"] for l in live_auction_listings if "auction.com" in l["url"]]
+    if auction_urls:
+        try:
+            from aspire_orchestrator.providers.parallel_client import execute_parallel_extract
+            extract_result = await execute_parallel_extract(
+                payload={
+                    "urls": auction_urls[:3],
+                    "objective": "Extract property listings: address, auction date, auction time, auction location, beds, baths, sqft, lot size, year built, property type, opening bid, foreclosure status",
+                    "max_chars_per_result": 3000,
+                },
+                **args,
+            )
+            if extract_result.outcome == Outcome.SUCCESS and extract_result.data:
+                providers_called.append("parallel_extract")
+                for ext_r in extract_result.data.get("results", []):
+                    excerpts = ext_r.get("excerpts", [])
+                    if excerpts:
+                        # Find existing listing and enrich with extracted content
+                        ext_url = ext_r.get("url", "")
+                        for listing in live_auction_listings:
+                            if listing["url"] == ext_url:
+                                listing["extracted_content"] = excerpts[0][:2000]
+                                listing["source"] = "exa+parallel_extract"
+                                break
+                        else:
+                            # New listing from extract
+                            live_auction_listings.append({
+                                "title": ext_r.get("title", ""),
+                                "url": ext_url,
+                                "extracted_content": excerpts[0][:2000],
+                                "source": "parallel_extract",
+                            })
+                sources.append(_source("parallel"))
+        except Exception as exc:
+            logger.warning("landlord.investment: parallel extract failed: %s", exc)
+
+    # Parse market trends
+    trends_summary = ""
+    if trends_result.outcome == Outcome.SUCCESS and trends_result.data:
+        trends_props = trends_result.data.get("salesTrends", trends_result.data.get("property", []))
+        if isinstance(trends_props, list) and trends_props:
+            trends_summary = f"ZIP {zip_code} market trends available"
+
+    # Step 2: Deep dive on top 5 foreclosure-flagged properties
+    deep_opportunities: list[dict[str, Any]] = []
+    for prop_info in fc_flagged[:5]:
+        a1 = prop_info.get("line1", "")
+        a2 = prop_info.get("line2", "")
+        if not a1 or not a2:
+            continue
+
+        addr_payload = {"address": f"{a1}, {a2}"}
+
+        # Parallel: expanded history (foreclosure filings) + equity + AVM
+        fc_result, equity_result, avm_result = await asyncio.gather(
+            execute_attom_sales_expanded_history(payload=addr_payload, **args),
+            execute_attom_home_equity(payload=addr_payload, **args),
+            execute_attom_valuation_avm(payload=addr_payload, **args),
+            return_exceptions=False,
+        )
+
+        opp: dict[str, Any] = {
+            "address": prop_info.get("oneLine", f"{a1}, {a2}"),
+            "year_built": prop_info.get("year_built"),
+            "foreclosure_flag": prop_info.get("foreclosure_flag", ""),
+            "trans_type": prop_info.get("trans_type", ""),
+            "absentee": prop_info.get("absentee", ""),
+        }
+
+        # Merge foreclosure filings
+        if fc_result.outcome == Outcome.SUCCESS and fc_result.data:
+            fc_data = normalize_from_attom_foreclosure(fc_result.data)
+            fc_recs = fc_data.get("foreclosure_records", [])
+            opp["foreclosure_stage"] = fc_data.get("foreclosure_stage", "none")
+            opp["foreclosure_count"] = len(fc_recs)
+            if fc_recs:
+                latest = fc_recs[0]
+                opp["latest_filing_date"] = latest.recording_date
+                opp["latest_filing_type"] = latest.distress_type_label
+                opp["auction_date"] = latest.auction_date_time
+                opp["auction_location"] = latest.auction_location
+                opp["lender"] = latest.lender_name
+                opp["original_loan"] = latest.original_loan_amount
+                opp["opening_bid"] = latest.opening_bid
+            # Expanded sale history
+            sh = fc_data.get("sale_history_expanded", [])
+            if sh:
+                opp["sale_history"] = sh[:5]
+
+        # Merge equity
+        if equity_result.outcome == Outcome.SUCCESS and equity_result.data:
+            eq = normalize_from_attom_equity(equity_result.data)
+            opp["ltv_ratio"] = eq.get("ltv_ratio")
+            opp["available_equity"] = eq.get("available_equity")
+            opp["current_loan_balance"] = eq.get("current_loan_balance")
+
+        # Merge AVM
+        if avm_result.outcome == Outcome.SUCCESS and avm_result.data:
+            avm_data = normalize_from_attom_avm(avm_result.data)
+            opp["estimated_value"] = avm_data.get("estimated_value")
+            opp["avm_confidence"] = avm_data.get("avm_confidence_score")
+
+        # Calculate investment metrics
+        avm_val = opp.get("estimated_value")
+        last_sale = prop_info.get("last_sale_amt")
+        if avm_val and last_sale:
+            opp["discount_pct"] = round((1 - last_sale / avm_val) * 100, 1)
+
+        deep_opportunities.append(opp)
+
+    # Build summary record
+    summary_record = {
+        "zip_code": zip_code,
+        "total_absentee_owners": absentee_count,
+        "foreclosure_flagged_properties": len(fc_flagged),
+        "deep_dive_count": len(deep_opportunities),
+        "market_trends": trends_summary,
+        "opportunities": deep_opportunities,
+        "live_auction_listings": live_auction_listings,
+        "all_foreclosure_flagged": [
+            {
+                "address": fp.get("oneLine", ""),
+                "foreclosure_flag": fp.get("foreclosure_flag", ""),
+                "trans_type": fp.get("trans_type", ""),
+                "last_sale": fp.get("last_sale_amt"),
+                "avm_value": fp.get("avm_value"),
+                "year_built": fp.get("year_built"),
+                "absentee": fp.get("absentee", ""),
+                "recent_activity": fp.get("recent_activity", False),
+            }
+            for fp in fc_flagged
+        ],
+    }
+    records.append(summary_record)
+    sources.append(_source("attom"))
+
+    report = verify_records(
+        records=records,
+        sources=sources,
+        required_fields=["zip_code"],
+    )
+
+    return ResearchResponse(
+        artifact_type="InvestmentOpportunityPack",
+        summary=(
+            f"Investment scan for ZIP {zip_code}: "
+            f"{absentee_count} absentee owners, "
+            f"{len(fc_flagged)} foreclosure-flagged properties, "
+            f"{len(deep_opportunities)} with deep dive data"
+            f"{f', {len(live_auction_listings)} live auction listings from web' if live_auction_listings else ''}. "
+            f"Verification: {report.status}."
+        ),
+        records=records,
+        sources=sources,
+        freshness={"mode": "live", "provider": "attom"},
+        confidence=_confidence_dict(report),
+        missing_fields=list(report.missing_fields),
+        next_queries=[
+            f"Deep dive on specific property address in {zip_code}",
+            f"Rental yield analysis for {zip_code}",
+            f"School district comparison for {zip_code}",
+            f"Permit activity trends in {zip_code}",
+        ],
+        verification_report=report,
+        segment="landlord",
+        intent="investment_opportunity_scan",
+        playbook="landlord.investment_opportunity_scan",
+        providers_called=providers_called,
     )

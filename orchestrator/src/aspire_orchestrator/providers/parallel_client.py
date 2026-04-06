@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
+
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.base_client import (
@@ -427,4 +429,90 @@ async def execute_parallel_task(
             tool_id=tool_id,
             error=response.error_message or f"Parallel AI task error: HTTP {response.status_code}",
             receipt_data=receipt,
+        )
+
+
+async def execute_parallel_extract(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Extract structured content from URLs via Parallel Extract (v1beta).
+
+    Uses separate API key (ASPIRE_PARALLEL_EXTRACT_API_KEY) and x-api-key auth header.
+    Endpoint: POST https://api.parallel.ai/v1beta/extract
+
+    Required payload:
+      - urls: list[str] — URLs to extract content from
+
+    Optional payload:
+      - objective: str — focuses extraction on specific information
+      - excerpts: bool — include focused excerpts (default True)
+      - full_content: bool — include full page content (default False)
+      - max_chars_per_result: int — limit excerpt chars per URL
+    """
+    tool_id = "parallel.extract"
+
+    api_key = settings.parallel_extract_api_key
+    if not api_key:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Parallel Extract API key not configured (ASPIRE_PARALLEL_EXTRACT_API_KEY)",
+        )
+
+    urls = payload.get("urls", [])
+    if not urls:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: urls",
+        )
+
+    body: dict[str, Any] = {"urls": urls}
+    if payload.get("objective"):
+        body["objective"] = payload["objective"]
+    body["excerpts"] = payload.get("excerpts", True)
+    body["full_content"] = payload.get("full_content", False)
+    if payload.get("max_chars_per_result"):
+        body["excerpts"] = {"max_chars_per_result": int(payload["max_chars_per_result"])}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.parallel.ai/v1beta/extract",
+                headers={"x-api-key": api_key, "Content-Type": "application/json"},
+                json=body,
+            )
+
+        if resp.status_code == 200:
+            data = resp.json()
+            return ToolExecutionResult(
+                outcome=Outcome.SUCCESS,
+                tool_id=tool_id,
+                data={
+                    "results": data.get("results", []),
+                    "errors": data.get("errors", []),
+                    "extract_id": data.get("extract_id", ""),
+                },
+            )
+        else:
+            error_body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            error_msg = error_body.get("error", {}).get("message", f"HTTP {resp.status_code}")
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id=tool_id,
+                error=f"Parallel Extract error: {error_msg}",
+            )
+    except Exception as exc:
+        logger.warning("parallel.extract failed: %s", exc)
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=f"Parallel Extract request failed: {exc}",
         )

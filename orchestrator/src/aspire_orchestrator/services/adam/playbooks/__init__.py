@@ -49,6 +49,7 @@ def _ensure_dispatch_loaded() -> None:
         execute_neighborhood_demand,
         execute_screening_compliance,
         execute_turnover_vendor_scout,
+        execute_investment_opportunity_scan,
     )
     from aspire_orchestrator.services.adam.playbooks.travel import (
         execute_business_trip_hotel_research,
@@ -69,13 +70,14 @@ def _ensure_dispatch_loaded() -> None:
         "LOCAL_NICHE_SCAN": execute_local_niche_scan,
         "INDUSTRY_BENCHMARK_PACK": execute_industry_benchmark,
         "AR_COLLECTIONS_INTEL": execute_ar_collections_intel,
-        # Landlord (6)
+        # Landlord (7)
         "PROPERTY_FACTS": execute_property_facts,
         "RENT_COMP_CONTEXT": execute_rent_comp_context,
         "PERMIT_AND_RENOVATION_CONTEXT": execute_permit_and_renovation,
         "NEIGHBORHOOD_DEMAND_SCAN": execute_neighborhood_demand,
         "SCREENING_COMPLIANCE_LOOKUP": execute_screening_compliance,
         "TURNOVER_VENDOR_SCOUT": execute_turnover_vendor_scout,
+        "INVESTMENT_OPPORTUNITY_SCAN": execute_investment_opportunity_scan,
         # Travel (1)
         "BUSINESS_TRIP_HOTEL_RESEARCH": execute_business_trip_hotel_research,
     })

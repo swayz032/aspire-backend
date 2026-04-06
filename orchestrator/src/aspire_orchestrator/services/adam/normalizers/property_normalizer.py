@@ -14,6 +14,7 @@ from typing import Any
 
 from aspire_orchestrator.services.adam.schemas.business_record import SourceAttribution
 from aspire_orchestrator.services.adam.schemas.property_record import (
+    ForeclosureRecord,
     PropertyRecord,
     SaleRecord,
 )
@@ -312,6 +313,87 @@ def normalize_from_attom_rental(data: dict[str, Any]) -> dict[str, Any]:
         "estimated_rent": _safe_float(rental.get("rentAmount") or rental.get("amount", {}).get("value")),
         "estimated_rent_high": _safe_float(rental.get("rentHigh") or rental.get("amount", {}).get("high")),
         "estimated_rent_low": _safe_float(rental.get("rentLow") or rental.get("amount", {}).get("low")),
+    }
+
+
+def normalize_from_attom_foreclosure(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ATTOM saleshistory/expandedhistory foreclosure data.
+
+    Returns dict with foreclosure_records list + stage classification.
+    distressType: D = Default (NOD/Lis Pendens), T = Trustee Sale (NTS/NFS)
+    """
+    props = data.get("property", [])
+    if not props:
+        return {}
+
+    p = props[0] if isinstance(props, list) else props
+    fc_list = p.get("foreclosure", [])
+
+    if not fc_list:
+        return {"prior_foreclosure": False, "foreclosure_stage": "none"}
+
+    _distress_labels = {
+        "D": "Notice of Default / Lis Pendens",
+        "T": "Trustee Sale / Notice of Foreclosure Sale",
+    }
+
+    records: list[ForeclosureRecord] = []
+    for fc in fc_list:
+        # Skip empty records (just sequence number)
+        if len(fc) <= 1:
+            continue
+        trustor_first = fc.get("trustorFirstName", "")
+        trustor_last = fc.get("trustorLastName", "")
+        borrower = f"{trustor_first} {trustor_last}".strip()
+
+        dtype = fc.get("distressType", "")
+        records.append(ForeclosureRecord(
+            recording_date=fc.get("recordingDate", ""),
+            distress_type=dtype,
+            distress_type_label=_distress_labels.get(dtype, dtype),
+            borrower_name=borrower,
+            trustee_name=fc.get("trusteeFirstName", ""),
+            trustee_city=fc.get("trusteeCity", ""),
+            trustee_state=fc.get("trusteeState", ""),
+            lender_name=fc.get("beneficiaryName", ""),
+            original_loan_amount=_safe_float(fc.get("originalLoanAmount")),
+            original_loan_date=fc.get("originalLoanDate", ""),
+            auction_date_time=fc.get("auctionDateTime", ""),
+            auction_location=fc.get("auctionLocation", ""),
+            opening_bid=_safe_float(fc.get("recordedOpeningBid")),
+            document_number=fc.get("documentNumber", ""),
+            trustee_sale_number=fc.get("trusteeSaleNumber", ""),
+        ))
+
+    # Classify foreclosure stage from most recent record
+    stage = "none"
+    if records:
+        latest = records[0]  # Sorted by sequence (most recent first)
+        if latest.distress_type == "T":
+            stage = "auction"
+        elif latest.distress_type == "D":
+            stage = "default"
+        else:
+            stage = "filing"
+
+    # Also pull expanded sale history from the same endpoint
+    sh_list = p.get("saleHistory", p.get("salehistory", []))
+    sale_history: list[dict[str, Any]] = []
+    for sh in sh_list:
+        amt = sh.get("amount", {})
+        sale_history.append({
+            "date": sh.get("saleTransDate", sh.get("saletransdate", "")),
+            "amount": _safe_float(amt.get("saleAmt", amt.get("saleamt"))),
+            "trans_type": amt.get("saleTransType", amt.get("saletranstype", "")),
+            "buyer": sh.get("buyerName", ""),
+            "seller": sh.get("sellerName", ""),
+        })
+
+    return {
+        "foreclosure_records": records,
+        "prior_foreclosure": True,
+        "foreclosure_stage": stage,
+        "sale_history_expanded": sale_history,
     }
 
 

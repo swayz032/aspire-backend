@@ -23,7 +23,7 @@ class ClassificationResult:
     """Result of segment + intent classification."""
 
     segment: str = "general_smb"  # trades | accounting_bookkeeping | landlord | travel | general_smb
-    intent: str = "lookup"        # lookup | compare | verify | price_check | property_fact | compliance_lookup | hotel_research | prospect_research | territory_scan | monitor
+    intent: str = "lookup"        # lookup | compare | verify | price_check | property_fact | compliance_lookup | hotel_research | prospect_research | territory_scan | investment_scan | monitor
     entity_type: str = "web"      # business | property | product | hotel | web | geo
     geo_scope: str = ""           # address | radius | zip | city | county | state | national
     confidence: float = 0.0
@@ -54,6 +54,9 @@ _SEGMENT_KEYWORDS: dict[str, list[str]] = {
         "property fact", "property detail", "apn", "parcel",
         "assessed value", "avm", "valuation", "comp", "comparable",
         "school district", "neighborhood", "zip code analysis",
+        "investment", "foreclosure", "pre-foreclosure", "auction",
+        "reo", "bank-owned", "distressed", "flip", "wholesale",
+        "equity spread", "cash buyer", "motivated seller",
     ],
     "accounting_bookkeeping": [
         "bookkeep", "accountant", "cpa", "tax", "irs", "quarterly",
@@ -103,6 +106,12 @@ _INTENT_KEYWORDS: dict[str, list[str]] = {
         "prospect", "find client", "target", "lead", "pipeline",
         "potential client", "new business",
     ],
+    "investment_scan": [
+        "investment", "invest", "foreclosure", "pre-foreclosure", "preforeclosure",
+        "auction", "reo", "bank-owned", "bank owned", "distressed",
+        "absentee owner", "absentee", "flip", "wholesale", "below market",
+        "equity spread", "cash buyer", "motivated seller",
+    ],
     "territory_scan": [
         "territory", "expand", "market", "opportunity", "zip code",
         "neighborhood", "demand", "saturation", "underserved",
@@ -115,6 +124,7 @@ _ENTITY_MAP: dict[str, str] = {
     "property_fact": "property",
     "hotel_research": "hotel",
     "prospect_research": "business",
+    "investment_scan": "property",
     "territory_scan": "property",
     "compare": "business",
     "verify": "business",

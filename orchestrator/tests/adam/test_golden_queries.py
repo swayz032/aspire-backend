@@ -95,6 +95,13 @@ GOLDEN_QUERIES = [
         "ESTIMATE_RESEARCH",
         "EstimateResearchPack",
     ),
+    (
+        "Investment opportunity scan — foreclosures in ZIP",
+        "Find investment opportunities in 30297 foreclosures distressed properties",
+        "landlord",
+        "INVESTMENT_OPPORTUNITY_SCAN",
+        "InvestmentOpportunityPack",
+    ),
 ]
 
 
@@ -104,7 +111,7 @@ GOLDEN_QUERIES = [
 
 
 class TestGoldenChain:
-    """classify_fast → route_to_playbook chain for all 10 golden queries."""
+    """classify_fast → route_to_playbook chain for all 11 golden queries."""
 
     @pytest.mark.parametrize(
         "description,query,tenant_segment,expected_playbook,expected_artifact",

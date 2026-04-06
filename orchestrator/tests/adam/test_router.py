@@ -58,20 +58,21 @@ class TestPlaybookRegistry:
         "LOCAL_NICHE_SCAN",
         "INDUSTRY_BENCHMARK_PACK",
         "AR_COLLECTIONS_INTEL",
-        # Landlord (6)
+        # Landlord (7)
         "PROPERTY_FACTS",
         "RENT_COMP_CONTEXT",
         "PERMIT_AND_RENOVATION_CONTEXT",
         "NEIGHBORHOOD_DEMAND_SCAN",
         "SCREENING_COMPLIANCE_LOOKUP",
         "TURNOVER_VENDOR_SCOUT",
+        "INVESTMENT_OPPORTUNITY_SCAN",
         # Travel (1)
         "BUSINESS_TRIP_HOTEL_RESEARCH",
     }
 
-    def test_all_19_playbooks_registered(self):
-        """ALL_PLAYBOOKS has exactly 19 entries."""
-        assert len(ALL_PLAYBOOKS) == 19
+    def test_all_20_playbooks_registered(self):
+        """ALL_PLAYBOOKS has exactly 20 entries (19 + INVESTMENT_OPPORTUNITY_SCAN)."""
+        assert len(ALL_PLAYBOOKS) == 20
 
     def test_all_playbook_names_present(self):
         """Every expected playbook name is in ALL_PLAYBOOKS."""

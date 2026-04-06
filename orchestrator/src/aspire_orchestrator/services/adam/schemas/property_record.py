@@ -14,6 +14,31 @@ from aspire_orchestrator.services.adam.schemas.business_record import SourceAttr
 
 
 @dataclass
+class ForeclosureRecord:
+    """A single foreclosure filing on the property.
+
+    Source: ATTOM saleshistory/expandedhistory → foreclosure[] array
+    distress_type: D = Default (NOD/Lis Pendens), T = Trustee Sale (NTS/NFS)
+    """
+
+    recording_date: str = ""
+    distress_type: str = ""  # D = Default/NOD, T = Trustee Sale/NTS
+    distress_type_label: str = ""  # Human-readable: "Notice of Default", "Trustee Sale"
+    borrower_name: str = ""  # trustorFirstName + trustorLastName
+    trustee_name: str = ""
+    trustee_city: str = ""
+    trustee_state: str = ""
+    lender_name: str = ""  # beneficiaryName
+    original_loan_amount: float | None = None
+    original_loan_date: str = ""
+    auction_date_time: str = ""  # "2014-08-20 3:30 PM"
+    auction_location: str = ""  # "200 E Washington St"
+    opening_bid: float | None = None  # recordedOpeningBid
+    document_number: str = ""
+    trustee_sale_number: str = ""
+
+
+@dataclass
 class SaleRecord:
     """A single transaction in the property's sale history."""
 
@@ -125,6 +150,12 @@ class PropertyRecord:
     school_district_name: str = ""
     school_context: str = ""
 
+    # Foreclosure / Distress
+    foreclosure_records: list[ForeclosureRecord] = field(default_factory=list)
+    in_foreclosure: bool | None = None  # True if active foreclosure pipeline
+    foreclosure_stage: str = ""  # "default", "auction", "reo", "none"
+    prior_foreclosure: bool | None = None  # Property had past foreclosure
+
     # Previous Owner / Seller
     previous_owner_name: str = ""
 
@@ -164,6 +195,11 @@ class PropertyRecord:
         for k, v in self.__dict__.items():
             if k == "sources":
                 d[k] = [{"provider": s.provider, "retrieved_at": s.retrieved_at, "source_id": s.source_id} for s in v]
+            elif k == "foreclosure_records":
+                d[k] = [
+                    {fk: fv for fk, fv in fr.__dict__.items() if fv}
+                    for fr in v
+                ]
             elif k == "sale_history":
                 d[k] = [{"date": s.date, "amount": s.amount, "trans_type": s.trans_type, "buyer": s.buyer, "seller": s.seller} for s in v]
             elif k == "extra":
