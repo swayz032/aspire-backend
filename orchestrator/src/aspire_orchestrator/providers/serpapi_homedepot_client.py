@@ -194,6 +194,11 @@ async def execute_serpapi_homedepot_search(
 
     if response.success:
         raw_products = response.body.get("products", [])
+        search_info = response.body.get("search_information", {})
+        store_info = {
+            "store_id": search_info.get("store_id", ""),
+            "store_name": search_info.get("store_name", ""),
+        }
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id=tool_id,
@@ -211,14 +216,17 @@ async def execute_serpapi_homedepot_search(
                         "rating": p.get("rating"),
                         "reviews": p.get("reviews"),
                         "pickup_quantity": (p.get("pickup") or {}).get("quantity"),
+                        "pickup_store": (p.get("pickup") or {}).get("store_name", ""),
                         "delivery": p.get("delivery"),
                         "link": p.get("link"),
                         "thumbnail": p.get("thumbnail"),
+                        "badges": p.get("badges", []),
                     }
                     for p in raw_products
                 ],
                 "query": query,
                 "result_count": len(raw_products),
+                "store": store_info,
             },
             receipt_data=receipt,
         )

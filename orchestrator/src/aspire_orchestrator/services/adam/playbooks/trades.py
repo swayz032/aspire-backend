@@ -189,7 +189,8 @@ async def execute_tool_material_price_check(
     query: str, ctx: PlaybookContext, zip_code: str = "", store_id: str = "",
     on_sale: bool = False,
 ) -> ResearchResponse:
-    """TOOL_MATERIAL_PRICE_CHECK — Find current pricing for tools/materials."""
+    """TOOL_MATERIAL_PRICE_CHECK — Find current pricing, stock, and store info for tools/materials."""
+    import re as _re
     from aspire_orchestrator.providers.serpapi_shopping_client import execute_serpapi_shopping_search
     from aspire_orchestrator.providers.serpapi_homedepot_client import execute_serpapi_homedepot_search
     from aspire_orchestrator.services.adam.normalizers.product_normalizer import (
@@ -199,11 +200,59 @@ async def execute_tool_material_price_check(
 
     logger.info("Executing TOOL_MATERIAL_PRICE_CHECK for: %s", query[:80])
 
+    # Auto-extract ZIP from query if not provided
+    if not zip_code:
+        zip_match = _re.search(r'\b(\d{5})\b', query)
+        if zip_match:
+            zip_code = zip_match.group(1)
+
     records: list[dict[str, Any]] = []
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # 1. SerpApi Google Shopping (cross-retailer)
+    # 1. SerpApi Home Depot FIRST (store-specific with stock — primary for trades)
+    # Resolve nearest HD store using Google Places for accurate location
+    from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
+    hd_store_info: dict[str, Any] = {}
+    resolved_store_id = store_id
+    if not resolved_store_id and zip_code:
+        store_match = await resolve_store_async(
+            zip_code,
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        )
+        if store_match:
+            resolved_store_id = store_match.get("store_id", "")
+            hd_store_info = store_match
+
+    hd_payload: dict[str, Any] = {"query": query, "hd_sort": "best_match"}
+    if resolved_store_id:
+        hd_payload["store_id"] = resolved_store_id
+    if zip_code:
+        hd_payload["delivery_zip"] = zip_code
+
+    hd_result = await execute_serpapi_homedepot_search(
+        payload=hd_payload,
+        correlation_id=ctx.correlation_id,
+        suite_id=ctx.suite_id,
+        office_id=ctx.office_id,
+    )
+    providers_called.append("serpapi_home_depot")
+
+    if hd_result.outcome.value == "success" and hd_result.data:
+        # Merge SerpApi's store info with our resolved store
+        serpapi_store = hd_result.data.get("store", {})
+        if serpapi_store.get("store_name"):
+            hd_store_info["store_name"] = serpapi_store["store_name"]
+        if not hd_store_info.get("store_id") and serpapi_store.get("store_id"):
+            hd_store_info["store_id"] = serpapi_store["store_id"]
+        for item in hd_result.data.get("results", [])[:8]:
+            product = normalize_from_serpapi_homedepot(item)
+            records.append(product.to_dict())
+            sources.extend(product.sources)
+
+    # 2. SerpApi Google Shopping (cross-retailer comparison)
     shopping_payload: dict[str, Any] = {"query": query, "sort_by": 1}  # price low-high
     if zip_code:
         shopping_payload["location"] = zip_code
@@ -224,43 +273,34 @@ async def execute_tool_material_price_check(
             records.append(product.to_dict())
             sources.extend(product.sources)
 
-    # 2. SerpApi Home Depot (store-specific with stock)
-    hd_payload: dict[str, Any] = {"query": query, "hd_sort": "price_low_to_high"}
-    if store_id:
-        hd_payload["store_id"] = store_id
-    if zip_code:
-        hd_payload["delivery_zip"] = zip_code
-
-    hd_result = await execute_serpapi_homedepot_search(
-        payload=hd_payload,
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-    )
-    providers_called.append("serpapi_home_depot")
-
-    if hd_result.outcome.value == "success" and hd_result.data:
-        for item in hd_result.data.get("results", [])[:6]:
-            product = normalize_from_serpapi_homedepot(item)
-            records.append(product.to_dict())
-            sources.extend(product.sources)
-
     report = verify_records(records=records, sources=sources, required_fields=["product_name", "price", "retailer"])
+
+    summary_parts = [f"Price check for {query[:60]}"]
+    if hd_store_info.get("store_name"):
+        summary_parts.append(f"Home Depot store: {hd_store_info['store_name']} (#{hd_store_info.get('store_id', '')})")
+    hd_count = sum(1 for r in records if r.get("retailer") == "Home Depot")
+    in_stock = sum(1 for r in records if r.get("in_store_stock") and r["in_store_stock"] > 0)
+    if hd_count:
+        summary_parts.append(f"{hd_count} Home Depot products, {in_stock} in stock")
 
     return ResearchResponse(
         artifact_type="PriceComparison",
-        summary=f"Price check for {query[:60]}",
+        summary=". ".join(summary_parts) + ".",
         records=records,
         sources=sources,
         freshness={"mode": "live"},
         confidence={"status": report.status, "score": report.confidence_score},
         missing_fields=report.missing_fields,
-        next_queries=["Check availability at specific store", "Compare alternative products"],
+        next_queries=[
+            f"Compare prices at Lowe's near {zip_code}" if zip_code else "Compare at other retailers",
+            "Check for current sales and promotions",
+        ],
         verification_report=report,
         segment="trades",
         intent="price_check",
         playbook="TOOL_MATERIAL_PRICE_CHECK",
         providers_called=providers_called,
+        extra={"store": hd_store_info} if hd_store_info else {},
     )
 
 

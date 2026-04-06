@@ -31,6 +31,7 @@ class ResearchResponse:
     playbook: str = ""
     providers_called: list[str] = field(default_factory=list)
     cost_estimate: float = 0.0
+    extra: dict[str, Any] = field(default_factory=dict)  # Store info, metadata, etc.
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {

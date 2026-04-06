@@ -326,6 +326,7 @@ def route_to_playbook(
     classification = classify_fast(query, tenant_segment)
 
     # Detect hybrid queries: address + pricing co-occur → ESTIMATE_RESEARCH
+    # BUT: store-specific queries ("home depot", "lowes") are product lookups, not estimates
     import re as _re
     q_lower = query.lower()
     has_address_signal = bool(_re.search(
@@ -335,7 +336,12 @@ def route_to_playbook(
         q_lower,
     ))
     has_price_signal = classification.intent == "price_check"
-    is_estimate_hybrid = has_address_signal and has_price_signal
+    has_store_signal = any(s in q_lower for s in [
+        "home depot", "lowes", "lowe's", "menards", "ace hardware",
+        "in stock", "available at", "pickup",
+    ])
+    # Estimate hybrid = address + price but NOT a store product lookup
+    is_estimate_hybrid = has_address_signal and has_price_signal and not has_store_signal
 
     # Find best matching playbook for this classification
     best: PlaybookSpec | None = None

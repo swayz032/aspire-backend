@@ -78,6 +78,8 @@ _INTENT_KEYWORDS: dict[str, list[str]] = {
         "price", "cost", "how much", "pricing", "quote", "estimate cost",
         "compare price", "cheapest", "affordable", "budget", "expensive",
         "deal", "sale", "discount", "on sale",
+        "available", "in stock", "stock", "home depot", "lowes", "lowe's",
+        "buy", "where to buy", "find me", "get me",
     ],
     "property_fact": [
         "square foot", "sqft", "lot size", "year built", "beds", "baths",

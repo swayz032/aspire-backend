@@ -55,8 +55,18 @@ def normalize_from_serpapi_shopping(data: dict[str, Any]) -> ProductRecord:
 
 def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     """Normalize a SerpApi Home Depot result to ProductRecord."""
-    pickup = data.get("pickup") or {}
     delivery = data.get("delivery") or {}
+    stock = data.get("pickup_quantity")
+    store_name = data.get("pickup_store", "")
+
+    delivery_str = ""
+    if isinstance(delivery, dict):
+        delivery_str = "Free delivery" if delivery.get("free") else str(delivery)
+    elif delivery:
+        delivery_str = str(delivery)
+
+    badges = data.get("badges", [])
+    badge_str = ", ".join(badges) if badges else ""
 
     return ProductRecord(
         product_name=data.get("title", ""),
@@ -69,13 +79,14 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
         price_saving=data.get("price_saving"),
         percentage_off=data.get("percentage_off"),
         currency="USD",
-        availability="in_stock" if pickup.get("quantity", 0) > 0 else "check_store",
-        in_store_stock=pickup.get("quantity"),
-        store_id=str(pickup.get("store_name", "")),
-        delivery_info=delivery.get("free", "Free delivery") if delivery.get("free") else str(delivery),
+        availability="in_stock" if stock and stock > 0 else "check_store",
+        in_store_stock=stock,
+        store_id=store_name,
+        delivery_info=delivery_str,
         url=data.get("link", ""),
-        image_url=_safe_thumbnail(data.get("thumbnails")),
+        image_url=_safe_thumbnail(data.get("thumbnails") or data.get("thumbnail")),
         rating=data.get("rating"),
         reviews=data.get("reviews"),
         sources=[SourceAttribution(provider="serpapi_home_depot", retrieved_at=datetime.now(timezone.utc).isoformat())],
+        extra={"badges": badge_str} if badge_str else {},
     )
