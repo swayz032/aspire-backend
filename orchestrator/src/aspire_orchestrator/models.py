@@ -273,6 +273,12 @@ class AvaResult(BaseModel):
     risk: AvaResultRisk
     governance: AvaResultGovernance
     plan: dict[str, Any]
+    structured_results: dict[str, Any] | None = Field(
+        default=None,
+        description="Structured research data for visual card rendering on desktop. "
+        "Contains artifact_type, records[], confidence, sources from Adam playbooks. "
+        "Desktop uses this to show immersive card modals while Ava narrates.",
+    )
 
 
 # =============================================================================

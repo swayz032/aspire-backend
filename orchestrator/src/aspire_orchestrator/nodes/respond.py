@@ -781,6 +781,37 @@ def _generate_presence_prompt(state: OrchestratorState, channel: str = "chat") -
         return fallback_text
 
 
+def _extract_structured_results(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract Adam research data for desktop card rendering.
+
+    Returns structured_results when execution_result contains an Adam
+    ResearchResponse (identified by artifact_type). Desktop uses this
+    to render immersive card modals with photos, safety badges, etc.
+    """
+    execution_result = state.get("execution_result") or {}
+    if not isinstance(execution_result, dict):
+        return None
+    data = execution_result.get("data")
+    if not isinstance(data, dict):
+        return None
+    artifact_type = data.get("artifact_type")
+    if not artifact_type or artifact_type == "error":
+        return None
+    # Only include card-relevant fields (not raw provider responses)
+    return {
+        "artifact_type": artifact_type,
+        "records": data.get("records", []),
+        "summary": data.get("summary", ""),
+        "confidence": data.get("confidence"),
+        "missing_fields": data.get("missing_fields", []),
+        "next_queries": data.get("next_queries", []),
+        "providers_called": data.get("providers_called", []),
+        "segment": data.get("segment"),
+        "intent": data.get("intent"),
+        "playbook": data.get("playbook"),
+    }
+
+
 def _extract_media_items(state: OrchestratorState) -> list[dict[str, Any]]:
     """Extract media payloads from execution_result for chat rendering."""
     execution_result = state.get("execution_result") or {}
@@ -1176,6 +1207,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 "outcome": state.get("outcome", Outcome.SUCCESS).value if hasattr(state.get("outcome", Outcome.SUCCESS), "value") else str(state.get("outcome", "success")),
                 "execution_result": state.get("execution_result"),
             },
+            structured_results=_extract_structured_results(state),
         )
 
         # Egress validation — validate AvaResult schema before returning
