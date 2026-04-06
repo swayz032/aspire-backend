@@ -86,7 +86,9 @@ async def execute_business_trip_hotel_research(
     )
     providers_called.append("google_places")
 
-    # Merge both GP result sets
+    # Merge both GP result sets + compute center lat/lng for TA geographic search
+    all_lats: list[float] = []
+    all_lngs: list[float] = []
     for gp_result in (gp_a, gp_b):
         if gp_result.outcome.value == "success" and gp_result.data:
             for place in gp_result.data.get("results", [])[:10]:
@@ -97,184 +99,135 @@ async def execute_business_trip_hotel_research(
                         seen_names.add(name_key)
                         records.append(hotel.to_dict())
                         sources.extend(hotel.sources)
+                        if hotel.latitude and hotel.longitude:
+                            all_lats.append(hotel.latitude)
+                            all_lngs.append(hotel.longitude)
 
-    # Step 2: TripAdvisor Search → Details for each hotel (parallel)
-    ta_search = await execute_tripadvisor_search(
-        payload={"query": f"hotels in {location}", "category": "hotels", "language": "en"},
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
+    # Center point of GP results — used for TA geographic anchoring
+    center_lat = sum(all_lats) / len(all_lats) if all_lats else None
+    center_lng = sum(all_lngs) / len(all_lngs) if all_lngs else None
+    lat_long_str = f"{center_lat},{center_lng}" if center_lat and center_lng else ""
+
+    # Step 2: TripAdvisor — geographic search + text search (parallel)
+    # TWO TA searches for maximum coverage:
+    #   A: latLong anchored (finds hotels NEAR the area regardless of city name)
+    #   B: text search (finds hotels with city name in their listing)
+    ta_payload_geo = {
+        "query": f"hotels {location}", "category": "hotels", "language": "en",
+    }
+    if lat_long_str:
+        ta_payload_geo["latLong"] = lat_long_str
+        ta_payload_geo["radius"] = 10
+        ta_payload_geo["radiusUnit"] = "mi"
+
+    ta_geo, ta_text = await asyncio.gather(
+        execute_tripadvisor_search(
+            payload=ta_payload_geo,
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        ),
+        execute_tripadvisor_search(
+            payload={"query": f"hotels in {location}", "category": "hotels", "language": "en"},
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        ),
     )
     providers_called.append("tripadvisor")
 
-    if ta_search.outcome.value == "success" and ta_search.data:
-        ta_locations = ta_search.data.get("results", [])
+    # Collect unique TA location IDs from both searches
+    ta_location_ids: dict[str, str] = {}  # location_id -> name
+    for ta_result in (ta_geo, ta_text):
+        if ta_result.outcome.value == "success" and ta_result.data:
+            for loc in ta_result.data.get("results", []):
+                lid = loc.get("location_id", "")
+                if lid and lid not in ta_location_ids:
+                    ta_location_ids[lid] = loc.get("name", "")
 
-        # Get details for each TA location (parallel — up to 10)
-        detail_tasks = []
-        for loc in ta_locations[:10]:
-            loc_id = loc.get("location_id", "")
-            if loc_id:
-                detail_tasks.append(execute_tripadvisor_location_details(
-                    location_id=loc_id,
+    # Get details for all unique TA locations (parallel)
+    if ta_location_ids:
+        detail_tasks = [
+            execute_tripadvisor_location_details(
+                location_id=lid,
+                correlation_id=ctx.correlation_id,
+                suite_id=ctx.suite_id,
+                office_id=ctx.office_id,
+            )
+            for lid in list(ta_location_ids.keys())[:15]
+        ]
+        detail_results = await asyncio.gather(*detail_tasks, return_exceptions=True)
+
+        for dr in detail_results:
+            if isinstance(dr, Exception):
+                continue
+            if dr.outcome.value != "success" or not dr.data:
+                continue
+            _merge_ta_detail_into_records(
+                dr.data, records, seen_names, sources, center_lat, center_lng, location,
+            )
+
+    # Step 2.5: Enrich remaining GP-only hotels via individual TA name lookups
+    # Hotels like DoubleTree that TA text search missed because their address
+    # says "Atlanta" not "Tucker" — search TA by hotel name directly
+    unenriched = [
+        r for r in records
+        if not any(s.get("provider") == "tripadvisor" for s in r.get("sources", []))
+    ]
+    if unenriched:
+        enrich_tasks = []
+        enrich_names = []  # Track which GP hotel each search is for
+        for rec in unenriched[:8]:
+            hotel_name = rec.get("name", "")
+            if hotel_name:
+                enrich_tasks.append(execute_tripadvisor_search(
+                    payload={"query": hotel_name, "category": "hotels", "language": "en"},
                     correlation_id=ctx.correlation_id,
                     suite_id=ctx.suite_id,
                     office_id=ctx.office_id,
                 ))
+                enrich_names.append(hotel_name)
 
-        if detail_tasks:
-            detail_results = await asyncio.gather(*detail_tasks, return_exceptions=True)
+        if enrich_tasks:
+            enrich_results = await asyncio.gather(*enrich_tasks, return_exceptions=True)
 
-            for dr in detail_results:
-                if isinstance(dr, Exception):
+            # For each search result, find the TA hotel that best matches the GP hotel name
+            enrich_detail_tasks = []
+            enrich_target_names = []  # Which GP hotel this detail is for
+            for idx, er in enumerate(enrich_results):
+                if isinstance(er, Exception):
                     continue
-                if dr.outcome.value != "success" or not dr.data:
+                if er.outcome.value != "success" or not er.data:
                     continue
-
-                d = dr.data
-                name = d.get("name", "")
-                name_key = name.lower().strip()
-
-                # Geographic filter — skip hotels not in target area
-                addr_obj = d.get("address_obj", {}) or {}
-                ta_state = (addr_obj.get("state") or "").strip()
-                ta_city = (addr_obj.get("city") or "").strip()
-                ta_country = (addr_obj.get("country") or "").strip()
-
-                # Extract target city/state from location (e.g., "Tucker" + "GA" from "Tucker GA")
-                loc_parts = location.split()
-                target_state = loc_parts[-1] if len(loc_parts) >= 2 and len(loc_parts[-1]) == 2 else ""
-                target_city_name = " ".join(loc_parts[:-1]) if target_state else location
-
-                # Skip if wrong country (not US)
-                if ta_country and ta_country.lower() not in ("united states", "us", "usa", ""):
-                    logger.debug("Skipping TA hotel %s — wrong country: %s", name, ta_country)
-                    continue
-                # Skip if wrong state
-                if target_state and ta_state:
-                    state_ok = _state_matches(target_state, ta_state)
-                    if not state_ok:
-                        logger.debug("Skipping TA hotel %s — wrong state: %s vs %s", name, ta_state, target_state)
+                gp_name = enrich_names[idx].lower()
+                # Find the TA result whose name best matches the GP hotel
+                for loc in er.data.get("results", [])[:3]:
+                    lid = loc.get("location_id", "")
+                    ta_name = (loc.get("name") or "").lower()
+                    if not lid or lid in ta_location_ids:
                         continue
-                # Skip if city doesn't match target (allows nearby cities in same metro)
-                if target_city_name and ta_city:
-                    city_match = (
-                        target_city_name.lower() == ta_city.lower()
-                        or target_city_name.lower() in ta_city.lower()
-                        or ta_city.lower() in target_city_name.lower()
+                    # Name must have significant overlap — prevent cross-hotel contamination
+                    if _names_match(gp_name, ta_name):
+                        ta_location_ids[lid] = loc.get("name", "")
+                        enrich_detail_tasks.append(execute_tripadvisor_location_details(
+                            location_id=lid,
+                            correlation_id=ctx.correlation_id,
+                            suite_id=ctx.suite_id,
+                            office_id=ctx.office_id,
+                        ))
+                        enrich_target_names.append(enrich_names[idx])
+                        break
+
+            if enrich_detail_tasks:
+                enrich_details = await asyncio.gather(*enrich_detail_tasks, return_exceptions=True)
+                for dr in enrich_details:
+                    if isinstance(dr, Exception):
+                        continue
+                    if dr.outcome.value != "success" or not dr.data:
+                        continue
+                    _merge_ta_detail_into_records(
+                        dr.data, records, seen_names, sources, center_lat, center_lng, location,
                     )
-                    if not city_match:
-                        logger.debug("Skipping TA hotel %s — wrong city: %s vs %s", name, ta_city, target_city_name)
-                        continue
-
-                # Build hotel dict from TA details
-                address = ", ".join(filter(None, [
-                    addr_obj.get("street1", ""),
-                    addr_obj.get("city", ""),
-                    addr_obj.get("state", ""),
-                    addr_obj.get("postalcode", ""),
-                ]))
-                ranking = d.get("ranking_data", {}) or {}
-
-                # Parse subratings
-                subratings: dict[str, float] = {}
-                for _sr_key, sr_val in (d.get("subratings") or {}).items():
-                    if isinstance(sr_val, dict) and sr_val.get("localized_name"):
-                        sr_v = _safe_float(sr_val.get("value"))
-                        if sr_v is not None:
-                            subratings[sr_val["localized_name"]] = sr_v
-
-                # Parse rating breakdown
-                rating_breakdown: dict[str, int] = {}
-                for stars, count in (d.get("review_rating_count") or {}).items():
-                    ct = _safe_int(count)
-                    if ct is not None:
-                        rating_breakdown[stars] = ct
-
-                # Parse trip types
-                trip_types: dict[str, int] = {}
-                for tt in d.get("trip_types", []):
-                    if isinstance(tt, dict) and tt.get("localized_name"):
-                        tv = _safe_int(tt.get("value"))
-                        if tv is not None:
-                            trip_types[tt["localized_name"]] = tv
-
-                # Parse amenities
-                amenities_list = d.get("amenities", [])
-                if amenities_list and isinstance(amenities_list[0], dict):
-                    amenities_list = [a.get("name", "") for a in amenities_list if isinstance(a, dict)]
-
-                ta_hotel = {
-                    "name": name,
-                    "normalized_address": address or d.get("address_string", ""),
-                    "city": addr_obj.get("city", ""),
-                    "state": addr_obj.get("state", ""),
-                    "postal_code": addr_obj.get("postalcode", ""),
-                    "star_rating": _safe_float(d.get("hotel_class")),
-                    "traveler_rating": _safe_float(d.get("rating")),
-                    "review_count": _safe_int(d.get("num_reviews")),
-                    "rating_breakdown": rating_breakdown,
-                    "subratings": subratings,
-                    "price_range": d.get("price_level", ""),
-                    "styles": d.get("styles", []),
-                    "phone": d.get("phone", ""),
-                    "website": d.get("website", ""),
-                    "tripadvisor_url": d.get("web_url", ""),
-                    "amenities": amenities_list,
-                    "description": d.get("description", ""),
-                    "sentiment_summary": ranking.get("ranking_string", ""),
-                    "ta_ranking": ranking.get("ranking", ""),
-                    "trip_types": trip_types,
-                    "latitude": _safe_float(d.get("latitude")),
-                    "longitude": _safe_float(d.get("longitude")),
-                    "photo_count": _safe_int(d.get("photo_count")),
-                    "sources": [{"provider": "tripadvisor"}],
-                }
-
-                # Match TA hotel to existing GP record — try exact, substring, fuzzy
-                matched_rec = None
-                for rec in records:
-                    rec_key = rec.get("name", "").lower().strip()
-                    # Exact match
-                    if rec_key == name_key:
-                        matched_rec = rec
-                        break
-                    # Substring match (one name contains the other)
-                    if name_key in rec_key or rec_key in name_key:
-                        matched_rec = rec
-                        break
-                if not matched_rec:
-                    # Fuzzy: 2+ significant word overlap
-                    stop_words = {"hotel", "inn", "suites", "by", "the", "&", "and", "a", "an",
-                                  "extended", "stay", "express", "-", "ga", "atlanta"}
-                    name_words = set(name_key.split()) - stop_words
-                    for rec in records:
-                        rec_words = set(rec.get("name", "").lower().split()) - stop_words
-                        if len(name_words & rec_words) >= 2:
-                            matched_rec = rec
-                            break
-
-                if matched_rec:
-                    rec = matched_rec
-                    # Merge all TA fields GP doesn't have
-                    merge_fields = [
-                        "star_rating", "price_range", "amenities", "styles",
-                        "sentiment_summary", "ta_ranking", "description",
-                        "subratings", "rating_breakdown", "trip_types",
-                        "tripadvisor_url", "photo_count",
-                    ]
-                    for field in merge_fields:
-                        if ta_hotel.get(field) and not rec.get(field):
-                            rec[field] = ta_hotel[field]
-                    if ta_hotel.get("review_count") and not rec.get("ta_review_count"):
-                        rec["ta_review_count"] = ta_hotel["review_count"]
-                        rec["ta_rating"] = ta_hotel.get("traveler_rating")
-                    rec["sources"].append({"provider": "tripadvisor"})
-                else:
-                    # New hotel not in Google Places — add it
-                    seen_names.add(name_key)
-                    records.append(ta_hotel)
-                    sources.append(SourceAttribution(provider="tripadvisor"))
 
     # Step 3: Exa for review sentiment on top 3 hotels
     top_names = [r.get("name", "") for r in records[:3] if r.get("name")]
@@ -342,6 +295,196 @@ async def execute_business_trip_hotel_research(
         playbook="BUSINESS_TRIP_HOTEL_RESEARCH",
         providers_called=providers_called,
     )
+
+
+def _merge_ta_detail_into_records(
+    d: dict[str, Any],
+    records: list[dict[str, Any]],
+    seen_names: set[str],
+    sources: list[SourceAttribution],
+    center_lat: float | None,
+    center_lng: float | None,
+    location: str,
+) -> None:
+    """Process a TA Location Details response and merge into existing records.
+
+    Geographic filter: uses lat/lng proximity (30 mile radius from GP center)
+    + state matching as fallback. Works for any city universally.
+    """
+    name = d.get("name", "")
+    name_key = name.lower().strip()
+
+    addr_obj = d.get("address_obj", {}) or {}
+    ta_lat = _safe_float(d.get("latitude"))
+    ta_lng = _safe_float(d.get("longitude"))
+    ta_state = (addr_obj.get("state") or "").strip()
+    ta_country = (addr_obj.get("country") or "").strip()
+
+    # Geographic filter — proximity-based (universal, works for any area)
+    # Skip if wrong country
+    if ta_country and ta_country.lower() not in ("united states", "us", "usa", ""):
+        logger.debug("Skipping TA hotel %s — wrong country: %s", name, ta_country)
+        return
+
+    # Primary filter: lat/lng proximity (30 mile radius from GP center)
+    if center_lat and center_lng and ta_lat and ta_lng:
+        dist_miles = _haversine_miles(center_lat, center_lng, ta_lat, ta_lng)
+        if dist_miles > 30:
+            logger.debug("Skipping TA hotel %s — %.1f miles away", name, dist_miles)
+            return
+    else:
+        # Fallback: state matching when no coordinates available
+        loc_parts = location.split()
+        target_state = loc_parts[-1] if len(loc_parts) >= 2 and len(loc_parts[-1]) == 2 else ""
+        if target_state and ta_state:
+            if not _state_matches(target_state, ta_state):
+                logger.debug("Skipping TA hotel %s — wrong state: %s", name, ta_state)
+                return
+
+    # Build hotel dict from TA details
+    address = ", ".join(filter(None, [
+        addr_obj.get("street1", ""),
+        addr_obj.get("city", ""),
+        addr_obj.get("state", ""),
+        addr_obj.get("postalcode", ""),
+    ]))
+    ranking = d.get("ranking_data", {}) or {}
+
+    # Parse subratings
+    subratings: dict[str, float] = {}
+    for _sr_key, sr_val in (d.get("subratings") or {}).items():
+        if isinstance(sr_val, dict) and sr_val.get("localized_name"):
+            sr_v = _safe_float(sr_val.get("value"))
+            if sr_v is not None:
+                subratings[sr_val["localized_name"]] = sr_v
+
+    # Parse rating breakdown
+    rating_breakdown: dict[str, int] = {}
+    for stars, count in (d.get("review_rating_count") or {}).items():
+        ct = _safe_int(count)
+        if ct is not None:
+            rating_breakdown[stars] = ct
+
+    # Parse trip types
+    trip_types: dict[str, int] = {}
+    for tt in d.get("trip_types", []):
+        if isinstance(tt, dict) and tt.get("localized_name"):
+            tv = _safe_int(tt.get("value"))
+            if tv is not None:
+                trip_types[tt["localized_name"]] = tv
+
+    # Parse amenities
+    amenities_list = d.get("amenities", [])
+    if amenities_list and isinstance(amenities_list[0], dict):
+        amenities_list = [a.get("name", "") for a in amenities_list if isinstance(a, dict)]
+
+    ta_hotel = {
+        "name": name,
+        "normalized_address": address or d.get("address_string", ""),
+        "city": addr_obj.get("city", ""),
+        "state": addr_obj.get("state", ""),
+        "postal_code": addr_obj.get("postalcode", ""),
+        "star_rating": _safe_float(d.get("hotel_class")),
+        "traveler_rating": _safe_float(d.get("rating")),
+        "review_count": _safe_int(d.get("num_reviews")),
+        "rating_breakdown": rating_breakdown,
+        "subratings": subratings,
+        "price_range": d.get("price_level", ""),
+        "styles": d.get("styles", []),
+        "phone": d.get("phone", ""),
+        "website": d.get("website", ""),
+        "tripadvisor_url": d.get("web_url", ""),
+        "amenities": amenities_list,
+        "description": d.get("description", ""),
+        "sentiment_summary": ranking.get("ranking_string", ""),
+        "ta_ranking": ranking.get("ranking", ""),
+        "trip_types": trip_types,
+        "latitude": ta_lat,
+        "longitude": ta_lng,
+        "photo_count": _safe_int(d.get("photo_count")),
+        "sources": [{"provider": "tripadvisor"}],
+    }
+
+    # Match TA hotel to existing GP record — try exact, substring, fuzzy
+    matched_rec = None
+    for rec in records:
+        rec_key = rec.get("name", "").lower().strip()
+        if rec_key == name_key:
+            matched_rec = rec
+            break
+        if name_key in rec_key or rec_key in name_key:
+            matched_rec = rec
+            break
+    if not matched_rec:
+        # Fuzzy match using strict name comparison (prevents cross-hotel contamination)
+        for rec in records:
+            if _names_match(name_key, rec.get("name", "")):
+                matched_rec = rec
+                break
+
+    if matched_rec:
+        # Merge all TA fields GP doesn't have
+        merge_fields = [
+            "star_rating", "price_range", "amenities", "styles",
+            "sentiment_summary", "ta_ranking", "description",
+            "subratings", "rating_breakdown", "trip_types",
+            "tripadvisor_url", "photo_count", "city", "state", "postal_code",
+        ]
+        for field in merge_fields:
+            if ta_hotel.get(field) and not matched_rec.get(field):
+                matched_rec[field] = ta_hotel[field]
+        if ta_hotel.get("review_count") and not matched_rec.get("ta_review_count"):
+            matched_rec["ta_review_count"] = ta_hotel["review_count"]
+            matched_rec["ta_rating"] = ta_hotel.get("traveler_rating")
+        if not matched_rec.get("phone") and ta_hotel.get("phone"):
+            matched_rec["phone"] = ta_hotel["phone"]
+        if not matched_rec.get("website") and ta_hotel.get("website"):
+            matched_rec["website"] = ta_hotel["website"]
+        matched_rec["sources"].append({"provider": "tripadvisor"})
+    else:
+        # New hotel not in Google Places — add it
+        seen_names.add(name_key)
+        records.append(ta_hotel)
+        sources.append(SourceAttribution(provider="tripadvisor"))
+
+
+def _names_match(name_a: str, name_b: str) -> bool:
+    """Check if two hotel names refer to the same property.
+
+    More strict than fuzzy merge — prevents cross-hotel contamination
+    during individual TA enrichment lookups.
+    """
+    a = name_a.lower().strip()
+    b = name_b.lower().strip()
+    # Exact
+    if a == b:
+        return True
+    # Substring
+    if a in b or b in a:
+        return True
+    # Significant word overlap (3+ words, excluding common filler)
+    stop = {"hotel", "inn", "suites", "by", "the", "&", "and", "a", "an",
+            "extended", "stay", "express", "-", "at", "of", "in"}
+    words_a = set(a.split()) - stop
+    words_b = set(b.split()) - stop
+    overlap = len(words_a & words_b)
+    # Need at least 2 significant words AND >50% of the smaller set
+    min_words = min(len(words_a), len(words_b))
+    if min_words > 0 and overlap >= 2 and overlap / min_words >= 0.5:
+        return True
+    return False
+
+
+def _haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Calculate distance in miles between two lat/lng points."""
+    import math
+    R = 3959  # Earth radius in miles
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlng / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 _STATE_ABBREV = {
