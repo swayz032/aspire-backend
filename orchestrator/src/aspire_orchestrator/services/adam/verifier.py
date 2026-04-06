@@ -218,7 +218,13 @@ def _detect_conflicts(records: list[dict[str, Any]]) -> list[FieldConflict]:
                 break
 
         for key, value in record.items():
-            if key in ("sources", "extra", "verification_status", "confidence"):
+            # Skip metadata fields and web-evidence fields where uniqueness is expected
+            if key in (
+                "sources", "extra", "verification_status", "confidence",
+                "url", "title", "content", "snippet", "domain",
+                "published_date", "relevance_score", "exa_grounding_confidence",
+                "retrieved_at", "provider",
+            ):
                 continue
             if value is None or value == "" or value == []:
                 continue

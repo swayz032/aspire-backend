@@ -38,10 +38,13 @@ _SEGMENT_KEYWORDS: dict[str, list[str]] = {
     "trades": [
         "plumb", "hvac", "electric", "roof", "paint", "landscap", "contractor",
         "handyman", "flooring", "tile", "drywall", "mason", "weld", "carpent",
-        "general contractor", "gc ", "subcontractor", "sub ", "insulation",
+        "general contractor", " gc ", "subcontractor", "insulation",
         "renovation", "remodel", "repair", "install", "estimate", "quote",
         "bid", "job site", "permit", "inspection", "material", "tool",
         "condenser", "compressor", "furnace", "water heater", "fixture",
+        "drill", "impact driver", "saw", "wrench", "socket", "multimeter",
+        "milwaukee", "dewalt", "makita", "ryobi", "bosch", "ridgid", "hilti",
+        "home depot", "lowes", "supply house", "seer", "tonnage",
     ],
     "landlord": [
         "landlord", "tenant", "rent", "lease", "evict", "property manage",
@@ -55,14 +58,14 @@ _SEGMENT_KEYWORDS: dict[str, list[str]] = {
     "accounting_bookkeeping": [
         "bookkeep", "accountant", "cpa", "tax", "irs", "quarterly",
         "estimated tax", "payroll tax", "1099", "w-2", "schedule c",
-        "profit loss", "balance sheet", "accounts receivable", "ar ",
+        "profit loss", "balance sheet", "accounts receivable", " ar ",
         "collections", "invoice aging", "client verification", "prospect",
         "niche", "benchmark", "industry average", "compliance",
         "recordkeeping", "audit", "reconcil",
     ],
     "travel": [
         "hotel", "flight", "travel", "trip", "business trip", "convention",
-        "conference center", "airport", "lodging", "accommodation",
+        "conference center", "congress center", "airport", "lodging", "accommodation",
         "parking", "breakfast", "walkab",
     ],
 }

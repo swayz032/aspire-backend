@@ -19,12 +19,34 @@ from aspire_orchestrator.services.adam.verifier import verify_records
 logger = logging.getLogger(__name__)
 
 
+def _extract_address_from_query(query: str) -> str:
+    """Extract address from a natural language query for ATTOM."""
+    import re
+    match = re.search(
+        r'(\d+\s+[\w\s]+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pl|Cir|Pkwy|Hwy|Ter)\.?'
+        r'(?:\s*,\s*[\w\s]+,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?))',
+        query, re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip()
+    prefixes = [
+        "pull property facts for", "pull property details for",
+        "property facts for", "property details for",
+        "pull the square footage and permit context for",
+    ]
+    q_lower = query.lower().strip()
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if q_lower.startswith(prefix):
+            return query[len(prefix):].strip()
+    return query
+
+
 async def execute_property_facts_and_permits(
     query: str, ctx: PlaybookContext, address: str = "",
 ) -> ResearchResponse:
     """PROPERTY_FACTS_AND_PERMITS — Resolve property context for quoting."""
     from aspire_orchestrator.providers.attom_client import (
-        execute_attom_property_detail,
+        execute_attom_detail_mortgage_owner,
         execute_attom_sales_history,
     )
     from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
@@ -38,9 +60,12 @@ async def execute_property_facts_and_permits(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # 1. ATTOM property detail
-    detail_result = await execute_attom_property_detail(
-        payload={"address": address or query},
+    # Extract address from query
+    attom_address = address or _extract_address_from_query(query)
+
+    # 1. ATTOM property detail (with mortgage+owner for full context)
+    detail_result = await execute_attom_detail_mortgage_owner(
+        payload={"address": attom_address},
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
         office_id=ctx.office_id,
@@ -56,7 +81,7 @@ async def execute_property_facts_and_permits(
 
     # 2. ATTOM sales history
     history_result = await execute_attom_sales_history(
-        payload={"address": address or query},
+        payload={"address": attom_address},
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
         office_id=ctx.office_id,

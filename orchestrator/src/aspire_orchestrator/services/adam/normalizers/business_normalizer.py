@@ -67,7 +67,10 @@ def normalize_from_here(data: dict[str, Any]) -> BusinessRecord:
         normalized_address=address.get("label", ""),
         phone=normalize_phone(phone_raw),
         website=website_raw,
-        category=", ".join(c.get("name", "") for c in data.get("categories", [])[:3]),
+        category=", ".join(
+            (c.get("name", "") if isinstance(c, dict) else str(c))
+            for c in data.get("categories", [])[:3]
+        ),
         latitude=position.get("lat"),
         longitude=position.get("lng"),
         sources=[SourceAttribution(provider="here", retrieved_at=datetime.now(timezone.utc).isoformat())],
@@ -79,7 +82,11 @@ def normalize_from_foursquare(data: dict[str, Any]) -> BusinessRecord:
     location = data.get("location", {}) or {}
     geocodes = data.get("geocodes", {}).get("main", {}) or {}
     cats = data.get("categories", [])
-    category = cats[0].get("name", "") if cats else ""
+    if cats:
+        first = cats[0]
+        category = first.get("name", "") if isinstance(first, dict) else str(first)
+    else:
+        category = ""
 
     return BusinessRecord(
         name=data.get("name", ""),

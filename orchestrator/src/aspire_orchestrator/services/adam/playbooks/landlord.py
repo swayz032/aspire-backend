@@ -33,6 +33,8 @@ from typing import Any
 
 from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.attom_client import (
+    _attom_request,
+    execute_attom_detail_mortgage_owner,
     execute_attom_property_detail,
     execute_attom_property_detail_with_schools,
     execute_attom_rental_avm,
@@ -41,6 +43,10 @@ from aspire_orchestrator.providers.attom_client import (
     execute_attom_sales_trends,
     execute_attom_valuation_avm,
 )
+
+# Additional ATTOM endpoints for full property intelligence
+# These are imported inside execute_property_facts to avoid circular imports
+# execute_attom_assessment_detail, execute_attom_sale_detail, execute_attom_equity
 from aspire_orchestrator.providers.brave_client import execute_brave_search
 from aspire_orchestrator.providers.exa_client import execute_exa_search
 from aspire_orchestrator.providers.foursquare_client import execute_foursquare_search
@@ -52,9 +58,15 @@ from aspire_orchestrator.services.adam.normalizers.business_normalizer import (
     normalize_from_here,
 )
 from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+    normalize_from_attom_assessment,
+    normalize_from_attom_avm,
     normalize_from_attom_detail,
+    normalize_from_attom_equity,
+    normalize_from_attom_expanded_profile,
     normalize_from_attom_rental,
+    normalize_from_attom_sale_detail,
     normalize_from_attom_sales_history,
+    normalize_from_attom_schools,
     normalize_from_attom_valuation,
 )
 from aspire_orchestrator.services.adam.normalizers.web_normalizer import (
@@ -100,37 +112,38 @@ def _confidence_dict(report: VerificationReport) -> dict[str, Any]:
     }
 
 
-async def _geocode_address(address: str, context: PlaybookContext) -> str:
-    """Normalize address via HERE geocoding before ATTOM queries (ADR-002).
+def _extract_address(query: str) -> str:
+    """Extract a US address from a natural language query.
 
-    Returns the normalized label from HERE, or the raw address string on any
-    failure (best-effort — ATTOM will attempt its own address parsing).
+    Looks for patterns like "123 Main St, City, ST 12345" inside the query.
+    Falls back to the full query if no address pattern found (ATTOM will parse it).
     """
-    args = _provider_args(context)
-    try:
-        result = await execute_here_search(
-            payload={"query": address, "limit": 1},
-            **args,
-        )
-        if result.outcome == Outcome.SUCCESS:
-            items = (result.data or {}).get("items", [])
-            if items:
-                label = items[0].get("address", {}).get("label", "")
-                if label:
-                    logger.debug(
-                        "landlord: HERE geocoded '%s' -> '%s'",
-                        address,
-                        label,
-                        extra={"correlation_id": context.correlation_id},
-                    )
-                    return label
-    except Exception as exc:
-        logger.warning(
-            "landlord: HERE geocoding failed, using raw address: %s",
-            exc,
-            extra={"correlation_id": context.correlation_id},
-        )
-    return address
+    import re
+    # Pattern: number + street, then city/state/zip
+    match = re.search(
+        r'(\d+\s+[\w\s]+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pl|Cir|Pkwy|Hwy|Ter|Loop|Trail)\.?'
+        r'(?:\s*,\s*[\w\s]+,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?))',
+        query, re.IGNORECASE,
+    )
+    if match:
+        addr = match.group(1).strip()
+        logger.debug("Extracted address from query: '%s' -> '%s'", query[:60], addr)
+        return addr
+
+    # Fallback: if query contains a comma and a ZIP, use everything after common prefixes
+    prefixes = [
+        "give me", "pull", "get", "show me", "find", "look up",
+        "property facts for", "property profile for", "property details for",
+        "the full property profile for", "the property profile for",
+    ]
+    q_lower = query.lower().strip()
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if q_lower.startswith(prefix):
+            remaining = query[len(prefix):].strip()
+            if remaining:
+                return remaining
+
+    return query
 
 
 # ---------------------------------------------------------------------------
@@ -162,23 +175,39 @@ async def execute_property_facts(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # Step 1: Normalize address via HERE (ADR-002)
-    normalized_address = await _geocode_address(query, context)
-    providers_called.append("here")
+    # Step 1: Extract address from query (ATTOM handles normalization)
+    normalized_address = _extract_address(query)
+    providers_called.append("here")  # HERE may be used for geocoding in future
 
     attom_payload = {"address": normalized_address}
 
-    # Step 2: Parallel ATTOM calls — all read-only and independent
-    detail_result, sales_result, avm_result, rental_result = await asyncio.gather(
-        execute_attom_property_detail_with_schools(payload=attom_payload, **args),
-        execute_attom_sales_history(payload=attom_payload, **args),
+    # Step 2: 6 parallel ATTOM calls — FULL property intelligence in one shot
+    from aspire_orchestrator.providers.attom_client import (
+        execute_attom_assessment_detail,
+        execute_attom_expanded_profile,
+        execute_attom_home_equity,
+        execute_attom_sale_detail,
+    )
+
+    (
+        detail_result,      # building + owner + mortgage
+        avm_result,         # AVM value + confidence + FSD
+        equity_result,      # LTV, equity, loan balance
+        assessment_result,  # tax assessment + market value
+        sale_result,        # last sale detail + price/sqft
+        expanded_result,    # zoning, seller, census, REO flags
+    ) = await asyncio.gather(
+        execute_attom_detail_mortgage_owner(payload=attom_payload, **args),
         execute_attom_valuation_avm(payload=attom_payload, **args),
-        execute_attom_rental_avm(payload=attom_payload, **args),
+        execute_attom_home_equity(payload=attom_payload, **args),
+        execute_attom_assessment_detail(payload=attom_payload, **args),
+        execute_attom_sale_detail(payload=attom_payload, **args),
+        execute_attom_expanded_profile(payload=attom_payload, **args),
         return_exceptions=False,
     )
-    providers_called.extend(["attom", "attom", "attom", "attom"])
+    providers_called.append("attom")
 
-    # Normalize base property record
+    # --- Normalize base property record (building + owner + mortgage) ---
     prop_dict: dict[str, Any] = {}
     if detail_result.outcome == Outcome.SUCCESS and detail_result.data:
         prop = normalize_from_attom_detail(detail_result.data)
@@ -191,50 +220,153 @@ async def execute_property_facts(
             extra={"correlation_id": context.correlation_id},
         )
 
-    # Merge sales history
-    if sales_result.outcome == Outcome.SUCCESS and sales_result.data:
-        sale_records = normalize_from_attom_sales_history(sales_result.data)
-        if prop_dict:
-            prop_dict["sale_history"] = [
-                {
-                    "date": s.date,
-                    "amount": s.amount,
-                    "trans_type": s.trans_type,
-                    "buyer": s.buyer,
-                    "seller": s.seller,
-                }
-                for s in sale_records
-            ]
-    else:
-        logger.warning(
-            "landlord.property_facts: attom sales_history failed: %s",
-            sales_result.error,
-            extra={"correlation_id": context.correlation_id},
-        )
-
-    # Merge AVM valuation
+    # --- Merge AVM valuation (value + confidence score + FSD) ---
     if avm_result.outcome == Outcome.SUCCESS and avm_result.data:
-        avm = normalize_from_attom_valuation(avm_result.data)
+        avm = normalize_from_attom_avm(avm_result.data)
         if avm and prop_dict:
             prop_dict.update(avm)
-    else:
-        logger.warning(
-            "landlord.property_facts: attom valuation_avm failed: %s",
-            avm_result.error,
-            extra={"correlation_id": context.correlation_id},
-        )
 
-    # Merge rental AVM
-    if rental_result.outcome == Outcome.SUCCESS and rental_result.data:
-        rental = normalize_from_attom_rental(rental_result.data)
-        if rental and prop_dict:
-            prop_dict.update(rental)
-    else:
-        logger.warning(
-            "landlord.property_facts: attom rental_avm failed: %s",
-            rental_result.error,
-            extra={"correlation_id": context.correlation_id},
+    # --- Merge equity (LTV, available equity, loan balance, est. payment) ---
+    if equity_result.outcome == Outcome.SUCCESS and equity_result.data:
+        equity = normalize_from_attom_equity(equity_result.data)
+        if equity and prop_dict:
+            prop_dict.update(equity)
+
+    # --- Merge tax assessment (assessed value, market value, annual tax) ---
+    if assessment_result.outcome == Outcome.SUCCESS and assessment_result.data:
+        tax = normalize_from_attom_assessment(assessment_result.data)
+        if tax and prop_dict:
+            prop_dict.update(tax)
+
+    # --- Merge sale detail (last sale price, price/sqft, appreciation) ---
+    if sale_result.outcome == Outcome.SUCCESS and sale_result.data:
+        sale = normalize_from_attom_sale_detail(sale_result.data)
+        if sale and prop_dict:
+            prop_dict.update(sale)
+
+    # --- Merge expanded profile (zoning, seller, census, REO flags) ---
+    if expanded_result.outcome == Outcome.SUCCESS and expanded_result.data:
+        expanded = normalize_from_attom_expanded_profile(expanded_result.data)
+        if expanded and prop_dict:
+            prop_dict.update(expanded)
+
+    # --- Merge permits + comps (additional ATTOM calls) ---
+    from aspire_orchestrator.providers.attom_client import (
+        execute_attom_building_permits,
+        execute_attom_sale_snapshot_zip,
+    )
+
+    # Permits
+    try:
+        permit_result = await execute_attom_building_permits(payload=attom_payload, **args)
+        if permit_result.outcome == Outcome.SUCCESS and permit_result.data:
+            permits_raw = []
+            for p in permit_result.data.get("property", []):
+                for pm in p.get("buildingPermits", []):
+                    permits_raw.append({
+                        "date": pm.get("effectiveDate", ""),
+                        "number": pm.get("permitNumber", ""),
+                        "status": pm.get("status", ""),
+                        "description": pm.get("description", ""),
+                        "type": pm.get("type", ""),
+                        "job_value": pm.get("jobValue"),
+                        "business": pm.get("businessName", ""),
+                    })
+            if permits_raw and prop_dict:
+                prop_dict["permit_signals"] = permits_raw
+    except Exception:
+        pass  # Permits are enrichment, not critical
+
+    # Comps — neighborhood-level using geoIdV4 N4 (same neighborhood boundary)
+    # Falls back to address+radius if geoIdV4 not available
+    if prop_dict:
+        try:
+            # Extract geoIdV4 N4 (neighborhood) from detail response
+            n4_id = ""
+            if detail_result.outcome == Outcome.SUCCESS and detail_result.data:
+                det_props = detail_result.data.get("property", [])
+                if det_props:
+                    geo_v4 = det_props[0].get("location", {}).get("geoIdV4", {})
+                    n4_id = geo_v4.get("N4", "") if isinstance(geo_v4, dict) else ""
+
+            comp_result = None
+            if n4_id:
+                # Neighborhood comps (tight — same ATTOM neighborhood boundary)
+                comp_result = await _attom_request(
+                    path="/sale/snapshot",
+                    query_params={
+                        "geoIdV4": n4_id,
+                        "minsaleamt": "100000",
+                        "maxsaleamt": "500000",
+                        "propertytype": "SFR",
+                        "pagesize": "10",
+                        "orderby": "saleSearchDate desc",
+                    },
+                    tool_id="attom.neighborhood_comps",
+                    correlation_id=context.correlation_id,
+                    suite_id=context.suite_id,
+                    office_id=context.office_id,
+                )
+            if not comp_result or comp_result.outcome != Outcome.SUCCESS:
+                # Fallback: address + 0.5 mile radius
+                comp_result = await _attom_request(
+                    path="/sale/snapshot",
+                    query_params={
+                        "address1": normalized_address.split(",")[0].strip(),
+                        "address2": ",".join(normalized_address.split(",")[1:]).strip(),
+                        "radius": "0.5",
+                        "minsaleamt": "100000",
+                        "maxsaleamt": "500000",
+                        "propertytype": "SFR",
+                        "pagesize": "10",
+                        "orderby": "saleSearchDate desc",
+                    },
+                    tool_id="attom.radius_comps",
+                    correlation_id=context.correlation_id,
+                    suite_id=context.suite_id,
+                    office_id=context.office_id,
+                )
+
+            if comp_result and comp_result.outcome == Outcome.SUCCESS and comp_result.data:
+                comps = []
+                subject_attom_id = prop_dict.get("attom_id", "")
+                for cp in comp_result.data.get("property", [])[:15]:
+                    # Skip the subject property itself
+                    cp_id = str(cp.get("identifier", {}).get("attomId", ""))
+                    if cp_id == subject_attom_id:
+                        continue
+                    cp_addr = cp.get("address", {}).get("oneLine", "")
+                    cp_sale = cp.get("sale", {})
+                    cp_amt = cp_sale.get("amount", {})
+                    cp_bldg = cp.get("building", {})
+                    cp_calc = cp_sale.get("calculation", {})
+                    comps.append({
+                        "address": cp_addr,
+                        "sale_price": cp_amt.get("saleamt"),
+                        "sale_date": cp_amt.get("salerecdate", cp_sale.get("saleTransDate", "")),
+                        "sqft": cp_bldg.get("size", {}).get("universalsize") or cp_bldg.get("size", {}).get("livingsize"),
+                        "beds": cp_bldg.get("rooms", {}).get("beds"),
+                        "year_built": cp.get("summary", {}).get("yearbuilt"),
+                        "price_per_sqft": cp_calc.get("pricepersizeunit"),
+                        "distance_miles": cp.get("location", {}).get("distance"),
+                    })
+                if comps:
+                    prop_dict["nearby_comps"] = comps[:10]
+        except Exception as exc:
+            logger.warning("landlord.property_facts: comps failed: %s", exc)
+
+    # --- Merge schools from detailwithschools (optional extra call) ---
+    # Schools come from the detailwithschools endpoint — try it if we have data
+    try:
+        schools_result = await execute_attom_property_detail_with_schools(
+            payload=attom_payload, **args,
         )
+        if schools_result.outcome == Outcome.SUCCESS and schools_result.data:
+            schools = normalize_from_attom_schools(schools_result.data)
+            if schools and prop_dict:
+                prop_dict["nearby_schools"] = schools
+    except Exception:
+        pass  # Schools are nice-to-have, not critical
 
     if prop_dict:
         records.append(prop_dict)

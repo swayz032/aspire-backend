@@ -151,6 +151,24 @@ async def _attom_request(
             data=response.body,
             receipt_data=receipt,
         )
+
+    # ATTOM returns HTTP 400 with "SuccessWithoutResult" when address is valid
+    # but no data exists — treat as empty success, not error
+    body = response.body or {}
+    status_msg = ""
+    if isinstance(body, dict):
+        status_obj = body.get("status", {})
+        if isinstance(status_obj, dict):
+            status_msg = status_obj.get("msg", "")
+    if status_msg == "SuccessWithoutResult":
+        logger.info("ATTOM %s: address valid but no results (SuccessWithoutResult)", tool_id)
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id=tool_id,
+            data={"property": []},  # Empty but valid
+            receipt_data=receipt,
+        )
+
     return ToolExecutionResult(
         outcome=Outcome.FAILED,
         tool_id=tool_id,
@@ -187,14 +205,37 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
         params["apn"] = payload["apn"]
         params["fips"] = payload["fips"]
     else:
-        # Parse address into components
+        # Parse address into ATTOM format: address1=street, address2=City, ST ZIP
         parts = address.split(",")
         if len(parts) >= 2:
             params["address1"] = parts[0].strip()
             params["address2"] = ",".join(parts[1:]).strip()
         else:
-            params["address1"] = address
-            params["address2"] = ""
+            # No comma — try to split "123 Main St Lexington KY 40509" intelligently
+            # Look for state abbreviation pattern to split street from city/state/zip
+            import re
+            match = re.search(r'\b([A-Z]{2})\s+(\d{5})\b', address)
+            if match:
+                # Found "KY 40509" — everything before the city is address1
+                state_pos = match.start()
+                # Walk backwards from state to find city start (after street suffix)
+                pre_state = address[:state_pos].rstrip()
+                # Split on last word boundary that looks like end of street
+                street_suffixes = re.search(
+                    r'(.*?\b(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pl|Cir|Pkwy|Hwy)\b\.?)\s+(.*)',
+                    pre_state, re.IGNORECASE,
+                )
+                if street_suffixes:
+                    params["address1"] = street_suffixes.group(1).strip()
+                    city = street_suffixes.group(2).strip()
+                    state_zip = address[state_pos:].strip()
+                    params["address2"] = f"{city}, {state_zip}"
+                else:
+                    params["address1"] = pre_state
+                    params["address2"] = address[state_pos:].strip()
+            else:
+                params["address1"] = address
+                params["address2"] = ""
 
     return params
 
@@ -292,6 +333,230 @@ async def execute_attom_property_detail_with_schools(
 
     return await _attom_request(
         path="/property/detailwithschools",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_detail_mortgage_owner(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Property detail + mortgage + owner — full profile in one call."""
+    tool_id = "attom.detail_mortgage_owner"
+    client = _get_client()
+
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+
+    return await _attom_request(
+        path="/property/detailmortgageowner",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_assessment_detail(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Assessment detail — tax values, market values, annual tax amount."""
+    tool_id = "attom.assessment_detail"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/assessment/detail",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_sale_detail(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Sale detail — last sale price, price/sqft, buyer type, arm's length."""
+    tool_id = "attom.sale_detail"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/sale/detail",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_home_equity(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Home equity — LTV, available equity, lendable equity, amortized balance."""
+    tool_id = "attom.home_equity"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/valuation/homeequity",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_building_permits(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Building permits — permit history, job value, contractors."""
+    tool_id = "attom.building_permits"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/property/buildingpermits",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_sale_snapshot_zip(
+    *,
+    zip_code: str,
+    min_price: int = 100000,
+    max_price: int = 500000,
+    property_type: str = "SFR",
+    page_size: int = 10,
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Sale snapshot by ZIP — nearby comps workaround (sale/comparables not in entitlement)."""
+    tool_id = "attom.sale_snapshot_zip"
+    client = _get_client()
+    return await _attom_request(
+        path="/sale/snapshot",
+        query_params={
+            "postalcode": zip_code,
+            "minsaleamt": str(min_price),
+            "maxsaleamt": str(max_price),
+            "propertytype": property_type,
+            "pagesize": str(page_size),
+            "orderby": "saleSearchDate desc",
+        },
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_expanded_profile(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Expanded profile — zoning, census, seller name, REO/quit claim flags, attic."""
+    tool_id = "attom.expanded_profile"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/property/expandedprofile",
         query_params=result,
         tool_id=tool_id,
         correlation_id=correlation_id,

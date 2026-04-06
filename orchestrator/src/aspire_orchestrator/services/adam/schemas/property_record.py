@@ -53,6 +53,16 @@ class PropertyRecord:
     owner_type: str = ""
     mailing_address: str = ""
     absentee_owner_indicator: bool | None = None
+    owner_occupied: str = ""
+
+    # Mortgage
+    mortgage_lender: str = ""
+    mortgage_amount: float | None = None
+    mortgage_date: str = ""
+    mortgage_loan_type: str = ""
+    mortgage_term_months: int | None = None
+    mortgage_due_date: str = ""
+    deed_type: str = ""
 
     # Transactions
     last_sale_date: str = ""
@@ -60,28 +70,85 @@ class PropertyRecord:
     sale_history: list[SaleRecord] = field(default_factory=list)
     price_per_sqft: float | None = None
 
-    # Valuation
+    # Valuation (AVM)
     estimated_value: float | None = None
     estimated_value_high: float | None = None
     estimated_value_low: float | None = None
     valuation_confidence: str = ""
+    avm_confidence_score: int | None = None  # 0-100 from ATTOM
+    avm_fsd: float | None = None  # Forecast Standard Deviation %
+    avm_price_per_sqft: float | None = None
+    avm_date: str = ""
+
+    # Equity (from homeequity endpoint)
+    ltv_ratio: int | None = None  # Loan-to-value %
+    available_equity: float | None = None
+    lendable_equity: float | None = None
+    current_loan_balance: float | None = None
+    estimated_monthly_payment: float | None = None
+    equity_last_updated: str = ""
+
+    # Tax Assessment
+    tax_assessed_total: float | None = None
+    tax_assessed_land: float | None = None
+    tax_assessed_improvement: float | None = None
+    tax_market_value: float | None = None
+    tax_market_land: float | None = None
+    tax_market_improvement: float | None = None
+    annual_tax_amount: float | None = None
+    tax_year: int | None = None
+    tax_per_sqft: float | None = None
+
+    # Last Sale Detail
+    last_sale_price_per_sqft: float | None = None
+    last_sale_price_per_bed: float | None = None
+    last_sale_type: str = ""  # Resale, New Construction, etc.
+    last_sale_cash_or_mortgage: str = ""
+    last_sale_arms_length: bool | None = None
+    last_sale_doc_number: str = ""
+    appreciation_pct: float | None = None  # Since last sale
 
     # Rental
     estimated_rent: float | None = None
     estimated_rent_high: float | None = None
     estimated_rent_low: float | None = None
 
-    # Permits / Assessment
-    permit_signals: list[str] = field(default_factory=list)
+    # Permits
+    permit_signals: list[Any] = field(default_factory=list)  # list of permit dicts or strings
     assessment_context: str = ""
 
-    # Geography / Schools
+    # Nearby Comps (recent sales in same ZIP)
+    nearby_comps: list[dict[str, Any]] = field(default_factory=list)
+
+    # Schools
+    nearby_schools: list[dict[str, Any]] = field(default_factory=list)
     school_district_name: str = ""
     school_context: str = ""
+
+    # Previous Owner / Seller
+    previous_owner_name: str = ""
+
+    # Zoning & Census
+    zoning_type: str = ""
+    zoning_code: str = ""
+    census_tract: str = ""
+    census_block_group: str = ""
+
+    # Additional Building Detail
+    attic_sqft: int | None = None
+    major_improvements_year: int | None = None
+    homeowner_exemption: bool | None = None
+    reo_flag: bool | None = None
+    quit_claim_flag: bool | None = None
+
+    # Geography
     geo_hierarchy: str = ""
     neighborhood: str = ""
     subdivision: str = ""
+    county: str = ""
     zcta: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
 
     # Freshness
     source_last_modified: str = ""
