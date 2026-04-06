@@ -40,6 +40,14 @@ from aspire_orchestrator.services.browser_service import (
     NavigationTimeoutError,
     ScreenshotUploadError,
 )
+from aspire_orchestrator.services.adam.router import route_to_playbook
+from aspire_orchestrator.services.adam.playbooks import dispatch_playbook
+from aspire_orchestrator.services.adam.schemas.playbook_context import PlaybookContext
+from aspire_orchestrator.services.adam.telemetry import (
+    emit_request_received,
+    emit_playbook_selected,
+    emit_response_completed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,13 +141,146 @@ def _emit_receipt(
 
 
 class AdamResearchSkillPack:
+    async def research_playbook(
+        self,
+        query: str,
+        context: AdamResearchContext,
+        tenant_segment: str | None = None,
+    ) -> SkillPackResult:
+        """PRIMARY ENTRY POINT — Route query through playbook system.
+
+        Algorithm:
+          1. Classify segment + intent via fast keyword classifier
+          2. Select playbook from segment×intent matrix
+          3. Execute playbook (providers → normalize → verify → respond)
+          4. Fallback: if no playbook matches, delegate to legacy search_web
+
+        GREEN tier. All playbooks are read-only research.
+        """
+        if not query or not query.strip():
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type="research.playbook",
+                status="denied",
+                inputs={"action": "research.playbook", "query": ""},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_QUERY"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: query")
+
+        tenant_hash = hashlib.sha256(context.suite_id.encode()).hexdigest()[:12]
+
+        # 1. Classify + route
+        _emit_activity_event("thinking", f"Classifying research query: {query.strip()[:60]}...", "search")
+
+        classification, playbook = route_to_playbook(query.strip(), tenant_segment=tenant_segment)
+
+        emit_request_received(
+            tenant_hash=tenant_hash,
+            segment=classification.segment,
+            intent=classification.intent,
+            playbook=classification.playbook or "LEGACY_FALLBACK",
+        )
+
+        # 2. No playbook match → fallback to legacy 4-mode
+        if playbook is None:
+            logger.info("No playbook matched for query='%s' — falling back to legacy search", query[:60])
+            _emit_activity_event("step", "No specialized playbook — using general web search", "search")
+            return await self.search_web(query=query, context=context)
+
+        # 3. Execute playbook
+        emit_playbook_selected(
+            tenant_hash=tenant_hash,
+            playbook=playbook.name,
+            provider_plan=list(playbook.provider_order),
+        )
+
+        _emit_activity_event(
+            "tool_call",
+            f"Running playbook: {playbook.name} ({', '.join(playbook.provider_order)})",
+            "code",
+        )
+
+        playbook_ctx = PlaybookContext(
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+            correlation_id=context.correlation_id,
+            capability_token_id=context.capability_token_id,
+            capability_token_hash=context.capability_token_hash,
+            tenant_id=context.suite_id,
+        )
+
+        import time as _time
+        t0 = _time.monotonic()
+        response = await dispatch_playbook(playbook.name, query.strip(), playbook_ctx)
+        elapsed_ms = (_time.monotonic() - t0) * 1000
+
+        # 4. Build receipt + telemetry
+        is_success = response.artifact_type != "error"
+        status = "ok" if is_success else "failed"
+
+        receipt = _emit_receipt(
+            ctx=context,
+            event_type="research.playbook",
+            status=status,
+            inputs={
+                "action": "research.playbook",
+                "query": query.strip(),
+                "playbook": playbook.name,
+                "segment": classification.segment,
+                "intent": classification.intent,
+            },
+            metadata={
+                "artifact_type": response.artifact_type,
+                "playbook": playbook.name,
+                "segment": classification.segment,
+                "intent": classification.intent,
+                "providers_called": response.providers_called,
+                "cost_estimate": response.cost_estimate,
+                "confidence": response.confidence,
+                "record_count": len(response.records),
+                "missing_fields": response.missing_fields,
+                "latency_ms": round(elapsed_ms, 1),
+            },
+        )
+
+        emit_response_completed(
+            tenant_hash=tenant_hash,
+            segment=classification.segment,
+            playbook=playbook.name,
+            intent=classification.intent,
+            verification_status=response.confidence.get("status", "unverified"),
+            source_count=len(response.sources),
+            conflict_count=0,
+            missing_fields_count=len(response.missing_fields),
+            total_cost=response.cost_estimate,
+            total_latency_ms=elapsed_ms,
+            artifact_type=response.artifact_type,
+        )
+
+        if is_success:
+            _emit_activity_event(
+                "done",
+                f"Research complete: {response.artifact_type} ({len(response.records)} records)",
+                "checkmark",
+            )
+        else:
+            _emit_activity_event("error", f"Playbook failed: {response.summary}", "error")
+
+        return SkillPackResult(
+            success=is_success,
+            data=response.to_dict(),
+            receipt=receipt,
+            error=None if is_success else response.summary,
+        )
+
     async def research_search(
         self,
         query: str,
         context: AdamResearchContext,
     ) -> SkillPackResult:
-        """Compatibility wrapper for registry-aligned action validation."""
-        return await self.search_web(query=query, context=context)
+        """Compatibility wrapper — routes through playbook system first."""
+        return await self.research_playbook(query=query, context=context)
 
     """Adam Research skill pack — web search, places, vendor comparison, RFQ."""
 
@@ -556,13 +697,14 @@ class EnhancedAdamResearch(AgenticSkillPack):
         self,
         user_request: str,
         ctx: AgentContext,
+        tenant_segment: str | None = None,
     ) -> AgentResult:
-        """Plan a multi-query search strategy using LLM classification.
+        """Plan a search strategy using the playbook router.
 
-        Uses cheap_classifier (GPT-5-mini) to:
-        1. Classify intent (web_search, places_search, comparison, rfq)
-        2. Generate optimized search queries
-        3. Suggest provider routing preferences
+        Hybrid approach:
+          1. Fast keyword classifier → segment + intent + playbook selection
+          2. If playbook matched → return structured plan with provider order
+          3. If no match → fall back to LLM-based planning
 
         GREEN tier — planning only, no execution.
         """
@@ -578,10 +720,47 @@ class EnhancedAdamResearch(AgenticSkillPack):
             await self.emit_receipt(receipt)
             return AgentResult(success=False, receipt=receipt, error="Missing user_request")
 
+        # Try playbook router first (deterministic, zero cost)
+        classification, playbook = route_to_playbook(user_request.strip(), tenant_segment=tenant_segment)
+
+        if playbook is not None:
+            plan = {
+                "strategy": "playbook",
+                "segment": classification.segment,
+                "intent": classification.intent,
+                "entity_type": classification.entity_type,
+                "geo_scope": classification.geo_scope,
+                "playbook": playbook.name,
+                "artifact_type": playbook.artifact_type,
+                "provider_order": list(playbook.provider_order),
+                "max_provider_calls": playbook.max_provider_calls,
+                "required_fields": list(playbook.required_fields),
+                "confidence_threshold": playbook.confidence_threshold,
+                "description": playbook.description,
+            }
+
+            receipt = self.build_receipt(
+                ctx=ctx,
+                event_type="research.plan",
+                status="ok",
+                inputs={"action": "research.plan", "user_request": user_request.strip()},
+                metadata={"strategy": "playbook", "playbook": playbook.name},
+            )
+            await self.emit_receipt(receipt)
+
+            return AgentResult(
+                success=True,
+                data=plan,
+                receipt=receipt,
+            )
+
+        # Fallback: LLM-based planning for unclassified queries
         return await self.execute_with_llm(
             prompt=(
                 f"You are Adam, the research specialist for a small business.\n"
                 f"The user wants: {user_request}\n\n"
+                f"The playbook router could not match this query.\n"
+                f"Classification: segment={classification.segment}, intent={classification.intent}\n\n"
                 f"Create a search plan with:\n"
                 f"1. Intent classification (web_search, places_search, comparison, rfq)\n"
                 f"2. Optimized search queries (max 3)\n"

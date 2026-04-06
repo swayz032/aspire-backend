@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     foursquare_api_key: str = ""
     mapbox_access_token: str = ""
 
+    # --- Adam Research commerce/hospitality/deep-research provider keys ---
+    attom_api_key: str = ""            # ASPIRE_ATTOM_API_KEY — ATTOM property data
+    exa_api_key: str = ""              # ASPIRE_EXA_API_KEY — Exa deep research
+    serpapi_api_key: str = ""          # ASPIRE_SERPAPI_API_KEY — shared by shopping + homedepot engines
+    tripadvisor_api_key: str = ""      # ASPIRE_TRIPADVISOR_API_KEY — TripAdvisor Content API
+    parallel_api_key: str = ""         # ASPIRE_PARALLEL_API_KEY — Parallel AI deep research
+
     # --- Tec Documents (S3) provider keys ---
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""

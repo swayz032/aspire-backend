@@ -6,13 +6,21 @@
   "owner_key": "adam",
   "persona_filename": "adam_research_system_prompt.md",
   "channel": "internal_frontend",
-  "version": "1.0.0",
-  "description": "Web search, places lookup, vendor comparison, and RFQ generation. Default risk tier green.",
+  "version": "2.0.0",
+  "description": "Registry-driven, playbook-routed research platform. 13 providers, 19 segment-specific playbooks (Trades, Accounting, Landlord, Travel), canonical normalization, verification scoring, cost-aware routing. GREEN tier read-only.",
   "capabilities": [
     "can_search_web",
     "can_search_places",
     "can_compare_vendors",
-    "can_generate_rfq"
+    "can_generate_rfq",
+    "can_research_property",
+    "can_research_pricing",
+    "can_research_hotels",
+    "can_research_compliance",
+    "can_research_prospects",
+    "can_research_territory",
+    "can_verify_businesses",
+    "can_research_benchmarks"
   ],
   "risk_profile": {
     "default_risk_tier": "green",
@@ -28,7 +36,25 @@
     "foursquare.search",
     "osm_overpass.query",
     "mapbox.geocode",
-    "internal.document.generate"
+    "internal.document.generate",
+    "attom.property_detail",
+    "attom.property_snapshot",
+    "attom.property_detail_with_schools",
+    "attom.sales_history",
+    "attom.sales_expanded_history",
+    "attom.sales_comparables",
+    "attom.sales_trends",
+    "attom.valuation_avm",
+    "attom.rental_avm",
+    "attom.school_search",
+    "attom.boundary_lookup",
+    "exa.search",
+    "serpapi_shopping.search",
+    "serpapi_home_depot.search",
+    "tripadvisor.search",
+    "parallel.search",
+    "parallel.findall",
+    "parallel.task"
   ],
   "providers": [
     "brave",
@@ -37,20 +63,74 @@
     "tomtom",
     "here",
     "foursquare",
-    "mapbox"
+    "mapbox",
+    "attom",
+    "exa",
+    "serpapi",
+    "tripadvisor",
+    "parallel"
   ],
   "actions": [
     "research.search",
     "research.places",
     "research.compare",
-    "research.rfq"
+    "research.rfq",
+    "research.property_facts",
+    "research.pricing",
+    "research.hotel",
+    "research.compliance",
+    "research.prospects",
+    "research.territory",
+    "research.verification",
+    "research.benchmark",
+    "research.estimate",
+    "research.competitor_scan",
+    "research.vendor_scout",
+    "research.niche_scan",
+    "research.demand_scan",
+    "research.collections_intel",
+    "research.permit_context"
+  ],
+  "segments": ["trades", "accounting_bookkeeping", "landlord", "travel", "general_smb"],
+  "playbooks": {
+    "trades": ["PROPERTY_FACTS_AND_PERMITS", "ESTIMATE_RESEARCH", "TOOL_MATERIAL_PRICE_CHECK", "COMPETITOR_PRICING_SCAN", "SUBCONTRACTOR_SCOUT", "TERRITORY_OPPORTUNITY_SCAN"],
+    "accounting_bookkeeping": ["PROSPECT_RESEARCH", "CLIENT_VERIFICATION", "TAX_AND_COMPLIANCE_LOOKUP", "LOCAL_NICHE_SCAN", "INDUSTRY_BENCHMARK_PACK", "AR_COLLECTIONS_INTEL"],
+    "landlord": ["PROPERTY_FACTS", "RENT_COMP_CONTEXT", "PERMIT_AND_RENOVATION_CONTEXT", "NEIGHBORHOOD_DEMAND_SCAN", "SCREENING_COMPLIANCE_LOOKUP", "TURNOVER_VENDOR_SCOUT"],
+    "travel": ["BUSINESS_TRIP_HOTEL_RESEARCH"]
+  },
+  "feature_flags": [
+    "adam_provider_attom_v1",
+    "adam_provider_serpapi_shopping_v1",
+    "adam_provider_serpapi_home_depot_v1",
+    "adam_provider_tripadvisor_v1",
+    "adam_provider_parallel_v1",
+    "adam_playbook_travel_hotels_v1",
+    "adam_verification_v2"
   ],
   "certification_status": "uncertified",
   "outputs": [
     "research_packet",
     "vendor_comparison",
     "rfq_document",
-    "evidence_item"
+    "evidence_item",
+    "PropertyFactPack",
+    "EstimateResearchPack",
+    "PriceComparison",
+    "CompetitorBrief",
+    "VendorShortlist",
+    "TerritoryAnalysis",
+    "ProspectList",
+    "ClientVerificationPack",
+    "ComplianceBrief",
+    "NicheScanReport",
+    "BenchmarkPack",
+    "CollectionsIntelPack",
+    "LandlordPropertyPack",
+    "RentCompPack",
+    "PermitContextPack",
+    "NeighborhoodDemandBrief",
+    "ScreeningComplianceBrief",
+    "HotelShortlist"
   ],
   "dependencies": [],
   "memory": {
@@ -69,32 +149,58 @@
     "guardrails": [
       "state assumptions explicitly",
       "never claim execution without receipts",
-      "stay inside the assigned domain"
+      "stay inside the assigned domain",
+      "never invent property facts",
+      "never merge unrelated product SKUs",
+      "compliance without official source caps at partially_verified",
+      "no tenant scoring in screening compliance",
+      "hotel research only, no booking"
     ]
   },
   "observability": {
     "tags": [
       "adam_research",
       "research",
-      "vendors"
+      "vendors",
+      "property_intel",
+      "pricing",
+      "compliance"
     ],
     "alerts": [
       "receipt_failure_rate",
       "agent_loop_timeout_rate",
       "policy_denial_spike",
-      "memory_write_failures"
+      "memory_write_failures",
+      "attom_auth_failure",
+      "serpapi_budget_warning",
+      "serpapi_budget_exhausted",
+      "provider_outage",
+      "cache_miss_spike",
+      "latency_budget_breach",
+      "conflict_rate_spike"
     ],
     "metrics": [
       "response_quality_score",
       "receipts_emitted",
       "policy_denials",
-      "llm_latency_ms"
+      "llm_latency_ms",
+      "provider_cost_total",
+      "serpapi_monthly_count",
+      "cache_hit_rate",
+      "verification_status_distribution",
+      "playbook_usage_distribution"
     ],
     "expected_receipt_events": [
       "research.search",
       "research.places",
       "research.compare",
-      "research.rfq"
+      "research.rfq",
+      "research.property_facts",
+      "research.pricing",
+      "research.hotel",
+      "research.compliance",
+      "research.prospects",
+      "research.territory"
     ]
   },
   "scaffold_metadata": {
