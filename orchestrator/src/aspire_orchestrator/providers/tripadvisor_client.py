@@ -218,3 +218,55 @@ async def execute_tripadvisor_search(
             error=response.error_message or f"TripAdvisor API error: HTTP {response.status_code}",
             receipt_data=receipt,
         )
+
+
+async def execute_tripadvisor_location_details(
+    *,
+    location_id: str,
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Get full details for a TripAdvisor location by ID.
+
+    Returns: name, address, rating, num_reviews, price_level, phone, website,
+    ranking, hotel_class, amenities, etc.
+    Endpoint: GET /location/{locationId}/details
+    """
+    client = _get_client()
+    tool_id = "tripadvisor.location_details"
+
+    api_key = settings.tripadvisor_api_key
+    if not api_key:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="TripAdvisor API key not configured",
+        )
+
+    response = await client._request(
+        ProviderRequest(
+            method="GET",
+            path=f"/location/{location_id}/details",
+            query_params={"key": api_key, "language": "en", "currency": "USD"},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+        )
+    )
+
+    if response.success:
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id=tool_id,
+            data=response.body,
+        )
+    else:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=response.error_message or f"TripAdvisor details error: HTTP {response.status_code}",
+        )

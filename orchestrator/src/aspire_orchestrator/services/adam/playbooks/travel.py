@@ -1,13 +1,14 @@
-"""TRAVEL Playbooks — 1 research playbook for travel/hotel ICP.
+"""TRAVEL Playbooks — hotel research for business trips.
 
 Playbook: Business Trip Hotel Research
+Strategy: Google Places (primary, full data) + TripAdvisor (enrichment via Details API)
 Guardrail: research and recommendation only, NO booking in v1.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 from aspire_orchestrator.services.adam.schemas.business_record import SourceAttribution
@@ -26,89 +27,254 @@ async def execute_business_trip_hotel_research(
     budget_max: float | None = None,
     preferences: list[str] | None = None,
 ) -> ResearchResponse:
-    """BUSINESS_TRIP_HOTEL_RESEARCH — Find strong hotel options for business trips.
+    """BUSINESS_TRIP_HOTEL_RESEARCH — Find hotel options with full details.
 
-    Provider order: Tripadvisor → HERE → Google Places → Exa (instant for sentiment)
+    Strategy:
+      1. Google Places text search (type=lodging) — primary source for address,
+         rating, reviews, phone, website, price level
+      2. TripAdvisor Search → Details API — hotel class, ranking, amenities,
+         price level, reviews, web URL
+      3. Dedup by name, merge best data from both sources
+      4. Exa for sentiment/review enrichment on top picks
+
     Guardrail: research and recommendation only, NO booking in v1.
     """
-    from aspire_orchestrator.providers.tripadvisor_client import execute_tripadvisor_search
     from aspire_orchestrator.providers.google_places_client import execute_google_places_search
+    from aspire_orchestrator.providers.tripadvisor_client import (
+        execute_tripadvisor_search,
+        execute_tripadvisor_location_details,
+    )
     from aspire_orchestrator.providers.exa_client import execute_exa_search
     from aspire_orchestrator.services.adam.normalizers.hotel_normalizer import (
         normalize_from_tripadvisor,
         normalize_from_google_places_hotel,
     )
-    from aspire_orchestrator.services.adam.normalizers.web_normalizer import normalize_from_exa
 
     logger.info("Executing BUSINESS_TRIP_HOTEL_RESEARCH for: %s", query[:80])
 
+    # Extract location from query if destination not provided
+    import re
+    location = destination
+    if not location:
+        # Try to extract "in <City> <State>" pattern
+        loc_match = re.search(r'\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:,?\s*[A-Z]{2})?)', query)
+        if loc_match:
+            location = loc_match.group(1)
+        else:
+            location = query
     records: list[dict[str, Any]] = []
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
-    prefs = preferences or []
+    seen_names: set[str] = set()
 
-    search_query = destination or query
-    if prefs:
-        search_query = f"{search_query} {' '.join(prefs)}"
+    # Step 1: Google Places — TWO searches for maximum coverage
+    # Search A: tight "hotels in {location}" for local results
+    # Search B: broader "hotels near {location}" for nearby area
+    gp_a, gp_b = await asyncio.gather(
+        execute_google_places_search(
+            payload={"query": f"hotels in {location}", "type": "lodging"},
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        ),
+        execute_google_places_search(
+            payload={"query": f"affordable hotels near {location}"},
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        ),
+    )
+    providers_called.append("google_places")
 
-    # 1. Tripadvisor for hotel sentiment + rankings
-    ta_result = await execute_tripadvisor_search(
-        payload={
-            "query": search_query,
-            "category": "hotels",
-            "language": "en",
-        },
+    # Merge both GP result sets
+    for gp_result in (gp_a, gp_b):
+        if gp_result.outcome.value == "success" and gp_result.data:
+            for place in gp_result.data.get("results", [])[:10]:
+                hotel = normalize_from_google_places_hotel(place)
+                if hotel.name:
+                    name_key = hotel.name.lower().strip()
+                    if name_key not in seen_names:
+                        seen_names.add(name_key)
+                        records.append(hotel.to_dict())
+                        sources.extend(hotel.sources)
+
+    # Step 2: TripAdvisor Search → Details for each hotel (parallel)
+    ta_search = await execute_tripadvisor_search(
+        payload={"query": f"hotels in {location}", "category": "hotels", "language": "en"},
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
         office_id=ctx.office_id,
     )
     providers_called.append("tripadvisor")
 
-    if ta_result.outcome.value == "success" and ta_result.data:
-        for item in ta_result.data.get("results", [])[:8]:
-            hotel = normalize_from_tripadvisor(item)
-            records.append(hotel.to_dict())
-            sources.extend(hotel.sources)
+    if ta_search.outcome.value == "success" and ta_search.data:
+        ta_locations = ta_search.data.get("results", [])
 
-    # 2. Google Places for additional hotel coverage
-    gp_result = await execute_google_places_search(
-        payload={"query": f"hotels near {destination or query}", "location": destination},
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-    )
-    providers_called.append("google_places")
+        # Get details for each TA location (parallel — up to 10)
+        detail_tasks = []
+        for loc in ta_locations[:10]:
+            loc_id = loc.get("location_id", "")
+            if loc_id:
+                detail_tasks.append(execute_tripadvisor_location_details(
+                    location_id=loc_id,
+                    correlation_id=ctx.correlation_id,
+                    suite_id=ctx.suite_id,
+                    office_id=ctx.office_id,
+                ))
 
-    if gp_result.outcome.value == "success" and gp_result.data:
-        for place in gp_result.data.get("results", [])[:5]:
-            hotel = normalize_from_google_places_hotel(place)
-            records.append(hotel.to_dict())
-            sources.extend(hotel.sources)
+        if detail_tasks:
+            detail_results = await asyncio.gather(*detail_tasks, return_exceptions=True)
 
-    # 3. Exa instant for quick sentiment verification on top hotels
-    if records:
-        top_hotel = records[0].get("name", "")
-        if top_hotel:
-            exa_result = await execute_exa_search(
-                payload={
-                    "query": f"{top_hotel} {destination} hotel reviews business travel",
-                    "type": "instant",
-                    "num_results": 3,
-                    "moderation": True,
-                },
-                correlation_id=ctx.correlation_id,
-                suite_id=ctx.suite_id,
-                office_id=ctx.office_id,
-            )
-            providers_called.append("exa")
+            for dr in detail_results:
+                if isinstance(dr, Exception):
+                    continue
+                if dr.outcome.value != "success" or not dr.data:
+                    continue
 
-            if exa_result.outcome.value == "success" and exa_result.data:
-                for r in exa_result.data.get("results", [])[:3]:
-                    we = normalize_from_exa(r)
-                    sources.append(SourceAttribution(provider="exa"))
-                    # Enrich top hotel with sentiment from reviews
-                    if we.summary and records:
-                        records[0]["web_sentiment"] = we.summary
+                d = dr.data
+                name = d.get("name", "")
+                name_key = name.lower().strip()
+
+                # Build hotel dict from TA details
+                addr_obj = d.get("address_obj", {}) or {}
+                address = ", ".join(filter(None, [
+                    addr_obj.get("street1", ""),
+                    addr_obj.get("city", ""),
+                    addr_obj.get("state", ""),
+                    addr_obj.get("postalcode", ""),
+                ]))
+                ranking = d.get("ranking_data", {}) or {}
+
+                # Parse subratings
+                subratings: dict[str, float] = {}
+                for _sr_key, sr_val in (d.get("subratings") or {}).items():
+                    if isinstance(sr_val, dict) and sr_val.get("localized_name"):
+                        sr_v = _safe_float(sr_val.get("value"))
+                        if sr_v is not None:
+                            subratings[sr_val["localized_name"]] = sr_v
+
+                # Parse rating breakdown
+                rating_breakdown: dict[str, int] = {}
+                for stars, count in (d.get("review_rating_count") or {}).items():
+                    ct = _safe_int(count)
+                    if ct is not None:
+                        rating_breakdown[stars] = ct
+
+                # Parse trip types
+                trip_types: dict[str, int] = {}
+                for tt in d.get("trip_types", []):
+                    if isinstance(tt, dict) and tt.get("localized_name"):
+                        tv = _safe_int(tt.get("value"))
+                        if tv is not None:
+                            trip_types[tt["localized_name"]] = tv
+
+                # Parse amenities
+                amenities_list = d.get("amenities", [])
+                if amenities_list and isinstance(amenities_list[0], dict):
+                    amenities_list = [a.get("name", "") for a in amenities_list if isinstance(a, dict)]
+
+                ta_hotel = {
+                    "name": name,
+                    "normalized_address": address or d.get("address_string", ""),
+                    "city": addr_obj.get("city", ""),
+                    "state": addr_obj.get("state", ""),
+                    "postal_code": addr_obj.get("postalcode", ""),
+                    "star_rating": _safe_float(d.get("hotel_class")),
+                    "traveler_rating": _safe_float(d.get("rating")),
+                    "review_count": _safe_int(d.get("num_reviews")),
+                    "rating_breakdown": rating_breakdown,
+                    "subratings": subratings,
+                    "price_range": d.get("price_level", ""),
+                    "styles": d.get("styles", []),
+                    "phone": d.get("phone", ""),
+                    "website": d.get("website", ""),
+                    "tripadvisor_url": d.get("web_url", ""),
+                    "amenities": amenities_list,
+                    "description": d.get("description", ""),
+                    "sentiment_summary": ranking.get("ranking_string", ""),
+                    "ta_ranking": ranking.get("ranking", ""),
+                    "trip_types": trip_types,
+                    "latitude": _safe_float(d.get("latitude")),
+                    "longitude": _safe_float(d.get("longitude")),
+                    "photo_count": _safe_int(d.get("photo_count")),
+                    "sources": [{"provider": "tripadvisor"}],
+                }
+
+                # Match by exact name OR substring (hotel names vary between providers)
+                matched_rec = None
+                if name_key in seen_names:
+                    for rec in records:
+                        rec_key = rec.get("name", "").lower().strip()
+                        if rec_key == name_key or name_key in rec_key or rec_key in name_key:
+                            matched_rec = rec
+                            break
+                if not matched_rec:
+                    # Try fuzzy: first significant word match
+                    name_words = set(name_key.split()) - {"hotel", "inn", "suites", "by", "the", "&", "and", "a"}
+                    for rec in records:
+                        rec_words = set(rec.get("name", "").lower().split()) - {"hotel", "inn", "suites", "by", "the", "&", "and", "a"}
+                        if len(name_words & rec_words) >= 2:
+                            matched_rec = rec
+                            break
+
+                if matched_rec:
+                    rec = matched_rec
+                    # Merge all TA fields GP doesn't have
+                    merge_fields = [
+                        "star_rating", "price_range", "amenities", "styles",
+                        "sentiment_summary", "ta_ranking", "description",
+                        "subratings", "rating_breakdown", "trip_types",
+                        "tripadvisor_url", "photo_count",
+                    ]
+                    for field in merge_fields:
+                        if ta_hotel.get(field) and not rec.get(field):
+                            rec[field] = ta_hotel[field]
+                    if ta_hotel.get("review_count") and not rec.get("ta_review_count"):
+                        rec["ta_review_count"] = ta_hotel["review_count"]
+                        rec["ta_rating"] = ta_hotel.get("traveler_rating")
+                    rec["sources"].append({"provider": "tripadvisor"})
+                else:
+                    # New hotel not in Google Places — add it
+                    seen_names.add(name_key)
+                    records.append(ta_hotel)
+                    sources.append(SourceAttribution(provider="tripadvisor"))
+
+    # Step 3: Exa for review sentiment on top 3 hotels
+    top_names = [r.get("name", "") for r in records[:3] if r.get("name")]
+    if top_names:
+        exa_query = f"{' vs '.join(top_names)} hotel reviews {location}"
+        exa_result = await execute_exa_search(
+            payload={"query": exa_query, "num_results": 3, "moderation": True},
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        )
+        providers_called.append("exa")
+        if exa_result.outcome.value == "success" and exa_result.data:
+            for r in exa_result.data.get("results", [])[:3]:
+                snippet = r.get("text", r.get("highlight", ""))
+                if snippet and records:
+                    # Attach review snippets to first matching hotel
+                    for rec in records:
+                        if rec.get("name", "").lower() in str(snippet).lower():
+                            rec["web_review_snippet"] = str(snippet)[:300]
+                            break
+            sources.append(SourceAttribution(provider="exa"))
+
+    # Step 4: Safety scoring — protect our users from sketchy hotels
+    # Extract city name for location relevance boost
+    city_name = location.split(",")[0].split()[-1] if location else ""  # "Tucker" from "Tucker GA"
+    for rec in records:
+        safety = _compute_safety_score(rec, target_city=city_name)
+        rec["safety_score"] = safety["score"]
+        rec["safety_verdict"] = safety["verdict"]
+        rec["safety_flags"] = safety["flags"]
+
+    # Sort: recommended hotels first, then by rating
+    def _sort_key(r: dict) -> tuple:
+        verdict_order = {"Recommended for business travel": 0, "Acceptable": 1, "Use caution": 2, "Not recommended": 3}
+        return (verdict_order.get(r.get("safety_verdict", ""), 9), -(r.get("traveler_rating") or 0))
+    records.sort(key=_sort_key)
 
     report = verify_records(
         records=records,
@@ -118,16 +284,20 @@ async def execute_business_trip_hotel_research(
 
     return ResearchResponse(
         artifact_type="HotelShortlist",
-        summary=f"Hotel research for {destination or query[:60]}",
+        summary=(
+            f"Found {len(records)} hotels in {location}. "
+            f"Providers: {'+'.join(providers_called)}. "
+            f"Verification: {report.status}."
+        ),
         records=records,
         sources=sources,
         freshness={"mode": "live"},
         confidence={"status": report.status, "score": report.confidence_score},
-        missing_fields=report.missing_fields,
+        missing_fields=list(report.missing_fields),
         next_queries=[
-            "Compare prices on booking sites",
-            "Check amenities in detail",
-            "Find nearby restaurants",
+            f"Compare prices on booking sites for {location}",
+            "Check amenities and parking details",
+            f"Find restaurants near hotels in {location}",
         ],
         verification_report=report,
         segment="travel",
@@ -135,3 +305,145 @@ async def execute_business_trip_hotel_research(
         playbook="BUSINESS_TRIP_HOTEL_RESEARCH",
         providers_called=providers_called,
     )
+
+
+def _compute_safety_score(hotel: dict[str, Any], target_city: str = "") -> dict[str, Any]:
+    """Compute a safety/quality score for business travelers.
+
+    Factors:
+      - Overall rating (Google or TA)
+      - Review count (more reviews = more reliable signal)
+      - Cleanliness subrating (from TA)
+      - Location subrating (from TA)
+      - 1-star review percentage (high = red flag)
+      - Hotel style ("Budget" = caution, "Business"/"Luxury" = positive)
+      - Known sketchy chain detection
+      - Location relevance (in target city = bonus)
+
+    Returns: {"score": 1-10, "verdict": str, "flags": list[str]}
+    """
+    flags: list[str] = []
+    score = 5.0  # Start neutral
+
+    # Factor 1: Overall rating
+    rating = hotel.get("traveler_rating") or hotel.get("ta_rating") or 0
+    if rating >= 4.3:
+        score += 2.0
+    elif rating >= 3.8:
+        score += 1.0
+    elif rating >= 3.3:
+        score += 0.0
+    elif rating >= 2.5:
+        score -= 1.5
+        flags.append("Low rating (%.1f/5)" % rating)
+    elif rating > 0:
+        score -= 3.0
+        flags.append("Very low rating (%.1f/5)" % rating)
+
+    # Factor 2: Review volume (more reviews = more trustworthy signal)
+    reviews = hotel.get("review_count") or 0
+    if reviews >= 1000:
+        score += 0.5  # Well-known property
+    elif reviews < 50 and rating < 3.5:
+        score -= 0.5
+        flags.append("Few reviews (%d) — limited data" % reviews)
+
+    # Factor 3: Cleanliness subrating (from TA)
+    subratings = hotel.get("subratings", {})
+    cleanliness = subratings.get("Cleanliness", subratings.get("cleanliness"))
+    if cleanliness is not None:
+        if isinstance(cleanliness, (int, float)):
+            if cleanliness < 3.0:
+                score -= 2.0
+                flags.append("Low cleanliness rating (%.1f/5)" % cleanliness)
+            elif cleanliness >= 4.0:
+                score += 0.5
+
+    # Factor 4: Location subrating
+    loc_rating = subratings.get("Location", subratings.get("location"))
+    if loc_rating is not None:
+        if isinstance(loc_rating, (int, float)):
+            if loc_rating < 3.0:
+                score -= 1.0
+                flags.append("Poor location rating (%.1f/5)" % loc_rating)
+
+    # Factor 5: 1-star review percentage
+    breakdown = hotel.get("rating_breakdown", {})
+    if breakdown:
+        total_reviews = sum(int(v) for v in breakdown.values() if str(v).isdigit())
+        one_star = int(breakdown.get("1", 0))
+        if total_reviews > 10:
+            one_star_pct = one_star / total_reviews * 100
+            if one_star_pct > 30:
+                score -= 2.0
+                flags.append("%.0f%% of reviews are 1-star" % one_star_pct)
+            elif one_star_pct > 20:
+                score -= 1.0
+                flags.append("%.0f%% 1-star reviews" % one_star_pct)
+
+    # Factor 6: Hotel style
+    styles = hotel.get("styles", [])
+    style_lower = [s.lower() for s in styles]
+    if "business" in style_lower or "luxury" in style_lower:
+        score += 1.0
+    if "budget" in style_lower:
+        score -= 0.5
+        if rating < 3.5:
+            flags.append("Budget hotel with low rating")
+
+    # Factor 7: Known sketchy chain detection
+    name_lower = (hotel.get("name") or "").lower()
+    cautious_chains = ["motel 6", "studio 6", "knights inn", "rodeway inn",
+                       "econo lodge", "americas best", "red roof"]
+    premium_chains = ["hilton", "marriott", "hyatt", "doubletree", "holiday inn",
+                      "hampton inn", "courtyard", "fairfield", "springhill",
+                      "residence inn", "homewood", "embassy suites"]
+    for chain in cautious_chains:
+        if chain in name_lower:
+            score -= 1.0
+            flags.append("Budget chain — verify conditions before booking")
+            break
+    for chain in premium_chains:
+        if chain in name_lower:
+            score += 1.0
+            break
+
+    # Factor 8: Location relevance — hotels in the target city get a small boost
+    if target_city:
+        addr = (hotel.get("normalized_address") or "").lower()
+        city = (hotel.get("city") or "").lower()
+        if target_city.lower() in addr or target_city.lower() in city:
+            score += 0.5
+
+    # Clamp score
+    score = max(1.0, min(10.0, score))
+
+    # Verdict
+    if score >= 7.5:
+        verdict = "Recommended for business travel"
+    elif score >= 5.5:
+        verdict = "Acceptable"
+    elif score >= 3.5:
+        verdict = "Use caution"
+    else:
+        verdict = "Not recommended"
+
+    return {"score": round(score, 1), "verdict": verdict, "flags": flags}
+
+
+def _safe_float(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _safe_int(val: Any) -> int | None:
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None

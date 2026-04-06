@@ -191,9 +191,14 @@ async def execute_google_places_search(
             place = {
                 "name": r.get("name", ""),
                 "formatted_address": r.get("formatted_address", ""),
+                "formattedAddress": r.get("formatted_address", ""),
                 "address": r.get("formatted_address", ""),
                 "location": r.get("geometry", {}).get("location", {}),
                 "rating": r.get("rating"),
+                "userRatingCount": r.get("user_ratings_total"),
+                "priceLevel": r.get("price_level"),
+                "opening_hours": r.get("opening_hours", {}),
+                "types": r.get("types", []),
                 "place_id": r.get("place_id", ""),
                 "phone": "",
                 "website": "",
@@ -208,7 +213,7 @@ async def execute_google_places_search(
                             query_params={
                                 "key": settings.google_maps_api_key,
                                 "place_id": pid,
-                                "fields": "formatted_phone_number,website,url",
+                                "fields": "formatted_phone_number,website,url,price_level,opening_hours,user_ratings_total",
                             },
                             correlation_id=correlation_id,
                             suite_id=suite_id,
@@ -219,6 +224,12 @@ async def execute_google_places_search(
                         detail = detail_resp.body.get("result", {})
                         place["phone"] = detail.get("formatted_phone_number", "")
                         place["website"] = detail.get("website", detail.get("url", ""))
+                        if detail.get("price_level") is not None:
+                            place["priceLevel"] = detail["price_level"]
+                        if detail.get("user_ratings_total") is not None:
+                            place["userRatingCount"] = detail["user_ratings_total"]
+                        if detail.get("opening_hours"):
+                            place["opening_hours"] = detail["opening_hours"]
                 except Exception:
                     pass  # Best-effort enrichment
             return place

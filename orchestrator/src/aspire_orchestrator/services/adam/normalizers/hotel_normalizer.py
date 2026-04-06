@@ -36,6 +36,8 @@ def normalize_from_tripadvisor(data: dict[str, Any]) -> HotelRecord:
         traveler_rating=_safe_float(data.get("rating")),
         review_count=_safe_int(data.get("num_reviews")),
         price_range=data.get("price_level", "") or data.get("price", ""),
+        phone=data.get("phone", ""),
+        website=data.get("web_url", data.get("website", "")),
         amenities=amenities,
         latitude=_safe_float(data.get("latitude")),
         longitude=_safe_float(data.get("longitude")),
@@ -48,21 +50,35 @@ def normalize_from_google_places_hotel(data: dict[str, Any]) -> HotelRecord:
     """Normalize a Google Places result (hotel category) to HotelRecord."""
     location = data.get("location", {}) or {}
 
-    # Map Google Places priceLevel to readable string
-    price_map = {"PRICE_LEVEL_FREE": "Free", "PRICE_LEVEL_INEXPENSIVE": "$",
-                 "PRICE_LEVEL_MODERATE": "$$", "PRICE_LEVEL_EXPENSIVE": "$$$",
-                 "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$"}
-    price_level = price_map.get(data.get("priceLevel", ""), "")
+    # Handle both old (integer 0-4) and new (string) price level formats
+    price_val = data.get("priceLevel", data.get("price_level"))
+    price_map_new = {"PRICE_LEVEL_FREE": "Free", "PRICE_LEVEL_INEXPENSIVE": "$",
+                     "PRICE_LEVEL_MODERATE": "$$", "PRICE_LEVEL_EXPENSIVE": "$$$",
+                     "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$"}
+    price_map_old = {0: "Free", 1: "$", 2: "$$", 3: "$$$", 4: "$$$$"}
+    if isinstance(price_val, str):
+        price_level = price_map_new.get(price_val, price_val)
+    elif isinstance(price_val, int):
+        price_level = price_map_old.get(price_val, "")
+    else:
+        price_level = ""
+
+    # Opening hours
+    hours = data.get("opening_hours", {}) or {}
+    open_now = hours.get("open_now")
 
     return HotelRecord(
         name=data.get("displayName", {}).get("text", "") or data.get("name", ""),
-        normalized_address=data.get("formattedAddress", ""),
+        normalized_address=data.get("formattedAddress", data.get("formatted_address", "")),
         traveler_rating=data.get("rating"),
-        review_count=data.get("userRatingCount"),
+        review_count=_safe_int(data.get("userRatingCount", data.get("user_ratings_total"))),
         price_range=price_level,
-        latitude=location.get("latitude"),
-        longitude=location.get("longitude"),
+        phone=data.get("phone", ""),
+        website=data.get("website", ""),
+        latitude=location.get("latitude", location.get("lat")),
+        longitude=location.get("longitude", location.get("lng")),
         sources=[SourceAttribution(provider="google_places", retrieved_at=datetime.now(timezone.utc).isoformat())],
+        extra={"open_now": open_now, "types": data.get("types", [])} if open_now is not None else {},
     )
 
 
