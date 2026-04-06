@@ -781,6 +781,40 @@ def _generate_presence_prompt(state: OrchestratorState, channel: str = "chat") -
         return fallback_text
 
 
+def _build_safe_plan(state: dict[str, Any]) -> dict[str, Any]:
+    """Build the plan dict for AvaResult — strips raw execution_result when
+    structured_results is present to prevent PII duplication (Law #9).
+
+    When Adam returns research data, the full records are already in
+    structured_results (PII-stripped). The plan dict only needs a summary.
+    """
+    task_type = state.get("task_type")
+    outcome = state.get("outcome", Outcome.SUCCESS)
+    outcome_str = outcome.value if hasattr(outcome, "value") else str(outcome)
+
+    execution_result = state.get("execution_result") or {}
+    data = execution_result.get("data") if isinstance(execution_result, dict) else None
+
+    # If this is an Adam research response, DON'T include the raw records
+    # in the plan — they're already in structured_results (PII-stripped)
+    if isinstance(data, dict) and data.get("artifact_type"):
+        return {
+            "task_type": task_type,
+            "outcome": outcome_str,
+            "execution_result": {
+                "artifact_type": data.get("artifact_type"),
+                "record_count": len(data.get("records", [])),
+                "summary": (data.get("summary") or "")[:200],
+            },
+        }
+
+    return {
+        "task_type": task_type,
+        "outcome": outcome_str,
+        "execution_result": execution_result,
+    }
+
+
 def _extract_structured_results(state: dict[str, Any]) -> dict[str, Any] | None:
     """Extract Adam research data for desktop card rendering.
 
@@ -797,10 +831,13 @@ def _extract_structured_results(state: dict[str, Any]) -> dict[str, Any] | None:
     artifact_type = data.get("artifact_type")
     if not artifact_type or artifact_type == "error":
         return None
-    # Only include card-relevant fields (not raw provider responses)
+    # Strip PII fields before sending to client (Law #9: Security & Privacy)
+    records = data.get("records", [])
+    safe_records = [_strip_pii_from_record(r) for r in records if isinstance(r, dict)]
+
     return {
         "artifact_type": artifact_type,
-        "records": data.get("records", []),
+        "records": safe_records,
         "summary": data.get("summary", ""),
         "confidence": data.get("confidence"),
         "missing_fields": data.get("missing_fields", []),
@@ -810,6 +847,44 @@ def _extract_structured_results(state: dict[str, Any]) -> dict[str, Any] | None:
         "intent": data.get("intent"),
         "playbook": data.get("playbook"),
     }
+
+
+# PII fields that must NEVER reach the client (Law #9)
+_PII_STRIP_FIELDS = {
+    "owner_name", "mailing_address", "mailing_city", "mailing_state", "mailing_zip",
+    "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_type", "mortgage_term_months",
+    "deed_type", "deed_recording_date", "loan_balance", "estimated_monthly_payment",
+    "tax_assessed_total", "tax_market_value", "annual_tax_amount",
+    "seller_name", "buyer_name",
+}
+
+
+def _strip_pii_from_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Remove PII fields from a record before sending to desktop client.
+
+    Law #9: Never expose property owner names, mailing addresses, mortgage
+    details, or financial data to the client. These fields are for backend
+    processing only — the card UI shows property characteristics, not PII.
+    """
+    stripped = {k: v for k, v in record.items() if k not in _PII_STRIP_FIELDS}
+
+    # Also strip PII from nested sale_history entries
+    if "sale_history" in stripped and isinstance(stripped["sale_history"], list):
+        stripped["sale_history"] = [
+            {k: v for k, v in entry.items() if k not in ("buyer", "seller", "buyer_name", "seller_name")}
+            for entry in stripped["sale_history"]
+            if isinstance(entry, dict)
+        ]
+
+    # Strip PII from foreclosure records
+    if "foreclosure_records" in stripped and isinstance(stripped["foreclosure_records"], list):
+        stripped["foreclosure_records"] = [
+            {k: v for k, v in entry.items() if k not in ("borrower_name", "trustee_name", "lender_name")}
+            for entry in stripped["foreclosure_records"]
+            if isinstance(entry, dict)
+        ]
+
+    return stripped
 
 
 def _extract_media_items(state: OrchestratorState) -> list[dict[str, Any]]:
@@ -1202,11 +1277,7 @@ def respond_node(state: OrchestratorState) -> dict[str, Any]:
                 capability_token_required=capability_token_required,
                 receipt_ids=receipt_ids,
             ),
-            plan={
-                "task_type": state.get("task_type"),
-                "outcome": state.get("outcome", Outcome.SUCCESS).value if hasattr(state.get("outcome", Outcome.SUCCESS), "value") else str(state.get("outcome", "success")),
-                "execution_result": state.get("execution_result"),
-            },
+            plan=_build_safe_plan(state),
             structured_results=_extract_structured_results(state),
         )
 
