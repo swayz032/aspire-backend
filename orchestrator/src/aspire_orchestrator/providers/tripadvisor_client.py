@@ -270,3 +270,74 @@ async def execute_tripadvisor_location_details(
             tool_id=tool_id,
             error=response.error_message or f"TripAdvisor details error: HTTP {response.status_code}",
         )
+
+
+async def execute_tripadvisor_location_photos(
+    *,
+    location_id: str,
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Get photos for a TripAdvisor location by ID.
+
+    Returns up to 5 high-quality photos with multiple sizes:
+      - thumbnail: 50x50px (cropped)
+      - small: 150x150px (cropped)
+      - medium: max 250px
+      - large: max 550px
+      - original: full resolution
+
+    Endpoint: GET /location/{locationId}/photos
+    """
+    client = _get_client()
+    tool_id = "tripadvisor.location_photos"
+
+    api_key = settings.tripadvisor_api_key
+    if not api_key:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="TripAdvisor API key not configured",
+        )
+
+    response = await client._request(
+        ProviderRequest(
+            method="GET",
+            path=f"/location/{location_id}/photos",
+            query_params={"key": api_key, "language": "en"},
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+        )
+    )
+
+    if response.success:
+        raw_photos = response.body.get("data", [])
+        photos = []
+        for photo in raw_photos[:5]:
+            images = photo.get("images", {})
+            photo_entry = {}
+            for size_key in ("thumbnail", "small", "medium", "large", "original"):
+                size_data = images.get(size_key, {})
+                if size_data.get("url"):
+                    photo_entry[size_key] = size_data["url"]
+            if photo_entry:
+                photo_entry["caption"] = photo.get("caption", "")
+                photo_entry["id"] = photo.get("id", "")
+                photos.append(photo_entry)
+
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id=tool_id,
+            data={"photos": photos, "location_id": location_id},
+        )
+    else:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=response.error_message or f"TripAdvisor photos error: HTTP {response.status_code}",
+        )

@@ -43,6 +43,7 @@ async def execute_business_trip_hotel_research(
     from aspire_orchestrator.providers.tripadvisor_client import (
         execute_tripadvisor_search,
         execute_tripadvisor_location_details,
+        execute_tripadvisor_location_photos,
     )
     from aspire_orchestrator.providers.exa_client import execute_exa_search
     from aspire_orchestrator.services.adam.normalizers.hotel_normalizer import (
@@ -250,6 +251,36 @@ async def execute_business_trip_hotel_research(
                             rec["web_review_snippet"] = str(snippet)[:300]
                             break
             sources.append(SourceAttribution(provider="exa"))
+
+    # Step 3.5: Fetch photos for TA-enriched hotels (parallel)
+    # Collect location_ids from TA-enriched records
+    photo_tasks = []
+    photo_record_map: list[dict] = []  # parallel array to match results to records
+    for rec in records:
+        ta_sources = [s for s in rec.get("sources", []) if s.get("provider") == "tripadvisor"]
+        if ta_sources and rec.get("tripadvisor_url"):
+            # Extract location_id from TA URL or from ta_location_ids dict
+            for lid, lname in ta_location_ids.items():
+                if _names_match(rec.get("name", "").lower(), lname.lower()):
+                    photo_tasks.append(execute_tripadvisor_location_photos(
+                        location_id=lid,
+                        correlation_id=ctx.correlation_id,
+                        suite_id=ctx.suite_id,
+                        office_id=ctx.office_id,
+                    ))
+                    photo_record_map.append(rec)
+                    break
+
+    if photo_tasks:
+        photo_results = await asyncio.gather(*photo_tasks, return_exceptions=True)
+        for pr, rec in zip(photo_results, photo_record_map):
+            if isinstance(pr, Exception):
+                continue
+            if pr.outcome.value == "success" and pr.data:
+                photos = pr.data.get("photos", [])
+                if photos:
+                    rec["photos"] = photos
+                    rec["photo_count"] = len(photos)
 
     # Step 4: Safety scoring — protect our users from sketchy hotels
     # Extract city name for location relevance boost
