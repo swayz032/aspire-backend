@@ -135,8 +135,39 @@ async def execute_business_trip_hotel_research(
                 name = d.get("name", "")
                 name_key = name.lower().strip()
 
-                # Build hotel dict from TA details
+                # Geographic filter — skip hotels not in target area
                 addr_obj = d.get("address_obj", {}) or {}
+                ta_state = (addr_obj.get("state") or "").strip()
+                ta_city = (addr_obj.get("city") or "").strip()
+                ta_country = (addr_obj.get("country") or "").strip()
+
+                # Extract target city/state from location (e.g., "Tucker" + "GA" from "Tucker GA")
+                loc_parts = location.split()
+                target_state = loc_parts[-1] if len(loc_parts) >= 2 and len(loc_parts[-1]) == 2 else ""
+                target_city_name = " ".join(loc_parts[:-1]) if target_state else location
+
+                # Skip if wrong country (not US)
+                if ta_country and ta_country.lower() not in ("united states", "us", "usa", ""):
+                    logger.debug("Skipping TA hotel %s — wrong country: %s", name, ta_country)
+                    continue
+                # Skip if wrong state
+                if target_state and ta_state:
+                    state_ok = _state_matches(target_state, ta_state)
+                    if not state_ok:
+                        logger.debug("Skipping TA hotel %s — wrong state: %s vs %s", name, ta_state, target_state)
+                        continue
+                # Skip if city doesn't match target (allows nearby cities in same metro)
+                if target_city_name and ta_city:
+                    city_match = (
+                        target_city_name.lower() == ta_city.lower()
+                        or target_city_name.lower() in ta_city.lower()
+                        or ta_city.lower() in target_city_name.lower()
+                    )
+                    if not city_match:
+                        logger.debug("Skipping TA hotel %s — wrong city: %s vs %s", name, ta_city, target_city_name)
+                        continue
+
+                # Build hotel dict from TA details
                 address = ", ".join(filter(None, [
                     addr_obj.get("street1", ""),
                     addr_obj.get("city", ""),
@@ -200,19 +231,25 @@ async def execute_business_trip_hotel_research(
                     "sources": [{"provider": "tripadvisor"}],
                 }
 
-                # Match by exact name OR substring (hotel names vary between providers)
+                # Match TA hotel to existing GP record — try exact, substring, fuzzy
                 matched_rec = None
-                if name_key in seen_names:
-                    for rec in records:
-                        rec_key = rec.get("name", "").lower().strip()
-                        if rec_key == name_key or name_key in rec_key or rec_key in name_key:
-                            matched_rec = rec
-                            break
+                for rec in records:
+                    rec_key = rec.get("name", "").lower().strip()
+                    # Exact match
+                    if rec_key == name_key:
+                        matched_rec = rec
+                        break
+                    # Substring match (one name contains the other)
+                    if name_key in rec_key or rec_key in name_key:
+                        matched_rec = rec
+                        break
                 if not matched_rec:
-                    # Try fuzzy: first significant word match
-                    name_words = set(name_key.split()) - {"hotel", "inn", "suites", "by", "the", "&", "and", "a"}
+                    # Fuzzy: 2+ significant word overlap
+                    stop_words = {"hotel", "inn", "suites", "by", "the", "&", "and", "a", "an",
+                                  "extended", "stay", "express", "-", "ga", "atlanta"}
+                    name_words = set(name_key.split()) - stop_words
                     for rec in records:
-                        rec_words = set(rec.get("name", "").lower().split()) - {"hotel", "inn", "suites", "by", "the", "&", "and", "a"}
+                        rec_words = set(rec.get("name", "").lower().split()) - stop_words
                         if len(name_words & rec_words) >= 2:
                             matched_rec = rec
                             break
@@ -305,6 +342,36 @@ async def execute_business_trip_hotel_research(
         playbook="BUSINESS_TRIP_HOTEL_RESEARCH",
         providers_called=providers_called,
     )
+
+
+_STATE_ABBREV = {
+    "AL": "alabama", "AK": "alaska", "AZ": "arizona", "AR": "arkansas",
+    "CA": "california", "CO": "colorado", "CT": "connecticut", "DE": "delaware",
+    "FL": "florida", "GA": "georgia", "HI": "hawaii", "ID": "idaho",
+    "IL": "illinois", "IN": "indiana", "IA": "iowa", "KS": "kansas",
+    "KY": "kentucky", "LA": "louisiana", "ME": "maine", "MD": "maryland",
+    "MA": "massachusetts", "MI": "michigan", "MN": "minnesota", "MS": "mississippi",
+    "MO": "missouri", "MT": "montana", "NE": "nebraska", "NV": "nevada",
+    "NH": "new hampshire", "NJ": "new jersey", "NM": "new mexico", "NY": "new york",
+    "NC": "north carolina", "ND": "north dakota", "OH": "ohio", "OK": "oklahoma",
+    "OR": "oregon", "PA": "pennsylvania", "RI": "rhode island", "SC": "south carolina",
+    "SD": "south dakota", "TN": "tennessee", "TX": "texas", "UT": "utah",
+    "VT": "vermont", "VA": "virginia", "WA": "washington", "WV": "west virginia",
+    "WI": "wisconsin", "WY": "wyoming", "DC": "district of columbia",
+}
+
+
+def _state_matches(target_abbrev: str, ta_state: str) -> bool:
+    """Check if a state abbreviation matches a TA state name (could be full name or abbreviation)."""
+    t = target_abbrev.upper()
+    s = ta_state.strip().upper()
+    if t == s:
+        return True
+    full_name = _STATE_ABBREV.get(t, "")
+    if full_name and full_name == s.lower():
+        return True
+    # Reverse: ta_state might be abbreviation and target might be full
+    return False
 
 
 def _compute_safety_score(hotel: dict[str, Any], target_city: str = "") -> dict[str, Any]:
