@@ -32,6 +32,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from aspire_orchestrator.models import Outcome
+
+
+def _safe_result(result: Any) -> Any | None:
+    """Guard for asyncio.gather(return_exceptions=True) results.
+
+    If the result is an exception (provider crash, timeout, etc.), log it
+    and return None so the caller can skip merging.  Otherwise return the
+    ToolExecutionResult as-is.
+    """
+    if isinstance(result, BaseException):
+        logger.warning("gather sub-task raised %s: %s", type(result).__name__, result)
+        return None
+    return result
 from aspire_orchestrator.providers.attom_client import (
     _attom_request,
     execute_attom_detail_mortgage_owner,
@@ -190,63 +203,63 @@ async def execute_property_facts(
         execute_attom_sale_detail,
     )
 
-    (
-        detail_result,      # building + owner + mortgage
-        avm_result,         # AVM value + confidence + FSD
-        equity_result,      # LTV, equity, loan balance
-        assessment_result,  # tax assessment + market value
-        sale_result,        # last sale detail + price/sqft
-        expanded_result,    # zoning, seller, census, REO flags
-    ) = await asyncio.gather(
+    _raw_results = await asyncio.gather(
         execute_attom_detail_mortgage_owner(payload=attom_payload, **args),
         execute_attom_valuation_avm(payload=attom_payload, **args),
         execute_attom_home_equity(payload=attom_payload, **args),
         execute_attom_assessment_detail(payload=attom_payload, **args),
         execute_attom_sale_detail(payload=attom_payload, **args),
         execute_attom_expanded_profile(payload=attom_payload, **args),
-        return_exceptions=False,
+        return_exceptions=True,
     )
+    # Guard: convert exceptions to None (graceful degradation, not crash)
+    detail_result = _safe_result(_raw_results[0])      # building + owner + mortgage
+    avm_result = _safe_result(_raw_results[1])          # AVM value + confidence + FSD
+    equity_result = _safe_result(_raw_results[2])       # LTV, equity, loan balance
+    assessment_result = _safe_result(_raw_results[3])   # tax assessment + market value
+    sale_result = _safe_result(_raw_results[4])         # last sale detail + price/sqft
+    expanded_result = _safe_result(_raw_results[5])     # zoning, seller, census, REO flags
     providers_called.append("attom")
 
     # --- Normalize base property record (building + owner + mortgage) ---
     prop_dict: dict[str, Any] = {}
-    if detail_result.outcome == Outcome.SUCCESS and detail_result.data:
+    if detail_result and detail_result.outcome == Outcome.SUCCESS and detail_result.data:
         prop = normalize_from_attom_detail(detail_result.data)
         prop_dict = prop.to_dict()
         sources.append(_source("attom"))
     else:
         logger.warning(
             "landlord.property_facts: attom detail failed: %s",
-            detail_result.error,
+            detail_result.error if detail_result else "provider raised exception",
             extra={"correlation_id": context.correlation_id},
         )
 
     # --- Merge AVM valuation (value + confidence score + FSD) ---
-    if avm_result.outcome == Outcome.SUCCESS and avm_result.data:
+    if avm_result and avm_result.outcome == Outcome.SUCCESS and avm_result.data:
         avm = normalize_from_attom_avm(avm_result.data)
         if avm and prop_dict:
             prop_dict.update(avm)
 
     # --- Merge equity (LTV, available equity, loan balance, est. payment) ---
-    if equity_result.outcome == Outcome.SUCCESS and equity_result.data:
+    if equity_result and equity_result.outcome == Outcome.SUCCESS and equity_result.data:
         equity = normalize_from_attom_equity(equity_result.data)
         if equity and prop_dict:
             prop_dict.update(equity)
 
     # --- Merge tax assessment (assessed value, market value, annual tax) ---
-    if assessment_result.outcome == Outcome.SUCCESS and assessment_result.data:
+    if assessment_result and assessment_result.outcome == Outcome.SUCCESS and assessment_result.data:
         tax = normalize_from_attom_assessment(assessment_result.data)
         if tax and prop_dict:
             prop_dict.update(tax)
 
     # --- Merge sale detail (last sale price, price/sqft, appreciation) ---
-    if sale_result.outcome == Outcome.SUCCESS and sale_result.data:
+    if sale_result and sale_result.outcome == Outcome.SUCCESS and sale_result.data:
         sale = normalize_from_attom_sale_detail(sale_result.data)
         if sale and prop_dict:
             prop_dict.update(sale)
 
     # --- Merge expanded profile (zoning, seller, census, REO flags) ---
-    if expanded_result.outcome == Outcome.SUCCESS and expanded_result.data:
+    if expanded_result and expanded_result.outcome == Outcome.SUCCESS and expanded_result.data:
         expanded = normalize_from_attom_expanded_profile(expanded_result.data)
         if expanded and prop_dict:
             prop_dict.update(expanded)
@@ -284,7 +297,7 @@ async def execute_property_facts(
         try:
             # Extract geoIdV4 N4 (neighborhood) from detail response
             n4_id = ""
-            if detail_result.outcome == Outcome.SUCCESS and detail_result.data:
+            if detail_result and detail_result.outcome == Outcome.SUCCESS and detail_result.data:
                 det_props = detail_result.data.get("property", [])
                 if det_props:
                     geo_v4 = det_props[0].get("location", {}).get("geoIdV4", {})
@@ -468,20 +481,22 @@ async def execute_rent_comp_context(
     attom_payload = {"address": normalized_address}
 
     # Step 2: Parallel ATTOM calls
-    rental_result, comps_result = await asyncio.gather(
+    _raw_rent = await asyncio.gather(
         execute_attom_rental_avm(payload=attom_payload, **args),
         execute_attom_sales_comparables(
             payload={**attom_payload, "searchtype": "rental", "miles": "1"},
             **args,
         ),
-        return_exceptions=False,
+        return_exceptions=True,
     )
+    rental_result = _safe_result(_raw_rent[0])
+    comps_result = _safe_result(_raw_rent[1])
     providers_called.extend(["attom", "attom"])
 
     rental_record: dict[str, Any] = {"normalized_address": normalized_address}
     has_rental_data = False
 
-    if rental_result.outcome == Outcome.SUCCESS and rental_result.data:
+    if rental_result and rental_result.outcome == Outcome.SUCCESS and rental_result.data:
         rental = normalize_from_attom_rental(rental_result.data)
         if rental.get("estimated_rent") is not None:
             has_rental_data = True
@@ -490,17 +505,17 @@ async def execute_rent_comp_context(
     else:
         logger.warning(
             "landlord.rent_comp_context: attom rental_avm failed: %s",
-            rental_result.error,
+            rental_result.error if rental_result else "provider raised exception",
             extra={"correlation_id": context.correlation_id},
         )
 
-    if comps_result.outcome == Outcome.SUCCESS and comps_result.data:
+    if comps_result and comps_result.outcome == Outcome.SUCCESS and comps_result.data:
         comps_props = comps_result.data.get("property", [])
         rental_record["sales_comparables"] = comps_props[:10]
     else:
         logger.warning(
             "landlord.rent_comp_context: attom sales_comparables failed: %s",
-            comps_result.error,
+            comps_result.error if comps_result else "provider raised exception",
             extra={"correlation_id": context.correlation_id},
         )
 
@@ -1042,12 +1057,15 @@ async def execute_turnover_vendor_scout(
 
     gp_results_per_cat = await asyncio.gather(
         *[_search_gp_category(cat) for cat in VENDOR_CATEGORIES],
-        return_exceptions=False,
+        return_exceptions=True,
     )
     providers_called.append("google_places")
 
     seen_names: set[str] = set()
     for cat_results in gp_results_per_cat:
+        if isinstance(cat_results, BaseException):
+            logger.warning("vendor scout category search raised: %s", cat_results)
+            continue
         for raw in cat_results[:3]:
             biz = normalize_from_google_places(raw)
             if biz.name and biz.name not in seen_names:
@@ -1188,7 +1206,7 @@ async def execute_investment_opportunity_scan(
     from datetime import datetime, timedelta
     cutoff_date = (datetime.now() - timedelta(days=540)).strftime("%Y/%m/%d")
 
-    absentee_result, fc_events_result, recent_events_result, trends_result, exa_result = await asyncio.gather(
+    _raw_inv = await asyncio.gather(
         _attom_request(
             path="/property/snapshot",
             query_params={
@@ -1233,14 +1251,19 @@ async def execute_investment_opportunity_scan(
             payload={"query": f"foreclosure auction listings {zip_code} 2026 upcoming auction date property sale"},
             **args,
         ),
-        return_exceptions=False,
+        return_exceptions=True,
     )
+    absentee_result = _safe_result(_raw_inv[0])
+    fc_events_result = _safe_result(_raw_inv[1])
+    recent_events_result = _safe_result(_raw_inv[2])
+    trends_result = _safe_result(_raw_inv[3])
+    exa_result = _safe_result(_raw_inv[4])
     providers_called.append("exa")
 
     # Parse absentee owners
     absentee_addrs: list[dict[str, str]] = []
     absentee_count = 0
-    if absentee_result.outcome == Outcome.SUCCESS and absentee_result.data:
+    if absentee_result and absentee_result.outcome == Outcome.SUCCESS and absentee_result.data:
         absentee_count = absentee_result.data.get("status", {}).get("total", 0)
         for p in absentee_result.data.get("property", []):
             addr = p.get("address", {})
@@ -1252,7 +1275,7 @@ async def execute_investment_opportunity_scan(
 
     # Parse foreclosure-flagged properties from allevents
     fc_flagged: list[dict[str, Any]] = []
-    if fc_events_result.outcome == Outcome.SUCCESS and fc_events_result.data:
+    if fc_events_result and fc_events_result.outcome == Outcome.SUCCESS and fc_events_result.data:
         for p in fc_events_result.data.get("property", []):
             sale = p.get("sale", {})
             fc = sale.get("foreclosure", "")
@@ -1281,7 +1304,7 @@ async def execute_investment_opportunity_scan(
 
     # Merge recently-active FC-flagged properties (may overlap with above)
     seen_addrs = {fp.get("oneLine", "") for fp in fc_flagged}
-    if recent_events_result.outcome == Outcome.SUCCESS and recent_events_result.data:
+    if recent_events_result and recent_events_result.outcome == Outcome.SUCCESS and recent_events_result.data:
         for p in recent_events_result.data.get("property", []):
             sale = p.get("sale", {})
             fc = sale.get("foreclosure", "")
@@ -1312,7 +1335,7 @@ async def execute_investment_opportunity_scan(
 
     # Parse Exa live auction listings (Auction.com, county sites)
     live_auction_listings: list[dict[str, Any]] = []
-    if exa_result.outcome == Outcome.SUCCESS and exa_result.data:
+    if exa_result and exa_result.outcome == Outcome.SUCCESS and exa_result.data:
         for result_item in (exa_result.data.get("results", []))[:10]:
             url = result_item.get("url", "")
             title = result_item.get("title", "")
@@ -1369,7 +1392,7 @@ async def execute_investment_opportunity_scan(
 
     # Parse market trends
     trends_summary = ""
-    if trends_result.outcome == Outcome.SUCCESS and trends_result.data:
+    if trends_result and trends_result.outcome == Outcome.SUCCESS and trends_result.data:
         trends_props = trends_result.data.get("salesTrends", trends_result.data.get("property", []))
         if isinstance(trends_props, list) and trends_props:
             trends_summary = f"ZIP {zip_code} market trends available"
@@ -1385,12 +1408,15 @@ async def execute_investment_opportunity_scan(
         addr_payload = {"address": f"{a1}, {a2}"}
 
         # Parallel: expanded history (foreclosure filings) + equity + AVM
-        fc_result, equity_result, avm_result = await asyncio.gather(
+        _raw_enrich = await asyncio.gather(
             execute_attom_sales_expanded_history(payload=addr_payload, **args),
             execute_attom_home_equity(payload=addr_payload, **args),
             execute_attom_valuation_avm(payload=addr_payload, **args),
-            return_exceptions=False,
+            return_exceptions=True,
         )
+        fc_result = _safe_result(_raw_enrich[0])
+        equity_result = _safe_result(_raw_enrich[1])
+        avm_result = _safe_result(_raw_enrich[2])
 
         opp: dict[str, Any] = {
             "address": prop_info.get("oneLine", f"{a1}, {a2}"),
@@ -1401,7 +1427,7 @@ async def execute_investment_opportunity_scan(
         }
 
         # Merge foreclosure filings
-        if fc_result.outcome == Outcome.SUCCESS and fc_result.data:
+        if fc_result and fc_result.outcome == Outcome.SUCCESS and fc_result.data:
             fc_data = normalize_from_attom_foreclosure(fc_result.data)
             fc_recs = fc_data.get("foreclosure_records", [])
             opp["foreclosure_stage"] = fc_data.get("foreclosure_stage", "none")
@@ -1421,14 +1447,14 @@ async def execute_investment_opportunity_scan(
                 opp["sale_history"] = sh[:5]
 
         # Merge equity
-        if equity_result.outcome == Outcome.SUCCESS and equity_result.data:
+        if equity_result and equity_result.outcome == Outcome.SUCCESS and equity_result.data:
             eq = normalize_from_attom_equity(equity_result.data)
             opp["ltv_ratio"] = eq.get("ltv_ratio")
             opp["available_equity"] = eq.get("available_equity")
             opp["current_loan_balance"] = eq.get("current_loan_balance")
 
         # Merge AVM
-        if avm_result.outcome == Outcome.SUCCESS and avm_result.data:
+        if avm_result and avm_result.outcome == Outcome.SUCCESS and avm_result.data:
             avm_data = normalize_from_attom_avm(avm_result.data)
             opp["estimated_value"] = avm_data.get("estimated_value")
             opp["avm_confidence"] = avm_data.get("avm_confidence_score")
