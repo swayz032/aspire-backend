@@ -1564,12 +1564,36 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         # Falls back to legacy 4-mode search if no playbook matches.
         if agent == "adam":
             import asyncio as _asyncio
-            import json as _json
 
             from aspire_orchestrator.services.adam.router import route_to_playbook
             from aspire_orchestrator.services.adam.playbooks import dispatch_playbook
             from aspire_orchestrator.services.adam.schemas.playbook_context import PlaybookContext as AdamContext
             from aspire_orchestrator.nodes.respond import _strip_pii_from_record
+
+            # Max records returned to the LLM — keeps the tool response under 20KB
+            # so gpt-4o-mini processes it fast and the voice response isn't delayed.
+            # The summary text includes the full count ("Found 16 hotels...").
+            _MAX_LLM_RECORDS = 10
+
+            # Heavy fields removed from voice responses — LLM doesn't need these to narrate.
+            # The desktop show_cards still gets them via the records array.
+            _VOICE_STRIP_FIELDS = {
+                "rating_breakdown", "trip_types", "sale_history", "foreclosure_records",
+                "nearby_comps", "nearby_schools", "description", "styles",
+                "geo_hierarchy", "census_tract", "census_block_group", "zcta",
+                "avm_fsd", "avm_date", "sources", "_quality_score",
+            }
+
+            def _slim_for_voice(record: dict) -> dict:
+                """Remove heavy nested fields to keep LLM response fast."""
+                slimmed = {k: v for k, v in record.items() if k not in _VOICE_STRIP_FIELDS}
+                # Cap photos to just first URL (LLM doesn't render images)
+                if "photos" in slimmed and isinstance(slimmed["photos"], list):
+                    slimmed["photos"] = len(slimmed["photos"])  # Just the count
+                # Cap amenities list (LLM only narrates top 3)
+                if "amenities" in slimmed and isinstance(slimmed["amenities"], list):
+                    slimmed["amenities"] = slimmed["amenities"][:5]
+                return slimmed
 
             adam_ctx = AdamContext(
                 suite_id=safe_suite_id,
@@ -1595,7 +1619,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             query=full_task,
                             ctx=adam_ctx,
                         ),
-                        timeout=50.0,  # 50s — leaves margin within ElevenLabs 55s timeout
+                        timeout=45.0,  # 45s — leaves 10s margin within ElevenLabs 55s tool timeout
                     )
 
                     # Strip PII from records before sending to client (Law #9)
@@ -1605,16 +1629,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         if isinstance(r, dict)
                     ]
 
-                    # Build voice-friendly summary
-                    response_text = research.summary or f"Research complete. Found {len(safe_records)} results."
+                    total_count = len(safe_records)
+
+                    # Build voice-friendly summary (includes full count even if records are capped)
+                    response_text = research.summary or f"Research complete. Found {total_count} results."
+
+                    # Cap records sent to LLM to keep response fast (<20KB).
+                    # Slim each record to remove heavy fields the LLM doesn't need.
+                    # show_cards on desktop will display these records as visual cards.
+                    llm_records = [_slim_for_voice(r) for r in safe_records[:_MAX_LLM_RECORDS]]
 
                     response_data = research.to_dict()
-                    response_data["records"] = safe_records
+                    response_data["records"] = llm_records
+                    response_data["total_count"] = total_count
 
                     return JSONResponse(
                         status_code=200,
                         content={
-                            "success": len(safe_records) > 0 and research.artifact_type != "error",
+                            "success": total_count > 0 and research.artifact_type != "error",
                             "agent": "adam",
                             "result": response_text,
                             "data": response_data,
