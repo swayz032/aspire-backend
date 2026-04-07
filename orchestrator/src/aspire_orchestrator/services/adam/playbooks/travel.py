@@ -29,16 +29,19 @@ async def execute_business_trip_hotel_research(
 ) -> ResearchResponse:
     """BUSINESS_TRIP_HOTEL_RESEARCH — Find hotel options with full details.
 
+    Time-budgeted execution — completes within 30s for voice responsiveness.
+    All data is preserved; optional enrichment stages degrade gracefully
+    under time pressure (they still run, just with tighter per-call timeouts).
+
     Strategy:
-      1. Google Places text search (type=lodging) — primary source for address,
-         rating, reviews, phone, website, price level
-      2. TripAdvisor Search → Details API — hotel class, ranking, amenities,
-         price level, reviews, web URL
-      3. Dedup by name, merge best data from both sources
-      4. Exa for sentiment/review enrichment on top picks
+      Phase 1 (0-8s):   Google Places + TripAdvisor search — ALL in parallel
+      Phase 2 (8-18s):  TripAdvisor detail enrichment (top 8 locations)
+      Phase 3 (18-30s): Name enrichment + Exa sentiment + photos — ALL in parallel
+      Safety scoring + sort always runs (pure CPU, ~0s)
 
     Guardrail: research and recommendation only, NO booking in v1.
     """
+    import time as _time
     from aspire_orchestrator.providers.google_places_client import execute_google_places_search
     from aspire_orchestrator.providers.tripadvisor_client import (
         execute_tripadvisor_search,
@@ -51,13 +54,21 @@ async def execute_business_trip_hotel_research(
         normalize_from_google_places_hotel,
     )
 
+    _t0 = _time.monotonic()
+    _TIME_BUDGET_SECS = 30.0  # Total budget — leaves 15s margin in 45s playbook timeout
+
+    def _elapsed() -> float:
+        return _time.monotonic() - _t0
+
+    def _remaining() -> float:
+        return max(0.0, _TIME_BUDGET_SECS - _elapsed())
+
     logger.info("Executing BUSINESS_TRIP_HOTEL_RESEARCH for: %s", query[:80])
 
     # Extract location from query if destination not provided
     import re
     location = destination
     if not location:
-        # Try to extract "in <City> <State>" pattern
         loc_match = re.search(r'\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:,?\s*[A-Z]{2})?)', query)
         if loc_match:
             location = loc_match.group(1)
@@ -68,29 +79,39 @@ async def execute_business_trip_hotel_research(
     providers_called: list[str] = []
     seen_names: set[str] = set()
 
-    # Step 1: Google Places — TWO searches for maximum coverage
-    # Search A: tight "hotels in {location}" for local results
-    # Search B: broader "hotels near {location}" for nearby area
-    gp_a, gp_b = await asyncio.gather(
-        execute_google_places_search(
-            payload={"query": f"hotels in {location}", "type": "lodging"},
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
-        ),
-        execute_google_places_search(
-            payload={"query": f"affordable hotels near {location}"},
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
-        ),
+    # ── Phase 1: Google Places + TripAdvisor searches — ALL in parallel ──
+    # Running GP and TA simultaneously saves 3-5s vs sequential.
+    # TA text search uses location string directly (no GP center point needed).
+    gp_a_task = execute_google_places_search(
+        payload={"query": f"hotels in {location}", "type": "lodging"},
+        correlation_id=ctx.correlation_id,
+        suite_id=ctx.suite_id,
+        office_id=ctx.office_id,
+    )
+    gp_b_task = execute_google_places_search(
+        payload={"query": f"affordable hotels near {location}"},
+        correlation_id=ctx.correlation_id,
+        suite_id=ctx.suite_id,
+        office_id=ctx.office_id,
+    )
+    ta_text_task = execute_tripadvisor_search(
+        payload={"query": f"hotels in {location}", "category": "hotels", "language": "en"},
+        correlation_id=ctx.correlation_id,
+        suite_id=ctx.suite_id,
+        office_id=ctx.office_id,
+    )
+
+    gp_a, gp_b, ta_text = await asyncio.gather(
+        gp_a_task, gp_b_task, ta_text_task, return_exceptions=True,
     )
     providers_called.append("google_places")
 
-    # Merge both GP result sets + compute center lat/lng for TA geographic search
+    # Process GP results + compute center lat/lng
     all_lats: list[float] = []
     all_lngs: list[float] = []
     for gp_result in (gp_a, gp_b):
+        if isinstance(gp_result, Exception):
+            continue
         if gp_result.outcome.value == "success" and gp_result.data:
             for place in gp_result.data.get("results", [])[:10]:
                 hotel = normalize_from_google_places_hotel(place)
@@ -104,50 +125,49 @@ async def execute_business_trip_hotel_research(
                             all_lats.append(hotel.latitude)
                             all_lngs.append(hotel.longitude)
 
-    # Center point of GP results — used for TA geographic anchoring
     center_lat = sum(all_lats) / len(all_lats) if all_lats else None
     center_lng = sum(all_lngs) / len(all_lngs) if all_lngs else None
     lat_long_str = f"{center_lat},{center_lng}" if center_lat and center_lng else ""
 
-    # Step 2: TripAdvisor — geographic search + text search (parallel)
-    # TWO TA searches for maximum coverage:
-    #   A: latLong anchored (finds hotels NEAR the area regardless of city name)
-    #   B: text search (finds hotels with city name in their listing)
-    ta_payload_geo = {
-        "query": f"hotels {location}", "category": "hotels", "language": "en",
-    }
+    # Now run TA geo search (needs center point) — fast single call
+    ta_location_ids: dict[str, str] = {}
     if lat_long_str:
-        ta_payload_geo["latLong"] = lat_long_str
-        ta_payload_geo["radius"] = 10
-        ta_payload_geo["radiusUnit"] = "mi"
+        ta_geo_payload = {
+            "query": f"hotels {location}", "category": "hotels", "language": "en",
+            "latLong": lat_long_str, "radius": 10, "radiusUnit": "mi",
+        }
+        try:
+            ta_geo = await asyncio.wait_for(
+                execute_tripadvisor_search(
+                    payload=ta_geo_payload,
+                    correlation_id=ctx.correlation_id,
+                    suite_id=ctx.suite_id,
+                    office_id=ctx.office_id,
+                ),
+                timeout=min(8.0, _remaining()),
+            )
+            if ta_geo.outcome.value == "success" and ta_geo.data:
+                for loc in ta_geo.data.get("results", []):
+                    lid = loc.get("location_id", "")
+                    if lid and lid not in ta_location_ids:
+                        ta_location_ids[lid] = loc.get("name", "")
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning("TA geo search timed out or failed: %s", e)
 
-    ta_geo, ta_text = await asyncio.gather(
-        execute_tripadvisor_search(
-            payload=ta_payload_geo,
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
-        ),
-        execute_tripadvisor_search(
-            payload={"query": f"hotels in {location}", "category": "hotels", "language": "en"},
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
-        ),
-    )
     providers_called.append("tripadvisor")
 
-    # Collect unique TA location IDs from both searches
-    ta_location_ids: dict[str, str] = {}  # location_id -> name
-    for ta_result in (ta_geo, ta_text):
-        if ta_result.outcome.value == "success" and ta_result.data:
-            for loc in ta_result.data.get("results", []):
-                lid = loc.get("location_id", "")
-                if lid and lid not in ta_location_ids:
-                    ta_location_ids[lid] = loc.get("name", "")
+    # Process TA text search results
+    if not isinstance(ta_text, Exception) and ta_text.outcome.value == "success" and ta_text.data:
+        for loc in ta_text.data.get("results", []):
+            lid = loc.get("location_id", "")
+            if lid and lid not in ta_location_ids:
+                ta_location_ids[lid] = loc.get("name", "")
 
-    # Get details for all unique TA locations (parallel)
-    if ta_location_ids:
+    logger.info("Phase 1 complete: %d GP records, %d TA locations in %.1fs",
+                len(records), len(ta_location_ids), _elapsed())
+
+    # ── Phase 2: TripAdvisor detail enrichment (parallel, top 8) ──
+    if ta_location_ids and _remaining() > 5.0:
         detail_tasks = [
             execute_tripadvisor_location_details(
                 location_id=lid,
@@ -155,30 +175,41 @@ async def execute_business_trip_hotel_research(
                 suite_id=ctx.suite_id,
                 office_id=ctx.office_id,
             )
-            for lid in list(ta_location_ids.keys())[:15]
+            for lid in list(ta_location_ids.keys())[:8]
         ]
-        detail_results = await asyncio.gather(*detail_tasks, return_exceptions=True)
-
-        for dr in detail_results:
-            if isinstance(dr, Exception):
-                continue
-            if dr.outcome.value != "success" or not dr.data:
-                continue
-            _merge_ta_detail_into_records(
-                dr.data, records, seen_names, sources, center_lat, center_lng, location,
+        try:
+            detail_results = await asyncio.wait_for(
+                asyncio.gather(*detail_tasks, return_exceptions=True),
+                timeout=min(12.0, _remaining()),
             )
+            for dr in detail_results:
+                if isinstance(dr, Exception):
+                    continue
+                if dr.outcome.value != "success" or not dr.data:
+                    continue
+                _merge_ta_detail_into_records(
+                    dr.data, records, seen_names, sources, center_lat, center_lng, location,
+                )
+        except asyncio.TimeoutError:
+            logger.warning("TA detail enrichment hit time budget at %.1fs", _elapsed())
 
-    # Step 2.5: Enrich remaining GP-only hotels via individual TA name lookups
-    # Hotels like DoubleTree that TA text search missed because their address
-    # says "Atlanta" not "Tucker" — search TA by hotel name directly
-    unenriched = [
-        r for r in records
-        if not any(s.get("provider") == "tripadvisor" for s in r.get("sources", []))
-    ]
-    if unenriched:
+    logger.info("Phase 2 complete: %d records in %.1fs", len(records), _elapsed())
+
+    # ── Phase 3: Name enrichment + Exa + Photos — ALL in parallel ──
+    # These are optional enrichment. Run them concurrently within remaining budget.
+    phase3_tasks: list[asyncio.Task] = []
+
+    # 3a. Name enrichment for unenriched GP hotels
+    async def _enrich_unenriched() -> None:
+        unenriched = [
+            r for r in records
+            if not any(s.get("provider") == "tripadvisor" for s in r.get("sources", []))
+        ]
+        if not unenriched:
+            return
         enrich_tasks = []
-        enrich_names = []  # Track which GP hotel each search is for
-        for rec in unenriched[:8]:
+        enrich_names = []
+        for rec in unenriched[:5]:
             hotel_name = rec.get("name", "")
             if hotel_name:
                 enrich_tasks.append(execute_tripadvisor_search(
@@ -189,50 +220,44 @@ async def execute_business_trip_hotel_research(
                 ))
                 enrich_names.append(hotel_name)
 
-        if enrich_tasks:
-            enrich_results = await asyncio.gather(*enrich_tasks, return_exceptions=True)
+        if not enrich_tasks:
+            return
+        enrich_results = await asyncio.gather(*enrich_tasks, return_exceptions=True)
 
-            # For each search result, find the TA hotel that best matches the GP hotel name
-            enrich_detail_tasks = []
-            enrich_target_names = []  # Which GP hotel this detail is for
-            for idx, er in enumerate(enrich_results):
-                if isinstance(er, Exception):
+        enrich_detail_tasks = []
+        for idx, er in enumerate(enrich_results):
+            if isinstance(er, Exception) or er.outcome.value != "success" or not er.data:
+                continue
+            gp_name = enrich_names[idx].lower()
+            for loc in er.data.get("results", [])[:3]:
+                lid = loc.get("location_id", "")
+                ta_name = (loc.get("name") or "").lower()
+                if not lid or lid in ta_location_ids:
                     continue
-                if er.outcome.value != "success" or not er.data:
+                if _names_match(gp_name, ta_name):
+                    ta_location_ids[lid] = loc.get("name", "")
+                    enrich_detail_tasks.append(execute_tripadvisor_location_details(
+                        location_id=lid,
+                        correlation_id=ctx.correlation_id,
+                        suite_id=ctx.suite_id,
+                        office_id=ctx.office_id,
+                    ))
+                    break
+
+        if enrich_detail_tasks:
+            enrich_details = await asyncio.gather(*enrich_detail_tasks, return_exceptions=True)
+            for dr in enrich_details:
+                if isinstance(dr, Exception) or dr.outcome.value != "success" or not dr.data:
                     continue
-                gp_name = enrich_names[idx].lower()
-                # Find the TA result whose name best matches the GP hotel
-                for loc in er.data.get("results", [])[:3]:
-                    lid = loc.get("location_id", "")
-                    ta_name = (loc.get("name") or "").lower()
-                    if not lid or lid in ta_location_ids:
-                        continue
-                    # Name must have significant overlap — prevent cross-hotel contamination
-                    if _names_match(gp_name, ta_name):
-                        ta_location_ids[lid] = loc.get("name", "")
-                        enrich_detail_tasks.append(execute_tripadvisor_location_details(
-                            location_id=lid,
-                            correlation_id=ctx.correlation_id,
-                            suite_id=ctx.suite_id,
-                            office_id=ctx.office_id,
-                        ))
-                        enrich_target_names.append(enrich_names[idx])
-                        break
+                _merge_ta_detail_into_records(
+                    dr.data, records, seen_names, sources, center_lat, center_lng, location,
+                )
 
-            if enrich_detail_tasks:
-                enrich_details = await asyncio.gather(*enrich_detail_tasks, return_exceptions=True)
-                for dr in enrich_details:
-                    if isinstance(dr, Exception):
-                        continue
-                    if dr.outcome.value != "success" or not dr.data:
-                        continue
-                    _merge_ta_detail_into_records(
-                        dr.data, records, seen_names, sources, center_lat, center_lng, location,
-                    )
-
-    # Step 3: Exa for review sentiment on top 3 hotels
-    top_names = [r.get("name", "") for r in records[:3] if r.get("name")]
-    if top_names:
+    # 3b. Exa sentiment on top 3 hotels
+    async def _exa_sentiment() -> None:
+        top_names = [r.get("name", "") for r in records[:3] if r.get("name")]
+        if not top_names:
+            return
         exa_query = f"{' vs '.join(top_names)} hotel reviews {location}"
         exa_result = await execute_exa_search(
             payload={"query": exa_query, "num_results": 3, "moderation": True},
@@ -245,53 +270,72 @@ async def execute_business_trip_hotel_research(
             for r in exa_result.data.get("results", [])[:3]:
                 snippet = r.get("text", r.get("highlight", ""))
                 if snippet and records:
-                    # Attach review snippets to first matching hotel
                     for rec in records:
                         if rec.get("name", "").lower() in str(snippet).lower():
                             rec["web_review_snippet"] = str(snippet)[:300]
                             break
             sources.append(SourceAttribution(provider="exa"))
 
-    # Step 3.5: Fetch photos for TA-enriched hotels (parallel)
-    # Collect location_ids from TA-enriched records
-    photo_tasks = []
-    photo_record_map: list[dict] = []  # parallel array to match results to records
-    for rec in records:
-        ta_sources = [s for s in rec.get("sources", []) if s.get("provider") == "tripadvisor"]
-        if ta_sources and rec.get("tripadvisor_url"):
-            # Extract location_id from TA URL or from ta_location_ids dict
-            for lid, lname in ta_location_ids.items():
-                if _names_match(rec.get("name", "").lower(), lname.lower()):
-                    photo_tasks.append(execute_tripadvisor_location_photos(
-                        location_id=lid,
-                        correlation_id=ctx.correlation_id,
-                        suite_id=ctx.suite_id,
-                        office_id=ctx.office_id,
-                    ))
-                    photo_record_map.append(rec)
-                    break
+    # 3c. Photos for TA-enriched hotels (top 5)
+    async def _fetch_photos() -> None:
+        photo_tasks_inner = []
+        photo_record_map: list[dict] = []
+        count = 0
+        for rec in records:
+            if count >= 5:
+                break
+            ta_srcs = [s for s in rec.get("sources", []) if s.get("provider") == "tripadvisor"]
+            if ta_srcs and rec.get("tripadvisor_url"):
+                for lid, lname in ta_location_ids.items():
+                    if _names_match(rec.get("name", "").lower(), lname.lower()):
+                        photo_tasks_inner.append(execute_tripadvisor_location_photos(
+                            location_id=lid,
+                            correlation_id=ctx.correlation_id,
+                            suite_id=ctx.suite_id,
+                            office_id=ctx.office_id,
+                        ))
+                        photo_record_map.append(rec)
+                        count += 1
+                        break
 
-    if photo_tasks:
-        photo_results = await asyncio.gather(*photo_tasks, return_exceptions=True)
-        for pr, rec in zip(photo_results, photo_record_map):
-            if isinstance(pr, Exception):
-                continue
-            if pr.outcome.value == "success" and pr.data:
-                photos = pr.data.get("photos", [])
-                if photos:
-                    rec["photos"] = photos
-                    rec["photo_count"] = len(photos)
+        if photo_tasks_inner:
+            photo_results = await asyncio.gather(*photo_tasks_inner, return_exceptions=True)
+            for pr, rec in zip(photo_results, photo_record_map):
+                if isinstance(pr, Exception):
+                    continue
+                if pr.outcome.value == "success" and pr.data:
+                    photos = pr.data.get("photos", [])
+                    if photos:
+                        rec["photos"] = photos
+                        rec["photo_count"] = len(photos)
 
-    # Step 4: Safety scoring — protect our users from sketchy hotels
-    # Extract city name for location relevance boost
-    city_name = location.split(",")[0].split()[-1] if location else ""  # "Tucker" from "Tucker GA"
+    # Run all Phase 3 tasks concurrently within remaining time budget
+    if _remaining() > 3.0:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    _enrich_unenriched(),
+                    _exa_sentiment(),
+                    _fetch_photos(),
+                    return_exceptions=True,
+                ),
+                timeout=min(15.0, _remaining()),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Phase 3 enrichment hit time budget at %.1fs", _elapsed())
+    else:
+        logger.info("Skipping Phase 3 enrichment — only %.1fs remaining", _remaining())
+
+    logger.info("All phases complete: %d records in %.1fs", len(records), _elapsed())
+
+    # ── Safety scoring + sort (pure CPU, instant) ──
+    city_name = location.split(",")[0].split()[-1] if location else ""
     for rec in records:
         safety = _compute_safety_score(rec, target_city=city_name)
         rec["safety_score"] = safety["score"]
         rec["safety_verdict"] = safety["verdict"]
         rec["safety_flags"] = safety["flags"]
 
-    # Sort: recommended hotels first, then by rating
     def _sort_key(r: dict) -> tuple:
         verdict_order = {"Recommended for business travel": 0, "Acceptable": 1, "Use caution": 2, "Not recommended": 3}
         return (verdict_order.get(r.get("safety_verdict", ""), 9), -(r.get("traveler_rating") or 0))

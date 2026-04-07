@@ -1663,14 +1663,17 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     else:
                         response_text = "I wasn't able to find results for that. Try a more specific query."
 
-                    # Slim records: strip heavy nested arrays but keep ALL scalar fields.
-                    # ~3-5KB per record — fast for LLM AND has all data the PropertyCard needs.
-                    # Only nested arrays (sale_history, foreclosure_records, nearby_comps,
-                    # nearby_schools, permit_signals) are removed to keep response under 20KB.
+                    # TWO record sets for different consumers:
+                    # 1. records: slim (~3-5KB each) — for LLM to process fast (no audio dropout)
+                    # 2. card_records: FULL PII-stripped data — for desktop PropertyCard
+                    #    Gateway intercepts card_records, stores them, strips before forwarding to LLM.
+                    #    Desktop fetches full records from gateway when show_cards fires.
                     slim_records = [_slim_for_cards(r) for r in safe_records[:_MAX_LLM_RECORDS]]
+                    full_records = safe_records[:_MAX_LLM_RECORDS]
 
                     response_data = research.to_dict()
                     response_data["records"] = slim_records
+                    response_data["card_records"] = full_records
                     response_data["total_count"] = total_count
 
                     return JSONResponse(

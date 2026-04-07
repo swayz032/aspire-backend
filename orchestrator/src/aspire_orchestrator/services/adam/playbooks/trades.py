@@ -7,6 +7,7 @@ Playbooks: Property Facts & Permits, Estimate Research, Tool/Material Price Chec
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -210,38 +211,60 @@ async def execute_tool_material_price_check(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # 1. SerpApi Home Depot FIRST (store-specific with stock — primary for trades)
-    # Resolve nearest HD store using Google Places for accurate location
+    # Resolve nearest HD store + run Google Shopping in parallel
+    # Store resolution is optional — HD search works without it, just no local stock info.
     from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
     hd_store_info: dict[str, Any] = {}
     resolved_store_id = store_id
-    if not resolved_store_id and zip_code:
-        store_match = await resolve_store_async(
-            zip_code,
+
+    # Build Google Shopping task now (doesn't need store_id)
+    shopping_payload: dict[str, Any] = {"query": query, "sort_by": 1}
+    if zip_code:
+        shopping_payload["location"] = zip_code
+    if on_sale:
+        shopping_payload["on_sale"] = True
+
+    async def _resolve_and_search_hd() -> Any:
+        """Resolve store ID, then search HD with it."""
+        nonlocal resolved_store_id, hd_store_info
+        if not resolved_store_id and zip_code:
+            store_match = await resolve_store_async(
+                zip_code,
+                correlation_id=ctx.correlation_id,
+                suite_id=ctx.suite_id,
+                office_id=ctx.office_id,
+            )
+            if store_match:
+                resolved_store_id = store_match.get("store_id", "")
+                hd_store_info = store_match
+
+        hd_payload: dict[str, Any] = {"query": query, "hd_sort": "best_match"}
+        if resolved_store_id:
+            hd_payload["store_id"] = resolved_store_id
+        if zip_code:
+            hd_payload["delivery_zip"] = zip_code
+
+        return await execute_serpapi_homedepot_search(
+            payload=hd_payload,
             correlation_id=ctx.correlation_id,
             suite_id=ctx.suite_id,
             office_id=ctx.office_id,
         )
-        if store_match:
-            resolved_store_id = store_match.get("store_id", "")
-            hd_store_info = store_match
 
-    hd_payload: dict[str, Any] = {"query": query, "hd_sort": "best_match"}
-    if resolved_store_id:
-        hd_payload["store_id"] = resolved_store_id
-    if zip_code:
-        hd_payload["delivery_zip"] = zip_code
-
-    hd_result = await execute_serpapi_homedepot_search(
-        payload=hd_payload,
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
+    # Run HD (store resolve + search) and Google Shopping in parallel
+    hd_result, shopping_result = await asyncio.gather(
+        _resolve_and_search_hd(),
+        execute_serpapi_shopping_search(
+            payload=shopping_payload,
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+        ),
+        return_exceptions=True,
     )
-    providers_called.append("serpapi_home_depot")
 
-    if hd_result.outcome.value == "success" and hd_result.data:
-        # Merge SerpApi's store info with our resolved store
+    # Process HD results
+    if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
         serpapi_store = hd_result.data.get("store", {})
         if serpapi_store.get("store_name"):
             hd_store_info["store_name"] = serpapi_store["store_name"]
@@ -251,27 +274,15 @@ async def execute_tool_material_price_check(
             product = normalize_from_serpapi_homedepot(item)
             records.append(product.to_dict())
             sources.extend(product.sources)
+    providers_called.append("serpapi_home_depot")
 
-    # 2. SerpApi Google Shopping (cross-retailer comparison)
-    shopping_payload: dict[str, Any] = {"query": query, "sort_by": 1}  # price low-high
-    if zip_code:
-        shopping_payload["location"] = zip_code
-    if on_sale:
-        shopping_payload["on_sale"] = True
-
-    shopping_result = await execute_serpapi_shopping_search(
-        payload=shopping_payload,
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-    )
-    providers_called.append("serpapi_shopping")
-
-    if shopping_result.outcome.value == "success" and shopping_result.data:
+    # Process Shopping results
+    if not isinstance(shopping_result, Exception) and shopping_result.outcome.value == "success" and shopping_result.data:
         for item in shopping_result.data.get("results", [])[:6]:
             product = normalize_from_serpapi_shopping(item)
             records.append(product.to_dict())
             sources.extend(product.sources)
+    providers_called.append("serpapi_shopping")
 
     report = verify_records(records=records, sources=sources, required_fields=["product_name", "price", "retailer"])
 
