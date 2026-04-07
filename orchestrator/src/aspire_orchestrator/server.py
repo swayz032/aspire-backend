@@ -1655,8 +1655,22 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
 
                     total_count = len(safe_records)
 
-                    # Build voice-friendly summary (includes full count even if records are capped)
-                    response_text = research.summary or f"Research complete. Found {total_count} results."
+                    # Build voice-friendly summary — clean and conversational, not raw playbook output.
+                    # The raw research.summary contains technical text like "Verification: verified (score=0.95)"
+                    # which should NEVER appear in the voice response or chat transcript.
+                    if total_count == 1 and research.artifact_type in (
+                        "LandlordPropertyPack", "PropertyFactPack", "RentCompPack",
+                        "PermitContextPack", "NeighborhoodDemandBrief",
+                    ):
+                        # Single property — address-based summary
+                        addr = ""
+                        if safe_records:
+                            addr = safe_records[0].get("normalized_address", "")
+                        response_text = f"I pulled up the property details for {addr}." if addr else "Here are the property details."
+                    elif total_count > 0:
+                        response_text = f"Found {total_count} results. Take a look."
+                    else:
+                        response_text = "I wasn't able to find results for that. Try a more specific query."
 
                     # Cap records sent to LLM to keep response fast (<20KB).
                     # Slim each record to remove heavy fields the LLM doesn't need.
