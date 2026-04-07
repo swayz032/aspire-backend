@@ -402,6 +402,12 @@ async def execute_property_facts(
         logger.warning("landlord.property_facts: foreclosure data failed: %s", exc)
 
     if prop_dict:
+        # Set property_value = tax market value (county official) as the default.
+        # AVM is an algorithm estimate — tax assessment is authoritative.
+        tax_mv = prop_dict.get("tax_market_value")
+        avm_v = prop_dict.get("estimated_value")
+        prop_dict["property_value"] = tax_mv or avm_v
+        prop_dict["property_value_source"] = "county_tax_assessment" if tax_mv else "avm_estimate"
         records.append(prop_dict)
 
     report = verify_records(

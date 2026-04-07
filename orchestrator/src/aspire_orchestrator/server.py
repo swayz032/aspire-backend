@@ -1588,6 +1588,9 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 "mortgage_loan_type", "current_loan_balance", "loan_balance",
                 "seller_name", "buyer_name", "lender", "original_loan",
                 "borrower_name", "trustee_name", "lender_name",
+                # AVM estimate stripped from voice — LLM should use property_value
+                # (which defaults to tax_market_value). Prevents quoting wrong value.
+                "estimated_value", "avm_confidence_score", "avm_fsd",
             }
 
             def _slim_for_voice(record: dict) -> dict:
