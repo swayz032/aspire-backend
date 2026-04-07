@@ -189,6 +189,18 @@ def classify_fast(query: str, tenant_segment: str | None = None) -> Classificati
         intent = "property_fact"
         logger.info("Classifier override: price_check → property_fact (street address detected)")
 
+    # 2c. Override: retail store name → force price_check
+    # "paint sprayers at Home Depot" must route to product search, not vendor search.
+    # Retail store names are a definitive signal: the user wants products/prices.
+    _RETAIL_STORES = [
+        "home depot", "lowes", "lowe's", "menards", "ace hardware",
+        "harbor freight", "tractor supply", "sherwin-williams", "sherwin williams",
+        "walmart", "costco", "amazon", "wayfair", "ikea",
+    ]
+    if intent != "price_check" and any(store in q for store in _RETAIL_STORES):
+        intent = "price_check"
+        logger.info("Classifier override: %s → price_check (retail store detected)", intent)
+
     # 3. Determine entity type from intent
     entity_type = _ENTITY_MAP.get(intent, "web")
 

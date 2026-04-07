@@ -849,42 +849,30 @@ def _extract_structured_results(state: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-# PII fields that must NEVER reach the client (Law #9)
-# Covers ALL PropertyRecord fields that reveal owner identity, financial details,
-# or mortgage/deed data.  Voice LLM and desktop cards show property characteristics
-# (beds, baths, sqft, value) — never owner PII or financial obligations.
+# PII fields stripped from card data sent to desktop (Law #9).
+#
+# MINIMAL set: only third-party PII from foreclosure records.
+# Owner, mortgage, equity, tax, sale history — ALL stay visible on cards.
+# The authenticated business user viewing property intel NEEDS this data.
+# Voice stripping (_VOICE_STRIP_FIELDS in server.py) is the defense layer
+# that prevents Ava from narrating sensitive fields aloud.
 _PII_STRIP_FIELDS = {
-    # Owner identity
-    "owner_name", "owner_type", "owner_occupied", "previous_owner_name",
-    "absentee_owner_indicator",
-    # Mailing / contact
-    "mailing_address", "mailing_city", "mailing_state", "mailing_zip",
-    # Mortgage / loan
-    "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_type",
-    "mortgage_loan_type", "mortgage_term_months", "mortgage_due_date",
-    "current_loan_balance", "estimated_monthly_payment",
-    # Deed
-    "deed_type", "deed_recording_date",
-    # Tax (keep estimated_value but strip raw tax data)
-    "tax_assessed_total", "tax_assessed_land", "tax_assessed_improvements",
-    "tax_market_value", "annual_tax_amount",
-    # Sale participants
-    "seller_name", "buyer_name", "lender", "original_loan",
-    # Financial ratios that reveal loan details
-    "loan_balance", "ltv_ratio",
+    # Third-party foreclosure participants (not the property owner's data)
+    "borrower_name", "trustee_name", "lender_name",
 }
 
 
 def _strip_pii_from_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Remove PII fields from a record before sending to desktop client.
+    """Remove third-party PII from a record before sending to desktop client.
 
-    Law #9: Never expose property owner names, mailing addresses, mortgage
-    details, or financial data to the client. These fields are for backend
-    processing only — the card UI shows property characteristics, not PII.
+    Law #9: Strip foreclosure third-party names. All other property data
+    (owner, mortgage, equity, tax) stays visible on the card — the
+    authenticated user needs this intel. Voice narration is stripped
+    separately via _VOICE_STRIP_FIELDS in server.py.
     """
     stripped = {k: v for k, v in record.items() if k not in _PII_STRIP_FIELDS}
 
-    # Also strip PII from nested sale_history entries
+    # Strip third-party names from nested sale_history entries
     if "sale_history" in stripped and isinstance(stripped["sale_history"], list):
         stripped["sale_history"] = [
             {k: v for k, v in entry.items() if k not in ("buyer", "seller", "buyer_name", "seller_name")}

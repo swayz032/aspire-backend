@@ -1582,23 +1582,38 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 "nearby_comps", "nearby_schools", "description", "styles",
                 "geo_hierarchy", "census_tract", "census_block_group", "zcta",
                 "avm_fsd", "avm_date", "sources", "_quality_score",
-                # Defense-in-depth: PII fields the LLM must NEVER narrate (Law #9)
-                "owner_name", "owner_type", "previous_owner_name", "mailing_address",
+                # Defense-in-depth: ALL sensitive fields the LLM must NEVER narrate (Law #9)
+                # Cards show these — voice doesn't. Full list covers owner, mortgage,
+                # equity, tax, sale participants, and AVM.
+                "owner_name", "owner_type", "owner_occupied", "previous_owner_name",
+                "absentee_owner_indicator", "mailing_address",
                 "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_due_date",
-                "mortgage_loan_type", "current_loan_balance", "loan_balance",
+                "mortgage_loan_type", "mortgage_term_months", "deed_type",
+                "current_loan_balance", "loan_balance", "estimated_monthly_payment",
+                "ltv_ratio", "available_equity", "lendable_equity",
+                "tax_assessed_total", "tax_assessed_land", "tax_assessed_improvement",
+                "tax_market_value", "tax_market_land", "tax_market_improvement",
+                "annual_tax_amount", "tax_per_sqft",
                 "seller_name", "buyer_name", "lender", "original_loan",
                 "borrower_name", "trustee_name", "lender_name",
+                "last_sale_amount", "last_sale_price_per_sqft", "last_sale_price_per_bed",
+                "parcel_apn", "parcel_fips", "attom_id",
                 # AVM estimate stripped from voice — LLM should use property_value
-                # (which defaults to tax_market_value). Prevents quoting wrong value.
-                "estimated_value", "avm_confidence_score", "avm_fsd",
+                "estimated_value", "estimated_value_high", "estimated_value_low",
+                "avm_confidence_score", "avm_price_per_sqft",
             }
 
             def _slim_for_voice(record: dict) -> dict:
-                """Remove heavy nested fields to keep LLM response fast."""
+                """Remove heavy nested fields to keep LLM response fast.
+
+                NOTE: Photos are kept (first 3 URLs) because show_cards renders
+                them as card hero images. Only the LLM text gets slim fields —
+                the full record including photos goes to the desktop via show_cards.
+                """
                 slimmed = {k: v for k, v in record.items() if k not in _VOICE_STRIP_FIELDS}
-                # Cap photos to just first URL (LLM doesn't render images)
+                # Keep first 3 photo URLs for card hero images (not just a count)
                 if "photos" in slimmed and isinstance(slimmed["photos"], list):
-                    slimmed["photos"] = len(slimmed["photos"])  # Just the count
+                    slimmed["photos"] = slimmed["photos"][:3]
                 # Cap amenities list (LLM only narrates top 3)
                 if "amenities" in slimmed and isinstance(slimmed["amenities"], list):
                     slimmed["amenities"] = slimmed["amenities"][:5]
