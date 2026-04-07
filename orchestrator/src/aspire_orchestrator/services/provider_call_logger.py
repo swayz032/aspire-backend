@@ -167,7 +167,13 @@ class ProviderCallLogger:
                     "error_detail": record.get("error_message", "") or None,
                     "started_at": record.get("started_at"),
                     "completed_at": record.get("finished_at"),
-                    "request_summary": record.get("response_summary", "") or "{}",
+                    # request_summary is jsonb NOT NULL — must be a dict, not a string
+                    "request_summary": {
+                        "provider": record.get("provider", ""),
+                        "action": record.get("action", ""),
+                        "latency_ms": record.get("latency_ms", 0),
+                        "retry_count": record.get("retry_count", 0),
+                    },
                 }
                 client.table("provider_call_log").insert(db_row).execute()
         except Exception as e:

@@ -143,6 +143,26 @@ class Settings(BaseSettings):
 
     model_config = {"env_prefix": "ASPIRE_", "extra": "ignore"}
 
+    def model_post_init(self, __context: object) -> None:
+        """Fall back to non-prefixed env vars for Adam provider keys.
+
+        Railway sets ATTOM_API_KEY but env_prefix makes Pydantic look for
+        ASPIRE_ATTOM_API_KEY.  Check both so deployment works either way.
+        """
+        _FALLBACKS: list[tuple[str, str]] = [
+            ("attom_api_key",            "ATTOM_API_KEY"),
+            ("exa_api_key",              "EXA_SEARCH_API_KEY"),
+            ("serpapi_api_key",          "SERPAPI_API_KEY"),
+            ("tripadvisor_api_key",      "TRIPADVISOR_API_KEY"),
+            ("parallel_api_key",         "PARALLEL_API_KEY"),
+            ("parallel_extract_api_key", "PARALLEL_EXTRACT_API_KEY"),
+        ]
+        for field, env_name in _FALLBACKS:
+            if not getattr(self, field):
+                val = (os.getenv(env_name) or "").strip()
+                if val:
+                    object.__setattr__(self, field, val)
+
 def _is_truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 

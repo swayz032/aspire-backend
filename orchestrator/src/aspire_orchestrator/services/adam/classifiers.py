@@ -85,7 +85,10 @@ _INTENT_KEYWORDS: dict[str, list[str]] = {
         "square foot", "sqft", "lot size", "year built", "beds", "baths",
         "owner", "parcel", "apn", "assessed", "avm", "valuation",
         "permit", "sold for", "last sale", "transaction", "school district",
-        "property fact", "property detail", "tell me about",
+        "property fact", "property detail", "property details",
+        "tell me about", "look up", "pull up", "what do you know about",
+        "property at", "property on", "house at", "house on",
+        "address", "street", "avenue", "boulevard", "drive", "road", "lane",
     ],
     "compare": [
         "compare", "competitor", "versus", "vs", "alternative", "better",
@@ -135,6 +138,24 @@ _ENTITY_MAP: dict[str, str] = {
 }
 
 
+def _has_street_address(q: str) -> bool:
+    """Detect a US street address pattern (e.g. '4863 Price Street').
+
+    Returns True when the query contains a number followed by a street name
+    with a common suffix.  This prevents 'Price Street' from triggering
+    the price_check intent.
+    """
+    import re
+    return bool(re.search(
+        r"\b\d{1,6}\s+\w+\s+"
+        r"(?:st(?:reet)?|ave(?:nue)?|blvd|boulevard|dr(?:ive)?|rd|road|"
+        r"ln|lane|ct|court|cir(?:cle)?|way|pl(?:ace)?|pkwy|parkway|"
+        r"ter(?:race)?|trail|trce)\b",
+        q,
+        re.IGNORECASE,
+    ))
+
+
 def classify_fast(query: str, tenant_segment: str | None = None) -> ClassificationResult:
     """Fast keyword-based classification. No LLM call.
 
@@ -160,6 +181,13 @@ def classify_fast(query: str, tenant_segment: str | None = None) -> Classificati
         if score > best_intent_score:
             best_intent_score = score
             intent = intent_name
+
+    # 2b. Override: street address + "price_check" → property_fact
+    # "property details for 4863 Price Street" contains "price" (→ price_check)
+    # but the real intent is property_fact.  Address pattern wins.
+    if intent == "price_check" and _has_street_address(q):
+        intent = "property_fact"
+        logger.info("Classifier override: price_check → property_fact (street address detected)")
 
     # 3. Determine entity type from intent
     entity_type = _ENTITY_MAP.get(intent, "web")
