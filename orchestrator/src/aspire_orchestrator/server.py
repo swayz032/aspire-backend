@@ -1672,14 +1672,20 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     else:
                         response_text = "I wasn't able to find results for that. Try a more specific query."
 
-                    # Cap records sent to LLM to keep response fast (<20KB).
-                    # Slim each record to remove heavy fields the LLM doesn't need.
-                    # show_cards on desktop will display these records as visual cards.
-                    llm_records = [_slim_for_voice(r) for r in safe_records[:_MAX_LLM_RECORDS]]
+                    # TWO record versions:
+                    # 1. card_records: FULL PII-stripped data for show_cards → PropertyCard/HotelCard/etc.
+                    #    These contain ALL owner, mortgage, equity, tax, sale data the card needs.
+                    # 2. voice_brief: Slimmed records the LLM reads for narration (no sensitive details).
+                    #    Voice guardrails in the ElevenLabs prompt prevent narrating what's stripped.
+                    card_records = safe_records[:_MAX_LLM_RECORDS]
+                    voice_brief = [_slim_for_voice(r) for r in card_records]
 
                     response_data = research.to_dict()
-                    response_data["records"] = llm_records
+                    # Records = full data for show_cards (cards need ALL the intel)
+                    response_data["records"] = card_records
                     response_data["total_count"] = total_count
+                    # Voice brief = slimmed for LLM narration context (lightweight)
+                    response_data["voice_brief"] = voice_brief
 
                     return JSONResponse(
                         status_code=200,
