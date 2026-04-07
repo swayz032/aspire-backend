@@ -676,18 +676,26 @@ async def stream_agent_activity(
                         if isinstance(_resp_agent, str) and _resp_agent.strip():
                             _resolved_agent = _resp_agent.strip().lower()
 
+                    # Include structured_results when Adam returns research data
+                    # Desktop uses this as fallback if ElevenLabs show_cards tool wasn't called
+                    _structured = response.get("structured_results") if isinstance(response, dict) else None
+
+                    _event_data: dict = {
+                        "text": response_text,
+                        "correlation_id": correlation_id,
+                        "receipt_ids": graph_result.get("receipt_ids", []),
+                        "assigned_agent": _resolved_agent,
+                    }
+                    if _structured and isinstance(_structured, dict):
+                        _event_data["structured_results"] = _structured
+
                     yield format_sse_event({
                         "type": "response",
                         "content": response_text,
                         "message": response_text,
                         "agent": _resolved_agent,
                         "timestamp": int(time.time() * 1000),
-                        "data": {
-                            "text": response_text,
-                            "correlation_id": correlation_id,
-                            "receipt_ids": graph_result.get("receipt_ids", []),
-                            "assigned_agent": _resolved_agent,
-                        },
+                        "data": _event_data,
                     })
                 except Exception as e:
                     logger.error("SSE: failed to emit final response: %s", e)
@@ -1550,375 +1558,102 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if details:
             full_task = f"{task}. Additional details: {details}"
 
-        # ── Adam: Next-Gen Research Engine (v6) ──
-        # Multi-mode: vendor (places-first), strategy (web-first 3-stream),
-        # competitive (places+web), topic (web-only). Mode detected by GPT-5.2.
+        # ── Adam: Research via Ultra Router (19 playbooks, 13 providers) ──
+        # Routes through classify_fast → route_to_playbook → dispatch_playbook.
+        # Returns ResearchResponse with artifact_type, records[], confidence, etc.
+        # Falls back to legacy 4-mode search if no playbook matches.
         if agent == "adam":
             import asyncio as _asyncio
             import json as _json
-            import os as _os
-            import re as _re
-            from aspire_orchestrator.services.openai_client import generate_text_async
+
+            from aspire_orchestrator.services.adam.router import route_to_playbook
+            from aspire_orchestrator.services.adam.playbooks import dispatch_playbook
+            from aspire_orchestrator.services.adam.schemas.playbook_context import PlaybookContext as AdamContext
+            from aspire_orchestrator.nodes.respond import _strip_pii_from_record
+
+            adam_ctx = AdamContext(
+                suite_id=safe_suite_id,
+                office_id=safe_office_id,
+                correlation_id=ctx.correlation_id,
+            )
+
+            # Step 1: Classify & route to the right playbook
+            classification, playbook = route_to_playbook(full_task)
+            logger.info(
+                "Adam Ultra: segment=%s intent=%s playbook=%s confidence=%.2f for: %s",
+                classification.segment, classification.intent,
+                playbook.name if playbook else "NONE",
+                classification.confidence, full_task[:80],
+            )
+
+            # Step 2: Execute playbook (or fall back to legacy)
+            if playbook:
+                try:
+                    research = await _asyncio.wait_for(
+                        dispatch_playbook(
+                            playbook_name=playbook.name,
+                            query=full_task,
+                            ctx=adam_ctx,
+                        ),
+                        timeout=50.0,  # 50s — leaves margin within ElevenLabs 55s timeout
+                    )
+
+                    # Strip PII from records before sending to client (Law #9)
+                    safe_records = [
+                        _strip_pii_from_record(r)
+                        for r in research.records
+                        if isinstance(r, dict)
+                    ]
+
+                    # Build voice-friendly summary
+                    response_text = research.summary or f"Research complete. Found {len(safe_records)} results."
+
+                    response_data = research.to_dict()
+                    response_data["records"] = safe_records
+
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": len(safe_records) > 0 and research.artifact_type != "error",
+                            "agent": "adam",
+                            "result": response_text,
+                            "data": response_data,
+                            "receipt_id": ctx.correlation_id,
+                            "error": None if research.artifact_type != "error" else research.summary,
+                        },
+                    )
+                except _asyncio.TimeoutError:
+                    logger.error("Adam playbook %s timed out for: %s", playbook.name, full_task[:80])
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": False,
+                            "agent": "adam",
+                            "result": "That research is taking longer than expected. Try a more specific query or try again.",
+                            "error": "PLAYBOOK_TIMEOUT",
+                        },
+                    )
+                except Exception as pb_err:
+                    logger.error("Adam playbook %s failed: %s", playbook.name, pb_err, exc_info=True)
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": False,
+                            "agent": "adam",
+                            "result": f"I ran into an issue researching that. Let me try a different approach — can you rephrase?",
+                            "error": str(pb_err)[:200],
+                        },
+                    )
+
+            # Step 3: No playbook matched — fall back to legacy web+places search
+            # This handles general SMB queries that don't fit any specialized playbook
+            logger.info("Adam: no playbook match, falling back to legacy search for: %s", full_task[:80])
+            # Legacy fallback: simple web + places search for unrecognized queries
             from aspire_orchestrator.services.search_router import (
-                _web_search_chain, _places_search_chain, _geocode_chain,
+                _web_search_chain, _places_search_chain,
             )
             from aspire_orchestrator.models import Outcome
 
-            api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
-
-            # ── Step 0: Mode Detection (keyword-based, instant) ──
-            mode = "vendor"
-            task_lower = full_task.lower()
-            _strategy_words = ["start", "plan", "build", "grow", "scale", "strategy", "research starting", "help me start", "how to start", "what would it take", "business plan", "market", "revenue", "startup cost", "how do i", "how would", "how can i", "what it takes", "research", "launch", "expand", "pricing strategy", "business model"]
-            _topic_words = ["license", "requirement", "regulation", "insurance", "how does", "what is", "explain", "tax", "legal", "permit", "certification", "comply", "zoning", "osha"]
-            _competitive_words = ["competitor", "competition", "what are others charging", "competitive", "who else", "market share", "who are my", "what do others charge", "pricing comparison"]
-            _vendor_words = ["find", "locate", "search for", "where can i", "who sells", "supplier", "store", "near me", "in my area", "phone number", "address for"]
-
-            if any(w in task_lower for w in _strategy_words):
-                mode = "strategy"
-            elif any(w in task_lower for w in _topic_words):
-                mode = "topic"
-            elif any(w in task_lower for w in _competitive_words):
-                mode = "competitive"
-            else:
-                mode = "vendor"
-            logger.info("Adam mode: %s for task: %s", mode, full_task[:80])
-
-            # ── STRATEGY MODE: 3 parallel research streams ──
-            if mode == "strategy":
-                common_kwargs_web = dict(
-                    correlation_id=ctx.correlation_id,
-                    suite_id=safe_suite_id,
-                    office_id=safe_office_id,
-                    risk_tier="green",
-                )
-
-                # Plan 3 research streams
-                try:
-                    plan_resp = await _asyncio.wait_for(
-                        generate_text_async(
-                            model="gpt-4o",
-                            messages=[
-                                {"role": "system", "content": "Return ONLY a JSON object with 3 keys: stream_a (market queries), stream_b (operations queries), stream_c (revenue queries). Each key has an array of 2 search query strings. No explanation."},
-                                {"role": "user", "content": f"Plan 3 research streams for this task. Each stream needs 2 web search queries.\nTask: {full_task}"},
-                            ],
-                            api_key=api_key,
-                            base_url="https://api.openai.com/v1",
-                            timeout_seconds=8.0,
-                            max_output_tokens=4096,
-                            prefer_responses_api=False,
-                        ),
-                        timeout=8.0,
-                    )
-                    cleaned = plan_resp.strip()
-                    if cleaned.startswith("```"):
-                        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-                        cleaned = cleaned.rsplit("```", 1)[0]
-                    streams = _json.loads(cleaned.strip())
-                except Exception as plan_err:
-                    logger.warning("Adam strategy plan failed: %s, using template", type(plan_err).__name__)
-                    streams = {
-                        "stream_a": [f"{full_task} market demand competitors", f"{full_task} industry trends 2026"],
-                        "stream_b": [f"{full_task} startup costs equipment licenses", f"{full_task} hiring requirements insurance"],
-                        "stream_c": [f"{full_task} pricing rates revenue benchmarks", f"{full_task} profit margins growth path"],
-                    }
-
-                # Execute all streams in parallel (web-first — Brave + Tavily)
-                async def _web_search(query: str) -> list[dict]:
-                    results = []
-                    for pname, executor_fn in _web_search_chain():
-                        try:
-                            result = await _asyncio.wait_for(
-                                executor_fn(payload={"query": query}, **common_kwargs_web),
-                                timeout=10.0,
-                            )
-                            if result.outcome == Outcome.SUCCESS and result.data:
-                                for r in result.data.get("results", [])[:5]:
-                                    results.append({
-                                        "title": r.get("title", r.get("name", "")),
-                                        "url": r.get("url", ""),
-                                        "snippet": r.get("snippet", r.get("description", "")),
-                                        "source": pname,
-                                    })
-                            if results:
-                                break  # Got results from first provider, skip fallback
-                        except Exception:
-                            continue
-                    return results
-
-                # Flatten all queries and search in parallel
-                all_queries = []
-                stream_labels = []
-                for label in ("stream_a", "stream_b", "stream_c"):
-                    for q in streams.get(label, [])[:2]:
-                        all_queries.append(q)
-                        stream_labels.append(label)
-
-                search_results = await _asyncio.gather(*[_web_search(q) for q in all_queries])
-
-                # Group results by stream
-                stream_data = {"stream_a": [], "stream_b": [], "stream_c": []}
-                for i, results in enumerate(search_results):
-                    label = stream_labels[i] if i < len(stream_labels) else "stream_a"
-                    stream_data[label].extend(results)
-
-                total_results = sum(len(v) for v in stream_data.values())
-                logger.info("Adam strategy search: %d total results across 3 streams", total_results)
-
-                # Synthesize with GPT-5.2
-                try:
-                    synthesis_prompt = (
-                        f"You are Adam, a strategic research specialist for small business owners.\n"
-                        f"Task: {full_task}\n\n"
-                        f"Stream A (Market):\n{_json.dumps(stream_data['stream_a'][:8], indent=2, default=str)}\n\n"
-                        f"Stream B (Operations):\n{_json.dumps(stream_data['stream_b'][:8], indent=2, default=str)}\n\n"
-                        f"Stream C (Revenue):\n{_json.dumps(stream_data['stream_c'][:8], indent=2, default=str)}\n\n"
-                        f"Create a strategic brief for a small business owner. Structure as JSON:\n"
-                        f'{{"market": {{"summary": "...", "competitors": ["..."], "demand": "..."}},\n'
-                        f' "operations": {{"startup_costs": "...", "equipment": ["..."], "licenses": ["..."], "hiring": "..."}},\n'
-                        f' "revenue": {{"pricing": "...", "contract_value": "...", "targets": "...", "margins": "..."}},\n'
-                        f' "recommended_approach": "one paragraph recommendation",\n'
-                        f' "confidence": "high/medium/low",\n'
-                        f' "flags": ["anything only found in 1 source"]}}\n\n'
-                        f"Use ONLY data from the search results. If you estimate a number, say so. Be specific."
-                    )
-
-                    synthesis = await generate_text_async(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "Create a strategic research brief. Return valid JSON. Be specific with numbers from the search results."},
-                            {"role": "user", "content": synthesis_prompt},
-                        ],
-                        api_key=api_key,
-                        base_url="https://api.openai.com/v1",
-                        timeout_seconds=15.0,
-                        max_output_tokens=4096,
-                        prefer_responses_api=False,
-                    )
-
-                    # Parse the brief
-                    brief_text = synthesis.strip()
-                    if brief_text.startswith("```"):
-                        brief_text = brief_text.split("\n", 1)[1] if "\n" in brief_text else brief_text[3:]
-                        brief_text = brief_text.rsplit("```", 1)[0]
-                    try:
-                        brief = _json.loads(brief_text.strip())
-                    except _json.JSONDecodeError:
-                        brief = {"recommended_approach": brief_text, "confidence": "medium"}
-
-                    # Build voice-friendly summary from the brief
-                    rec = brief.get("recommended_approach", "")
-                    market_summary = brief.get("market", {}).get("summary", "")
-                    response_text = rec if rec else market_summary if market_summary else synthesis[:500]
-
-                except Exception as synth_err:
-                    logger.warning("Adam strategy synthesis failed: %s", synth_err)
-                    brief = {}
-                    response_text = f"I researched {full_task} but had trouble synthesizing the results. Here's what I found across {total_results} sources."
-
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "success": total_results > 0,
-                        "agent": "adam",
-                        "result": response_text,
-                        "data": {
-                            "mode": "strategy",
-                            "brief": brief,
-                            "stream_results": {k: len(v) for k, v in stream_data.items()},
-                            "total_results": total_results,
-                            "queries_used": all_queries,
-                        },
-                        "receipt_id": ctx.correlation_id,
-                        "error": None if total_results > 0 else "No results found",
-                    },
-                )
-
-            # ── TOPIC MODE: web-only focused research ──
-            if mode == "topic":
-                common_kwargs_web = dict(
-                    correlation_id=ctx.correlation_id,
-                    suite_id=safe_suite_id,
-                    office_id=safe_office_id,
-                    risk_tier="green",
-                )
-
-                # Search with 2 query variants
-                queries = [full_task, f"{full_task} guide requirements 2026"]
-                all_results = []
-                for q in queries:
-                    for pname, executor_fn in _web_search_chain():
-                        try:
-                            result = await _asyncio.wait_for(
-                                executor_fn(payload={"query": q}, **common_kwargs_web),
-                                timeout=10.0,
-                            )
-                            if result.outcome == Outcome.SUCCESS and result.data:
-                                for r in result.data.get("results", [])[:5]:
-                                    all_results.append({
-                                        "title": r.get("title", r.get("name", "")),
-                                        "url": r.get("url", ""),
-                                        "snippet": r.get("snippet", r.get("description", "")),
-                                        "source": pname,
-                                    })
-                                break
-                        except Exception:
-                            continue
-
-                # Synthesize
-                try:
-                    synthesis = await generate_text_async(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "Summarize research findings for a small business owner. Be specific and cite sources. Under 200 words."},
-                            {"role": "user", "content": f"Task: {full_task}\n\nSearch results:\n{_json.dumps(all_results[:10], indent=2, default=str)}\n\nSummarize the key findings. Include specific requirements, steps, or answers."},
-                        ],
-                        api_key=api_key,
-                        base_url="https://api.openai.com/v1",
-                        timeout_seconds=12.0,
-                        max_output_tokens=4096,
-                        prefer_responses_api=False,
-                    )
-                    response_text = synthesis
-                except Exception as synth_err:
-                    logger.warning("Adam topic synthesis failed: %s", synth_err)
-                    if all_results:
-                        response_text = f"Found {len(all_results)} results. Top: {all_results[0].get('title', 'Unknown')}."
-                    else:
-                        response_text = f"No results found for: {full_task}"
-
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "success": len(all_results) > 0,
-                        "agent": "adam",
-                        "result": response_text,
-                        "data": {"mode": "topic", "results": all_results[:10], "total": len(all_results)},
-                        "receipt_id": ctx.correlation_id,
-                    },
-                )
-
-            # ── COMPETITIVE MODE: places + web cross-reference ──
-            if mode == "competitive":
-                common_kwargs_comp = dict(
-                    correlation_id=ctx.correlation_id,
-                    suite_id=safe_suite_id,
-                    office_id=safe_office_id,
-                    risk_tier="green",
-                )
-
-                # Extract location
-                _loc_patterns_comp = [
-                    _re.search(r'(?:in|near|around)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+[A-Z][A-Za-z]+)', full_task),
-                    _re.search(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+([A-Z]{2})\b', full_task),
-                ]
-                clean_loc = ""
-                for m in _loc_patterns_comp:
-                    if m:
-                        clean_loc = m.group(0).strip().lstrip("in ").lstrip("near ").lstrip("around ")
-                        break
-
-                # Parallel: web search for competitor pricing/reviews + places search for local businesses
-                async def _comp_web(query):
-                    for pname, fn in _web_search_chain():
-                        try:
-                            r = await _asyncio.wait_for(fn(payload={"query": query}, **common_kwargs_comp), timeout=10.0)
-                            if r.outcome == Outcome.SUCCESS and r.data:
-                                return [{"title": x.get("title", x.get("name", "")), "url": x.get("url", ""), "snippet": x.get("snippet", x.get("description", "")), "source": pname} for x in r.data.get("results", [])[:5]]
-                        except Exception:
-                            continue
-                    return []
-
-                async def _comp_places(query, location):
-                    for pname, fn in _places_search_chain():
-                        if pname == "osm_overpass":
-                            continue
-                        try:
-                            payload = {"query": query}
-                            if pname == "google_places" and location:
-                                payload["location"] = location
-                            r = await _asyncio.wait_for(fn(payload=payload, **common_kwargs_comp), timeout=10.0)
-                            if r.outcome == Outcome.SUCCESS and r.data:
-                                return [{"name": x.get("name", ""), "address": x.get("address", x.get("formatted_address", "")), "rating": x.get("rating"), "phone": x.get("phone", ""), "source": pname} for x in r.data.get("results", [])[:8]]
-                        except Exception:
-                            continue
-                    return []
-
-                # Geocode for places search
-                comp_coords = None
-                if clean_loc:
-                    for pname, geo_fn in _geocode_chain():
-                        try:
-                            gr = await _asyncio.wait_for(geo_fn(payload={"query": clean_loc}, **common_kwargs_comp), timeout=5.0)
-                            if gr.outcome == Outcome.SUCCESS and gr.data:
-                                gres = gr.data.get("results", [])
-                                if gres:
-                                    lat = gres[0].get("lat") or gres[0].get("latitude")
-                                    lng = gres[0].get("lng") or gres[0].get("longitude")
-                                    if lat and lng:
-                                        comp_coords = f"{lat},{lng}"
-                            break
-                        except Exception:
-                            break
-
-                # Run web + places in parallel
-                web_task = _comp_web(f"{full_task} pricing rates reviews")
-                places_task = _comp_places(full_task, comp_coords)
-                web_results, places_results = await _asyncio.gather(web_task, places_task)
-
-                # Synthesize competitive analysis
-                try:
-                    comp_synthesis = await generate_text_async(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "Create a competitive analysis for a small business owner. Return valid JSON. Be specific with competitor names, pricing, and strengths/weaknesses."},
-                            {"role": "user", "content": f"Task: {full_task}\nLocation: {clean_loc}\n\nLocal businesses found:\n{_json.dumps(places_results[:8], indent=2, default=str)}\n\nWeb research:\n{_json.dumps(web_results[:8], indent=2, default=str)}\n\nReturn JSON: {{\"competitors\": [{{\"name\": \"...\", \"pricing\": \"...\", \"rating\": ..., \"strengths\": \"...\", \"weaknesses\": \"...\"}}], \"market_position\": \"...\", \"recommended_differentiation\": \"...\"}}"},
-                        ],
-                        api_key=api_key,
-                        base_url="https://api.openai.com/v1",
-                        timeout_seconds=12.0,
-                        max_output_tokens=4096,
-                        prefer_responses_api=False,
-                    )
-                    comp_text = comp_synthesis.strip()
-                    if comp_text.startswith("```"):
-                        comp_text = comp_text.split("\n", 1)[1] if "\n" in comp_text else comp_text[3:]
-                        comp_text = comp_text.rsplit("```", 1)[0]
-                    try:
-                        comp_brief = _json.loads(comp_text.strip())
-                    except _json.JSONDecodeError:
-                        comp_brief = {"recommended_differentiation": comp_text}
-
-                    response_text = comp_brief.get("recommended_differentiation", comp_brief.get("market_position", comp_synthesis[:300]))
-                except Exception as comp_synth_err:
-                    logger.warning("Adam competitive synthesis failed: %s", comp_synth_err)
-                    comp_brief = {}
-                    if places_results:
-                        names = [p["name"] for p in places_results[:3]]
-                        response_text = f"Top competitors: {', '.join(names)}."
-                    else:
-                        response_text = "Couldn't find enough competitor data. Try a more specific location."
-
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "success": len(web_results) + len(places_results) > 0,
-                        "agent": "adam",
-                        "result": response_text,
-                        "data": {
-                            "mode": "competitive",
-                            "brief": comp_brief,
-                            "web_results": len(web_results),
-                            "places_results": len(places_results),
-                            "location": clean_loc,
-                        },
-                        "receipt_id": ctx.correlation_id,
-                    },
-                )
-
-            # ── VENDOR MODE (existing v5 pipeline) ──
-
-            api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
             common_kwargs = dict(
                 correlation_id=ctx.correlation_id,
                 suite_id=safe_suite_id,
@@ -1926,394 +1661,81 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 risk_tier="green",
             )
 
-            # ── Step 1: Extract location + build query variants (instant, no LLM) ──
-
-            # Extract clean location: "in Atlanta Georgia" → "Atlanta, Georgia"
-            clean_location = ""
-            _loc_patterns = [
-                r'(?:in|near|around|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+[A-Z][A-Za-z]+)',
-                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+([A-Z]{2})\b',
-                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),?\s+(Georgia|Texas|Florida|California|New York|Illinois|Ohio|North Carolina|Virginia|Tennessee|Alabama|South Carolina|Louisiana|Maryland|Arizona|Colorado|Oregon|Washington|Michigan|Indiana|Missouri|Wisconsin|Minnesota|Mississippi|Arkansas|Kansas|Utah|Nevada|Nebraska|Idaho|Maine|Montana|Delaware|New Hampshire|Vermont|Wyoming|Hawaii|Alaska|Connecticut|Oklahoma|Kentucky|Iowa|New Mexico|Rhode Island)',
-            ]
-            for pattern in _loc_patterns:
-                m = _re.search(pattern, full_task)
-                if m:
-                    clean_location = m.group(0).strip().lstrip("in ").lstrip("near ").lstrip("around ").lstrip("from ")
-                    break
-            logger.info("Adam location: '%s'", clean_location)
-
-            # Extract search subject (remove location and filler words)
-            search_subject = full_task
-            if clean_location:
-                search_subject = full_task.replace(clean_location, "").strip()
-            # Remove common filler
-            for filler in ["Find ", "find ", "Search for ", "search for ", "Look for ", "look for ",
-                           "that buy ", "who buy ", "that sell ", "who sell ",
-                           "Additional details:", ". Additional details:"]:
-                search_subject = search_subject.replace(filler, "")
-            search_subject = _re.sub(r'\s+', ' ', search_subject).strip().rstrip('.')
-
-            # Build query variants — different for web vs places
-            loc_str = clean_location or ""
-
-            # Web queries: detailed, include context (Brave/Tavily handle long queries well)
-            web_queries = [
-                f"{search_subject} {loc_str}".strip(),
-                f"{search_subject} near {loc_str}".strip() if loc_str else search_subject,
-                f"{search_subject} wholesale supplier {loc_str}".strip(),
-            ]
-
-            # Places queries: SIMPLE business type + location (Google/HERE/Foursquare need clean queries)
-            # Extract just the core business type (first 4-5 meaningful words)
-            _places_subject = search_subject
-            # Remove technical specs, details, and extra context
-            for noise in [" new ", " brand new ", " GMA ", " 48x40 ", " 48 by 40 ",
-                          " style ", " grade ", " that buy ", " who buy ", " who deal ",
-                          " who only ", " that only ", " targeting ", " looking to ",
-                          " month profit", " month revenue"]:
-                _places_subject = _places_subject.replace(noise, " ")
-            _places_subject = _re.sub(r'\s+', ' ', _places_subject).strip()
-            # Take the first meaningful chunk (usually the business type)
-            _places_words = _places_subject.split()[:6]
-            _places_query = " ".join(_places_words).strip()
-
-            places_queries = [
-                f"{_places_query} {loc_str}".strip(),
-            ]
-            if _places_query != search_subject:
-                places_queries.append(f"{search_subject.split()[0]} {loc_str}".strip() if search_subject else loc_str)
-
-            # Remove dupes
-            seen_q: set[str] = set()
-            web_queries = [q for q in web_queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
-            places_queries = [q for q in places_queries if q and q.lower() not in seen_q and not seen_q.add(q.lower())]
-
-            logger.info("Adam web queries: %s", web_queries)
-            logger.info("Adam places queries: %s", places_queries)
-            # Combined for metadata
-            queries = web_queries + places_queries
-
-            # ── Step 2: Geocode location (Mapbox primary → HERE fallback) ──
-            coordinates = None
-            if clean_location:
-                # Try Mapbox first
-                for pname, geo_fn in _geocode_chain():
-                    try:
-                        geo_result = await _asyncio.wait_for(
-                            geo_fn(payload={"query": clean_location}, **common_kwargs),
-                            timeout=5.0,
-                        )
-                        if geo_result.outcome == Outcome.SUCCESS and geo_result.data:
-                            geo_results = geo_result.data.get("results", [])
-                            if geo_results:
-                                first = geo_results[0]
-                                lat = first.get("lat") or first.get("latitude")
-                                lng = first.get("lng") or first.get("longitude")
-                                if lat and lng:
-                                    coordinates = {"lat": float(lat), "lng": float(lng)}
-                                    logger.info("Adam geocoded (mapbox) '%s' → %s", clean_location, coordinates)
-                        break
-                    except Exception as e:
-                        logger.warning("Adam mapbox geocode failed: %s", type(e).__name__)
-
-                # Fallback: HERE geocode if Mapbox failed
-                if not coordinates:
-                    try:
-                        import httpx
-                        here_key = _os.environ.get("ASPIRE_HERE_API_KEY", "")
-                        if here_key:
-                            async with httpx.AsyncClient(timeout=5.0) as hc:
-                                hr = await hc.get(
-                                    "https://geocode.search.hereapi.com/v1/geocode",
-                                    params={"q": clean_location, "apiKey": here_key, "limit": "1"},
-                                )
-                                if hr.status_code == 200:
-                                    items = hr.json().get("items", [])
-                                    if items:
-                                        pos = items[0].get("position", {})
-                                        if pos.get("lat") and pos.get("lng"):
-                                            coordinates = {"lat": float(pos["lat"]), "lng": float(pos["lng"])}
-                                            logger.info("Adam geocoded (here) '%s' → %s", clean_location, coordinates)
-                    except Exception as e:
-                        logger.warning("Adam here geocode failed: %s", type(e).__name__)
-
-            coord_str = f"{coordinates['lat']},{coordinates['lng']}" if coordinates else ""
-
-            # ── Step 3: Multi-provider parallel search ──
-            async def _safe_search(provider_name: str, executor_fn, payload: dict) -> tuple[str, dict | None]:
+            # Run web search with first available provider
+            web_results = []
+            for pname, executor_fn in _web_search_chain():
                 try:
                     result = await _asyncio.wait_for(
-                        executor_fn(payload=payload, **common_kwargs),
+                        executor_fn(payload={"query": full_task}, **common_kwargs),
                         timeout=10.0,
                     )
                     if result.outcome == Outcome.SUCCESS and result.data:
-                        return (provider_name, result.data)
-                except _asyncio.TimeoutError:
-                    logger.debug("Adam %s timed out", provider_name)
-                except Exception as e:
-                    logger.debug("Adam %s failed: %s", provider_name, type(e).__name__)
-                return (provider_name, None)
-
-            search_tasks = []
-
-            # Web: Brave + Tavily × web query variants (detailed, context-rich)
-            for query in web_queries:
-                for pname, executor_fn in _web_search_chain():
-                    search_tasks.append(_safe_search(pname, executor_fn, {"query": query}))
-
-            # Places: EVERY provider fires with CLEAN business-type queries.
-            # text location as fallback. Production grade = all providers contribute.
-            for pname, executor_fn in _places_search_chain():
-                p_payload: dict[str, Any] = {"query": places_queries[0] if places_queries else web_queries[0]}
-
-                if pname == "google_places":
-                    if coord_str:
-                        p_payload["location"] = coord_str
-                        p_payload["radius"] = "32000"
-                    # Google Places text search works without coords too
-
-                elif pname == "here":
-                    if coord_str:
-                        p_payload["at"] = coord_str
-                    else:
-                        # HERE strictly requires at — skip only if truly no location
-                        if not clean_location:
-                            continue
-                        # We already tried HERE geocode above, if coords still missing skip HERE discover
-                        continue
-
-                elif pname == "foursquare":
-                    if coord_str:
-                        p_payload["ll"] = coord_str
-                        p_payload["radius"] = "32000"
-                    elif clean_location:
-                        # Foursquare supports text-based 'near' param
-                        p_payload["near"] = clean_location
-                    # Always fires — uses ll OR near
-
-                elif pname == "tomtom":
-                    if coordinates:
-                        p_payload["lat"] = str(coordinates["lat"])
-                        p_payload["lon"] = str(coordinates["lng"])
-                    # TomTom works without coords — includes location in query text
-
-                elif pname == "osm_overpass":
-                    continue  # 10s+ response blows the 30s Railway timeout
-
-                search_tasks.append(_safe_search(pname, executor_fn, p_payload))
-
-            # Fire all in parallel
-            all_results = await _asyncio.gather(*search_tasks)
-
-            # ── Step 4: Merge, dedup, cross-validate, score ──
-            web_items_all: list[dict] = []
-            places_items_all: list[dict] = []
-            providers_used: set[str] = set()
-            provider_counts: dict[str, int] = {}
-
-            web_providers = {"brave", "tavily"}
-            for pname, data in all_results:
-                if data is None:
-                    continue
-                providers_used.add(pname)
-                results_list = data.get("results", [])
-                provider_counts[pname] = len(results_list)
-
-                if pname in web_providers:
-                    for r in results_list[:5]:
-                        web_items_all.append({
-                            "name": r.get("title", r.get("name", "")),
-                            "url": r.get("url", ""),
-                            "snippet": r.get("snippet", r.get("description", "")),
-                            "source": pname,
-                        })
-                else:
-                    for r in results_list[:8]:
-                        # Normalize fields across providers (Google, HERE, Foursquare, TomTom)
-                        name = r.get("name", r.get("title", ""))
-                        phone = r.get("phone", "") or r.get("formatted_phone_number", "") or r.get("tel", "")
-                        website = r.get("website", "") or r.get("url", "")
-                        email = r.get("email", "")
-                        address = r.get("address", "") or r.get("formatted_address", "")
-                        rating = r.get("rating")
-                        categories = r.get("categories", [])
-                        place_id = r.get("place_id", r.get("fsq_id", r.get("fsq_place_id", r.get("id", ""))))
-
-                        if not name:
-                            continue
-
-                        places_items_all.append({
-                            "name": name, "address": address, "rating": rating,
-                            "phone": phone, "website": website, "email": email,
-                            "categories": categories, "place_id": place_id, "source": pname,
-                        })
-
-            # ── Provider priority: Google Places + HERE > Foursquare > TomTom ──
-            # Sort so higher-quality providers appear first in dedup (first occurrence wins)
-            # NO hardcoded category filtering — what's "noise" depends on the user's trade.
-            # A painter looking for commercial leads WANTS gyms, salons, hotels, churches.
-            # GPT-5.2 synthesis handles relevance filtering with full task context.
-            _PROVIDER_PRIORITY = {"google_places": 0, "here": 1, "foursquare": 2, "tomtom": 3}
-            places_items_all.sort(key=lambda x: _PROVIDER_PRIORITY.get(x.get("source", ""), 9))
-
-            # Dedup by name — merge contact data across providers
-            seen_names: dict[str, dict] = {}
-            for item in places_items_all:
-                key = item["name"].lower().strip()
-                if not key or len(key) < 3:
-                    continue
-                if key in seen_names:
-                    seen_names[key]["sources"].add(item["source"])
-                    for field in ("rating", "address", "phone", "website", "email", "place_id"):
-                        if item.get(field) and not seen_names[key].get(field):
-                            seen_names[key][field] = item[field]
-                    existing_cats = set(seen_names[key].get("categories", []))
-                    for cat in item.get("categories", []):
-                        if cat and cat not in existing_cats:
-                            seen_names[key].setdefault("categories", []).append(cat)
-                            existing_cats.add(cat)
-                else:
-                    seen_names[key] = {**item, "sources": {item["source"]}}
-
-            # Cross-validate with web results + enrich
-            for key, item in seen_names.items():
-                for web in web_items_all:
-                    web_text = (web.get("name", "") + " " + web.get("snippet", "")).lower()
-                    if key in web_text or any(word in web_text for word in key.split() if len(word) > 4):
-                        item["sources"].add("web_mention")
-                        if not item.get("website") and web.get("url"):
-                            item["website"] = web["url"]
-                        if not item.get("email") and web.get("snippet"):
-                            em = _re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', web["snippet"])
-                            if em:
-                                item["email"] = em.group(0)
+                        for r in result.data.get("results", [])[:5]:
+                            web_results.append({
+                                "name": r.get("title", r.get("name", "")),
+                                "url": r.get("url", ""),
+                                "snippet": r.get("snippet", r.get("description", "")),
+                                "source": pname,
+                            })
+                    if web_results:
                         break
+                except Exception:
+                    continue
 
-            # ── Confidence scoring: provider quality + contact completeness ──
-            _PROVIDER_WEIGHT = {
-                "google_places": 3,  # Verified businesses with ratings
-                "here": 3,          # Rich contact data (phone + email + website)
-                "foursquare": 1,    # Venue-heavy, often noisy
-                "tomtom": 2,        # Good commercial/industrial data
-                "web_mention": 2,   # Cross-validated in web search
-            }
+            # Run places search with first available provider
+            places_results = []
+            for pname, executor_fn in _places_search_chain():
+                if pname == "osm_overpass":
+                    continue
+                try:
+                    result = await _asyncio.wait_for(
+                        executor_fn(payload={"query": full_task}, **common_kwargs),
+                        timeout=10.0,
+                    )
+                    if result.outcome == Outcome.SUCCESS and result.data:
+                        for r in result.data.get("results", [])[:8]:
+                            places_results.append({
+                                "name": r.get("name", ""),
+                                "address": r.get("address", r.get("formatted_address", "")),
+                                "phone": r.get("phone", ""),
+                                "rating": r.get("rating"),
+                                "source": pname,
+                            })
+                    if places_results:
+                        break
+                except Exception:
+                    continue
 
-            for item in seen_names.values():
-                sources = item["sources"]
-                # Provider quality score (weighted sum, not just count)
-                provider_score = sum(_PROVIDER_WEIGHT.get(s, 1) for s in sources)
+            total = len(web_results) + len(places_results)
 
-                # Contact completeness score (0-5)
-                contact_score = sum([
-                    2 if item.get("phone") else 0,
-                    1 if item.get("email") else 0,
-                    1 if item.get("website") else 0,
-                    1 if item.get("address") else 0,
-                ])
-
-                # Rating bonus
-                rating_score = 1 if item.get("rating") else 0
-
-                # Total quality score
-                total_score = provider_score + contact_score + rating_score
-                item["_quality_score"] = total_score
-
-                # Confidence label based on total score
-                if total_score >= 8:
-                    item["confidence"] = "high"
-                elif total_score >= 5:
-                    item["confidence"] = "medium"
-                else:
-                    item["confidence"] = "low"
-
-                item["sources"] = list(sources)
-
-            # Dedup web by URL
-            seen_urls: set[str] = set()
-            deduped_web = [w for w in web_items_all if w.get("url") and w["url"] not in seen_urls and not seen_urls.add(w["url"])]
-
-            # Sort by quality score (highest first) — captures provider quality + contact completeness + rating
-            sorted_places = sorted(
-                seen_names.values(),
-                key=lambda x: -x.get("_quality_score", 0),
-            )
-
-            raw_findings = {
-                "web_results": deduped_web[:10],
-                "places_results": [{k: v for k, v in p.items()} for p in sorted_places[:10]],
-                "providers_used": sorted(providers_used),
-                "provider_counts": provider_counts,
-                "queries_used": queries,
-                "geocoded": coordinates,
-                "location_extracted": clean_location,
-                "total_raw_results": len(web_items_all) + len(places_items_all),
-                "total_deduped": len(deduped_web) + len(sorted_places),
-            }
-
-            # ── Step 5: GPT-5.2 synthesis ──
-            try:
-                synthesis_prompt = (
-                    f"You are Adam, the Research Specialist at Aspire.\n"
-                    f"Task: {full_task}\n"
-                    f"Location: {clean_location or 'not specified'}\n\n"
-                    f"Searched {len(providers_used)} providers ({', '.join(sorted(providers_used))}) "
-                    f"with {len(queries)} queries. {raw_findings['total_deduped']} unique results.\n\n"
-                    f"Top places (with contact data + confidence):\n{_json.dumps(sorted_places[:8], indent=2, default=str)}\n\n"
-                    f"Top web results:\n{_json.dumps(deduped_web[:5], indent=2, default=str)}\n\n"
-                    f"Synthesize for a small business owner:\n"
-                    f"- Pick the top 3-5 results that are MOST RELEVANT to the user's actual task\n"
-                    f"- A painter looking for commercial leads WANTS gyms, salons, hotels, churches — those are customers\n"
-                    f"- A pallet company looking for buyers does NOT want restaurants or parks\n"
-                    f"- Think about WHO the user is and WHAT they need before deciding relevance\n"
-                    f"- For each relevant result: name, full address, phone, email, website\n"
-                    f"- Confidence level per result\n"
-                    f"- Skip results that don't match the user's specific need — explain why briefly\n"
-                    f"- Flag gaps: missing phone, no email, unverified\n"
-                    f"- Concrete next step: who to call first and what to say\n"
-                    f"Under 150 words. No markdown. Natural speech."
-                )
-
-                synthesis = await generate_text_async(
-                    model="gpt-5.2",
-                    messages=[
-                        {"role": "developer", "content": "You are Adam, Aspire's research specialist. Be specific — name businesses, include phone numbers and emails. Filter out irrelevant results (restaurants, parks, stadiums). Flag uncertainty honestly."},
-                        {"role": "user", "content": synthesis_prompt},
-                    ],
-                    api_key=api_key,
-                    base_url="https://api.openai.com/v1",
-                    timeout_seconds=18.0,
-                    max_output_tokens=4096,
-                    prefer_responses_api=True,
-                )
-                response_text = synthesis
-            except Exception as synth_err:
-                logger.warning("Adam synthesis failed: %s", synth_err)
-                relevant = [p for p in sorted_places if p.get("confidence") != "low"][:3]
-                if not relevant:
-                    relevant = sorted_places[:3]
-                if relevant:
-                    parts = []
-                    for p in relevant:
-                        part = p["name"]
-                        if p.get("phone"):
-                            part += f", {p['phone']}"
-                        parts.append(part)
-                    response_text = f"Found {len(sorted_places)} businesses. Top matches: {'; '.join(parts)}."
-                elif deduped_web:
-                    names = [w.get("name", "Unknown") for w in deduped_web[:3]]
-                    response_text = f"Found {len(deduped_web)} web results. Top: {', '.join(names)}."
-                else:
-                    response_text = f"No results found for: {task}. Try a different location or broader search terms."
+            # Build response text
+            if places_results:
+                top = places_results[0]
+                parts = [f"{top['name']}"]
+                if top.get("phone"):
+                    parts.append(f"phone {top['phone']}")
+                if top.get("address"):
+                    parts.append(f"at {top['address']}")
+                response_text = f"Found {total} results. Top match: {', '.join(parts)}."
+            elif web_results:
+                response_text = f"Found {len(web_results)} web results. Top: {web_results[0].get('name', 'Unknown')}."
+            else:
+                response_text = "I wasn't able to find results for that. Try a more specific query or different location."
 
             return JSONResponse(
                 status_code=200,
                 content={
-                    "success": len(providers_used) > 0,
+                    "success": total > 0,
                     "agent": "adam",
                     "result": response_text,
-                    "data": raw_findings,
+                    "data": {
+                        "mode": "legacy_fallback",
+                        "web_results": web_results[:10],
+                        "places_results": places_results[:10],
+                        "total": total,
+                    },
                     "receipt_id": ctx.correlation_id,
-                    "error": None if providers_used else "All search providers failed",
+                    "error": None if total > 0 else "No results found",
                 },
             )
 
