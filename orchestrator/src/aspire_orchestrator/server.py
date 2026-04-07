@@ -1582,6 +1582,12 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 "nearby_comps", "nearby_schools", "description", "styles",
                 "geo_hierarchy", "census_tract", "census_block_group", "zcta",
                 "avm_fsd", "avm_date", "sources", "_quality_score",
+                # Defense-in-depth: PII fields the LLM must NEVER narrate (Law #9)
+                "owner_name", "owner_type", "previous_owner_name", "mailing_address",
+                "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_due_date",
+                "mortgage_loan_type", "current_loan_balance", "loan_balance",
+                "seller_name", "buyer_name", "lender", "original_loan",
+                "borrower_name", "trustee_name", "lender_name",
             }
 
             def _slim_for_voice(record: dict) -> dict:

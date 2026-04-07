@@ -850,12 +850,28 @@ def _extract_structured_results(state: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # PII fields that must NEVER reach the client (Law #9)
+# Covers ALL PropertyRecord fields that reveal owner identity, financial details,
+# or mortgage/deed data.  Voice LLM and desktop cards show property characteristics
+# (beds, baths, sqft, value) — never owner PII or financial obligations.
 _PII_STRIP_FIELDS = {
-    "owner_name", "mailing_address", "mailing_city", "mailing_state", "mailing_zip",
-    "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_type", "mortgage_term_months",
-    "deed_type", "deed_recording_date", "loan_balance", "estimated_monthly_payment",
-    "tax_assessed_total", "tax_market_value", "annual_tax_amount",
-    "seller_name", "buyer_name",
+    # Owner identity
+    "owner_name", "owner_type", "owner_occupied", "previous_owner_name",
+    "absentee_owner_indicator",
+    # Mailing / contact
+    "mailing_address", "mailing_city", "mailing_state", "mailing_zip",
+    # Mortgage / loan
+    "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_type",
+    "mortgage_loan_type", "mortgage_term_months", "mortgage_due_date",
+    "current_loan_balance", "estimated_monthly_payment",
+    # Deed
+    "deed_type", "deed_recording_date",
+    # Tax (keep estimated_value but strip raw tax data)
+    "tax_assessed_total", "tax_assessed_land", "tax_assessed_improvements",
+    "tax_market_value", "annual_tax_amount",
+    # Sale participants
+    "seller_name", "buyer_name", "lender", "original_loan",
+    # Financial ratios that reveal loan details
+    "loan_balance", "ltv_ratio",
 }
 
 
