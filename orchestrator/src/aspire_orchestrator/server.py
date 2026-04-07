@@ -1649,32 +1649,52 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     # Build voice-friendly summary — clean and conversational, not raw playbook output.
                     # The raw research.summary contains technical text like "Verification: verified (score=0.95)"
                     # which should NEVER appear in the voice response or chat transcript.
+                    # Build response_text with explicit show_cards reminder.
+                    # LLMs follow instructions in tool responses more reliably than system prompts
+                    # when the response payload is large (23 hotels = LLM forgets to call show_cards).
+                    _SHOW_CARDS_REMINDER = (
+                        f" YOU MUST call show_cards NOW with artifact_type='{research.artifact_type}'"
+                        f" and the records array from this response. Do not skip this step."
+                    )
+
                     if total_count == 1 and research.artifact_type in (
                         "LandlordPropertyPack", "PropertyFactPack", "RentCompPack",
                         "PermitContextPack", "NeighborhoodDemandBrief",
                     ):
-                        # Single property — address-based summary
                         addr = ""
                         if safe_records:
                             addr = safe_records[0].get("normalized_address", "")
-                        response_text = f"I pulled up the property details for {addr}." if addr else "Here are the property details."
+                        response_text = (
+                            (f"I pulled up the property details for {addr}." if addr else "Here are the property details.")
+                            + _SHOW_CARDS_REMINDER
+                        )
                     elif total_count > 0:
-                        response_text = f"Found {total_count} results. Take a look."
+                        response_text = f"Found {total_count} results. Take a look." + _SHOW_CARDS_REMINDER
                     else:
                         response_text = "I wasn't able to find results for that. Try a more specific query."
 
                     # TWO record sets for different consumers:
-                    # 1. records: slim (~3-5KB each) — for LLM to process fast (no audio dropout)
+                    # 1. records: slim — ONLY for LLM to call show_cards (artifact_type + records array)
                     # 2. card_records: FULL PII-stripped data — for desktop PropertyCard
                     #    Gateway intercepts card_records, stores them, strips before forwarding to LLM.
                     #    Desktop fetches full records from gateway when show_cards fires.
+                    #
+                    # CRITICAL: research.to_dict() was dumping EVERYTHING (sources, verification_report,
+                    # next_queries, missing_fields) into the LLM payload — 20-50KB. The LLM choked
+                    # processing it and went silent (audio dropout). Now we send ONLY what the LLM
+                    # needs: artifact_type, slim records (for show_cards params), and total_count.
                     slim_records = [_slim_for_cards(r) for r in safe_records[:_MAX_LLM_RECORDS]]
                     full_records = safe_records[:_MAX_LLM_RECORDS]
 
-                    response_data = research.to_dict()
-                    response_data["records"] = slim_records
-                    response_data["card_records"] = full_records
-                    response_data["total_count"] = total_count
+                    # Minimal data for LLM — just enough to call show_cards and narrate
+                    response_data = {
+                        "artifact_type": research.artifact_type,
+                        "records": slim_records,
+                        "total_count": total_count,
+                        "summary": response_text,
+                        # card_records: gateway intercepts, caches, and strips before ElevenLabs
+                        "card_records": full_records,
+                    }
 
                     return JSONResponse(
                         status_code=200,

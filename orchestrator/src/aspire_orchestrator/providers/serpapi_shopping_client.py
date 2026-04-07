@@ -37,8 +37,8 @@ class SerpApiShoppingClient(BaseProviderClient):
 
     provider_id = "serpapi_shopping"
     base_url = "https://serpapi.com"
-    timeout_seconds = 8.0
-    max_retries = 1
+    timeout_seconds = 12.0
+    max_retries = 0  # No retry — runs parallel with HD, fail fast if slow
     idempotency_support = False
 
     async def _authenticate_headers(
