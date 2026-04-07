@@ -1575,46 +1575,37 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             # The summary text includes the full count ("Found 16 hotels...").
             _MAX_LLM_RECORDS = 10
 
-            # Heavy fields removed from voice responses — LLM doesn't need these to narrate.
-            # The desktop show_cards still gets them via the records array.
-            _VOICE_STRIP_FIELDS = {
-                "rating_breakdown", "trip_types", "sale_history", "foreclosure_records",
-                "nearby_comps", "nearby_schools", "description", "styles",
-                "geo_hierarchy", "census_tract", "census_block_group", "zcta",
-                "avm_fsd", "avm_date", "sources", "_quality_score",
-                # Defense-in-depth: ALL sensitive fields the LLM must NEVER narrate (Law #9)
-                # Cards show these — voice doesn't. Full list covers owner, mortgage,
-                # equity, tax, sale participants, and AVM.
-                "owner_name", "owner_type", "owner_occupied", "previous_owner_name",
-                "absentee_owner_indicator", "mailing_address",
-                "mortgage_lender", "mortgage_amount", "mortgage_date", "mortgage_due_date",
-                "mortgage_loan_type", "mortgage_term_months", "deed_type",
-                "current_loan_balance", "loan_balance", "estimated_monthly_payment",
-                "ltv_ratio", "available_equity", "lendable_equity",
-                "tax_assessed_total", "tax_assessed_land", "tax_assessed_improvement",
-                "tax_market_value", "tax_market_land", "tax_market_improvement",
-                "annual_tax_amount", "tax_per_sqft",
-                "seller_name", "buyer_name", "lender", "original_loan",
-                "borrower_name", "trustee_name", "lender_name",
-                "last_sale_amount", "last_sale_price_per_sqft", "last_sale_price_per_bed",
-                "parcel_apn", "parcel_fips", "attom_id",
-                # AVM estimate stripped from voice — LLM should use property_value
-                "estimated_value", "estimated_value_high", "estimated_value_low",
-                "avm_confidence_score", "avm_price_per_sqft",
+            # Strip HEAVY NESTED ARRAYS that bloat the response (50KB+ per record).
+            # Keep ALL scalar fields (owner, mortgage, tax, equity, sale basics) — these
+            # are small strings/numbers that both the LLM and the PropertyCard need.
+            # The LLM prompt guardrails prevent narrating sensitive scalars aloud.
+            _HEAVY_STRIP_FIELDS = {
+                # Nested arrays — these are the SIZE killers (5-20 items each)
+                "sale_history", "foreclosure_records", "nearby_comps",
+                "nearby_schools", "permit_signals",
+                # Heavy nested objects
+                "rating_breakdown", "trip_types", "sources",
+                "description", "styles", "geo_hierarchy",
+                # Low-value fields the LLM/cards don't need
+                "census_tract", "census_block_group", "zcta",
+                "avm_fsd", "avm_date", "_quality_score",
+                # Internal fields
+                "extra", "assessment_context", "school_context",
             }
 
-            def _slim_for_voice(record: dict) -> dict:
-                """Remove heavy nested fields to keep LLM response fast.
+            def _slim_for_cards(record: dict) -> dict:
+                """Remove heavy nested arrays but keep ALL scalar fields.
 
-                NOTE: Photos are kept (first 3 URLs) because show_cards renders
-                them as card hero images. Only the LLM text gets slim fields —
-                the full record including photos goes to the desktop via show_cards.
+                The result is small enough for the LLM to process fast (~3-5KB)
+                while keeping all owner/mortgage/tax/equity/sale scalar data
+                that the PropertyCard sections need.
+                Photos kept (first 3 URLs) for card hero images.
                 """
-                slimmed = {k: v for k, v in record.items() if k not in _VOICE_STRIP_FIELDS}
-                # Keep first 3 photo URLs for card hero images (not just a count)
+                slimmed = {k: v for k, v in record.items() if k not in _HEAVY_STRIP_FIELDS}
+                # Keep first 3 photo URLs for card hero images
                 if "photos" in slimmed and isinstance(slimmed["photos"], list):
                     slimmed["photos"] = slimmed["photos"][:3]
-                # Cap amenities list (LLM only narrates top 3)
+                # Cap amenities list
                 if "amenities" in slimmed and isinstance(slimmed["amenities"], list):
                     slimmed["amenities"] = slimmed["amenities"][:5]
                 return slimmed
@@ -1672,20 +1663,15 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     else:
                         response_text = "I wasn't able to find results for that. Try a more specific query."
 
-                    # TWO record versions:
-                    # 1. card_records: FULL PII-stripped data for show_cards → PropertyCard/HotelCard/etc.
-                    #    These contain ALL owner, mortgage, equity, tax, sale data the card needs.
-                    # 2. voice_brief: Slimmed records the LLM reads for narration (no sensitive details).
-                    #    Voice guardrails in the ElevenLabs prompt prevent narrating what's stripped.
-                    card_records = safe_records[:_MAX_LLM_RECORDS]
-                    voice_brief = [_slim_for_voice(r) for r in card_records]
+                    # Slim records: strip heavy nested arrays but keep ALL scalar fields.
+                    # ~3-5KB per record — fast for LLM AND has all data the PropertyCard needs.
+                    # Only nested arrays (sale_history, foreclosure_records, nearby_comps,
+                    # nearby_schools, permit_signals) are removed to keep response under 20KB.
+                    slim_records = [_slim_for_cards(r) for r in safe_records[:_MAX_LLM_RECORDS]]
 
                     response_data = research.to_dict()
-                    # Records = full data for show_cards (cards need ALL the intel)
-                    response_data["records"] = card_records
+                    response_data["records"] = slim_records
                     response_data["total_count"] = total_count
-                    # Voice brief = slimmed for LLM narration context (lightweight)
-                    response_data["voice_brief"] = voice_brief
 
                     return JSONResponse(
                         status_code=200,
