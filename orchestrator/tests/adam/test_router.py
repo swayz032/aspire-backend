@@ -228,6 +228,15 @@ class TestRouterReturnShape:
         # Must return cleanly
         assert classification is not None
 
+    def test_addressed_property_fact_guardrail_forces_property_facts(self):
+        """Address + property_fact phrasing must not fall through to legacy fallback."""
+        query = "property lookup. Additional details: 4863 Price Street, Forest Park, Georgia, 30297"
+        classification, playbook = route_to_playbook(query)
+        assert playbook is not None
+        assert playbook.name == "PROPERTY_FACTS"
+        assert classification.playbook == "PROPERTY_FACTS"
+        assert classification.segment == "landlord"
+
 
 # ---------------------------------------------------------------------------
 # Playbook spec field integrity

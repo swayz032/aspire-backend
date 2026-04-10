@@ -160,6 +160,28 @@ def _extract_address(query: str) -> str:
     return query
 
 
+async def _geocode_address(query: str, context: PlaybookContext) -> str:
+    """Best-effort address normalization using HERE search.
+
+    Falls back to extracted/raw address when HERE fails or returns no candidates.
+    """
+    raw_address = _extract_address(query)
+    args = _provider_args(context)
+    try:
+        result = await execute_here_search(
+            payload={"query": raw_address, "limit": 1},
+            **args,
+        )
+        if result.outcome == Outcome.SUCCESS and result.data:
+            first = (result.data.get("results") or [{}])[0]
+            normalized = first.get("address")
+            if isinstance(normalized, str) and normalized.strip():
+                return normalized.strip()
+    except Exception as exc:
+        logger.warning("landlord._geocode_address failed: %s", exc)
+    return raw_address
+
+
 # ---------------------------------------------------------------------------
 # 1. Property Facts
 # ---------------------------------------------------------------------------
@@ -189,9 +211,9 @@ async def execute_property_facts(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # Step 1: Extract address from query (ATTOM handles normalization)
-    normalized_address = _extract_address(query)
-    providers_called.append("here")  # HERE may be used for geocoding in future
+    # Step 1: Normalize address with HERE (fallback to extracted address).
+    normalized_address = await _geocode_address(query, context)
+    providers_called.append("here")
 
     attom_payload = {"address": normalized_address}
 

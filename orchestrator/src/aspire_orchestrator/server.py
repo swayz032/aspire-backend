@@ -1532,19 +1532,25 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 },
             )
 
-        # Validate suite_id — Supabase requires a real UUID, not empty string
+        # Validate suite_id/office_id — fail closed on invalid IDs.
         import uuid as _uuid
-        def _ensure_uuid(val: str) -> str:
+        def _validate_uuid(val: str, field: str) -> str:
             if not val:
-                return str(_uuid.uuid4())
+                raise ValueError(f"{field} is required")
             try:
                 _uuid.UUID(val)
                 return val
-            except ValueError:
-                return str(_uuid.uuid4())
+            except ValueError as exc:
+                raise ValueError(f"{field} must be a valid UUID") from exc
 
-        safe_suite_id = _ensure_uuid(suite_id)
-        safe_office_id = _ensure_uuid(office_id) if office_id else safe_suite_id
+        try:
+            safe_suite_id = _validate_uuid(suite_id, "suite_id")
+            safe_office_id = _validate_uuid(office_id, "office_id") if office_id else safe_suite_id
+        except ValueError as val_err:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "INVALID_SUITE_CONTEXT", "message": str(val_err)},
+            )
 
         ctx = AgentContext(
             suite_id=safe_suite_id,
@@ -1624,6 +1630,11 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 playbook.name if playbook else "NONE",
                 classification.confidence, full_task[:80],
             )
+            if classification.intent == "property_fact" and playbook is None:
+                logger.warning(
+                    "PROPERTY_ROUTE_MISS: addressed property request missed playbook route for: %s",
+                    full_task[:120],
+                )
 
             # Step 2: Execute playbook (or fall back to legacy)
             if playbook:

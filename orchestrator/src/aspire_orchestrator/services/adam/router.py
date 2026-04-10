@@ -335,7 +335,9 @@ def route_to_playbook(
         r"|address\b",
         q_lower,
     ))
-    has_price_signal = classification.intent == "price_check"
+    has_price_signal = classification.intent == "price_check" or any(
+        token in q_lower for token in ("price", "cost", "estimate", "quote", "how much", "pricing")
+    )
     has_store_signal = any(s in q_lower for s in [
         "home depot", "lowes", "lowe's", "menards", "ace hardware",
         "in stock", "available at", "pickup",
@@ -372,6 +374,17 @@ def route_to_playbook(
         if score > best_score:
             best_score = score
             best = playbook
+
+    # Guardrail: addressed property-fact queries must never fall through to legacy.
+    # If segment matching produced no candidate, force landlord PROPERTY_FACTS.
+    if best is None and has_address_signal and classification.intent == "property_fact":
+        best = LANDLORD_PROPERTY_FACTS
+        best_score = 1
+        classification.segment = LANDLORD_PROPERTY_FACTS.segment
+        logger.info(
+            "Routing guardrail applied: addressed property_fact forced to %s",
+            best.name,
+        )
 
     if best:
         classification.playbook = best.name

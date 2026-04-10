@@ -239,7 +239,7 @@ def _detect_geo_scope(q: str) -> str:
         return "state"
     if any(w in q for w in ["national", "nationwide", "country"]):
         return "national"
-    # Check for city-like patterns (capitalized words followed by state abbreviation)
-    if re.search(r"in\s+[A-Z][a-z]+", q) or re.search(r"\b[A-Z]{2}\b", q):
+    # q is normalized to lowercase by caller, so use lowercase patterns here.
+    if re.search(r"\bin\s+[a-z][a-z]+(?:\s+[a-z][a-z]+){0,2}(?:,\s*[a-z]{2})?\b", q):
         return "city"
     return ""

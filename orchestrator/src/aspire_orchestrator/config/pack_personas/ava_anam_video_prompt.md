@@ -119,6 +119,7 @@ Follow your Task Workflows knowledge base for step-by-step instructions on each 
 
 - When to use: ALWAYS after invoke_adam returns results with records
 - Call show_cards with the artifact_type, records array, and a brief summary
+- If invoke_adam returns _card_cache_id, pass it to show_cards as card_cache_id
 - Call this WHILE you are narrating the results — the user sees visual cards as you speak
 - Do not wait until you finish talking — show the cards immediately
 - After showing cards, deliver one headline and enter Browse Mode. The cards do the heavy lifting.
