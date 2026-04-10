@@ -160,12 +160,81 @@ def _extract_address(query: str) -> str:
     return query
 
 
+def _extract_house_number(address: str) -> str:
+    """Return leading house number from an address string, else empty string."""
+    if not isinstance(address, str):
+        return ""
+    m = re.match(r"\s*(\d+)\b", address.strip())
+    return m.group(1) if m else ""
+
+
+def _normalize_addr_key(address: str) -> str:
+    """Lightweight normalization for fuzzy address matching."""
+    if not isinstance(address, str):
+        return ""
+    return re.sub(r"[^a-z0-9]", "", address.lower())
+
+
+def _choose_best_attom_property_index(requested_address: str, properties: list[dict[str, Any]]) -> int:
+    """Pick the ATTOM property entry that best matches the requested address."""
+    if not properties:
+        return 0
+
+    req = requested_address or ""
+    req_key = _normalize_addr_key(req)
+    req_house = _extract_house_number(req)
+    req_parts = [p.strip().lower() for p in req.split(",") if p.strip()]
+    req_street = req_parts[0] if req_parts else ""
+    req_city = req_parts[1] if len(req_parts) > 1 else ""
+
+    best_idx = 0
+    best_score = -1
+    for idx, prop in enumerate(properties):
+        addr = ((prop or {}).get("address") or {}).get("oneLine", "") or ""
+        addr_key = _normalize_addr_key(addr)
+        addr_house = _extract_house_number(addr)
+        addr_parts = [p.strip().lower() for p in addr.split(",") if p.strip()]
+        addr_street = addr_parts[0] if addr_parts else ""
+        addr_city = addr_parts[1] if len(addr_parts) > 1 else ""
+
+        score = 0
+        if req_key and addr_key and req_key == addr_key:
+            score += 100
+        if req_house and addr_house and req_house == addr_house:
+            score += 25
+        if req_street and addr_street and req_street in addr_street:
+            score += 10
+        if req_city and addr_city and req_city == addr_city:
+            score += 5
+
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+
+    return best_idx
+
+
+def _pin_attom_payload_to_subject(payload: dict[str, Any] | None, requested_address: str) -> dict[str, Any] | None:
+    """Return payload with property list pinned to best subject match."""
+    if not isinstance(payload, dict):
+        return payload
+    props = payload.get("property")
+    if not isinstance(props, list) or len(props) <= 1:
+        return payload
+    idx = _choose_best_attom_property_index(requested_address, props)
+    chosen = props[idx]
+    cloned = dict(payload)
+    cloned["property"] = [chosen]
+    return cloned
+
+
 async def _geocode_address(query: str, context: PlaybookContext) -> str:
     """Best-effort address normalization using HERE search.
 
     Falls back to extracted/raw address when HERE fails or returns no candidates.
     """
     raw_address = _extract_address(query)
+    raw_house = _extract_house_number(raw_address)
     args = _provider_args(context)
     try:
         result = await execute_here_search(
@@ -176,7 +245,19 @@ async def _geocode_address(query: str, context: PlaybookContext) -> str:
             first = (result.data.get("results") or [{}])[0]
             normalized = first.get("address")
             if isinstance(normalized, str) and normalized.strip():
-                return normalized.strip()
+                normalized = normalized.strip()
+                normalized_house = _extract_house_number(normalized)
+                # Guardrail: if user gave a specific house number, do not degrade
+                # to a street-level address that loses the number.
+                if raw_house and normalized_house and raw_house == normalized_house:
+                    return normalized
+                if raw_house and not normalized_house:
+                    logger.warning(
+                        "landlord._geocode_address dropped house number (%s -> %s); using raw address",
+                        raw_address, normalized,
+                    )
+                    return raw_address
+                return normalized
     except Exception as exc:
         logger.warning("landlord._geocode_address failed: %s", exc)
     return raw_address
@@ -246,7 +327,8 @@ async def execute_property_facts(
     # --- Normalize base property record (building + owner + mortgage) ---
     prop_dict: dict[str, Any] = {}
     if detail_result and detail_result.outcome == Outcome.SUCCESS and detail_result.data:
-        prop = normalize_from_attom_detail(detail_result.data)
+        pinned_detail_data = _pin_attom_payload_to_subject(detail_result.data, normalized_address)
+        prop = normalize_from_attom_detail(pinned_detail_data or detail_result.data)
         prop_dict = prop.to_dict()
         sources.append(_source("attom"))
     else:
@@ -258,31 +340,36 @@ async def execute_property_facts(
 
     # --- Merge AVM valuation (value + confidence score + FSD) ---
     if avm_result and avm_result.outcome == Outcome.SUCCESS and avm_result.data:
-        avm = normalize_from_attom_avm(avm_result.data)
+        pinned_avm_data = _pin_attom_payload_to_subject(avm_result.data, normalized_address)
+        avm = normalize_from_attom_avm(pinned_avm_data or avm_result.data)
         if avm and prop_dict:
             prop_dict.update(avm)
 
     # --- Merge equity (LTV, available equity, loan balance, est. payment) ---
     if equity_result and equity_result.outcome == Outcome.SUCCESS and equity_result.data:
-        equity = normalize_from_attom_equity(equity_result.data)
+        pinned_equity_data = _pin_attom_payload_to_subject(equity_result.data, normalized_address)
+        equity = normalize_from_attom_equity(pinned_equity_data or equity_result.data)
         if equity and prop_dict:
             prop_dict.update(equity)
 
     # --- Merge tax assessment (assessed value, market value, annual tax) ---
     if assessment_result and assessment_result.outcome == Outcome.SUCCESS and assessment_result.data:
-        tax = normalize_from_attom_assessment(assessment_result.data)
+        pinned_assessment_data = _pin_attom_payload_to_subject(assessment_result.data, normalized_address)
+        tax = normalize_from_attom_assessment(pinned_assessment_data or assessment_result.data)
         if tax and prop_dict:
             prop_dict.update(tax)
 
     # --- Merge sale detail (last sale price, price/sqft, appreciation) ---
     if sale_result and sale_result.outcome == Outcome.SUCCESS and sale_result.data:
-        sale = normalize_from_attom_sale_detail(sale_result.data)
+        pinned_sale_data = _pin_attom_payload_to_subject(sale_result.data, normalized_address)
+        sale = normalize_from_attom_sale_detail(pinned_sale_data or sale_result.data)
         if sale and prop_dict:
             prop_dict.update(sale)
 
     # --- Merge expanded profile (zoning, seller, census, REO flags) ---
     if expanded_result and expanded_result.outcome == Outcome.SUCCESS and expanded_result.data:
-        expanded = normalize_from_attom_expanded_profile(expanded_result.data)
+        pinned_expanded_data = _pin_attom_payload_to_subject(expanded_result.data, normalized_address)
+        expanded = normalize_from_attom_expanded_profile(pinned_expanded_data or expanded_result.data)
         if expanded and prop_dict:
             prop_dict.update(expanded)
 
@@ -296,8 +383,9 @@ async def execute_property_facts(
     try:
         permit_result = await execute_attom_building_permits(payload=attom_payload, **args)
         if permit_result.outcome == Outcome.SUCCESS and permit_result.data:
+            pinned_permit_data = _pin_attom_payload_to_subject(permit_result.data, normalized_address)
             permits_raw = []
-            for p in permit_result.data.get("property", []):
+            for p in (pinned_permit_data or permit_result.data).get("property", []):
                 for pm in p.get("buildingPermits", []):
                     permits_raw.append({
                         "date": pm.get("effectiveDate", ""),
@@ -398,7 +486,8 @@ async def execute_property_facts(
             payload=attom_payload, **args,
         )
         if schools_result.outcome == Outcome.SUCCESS and schools_result.data:
-            schools = normalize_from_attom_schools(schools_result.data)
+            pinned_schools_data = _pin_attom_payload_to_subject(schools_result.data, normalized_address)
+            schools = normalize_from_attom_schools(pinned_schools_data or schools_result.data)
             if schools and prop_dict:
                 prop_dict["nearby_schools"] = schools
     except Exception:
@@ -409,10 +498,11 @@ async def execute_property_facts(
         from aspire_orchestrator.providers.attom_client import execute_attom_sales_expanded_history
         fc_result = await execute_attom_sales_expanded_history(payload=attom_payload, **args)
         if fc_result.outcome == Outcome.SUCCESS and fc_result.data:
+            pinned_fc_data = _pin_attom_payload_to_subject(fc_result.data, normalized_address)
             from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
                 normalize_from_attom_foreclosure,
             )
-            fc_data = normalize_from_attom_foreclosure(fc_result.data)
+            fc_data = normalize_from_attom_foreclosure(pinned_fc_data or fc_result.data)
             if fc_data and prop_dict:
                 prop_dict["foreclosure_records"] = fc_data.get("foreclosure_records", [])
                 prop_dict["prior_foreclosure"] = fc_data.get("prior_foreclosure", False)
