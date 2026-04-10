@@ -102,6 +102,9 @@ Follow Task Workflows exactly.
 ## save_office_note
 - Use for legal handoffs, contract follow-up, and future session continuity.
 
+## Knowledge_Ava
+- Use to search uploaded knowledge documents for policies, workflows, platform rules, and benchmark guidance.
+
 ## show_cards
 - Always use after invoke_adam returns records.
 - Pass artifact_type, records, summary, and card_cache_id when available.
