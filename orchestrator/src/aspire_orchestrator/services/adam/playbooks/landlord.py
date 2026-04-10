@@ -133,10 +133,11 @@ def _extract_address(query: str) -> str:
     Falls back to the full query if no address pattern found (ATTOM will parse it).
     """
     import re
-    # Pattern: number + street, then city/state/zip
+    # Pattern: number + street, then city/state/zip.
+    # Accept both state abbreviations (GA) and full names (Georgia).
     match = re.search(
         r'(\d+\s+[\w\s]+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pl|Cir|Pkwy|Hwy|Ter|Loop|Trail)\.?'
-        r'(?:\s*,\s*[\w\s]+,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?))',
+        r'(?:\s*,\s*[\w\s]+,?\s*(?:[A-Z]{2}|[A-Za-z]{4,})\s*,?\s*\d{5}(?:-\d{4})?))',
         query, re.IGNORECASE,
     )
     if match:
@@ -157,15 +158,34 @@ def _extract_address(query: str) -> str:
             if remaining:
                 return remaining
 
+    # Final fallback: try to recover an inline address from noisy wrappers
+    # like "property lookup. Additional details: 4863 Price Street, ...".
+    loose = re.search(
+        r'(\d+\s+[\w\s]+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Way|Pl|Place|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Ter|Terrace|Loop|Trail)\b[^,\n]*'
+        r'(?:,\s*[\w\s]+){0,2}\s*,?\s*(?:[A-Z]{2}|[A-Za-z]{4,})\s*,?\s*\d{5}(?:-\d{4})?)',
+        query,
+        re.IGNORECASE,
+    )
+    if loose:
+        return loose.group(1).strip()
+
     return query
 
 
 def _extract_house_number(address: str) -> str:
-    """Return leading house number from an address string, else empty string."""
+    """Return house number from an address string, else empty string.
+
+    Prefers leading number but falls back to first standalone number so
+    wrapped prompts ("... details: 4863 Price St ...") still pin correctly.
+    """
     if not isinstance(address, str):
         return ""
-    m = re.match(r"\s*(\d+)\b", address.strip())
-    return m.group(1) if m else ""
+    s = address.strip()
+    m = re.match(r"\s*(\d+)\b", s)
+    if m:
+        return m.group(1)
+    m2 = re.search(r"\b(\d{1,6})\b", s)
+    return m2.group(1) if m2 else ""
 
 
 def _normalize_addr_key(address: str) -> str:
@@ -200,8 +220,14 @@ def _choose_best_attom_property_index(requested_address: str, properties: list[d
         score = 0
         if req_key and addr_key and req_key == addr_key:
             score += 100
-        if req_house and addr_house and req_house == addr_house:
-            score += 25
+        # House number is a hard discriminator for subject-property lookups.
+        if req_house:
+            if addr_house and req_house == addr_house:
+                score += 40
+            elif addr_house and req_house != addr_house:
+                score -= 80
+            else:
+                score -= 40
         if req_street and addr_street and req_street in addr_street:
             score += 10
         if req_city and addr_city and req_city == addr_city:

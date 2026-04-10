@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 def _extract_address_from_query(query: str) -> str:
     """Extract address from a natural language query for ATTOM."""
     import re
+    # Strict pattern (state abbreviation or full state name)
     match = re.search(
         r'(\d+\s+[\w\s]+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pl|Cir|Pkwy|Hwy|Ter)\.?'
-        r'(?:\s*,\s*[\w\s]+,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?))',
+        r'(?:\s*,\s*[\w\s]+,?\s*(?:[A-Z]{2}|[A-Za-z]{4,})\s*,?\s*\d{5}(?:-\d{4})?))',
         query, re.IGNORECASE,
     )
     if match:
@@ -39,6 +40,16 @@ def _extract_address_from_query(query: str) -> str:
     for prefix in sorted(prefixes, key=len, reverse=True):
         if q_lower.startswith(prefix):
             return query[len(prefix):].strip()
+    # Loose fallback for wrapped inputs like:
+    # "property lookup. Additional details: 4863 Price Street, Forest Park, Georgia, 30297"
+    loose = re.search(
+        r'(\d+\s+[\w\s]+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Way|Pl|Place|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Ter|Terrace)\b[^,\n]*'
+        r'(?:,\s*[\w\s]+){0,2}\s*,?\s*(?:[A-Z]{2}|[A-Za-z]{4,})\s*,?\s*\d{5}(?:-\d{4})?)',
+        query,
+        re.IGNORECASE,
+    )
+    if loose:
+        return loose.group(1).strip()
     return query
 
 

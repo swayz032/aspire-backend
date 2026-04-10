@@ -1559,10 +1559,29 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             risk_tier="yellow" if agent == "quinn" else "green",
         )
 
-        # Combine task + details into a single prompt
+        # Combine task + details into a single prompt.
+        #
+        # IMPORTANT:
+        # ElevenLabs often sends generic task labels (e.g. "property lookup")
+        # and the real query/address in `details`. Prefixing with
+        # "Additional details:" harms downstream address extraction and can
+        # cause ATTOM to resolve to street-level parcels instead of the subject
+        # property. Keep details clean and front-loaded for Adam.
         full_task = task
         if details:
-            full_task = f"{task}. Additional details: {details}"
+            task_norm = str(task or "").strip().lower()
+            detail_text = str(details).strip()
+            generic_adam_task = task_norm in {
+                "lookup",
+                "research",
+                "property lookup",
+                "property search",
+                "property details",
+            }
+            if agent == "adam" and generic_adam_task:
+                full_task = detail_text
+            else:
+                full_task = f"{task}. {detail_text}"
 
         # ── Adam: Research via Ultra Router (19 playbooks, 13 providers) ──
         # Routes through classify_fast → route_to_playbook → dispatch_playbook.
