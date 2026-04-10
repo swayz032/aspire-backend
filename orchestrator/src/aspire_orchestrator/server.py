@@ -1578,7 +1578,25 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 "property search",
                 "property details",
             }
-            if agent == "adam" and generic_adam_task:
+            # ElevenLabs frequently sends a short descriptor in `task` and the
+            # concrete query (often full street address) in `details`.
+            # If we merge descriptor+details, provider extraction can degrade
+            # and ATTOM may resolve to street-level/vacant parcels.
+            task_is_descriptor = len(task_norm.split()) <= 8 and not bool(re.search(r"\d", task_norm))
+            details_is_specific = bool(
+                re.search(
+                    r"\b\d{1,6}\s+[\w\s]+(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way|pl|place|cir|circle|pkwy|parkway|hwy|highway|ter|terrace)\b",
+                    detail_text,
+                    re.IGNORECASE,
+                ),
+            ) or bool(re.search(r"\b\d{5}(?:-\d{4})?\b", detail_text))
+            adam_propertyish_task = "property" in task_norm or "address" in task_norm
+
+            if agent == "adam" and (
+                generic_adam_task
+                or (task_is_descriptor and details_is_specific)
+                or (adam_propertyish_task and details_is_specific)
+            ):
                 full_task = detail_text
             else:
                 full_task = f"{task}. {detail_text}"

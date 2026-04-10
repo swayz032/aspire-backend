@@ -145,18 +145,43 @@ def _extract_address(query: str) -> str:
         logger.debug("Extracted address from query: '%s' -> '%s'", query[:60], addr)
         return addr
 
-    # Fallback: if query contains a comma and a ZIP, use everything after common prefixes
+    # Fallback: if query contains a comma and a ZIP, strip common leading intent
+    # phrases (including stacked prefixes like "pull property facts for ...").
     prefixes = [
+        "pull property facts for", "pull property details for", "pull property profile for",
+        "find property facts for", "find property details for", "find property profile for",
         "give me", "pull", "get", "show me", "find", "look up",
         "property facts for", "property profile for", "property details for",
         "the full property profile for", "the property profile for",
     ]
-    q_lower = query.lower().strip()
-    for prefix in sorted(prefixes, key=len, reverse=True):
-        if q_lower.startswith(prefix):
-            remaining = query[len(prefix):].strip()
-            if remaining:
-                return remaining
+    remaining = query.strip()
+    while remaining:
+        q_lower = remaining.lower().strip()
+        consumed = False
+        for prefix in sorted(prefixes, key=len, reverse=True):
+            if q_lower.startswith(prefix):
+                remaining = remaining[len(prefix):].strip(" .,:;-")
+                consumed = True
+                break
+        if not consumed:
+            break
+    marker = "additional details:"
+    rem_lower = remaining.lower()
+    if marker in rem_lower:
+        idx = rem_lower.rfind(marker)
+        tail = remaining[idx + len(marker):].strip(" .,:;-")
+        if tail:
+            return tail
+    if remaining and remaining != query:
+        return remaining
+
+    # Explicit wrapper fallback used by invoke-sync ("... Additional details: ...")
+    lower_query = query.lower()
+    if marker in lower_query:
+        idx = lower_query.rfind(marker)
+        tail = query[idx + len(marker):].strip(" .,:;-")
+        if tail:
+            return tail
 
     # Final fallback: try to recover an inline address from noisy wrappers
     # like "property lookup. Additional details: 4863 Price Street, ...".

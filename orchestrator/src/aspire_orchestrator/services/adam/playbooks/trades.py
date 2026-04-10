@@ -32,14 +32,38 @@ def _extract_address_from_query(query: str) -> str:
     if match:
         return match.group(1).strip()
     prefixes = [
-        "pull property facts for", "pull property details for",
-        "property facts for", "property details for",
+        "pull property facts for", "pull property details for", "pull property profile for",
+        "find property facts for", "find property details for", "find property profile for",
+        "property facts for", "property details for", "property profile for",
         "pull the square footage and permit context for",
+        "pull", "get", "show me", "find", "look up",
     ]
-    q_lower = query.lower().strip()
-    for prefix in sorted(prefixes, key=len, reverse=True):
-        if q_lower.startswith(prefix):
-            return query[len(prefix):].strip()
+    remaining = query.strip()
+    while remaining:
+        q_lower = remaining.lower().strip()
+        consumed = False
+        for prefix in sorted(prefixes, key=len, reverse=True):
+            if q_lower.startswith(prefix):
+                remaining = remaining[len(prefix):].strip(" .,:;-")
+                consumed = True
+                break
+        if not consumed:
+            break
+    marker = "additional details:"
+    rem_lower = remaining.lower()
+    if marker in rem_lower:
+        idx = rem_lower.rfind(marker)
+        tail = remaining[idx + len(marker):].strip(" .,:;-")
+        if tail:
+            return tail
+    if remaining and remaining != query:
+        return remaining
+    lower_query = query.lower()
+    if marker in lower_query:
+        idx = lower_query.rfind(marker)
+        tail = query[idx + len(marker):].strip(" .,:;-")
+        if tail:
+            return tail
     # Loose fallback for wrapped inputs like:
     # "property lookup. Additional details: 4863 Price Street, Forest Park, Georgia, 30297"
     loose = re.search(
