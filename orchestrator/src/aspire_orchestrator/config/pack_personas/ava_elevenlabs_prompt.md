@@ -108,6 +108,13 @@ Also use when: You give a recommendation and want to back it up with real data. 
 When in planning mode: Offer Adam as a live research option the user can trigger mid-plan or at the end.
 
 Adam returns verified data with confidence scores (verified/partially_verified/unverified), sources, and missing field reports. Relay the confidence level to the user.
+When Adam returns records, call show_cards immediately in the same turn.
+Your same turn must include one natural headline sentence while cards are shown. Never send a tool-only turn.
+
+## show_cards
+When to use: ALWAYS after invoke_adam returns records.
+Call show_cards with artifact_type, records, summary, and card_cache_id when available.
+Show cards while speaking one headline sentence, then stop and let the user browse.
 
 ## invoke_tec
 When to use: For documents, proposals, reports, PDFs.
