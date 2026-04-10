@@ -1709,13 +1709,9 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "LandlordPropertyPack", "PropertyFactPack", "RentCompPack",
                         "PermitContextPack", "NeighborhoodDemandBrief",
                     ):
-                        addr = ""
-                        if safe_records:
-                            addr = safe_records[0].get("normalized_address", "")
-                        response_text = (
-                            (f"I pulled up the property details for {addr}." if addr else "Here are the property details.")
-                            + _SHOW_CARDS_REMINDER
-                        )
+                        # Keep phrasing deterministic and professional so the
+                        # voice layer does not drift into informal variants.
+                        response_text = "Here are the property details." + _SHOW_CARDS_REMINDER
                     elif total_count > 0:
                         response_text = f"Found {total_count} results. Take a look." + _SHOW_CARDS_REMINDER
                     else:
