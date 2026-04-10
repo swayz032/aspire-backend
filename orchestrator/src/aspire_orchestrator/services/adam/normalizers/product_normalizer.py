@@ -15,6 +15,8 @@ from aspire_orchestrator.services.adam.schemas.product_record import ProductReco
 
 def _safe_thumbnail(thumbnails: Any) -> str:
     """Safely extract first thumbnail URL from nested list."""
+    if isinstance(thumbnails, str):
+        return thumbnails.strip()
     if not thumbnails or not isinstance(thumbnails, list):
         return ""
     first = thumbnails[0]
@@ -35,6 +37,7 @@ def normalize_from_serpapi_shopping(data: dict[str, Any]) -> ProductRecord:
             brand = ext
             break
 
+    image_url = data.get("thumbnail", "")
     return ProductRecord(
         product_name=data.get("title", ""),
         brand=brand,
@@ -45,11 +48,12 @@ def normalize_from_serpapi_shopping(data: dict[str, Any]) -> ProductRecord:
         currency="USD",
         availability="",
         url=data.get("product_link", "") or data.get("link", ""),
-        image_url=data.get("thumbnail", ""),
+        image_url=image_url,
         rating=data.get("rating"),
         reviews=data.get("reviews"),
         delivery_info=data.get("delivery", ""),
         sources=[SourceAttribution(provider="serpapi_shopping", retrieved_at=datetime.now(timezone.utc).isoformat())],
+        extra={"thumbnail": image_url} if image_url else {},
     )
 
 
@@ -58,6 +62,7 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     delivery = data.get("delivery") or {}
     stock = data.get("pickup_quantity")
     store_name = data.get("pickup_store", "")
+    store_id = data.get("pickup_store_id", "") or data.get("store_id", "")
 
     delivery_str = ""
     if isinstance(delivery, dict):
@@ -66,7 +71,7 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
         delivery_str = str(delivery)
 
     badges = data.get("badges", [])
-    badge_str = ", ".join(badges) if badges else ""
+    image_url = _safe_thumbnail(data.get("thumbnails") or data.get("thumbnail"))
 
     return ProductRecord(
         product_name=data.get("title", ""),
@@ -81,12 +86,18 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
         currency="USD",
         availability="in_stock" if stock and stock > 0 else "check_store",
         in_store_stock=stock,
-        store_id=store_name,
+        store_id=str(store_id or ""),
         delivery_info=delivery_str,
         url=data.get("link", ""),
-        image_url=_safe_thumbnail(data.get("thumbnails") or data.get("thumbnail")),
+        image_url=image_url,
         rating=data.get("rating"),
         reviews=data.get("reviews"),
         sources=[SourceAttribution(provider="serpapi_home_depot", retrieved_at=datetime.now(timezone.utc).isoformat())],
-        extra={"badges": badge_str} if badge_str else {},
+        extra={
+            "thumbnail": image_url,
+            "pickup_store": store_name,
+            "delivery": delivery_str,
+            "badges": badges if isinstance(badges, list) else [],
+            "availability_text": "In stock" if stock and stock > 0 else "Check store",
+        },
     )

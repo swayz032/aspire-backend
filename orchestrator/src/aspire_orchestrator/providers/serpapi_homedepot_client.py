@@ -199,6 +199,19 @@ async def execute_serpapi_homedepot_search(
             "store_id": search_info.get("store_id", ""),
             "store_name": search_info.get("store_name", ""),
         }
+        def _pick_image(product: dict[str, Any]) -> str:
+            thumb = product.get("thumbnail")
+            if isinstance(thumb, str) and thumb.strip():
+                return thumb.strip()
+            thumbs = product.get("thumbnails")
+            if isinstance(thumbs, list) and thumbs:
+                first = thumbs[0]
+                if isinstance(first, str) and first.strip():
+                    return first.strip()
+                if isinstance(first, list) and first and isinstance(first[0], str):
+                    return first[0].strip()
+            return ""
+
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id=tool_id,
@@ -217,9 +230,11 @@ async def execute_serpapi_homedepot_search(
                         "reviews": p.get("reviews"),
                         "pickup_quantity": (p.get("pickup") or {}).get("quantity"),
                         "pickup_store": (p.get("pickup") or {}).get("store_name", ""),
+                        "pickup_store_id": (p.get("pickup") or {}).get("store_id", ""),
                         "delivery": p.get("delivery"),
                         "link": p.get("link"),
-                        "thumbnail": p.get("thumbnail"),
+                        "thumbnail": _pick_image(p),
+                        "thumbnails": p.get("thumbnails") or [],
                         "badges": p.get("badges", []),
                     }
                     for p in raw_products

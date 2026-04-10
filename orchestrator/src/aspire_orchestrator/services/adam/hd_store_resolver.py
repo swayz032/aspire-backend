@@ -1,11 +1,9 @@
-"""Home Depot store resolver — finds nearest store using Google Places + SerpApi store directory.
+"""Home Depot store resolver - finds nearest store using Google Places + SerpApi store directory.
 
 Strategy:
-  1. Google Places text search: "Home Depot near {zip_code}" → real address
-  2. Match Google result address against SerpApi store directory → store_id
+  1. Google Places text search: "Home Depot near {location}" -> real address
+  2. Match Google result address against SerpApi store directory -> store_id
   3. Fallback: ZIP-based match from directory if Google Places unavailable
-
-Store data source: https://serpapi.com/home-depot-stores-us (1,776 stores)
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ def _load_stores() -> None:
 
     store_file = Path(__file__).resolve().parent.parent.parent / "config" / "hd_stores_us.json"
     try:
-        with open(store_file) as f:
+        with open(store_file, encoding="utf-8") as f:
             _STORE_DATA = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         logger.warning("HD store data not found: %s", exc)
@@ -39,31 +37,27 @@ def _load_stores() -> None:
     for store in _STORE_DATA:
         zc = str(store.get("postal_code", "")).strip().zfill(5)
         store["_zip"] = zc
-        # Normalize address for matching
-        store["_addr_norm"] = re.sub(r'[^a-z0-9 ]', '', store.get("address", "").lower())
+        store["_addr_norm"] = re.sub(r"[^a-z0-9 ]", "", str(store.get("address", "")).lower())
         _ZIP_INDEX[zc] = store
 
 
 def _match_store_by_address(address: str) -> dict[str, Any] | None:
-    """Match a Google Places address to SerpApi store directory."""
     _load_stores()
     if not _STORE_DATA:
         return None
 
-    addr_norm = re.sub(r'[^a-z0-9 ]', '', address.lower())
+    addr_norm = re.sub(r"[^a-z0-9 ]", "", address.lower())
 
-    # Try to extract ZIP from the Google address
-    zip_match = re.search(r'\b(\d{5})\b', address)
+    zip_match = re.search(r"\b(\d{5})\b", address)
     if zip_match and zip_match.group(1) in (_ZIP_INDEX or {}):
         return _ZIP_INDEX[zip_match.group(1)]
 
-    # Try to match street number + street name
-    street_match = re.search(r'(\d+)\s+(\w+)', addr_norm)
+    street_match = re.search(r"(\d+)\s+(\w+)", addr_norm)
     if street_match:
         num = street_match.group(1)
         street = street_match.group(2)
         for store in _STORE_DATA:
-            if num in store["_addr_norm"] and street in store["_addr_norm"]:
+            if num in store.get("_addr_norm", "") and street in store.get("_addr_norm", ""):
                 return store
 
     return None
@@ -71,33 +65,38 @@ def _match_store_by_address(address: str) -> dict[str, Any] | None:
 
 async def resolve_store_async(
     zip_code: str,
+    location_hint: str = "",
     correlation_id: str = "",
     suite_id: str = "",
     office_id: str = "",
 ) -> dict[str, Any] | None:
     """Find nearest Home Depot store using Google Places API.
 
-    Returns dict with store_id, address, postal_code, plus Google Places data
-    (formatted_address, name, rating, opening_hours).
+    Returns store fields needed by tool cards and store summary card.
     """
     _load_stores()
 
-    # Exact ZIP match — skip Google Places
     zc = str(zip_code).strip().zfill(5)
-    if zc in (_ZIP_INDEX or {}):
+    if zc and zc in (_ZIP_INDEX or {}):
         store = _ZIP_INDEX[zc]
         return {
             "store_id": str(store.get("store_id", "")),
+            "store_name": store.get("name", "Home Depot"),
             "address": store.get("address", ""),
+            "city": store.get("city", ""),
+            "state": store.get("state", ""),
             "postal_code": store.get("postal_code", ""),
+            "phone": store.get("phone", ""),
+            "website": store.get("website", ""),
         }
 
-    # Google Places: find nearest Home Depot
     try:
         from aspire_orchestrator.providers.google_places_client import execute_google_places_search
+
+        location_query = location_hint or zip_code
         result = await execute_google_places_search(
             payload={
-                "query": f"Home Depot near {zip_code}",
+                "query": f"Home Depot near {location_query}",
                 "type": "home_goods_store",
             },
             correlation_id=correlation_id or "hd_store_lookup",
@@ -108,34 +107,33 @@ async def resolve_store_async(
         if result.outcome.value == "success" and result.data:
             places = result.data.get("results", [])
             if places:
-                place = places[0]  # Nearest result
+                place = places[0]
                 gp_address = place.get("formatted_address", "")
                 gp_name = place.get("name", "")
 
-                # Match to SerpApi store directory
                 matched = _match_store_by_address(gp_address)
 
                 store_info: dict[str, Any] = {
-                    "store_id": str(matched["store_id"]) if matched else "",
-                    "address": gp_address,
-                    "postal_code": matched.get("postal_code", "") if matched else "",
+                    "store_id": str(matched.get("store_id", "")) if matched else "",
                     "store_name": gp_name,
+                    "address": gp_address,
+                    "city": matched.get("city", "") if matched else "",
+                    "state": matched.get("state", "") if matched else "",
+                    "postal_code": matched.get("postal_code", "") if matched else "",
                     "rating": place.get("rating"),
                     "open_now": (place.get("opening_hours") or {}).get("open_now"),
+                    "phone": place.get("phone", ""),
+                    "website": place.get("website", ""),
                 }
                 return store_info
     except Exception as exc:
         logger.warning("Google Places store lookup failed: %s", exc)
 
-    # Fallback: ZIP distance within same 3-digit prefix range
     return _fallback_zip_match(zc)
 
 
 def resolve_store(zip_code: str, **_kwargs: Any) -> dict[str, Any] | None:
-    """Synchronous fallback — uses ZIP directory match only (no Google Places).
-
-    Use resolve_store_async when possible for accurate results.
-    """
+    """Synchronous fallback - uses ZIP directory match only (no Google Places)."""
     _load_stores()
     zc = str(zip_code).strip().zfill(5)
     if zc in (_ZIP_INDEX or {}):
@@ -144,21 +142,37 @@ def resolve_store(zip_code: str, **_kwargs: Any) -> dict[str, Any] | None:
 
 
 def _fallback_zip_match(zc: str) -> dict[str, Any] | None:
-    """Match by ZIP proximity within adjacent prefixes."""
     _load_stores()
-    if not _STORE_DATA:
+    if not _STORE_DATA or not zc:
         return None
 
-    base = int(zc[:3])
+    try:
+        base = int(zc[:3])
+        target = int(zc)
+    except ValueError:
+        return None
+
     candidates: list[dict[str, Any]] = []
     for store in _STORE_DATA:
-        store_prefix = int(store["_zip"][:3])
+        try:
+            store_prefix = int(str(store.get("_zip", "00000"))[:3])
+        except ValueError:
+            continue
         if abs(store_prefix - base) <= 3:
             candidates.append(store)
 
     if not candidates:
         return None
 
-    target = int(zc)
-    candidates.sort(key=lambda s: abs(int(s["_zip"]) - target))
-    return candidates[0]
+    candidates.sort(key=lambda s: abs(int(str(s.get("_zip", "0"))) - target))
+    store = candidates[0]
+    return {
+        "store_id": str(store.get("store_id", "")),
+        "store_name": store.get("name", "Home Depot"),
+        "address": store.get("address", ""),
+        "city": store.get("city", ""),
+        "state": store.get("state", ""),
+        "postal_code": store.get("postal_code", ""),
+        "phone": store.get("phone", ""),
+        "website": store.get("website", ""),
+    }

@@ -225,7 +225,13 @@ async def execute_tool_material_price_check(
     query: str, ctx: PlaybookContext, zip_code: str = "", store_id: str = "",
     on_sale: bool = False,
 ) -> ResearchResponse:
-    """TOOL_MATERIAL_PRICE_CHECK — Find current pricing, stock, and store info for tools/materials."""
+    """TOOL_MATERIAL_PRICE_CHECK - Find current pricing, stock, and store info for tools/materials.
+
+    Strict policy for product cards:
+      1. Run search with resolved location/store context.
+      2. Retry with tightened query up to 3 attempts.
+      3. Fail closed (no partial cards) if required product/store-summary fields are incomplete.
+    """
     import re as _re
     from aspire_orchestrator.providers.serpapi_shopping_client import execute_serpapi_shopping_search
     from aspire_orchestrator.providers.serpapi_homedepot_client import execute_serpapi_homedepot_search
@@ -233,107 +239,187 @@ async def execute_tool_material_price_check(
         normalize_from_serpapi_shopping,
         normalize_from_serpapi_homedepot,
     )
+    from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
 
     logger.info("Executing TOOL_MATERIAL_PRICE_CHECK for: %s", query[:80])
 
-    # Auto-extract ZIP from query if not provided
     if not zip_code:
-        zip_match = _re.search(r'\b(\d{5})\b', query)
+        zip_match = _re.search(r"\b(\d{5})\b", query)
         if zip_match:
             zip_code = zip_match.group(1)
 
-    records: list[dict[str, Any]] = []
-    sources: list[SourceAttribution] = []
+    location_hint = ""
+    city_match = _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\b", query)
+    if city_match:
+        location_hint = city_match.group(1).strip(" .,")
+
+    def _product_missing_fields(r: dict[str, Any]) -> list[str]:
+        missing: list[str] = []
+        for field in ("product_name", "price", "url", "image_url", "retailer"):
+            v = r.get(field)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                missing.append(field)
+        return missing
+
+    def _store_missing_fields(store: dict[str, Any]) -> list[str]:
+        missing: list[str] = []
+        for field in ("store_name", "address", "phone", "website"):
+            v = store.get(field)
+            if v is None or (isinstance(v, str) and not str(v).strip()):
+                missing.append(field)
+        return missing
+
     providers_called: list[str] = []
+    last_missing_fields: list[str] = []
+    final_records: list[dict[str, Any]] = []
+    final_sources: list[SourceAttribution] = []
+    final_store_summary: dict[str, Any] = {}
 
-    # Resolve nearest HD store + run Google Shopping in parallel
-    # Store resolution is optional — HD search works without it, just no local stock info.
-    from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
-    hd_store_info: dict[str, Any] = {}
-    resolved_store_id = store_id
+    query_attempts = [
+        query,
+        f"{query} Home Depot",
+        f"{query} Home Depot {location_hint}".strip(),
+    ]
 
-    # Build Google Shopping task now (doesn't need store_id)
-    shopping_payload: dict[str, Any] = {"query": query, "sort_by": 1}
-    if zip_code:
-        shopping_payload["location"] = zip_code
-    if on_sale:
-        shopping_payload["on_sale"] = True
+    for attempt_idx, attempt_query in enumerate(query_attempts, start=1):
+        records: list[dict[str, Any]] = []
+        sources: list[SourceAttribution] = []
+        hd_store_info: dict[str, Any] = {}
+        resolved_store_id = store_id
 
-    async def _resolve_and_search_hd() -> Any:
-        """Resolve store ID, then search HD with it."""
-        nonlocal resolved_store_id, hd_store_info
-        if not resolved_store_id and zip_code:
-            store_match = await resolve_store_async(
-                zip_code,
+        shopping_payload: dict[str, Any] = {"query": attempt_query, "sort_by": 1}
+        if zip_code:
+            shopping_payload["location"] = zip_code
+        elif location_hint:
+            shopping_payload["location"] = location_hint
+        if on_sale:
+            shopping_payload["on_sale"] = True
+
+        async def _resolve_and_search_hd() -> Any:
+            nonlocal resolved_store_id, hd_store_info
+            if not resolved_store_id and (zip_code or location_hint):
+                store_match = await resolve_store_async(
+                    zip_code=zip_code,
+                    location_hint=location_hint,
+                    correlation_id=ctx.correlation_id,
+                    suite_id=ctx.suite_id,
+                    office_id=ctx.office_id,
+                )
+                if store_match:
+                    resolved_store_id = str(store_match.get("store_id", "")).strip()
+                    hd_store_info = dict(store_match)
+
+            hd_payload: dict[str, Any] = {"query": attempt_query, "hd_sort": "best_match"}
+            if resolved_store_id:
+                hd_payload["store_id"] = resolved_store_id
+            if zip_code:
+                hd_payload["delivery_zip"] = zip_code
+            return await execute_serpapi_homedepot_search(
+                payload=hd_payload,
                 correlation_id=ctx.correlation_id,
                 suite_id=ctx.suite_id,
                 office_id=ctx.office_id,
             )
-            if store_match:
-                resolved_store_id = store_match.get("store_id", "")
-                hd_store_info = store_match
 
-        hd_payload: dict[str, Any] = {"query": query, "hd_sort": "best_match"}
-        if resolved_store_id:
-            hd_payload["store_id"] = resolved_store_id
-        if zip_code:
-            hd_payload["delivery_zip"] = zip_code
-
-        return await execute_serpapi_homedepot_search(
-            payload=hd_payload,
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
+        hd_result, shopping_result = await asyncio.gather(
+            _resolve_and_search_hd(),
+            execute_serpapi_shopping_search(
+                payload=shopping_payload,
+                correlation_id=ctx.correlation_id,
+                suite_id=ctx.suite_id,
+                office_id=ctx.office_id,
+            ),
+            return_exceptions=True,
         )
 
-    # Run HD (store resolve + search) and Google Shopping in parallel
-    hd_result, shopping_result = await asyncio.gather(
-        _resolve_and_search_hd(),
-        execute_serpapi_shopping_search(
-            payload=shopping_payload,
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
-        ),
-        return_exceptions=True,
-    )
+        if "serpapi_home_depot" not in providers_called:
+            providers_called.append("serpapi_home_depot")
+        if "serpapi_shopping" not in providers_called:
+            providers_called.append("serpapi_shopping")
 
-    # Process HD results
-    if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
-        serpapi_store = hd_result.data.get("store", {})
-        if serpapi_store.get("store_name"):
-            hd_store_info["store_name"] = serpapi_store["store_name"]
-        if not hd_store_info.get("store_id") and serpapi_store.get("store_id"):
-            hd_store_info["store_id"] = serpapi_store["store_id"]
-        for item in hd_result.data.get("results", [])[:8]:
-            product = normalize_from_serpapi_homedepot(item)
-            records.append(product.to_dict())
-            sources.extend(product.sources)
-    providers_called.append("serpapi_home_depot")
+        if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
+            serpapi_store = hd_result.data.get("store", {})
+            if serpapi_store.get("store_name"):
+                hd_store_info["store_name"] = serpapi_store["store_name"]
+            if not hd_store_info.get("store_id") and serpapi_store.get("store_id"):
+                hd_store_info["store_id"] = serpapi_store["store_id"]
+            for item in hd_result.data.get("results", [])[:8]:
+                product = normalize_from_serpapi_homedepot(item)
+                records.append(product.to_dict())
+                sources.extend(product.sources)
 
-    # Process Shopping results
-    if not isinstance(shopping_result, Exception) and shopping_result.outcome.value == "success" and shopping_result.data:
-        for item in shopping_result.data.get("results", [])[:6]:
-            product = normalize_from_serpapi_shopping(item)
-            records.append(product.to_dict())
-            sources.extend(product.sources)
-    providers_called.append("serpapi_shopping")
+        if not isinstance(shopping_result, Exception) and shopping_result.outcome.value == "success" and shopping_result.data:
+            for item in shopping_result.data.get("results", [])[:6]:
+                product = normalize_from_serpapi_shopping(item)
+                records.append(product.to_dict())
+                sources.extend(product.sources)
 
-    report = verify_records(records=records, sources=sources, required_fields=["product_name", "price", "retailer"])
+        hd_products = [r for r in records if r.get("retailer") == "Home Depot"]
+        complete_products = [r for r in hd_products if not _product_missing_fields(r)]
+        store_summary = {
+            "card_kind": "store_summary",
+            "store_id": hd_store_info.get("store_id", ""),
+            "store_name": hd_store_info.get("store_name", ""),
+            "address": hd_store_info.get("address", ""),
+            "city": hd_store_info.get("city", ""),
+            "state": hd_store_info.get("state", ""),
+            "postal_code": hd_store_info.get("postal_code", ""),
+            "phone": hd_store_info.get("phone", ""),
+            "website": hd_store_info.get("website", ""),
+            "open_now": hd_store_info.get("open_now"),
+            "rating": hd_store_info.get("rating"),
+            "retailer": "Home Depot",
+        }
+        store_missing = _store_missing_fields(store_summary)
+        last_missing_fields = sorted({
+            *[m for r in hd_products for m in _product_missing_fields(r)],
+            *[f"store_summary.{f}" for f in store_missing],
+        })
 
+        logger.info(
+            "TOOL_MATERIAL_PRICE_CHECK attempt=%s hd_products=%s complete_hd_products=%s store_missing=%s",
+            attempt_idx, len(hd_products), len(complete_products), store_missing,
+        )
+
+        if complete_products and not store_missing:
+            final_records = [store_summary, *complete_products, *[r for r in records if r.get("retailer") != "Home Depot"]]
+            final_sources = sources
+            final_store_summary = store_summary
+            break
+
+    if not final_records:
+        return ResearchResponse(
+            artifact_type="error",
+            summary="I could not retrieve complete Home Depot product and store details right now. Please try again in a moment.",
+            records=[],
+            sources=[],
+            freshness={"mode": "live"},
+            confidence={"status": "unverified", "score": 0.0},
+            missing_fields=last_missing_fields,
+            next_queries=["Try again in a moment", "Use a different city or ZIP"],
+            segment="trades",
+            intent="price_check",
+            playbook="TOOL_MATERIAL_PRICE_CHECK",
+            providers_called=providers_called,
+            extra={"hard_fail": True, "missing_fields": last_missing_fields},
+        )
+
+    report = verify_records(records=final_records, sources=final_sources, required_fields=["product_name", "price", "retailer"])
+
+    hd_count = sum(1 for r in final_records if r.get("retailer") == "Home Depot" and r.get("card_kind") != "store_summary")
+    in_stock = sum(1 for r in final_records if r.get("retailer") == "Home Depot" and r.get("in_store_stock") and r["in_store_stock"] > 0)
     summary_parts = [f"Price check for {query[:60]}"]
-    if hd_store_info.get("store_name"):
-        summary_parts.append(f"Home Depot store: {hd_store_info['store_name']} (#{hd_store_info.get('store_id', '')})")
-    hd_count = sum(1 for r in records if r.get("retailer") == "Home Depot")
-    in_stock = sum(1 for r in records if r.get("in_store_stock") and r["in_store_stock"] > 0)
-    if hd_count:
-        summary_parts.append(f"{hd_count} Home Depot products, {in_stock} in stock")
+    if final_store_summary.get("store_name"):
+        summary_parts.append(
+            f"Home Depot store: {final_store_summary['store_name']} (#{final_store_summary.get('store_id', '')})"
+        )
+    summary_parts.append(f"{hd_count} Home Depot products, {in_stock} in stock")
 
     return ResearchResponse(
         artifact_type="PriceComparison",
         summary=". ".join(summary_parts) + ".",
-        records=records,
-        sources=sources,
+        records=final_records,
+        sources=final_sources,
         freshness={"mode": "live"},
         confidence={"status": report.status, "score": report.confidence_score},
         missing_fields=report.missing_fields,
@@ -346,9 +432,8 @@ async def execute_tool_material_price_check(
         intent="price_check",
         playbook="TOOL_MATERIAL_PRICE_CHECK",
         providers_called=providers_called,
-        extra={"store": hd_store_info} if hd_store_info else {},
+        extra={"store_summary": final_store_summary, "cards_version": "v1"},
     )
-
 
 async def execute_competitor_pricing_scan(
     query: str, ctx: PlaybookContext, location: str = "",
@@ -575,3 +660,4 @@ async def execute_territory_opportunity_scan(
         playbook="TERRITORY_OPPORTUNITY_SCAN",
         providers_called=providers_called,
     )
+

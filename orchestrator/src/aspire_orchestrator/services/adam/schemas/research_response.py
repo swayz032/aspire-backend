@@ -48,6 +48,7 @@ class ResearchResponse:
             "playbook": self.playbook,
             "providers_called": self.providers_called,
             "cost_estimate": self.cost_estimate,
+            "extra": self.extra,
         }
         if self.verification_report:
             d["verification_report"] = self.verification_report.to_dict()
