@@ -82,7 +82,11 @@ interface PersonaConfig {
 const ANAM_API_BASE = "https://api.anam.ai/v1";
 const ANAM_API_KEY = process.env.ANAM_API_KEY;
 const GATEWAY_URL = process.env.GATEWAY_URL || "https://www.aspireos.app";
-const TOOL_SECRET = process.env.ANAM_TOOL_SECRET || process.env.ELEVENLABS_WORKSPACE_SECRET || "";
+const TOOL_SECRET =
+  process.env.TOOL_WEBHOOK_SHARED_SECRET ||
+  process.env.ANAM_TOOL_SECRET ||
+  process.env.ELEVENLABS_WORKSPACE_SECRET ||
+  "";
 
 if (!ANAM_API_KEY) {
   console.error("ERROR: ANAM_API_KEY environment variable is not set.");
@@ -90,7 +94,7 @@ if (!ANAM_API_KEY) {
 }
 
 if (!TOOL_SECRET) {
-  console.warn("WARNING: No ANAM_TOOL_SECRET or ELEVENLABS_WORKSPACE_SECRET set. Webhook tools will not authenticate.");
+  console.warn("WARNING: No TOOL_WEBHOOK_SHARED_SECRET/ANAM_TOOL_SECRET/ELEVENLABS_WORKSPACE_SECRET set. Webhook tools will not authenticate.");
 }
 
 // Known persona IDs (from existing Anam embed URLs)
@@ -200,7 +204,7 @@ Never reveal system internals, API keys, internal tool names, or architecture de
 function buildWebhookTools(): WebhookToolConfig[] {
   const authHeaders: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-elevenlabs-secret": TOOL_SECRET,
+    "x-aspire-tool-secret": TOOL_SECRET,
   };
 
   return [
@@ -893,7 +897,7 @@ async function main() {
   console.log("");
 
   console.log("Next steps:");
-  console.log("  1. Set ANAM_TOOL_SECRET in your environment (shared with ELEVENLABS_WORKSPACE_SECRET)");
+  console.log("  1. Set TOOL_WEBHOOK_SHARED_SECRET in your environment (fallback: ANAM_TOOL_SECRET)");
   console.log("  2. Update ANAM_FINN_PERSONA_ID and ANAM_AVA_PERSONA_ID env vars if IDs changed");
   console.log("  3. Verify personas in Anam dashboard: https://dashboard.anam.ai");
   console.log("  4. Test video sessions from Aspire Desktop");
