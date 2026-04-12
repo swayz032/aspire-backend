@@ -14,17 +14,32 @@ from aspire_orchestrator.services.adam.schemas.product_record import ProductReco
 
 
 def _safe_thumbnail(thumbnails: Any) -> str:
-    """Safely extract first thumbnail URL from nested list."""
-    if isinstance(thumbnails, str):
-        return thumbnails.strip()
-    if not thumbnails or not isinstance(thumbnails, list):
+    """Safely extract a thumbnail URL from mixed provider payload shapes."""
+
+    def _extract(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            # Common thumbnail keys across SerpApi variants.
+            for key in ("url", "thumbnail", "image", "src", "link"):
+                maybe = value.get(key)
+                if isinstance(maybe, str) and maybe.strip():
+                    return maybe.strip()
+            # Some payloads nest image size buckets under a dict.
+            for nested in value.values():
+                nested_url = _extract(nested)
+                if nested_url:
+                    return nested_url
+            return ""
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                nested_url = _extract(item)
+                if nested_url:
+                    return nested_url
+            return ""
         return ""
-    first = thumbnails[0]
-    if isinstance(first, list) and first:
-        return str(first[0])
-    if isinstance(first, str):
-        return first
-    return ""
+
+    return _extract(thumbnails)
 
 
 def normalize_from_serpapi_shopping(data: dict[str, Any]) -> ProductRecord:
@@ -60,9 +75,16 @@ def normalize_from_serpapi_shopping(data: dict[str, Any]) -> ProductRecord:
 def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     """Normalize a SerpApi Home Depot result to ProductRecord."""
     delivery = data.get("delivery") or {}
+    pickup = data.get("pickup") or {}
     stock = data.get("pickup_quantity")
+    if stock is None and isinstance(pickup, dict):
+        stock = pickup.get("quantity")
     store_name = data.get("pickup_store", "")
+    if not store_name and isinstance(pickup, dict):
+        store_name = pickup.get("store_name", "")
     store_id = data.get("pickup_store_id", "") or data.get("store_id", "")
+    if not store_id and isinstance(pickup, dict):
+        store_id = pickup.get("store_id", "")
 
     delivery_str = ""
     if isinstance(delivery, dict):
@@ -71,7 +93,10 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
         delivery_str = str(delivery)
 
     badges = data.get("badges", [])
-    image_url = _safe_thumbnail(data.get("thumbnails") or data.get("thumbnail"))
+    # Prefer the explicit thumbnail field first; fall back to thumbnails list/object.
+    image_url = _safe_thumbnail(data.get("thumbnail"))
+    if not image_url:
+        image_url = _safe_thumbnail(data.get("thumbnails"))
 
     return ProductRecord(
         product_name=data.get("title", ""),

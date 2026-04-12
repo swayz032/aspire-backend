@@ -375,6 +375,14 @@ def route_to_playbook(
             best_score = score
             best = playbook
 
+    # Guardrail: store-specific product queries must route to Home Depot/tool pricing
+    # playbook even when tenant segment would otherwise suppress a match (for example,
+    # landlord profile + "Home Depot drill price").
+    if has_store_signal and classification.intent == "price_check":
+        best = TRADES_TOOL_MATERIAL_PRICE_CHECK
+        best_score = max(best_score, 11)
+        classification.segment = "trades"
+
     # Guardrail: addressed property-fact queries must never fall through to legacy.
     # If segment matching produced no candidate, force landlord PROPERTY_FACTS.
     if best is None and has_address_signal and classification.intent == "property_fact":

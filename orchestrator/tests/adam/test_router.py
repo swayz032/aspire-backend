@@ -188,6 +188,13 @@ class TestGoldenQueries:
         assert playbook is not None
         assert playbook.name == "ESTIMATE_RESEARCH"
 
+    def test_store_specific_price_check_forces_trades_tool_playbook(self):
+        query = "show me drill prices at home depot in 30316"
+        classification, playbook = route_to_playbook(query, tenant_segment="landlord")
+        assert playbook is not None
+        assert playbook.name == "TOOL_MATERIAL_PRICE_CHECK"
+        assert classification.segment == "trades"
+
 
 # ---------------------------------------------------------------------------
 # Router return shape

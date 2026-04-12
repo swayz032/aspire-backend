@@ -29,6 +29,8 @@ def normalize_from_tripadvisor(data: dict[str, Any]) -> HotelRecord:
         if isinstance(sub, dict) and sub.get("name"):
             amenities.append(sub["name"])
 
+    ranking_string = data.get("ranking_data", {}).get("ranking_string", "") if data.get("ranking_data") else ""
+
     return HotelRecord(
         name=data.get("name", ""),
         normalized_address=address_str or data.get("address_string", ""),
@@ -41,8 +43,9 @@ def normalize_from_tripadvisor(data: dict[str, Any]) -> HotelRecord:
         amenities=amenities,
         latitude=_safe_float(data.get("latitude")),
         longitude=_safe_float(data.get("longitude")),
-        sentiment_summary=data.get("ranking_data", {}).get("ranking_string", "") if data.get("ranking_data") else "",
+        sentiment_summary=ranking_string,
         sources=[SourceAttribution(provider="tripadvisor", retrieved_at=datetime.now(timezone.utc).isoformat())],
+        extra={"ranking_string": ranking_string} if ranking_string else {},
     )
 
 

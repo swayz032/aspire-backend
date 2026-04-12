@@ -462,6 +462,20 @@ class TestNormalizeFromSerpApiHomeDepot:
         record = normalize_from_serpapi_homedepot(self._payload())
         assert "homedepot.com" in record.image_url or "img" in record.image_url
 
+    def test_image_url_extracted_from_dict_thumbnail_entries(self):
+        payload = self._payload()
+        payload["thumbnail"] = ""
+        payload["thumbnails"] = [{"url": "https://img.homedepot.com/rheem-dict.jpg"}]
+        record = normalize_from_serpapi_homedepot(payload)
+        assert record.image_url == "https://img.homedepot.com/rheem-dict.jpg"
+
+    def test_explicit_thumbnail_string_preferred_over_invalid_thumbnails(self):
+        payload = self._payload()
+        payload["thumbnail"] = "https://img.homedepot.com/rheem-explicit.jpg"
+        payload["thumbnails"] = [{"bad": "value"}]
+        record = normalize_from_serpapi_homedepot(payload)
+        assert record.image_url == "https://img.homedepot.com/rheem-explicit.jpg"
+
     def test_source_attribution_is_serpapi_home_depot(self):
         record = normalize_from_serpapi_homedepot(self._payload())
         assert record.sources[0].provider == "serpapi_home_depot"
@@ -522,6 +536,10 @@ class TestNormalizeFromTripAdvisor:
     def test_sentiment_summary_from_ranking_data(self):
         record = normalize_from_tripadvisor(self._payload())
         assert "#3 of 250" in record.sentiment_summary
+
+    def test_ranking_string_exposed_for_card_renderers(self):
+        record = normalize_from_tripadvisor(self._payload())
+        assert record.extra.get("ranking_string") == "#3 of 250 hotels in Nashville"
 
     def test_source_attribution_is_tripadvisor(self):
         record = normalize_from_tripadvisor(self._payload())

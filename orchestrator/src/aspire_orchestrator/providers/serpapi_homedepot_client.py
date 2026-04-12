@@ -200,17 +200,29 @@ async def execute_serpapi_homedepot_search(
             "store_name": search_info.get("store_name", ""),
         }
         def _pick_image(product: dict[str, Any]) -> str:
-            thumb = product.get("thumbnail")
-            if isinstance(thumb, str) and thumb.strip():
-                return thumb.strip()
-            thumbs = product.get("thumbnails")
-            if isinstance(thumbs, list) and thumbs:
-                first = thumbs[0]
-                if isinstance(first, str) and first.strip():
-                    return first.strip()
-                if isinstance(first, list) and first and isinstance(first[0], str):
-                    return first[0].strip()
-            return ""
+            def _extract(value: Any) -> str:
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                if isinstance(value, dict):
+                    for key in ("url", "thumbnail", "image", "src", "link"):
+                        maybe = value.get(key)
+                        if isinstance(maybe, str) and maybe.strip():
+                            return maybe.strip()
+                    for nested in value.values():
+                        nested_url = _extract(nested)
+                        if nested_url:
+                            return nested_url
+                    return ""
+                if isinstance(value, list):
+                    for item in value:
+                        nested_url = _extract(item)
+                        if nested_url:
+                            return nested_url
+                    return ""
+                return ""
+
+            # Prefer explicit thumbnail string if present, then complex thumbnails payload.
+            return _extract(product.get("thumbnail")) or _extract(product.get("thumbnails"))
 
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,

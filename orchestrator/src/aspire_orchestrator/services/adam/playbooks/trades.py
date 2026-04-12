@@ -382,7 +382,9 @@ async def execute_tool_material_price_check(
         )
 
         if complete_products and not store_missing:
-            final_records = [store_summary, *complete_products, *[r for r in records if r.get("retailer") != "Home Depot"]]
+            # Card pack is Home Depot-specific by design: include only the
+            # Home Depot store summary + Home Depot products.
+            final_records = [store_summary, *complete_products]
             final_sources = sources
             final_store_summary = store_summary
             break

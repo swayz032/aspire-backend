@@ -56,6 +56,10 @@ async def execute_business_trip_hotel_research(
 
     _t0 = _time.monotonic()
     _TIME_BUDGET_SECS = 30.0  # Total budget — leaves 15s margin in 45s playbook timeout
+    _MAX_TA_DETAIL_ENRICH = 20
+    _MAX_NAME_ENRICH = 12
+    _MAX_PHOTO_ENRICH = 20
+    _MAX_PHOTOS_PER_HOTEL = 5
 
     def _elapsed() -> float:
         return _time.monotonic() - _t0
@@ -175,7 +179,7 @@ async def execute_business_trip_hotel_research(
                 suite_id=ctx.suite_id,
                 office_id=ctx.office_id,
             )
-            for lid in list(ta_location_ids.keys())[:8]
+            for lid in list(ta_location_ids.keys())[:_MAX_TA_DETAIL_ENRICH]
         ]
         try:
             detail_results = await asyncio.wait_for(
@@ -209,7 +213,7 @@ async def execute_business_trip_hotel_research(
             return
         enrich_tasks = []
         enrich_names = []
-        for rec in unenriched[:5]:
+        for rec in unenriched[:_MAX_NAME_ENRICH]:
             hotel_name = rec.get("name", "")
             if hotel_name:
                 enrich_tasks.append(execute_tripadvisor_search(
@@ -282,7 +286,7 @@ async def execute_business_trip_hotel_research(
         photo_record_map: list[dict] = []
         count = 0
         for rec in records:
-            if count >= 5:
+            if count >= _MAX_PHOTO_ENRICH:
                 break
             ta_srcs = [s for s in rec.get("sources", []) if s.get("provider") == "tripadvisor"]
             if ta_srcs and rec.get("tripadvisor_url"):
@@ -306,8 +310,19 @@ async def execute_business_trip_hotel_research(
                 if pr.outcome.value == "success" and pr.data:
                     photos = pr.data.get("photos", [])
                     if photos:
-                        rec["photos"] = photos
-                        rec["photo_count"] = len(photos)
+                        clipped = photos[:_MAX_PHOTOS_PER_HOTEL]
+                        rec["photos"] = clipped
+                        rec["photo_count"] = len(clipped)
+                        hero = clipped[0] if clipped and isinstance(clipped[0], dict) else {}
+                        hero_url = (
+                            hero.get("large")
+                            or hero.get("original")
+                            or hero.get("medium")
+                            or hero.get("small")
+                            or hero.get("thumbnail")
+                        )
+                        if isinstance(hero_url, str) and hero_url.strip():
+                            rec["image_url"] = hero_url.strip()
 
     # Run all Phase 3 tasks concurrently within remaining time budget
     if _remaining() > 3.0:
@@ -472,6 +487,7 @@ def _merge_ta_detail_into_records(
         "amenities": amenities_list,
         "description": d.get("description", ""),
         "sentiment_summary": ranking.get("ranking_string", ""),
+        "ranking_string": ranking.get("ranking_string", ""),
         "ta_ranking": ranking.get("ranking", ""),
         "trip_types": trip_types,
         "latitude": ta_lat,
@@ -501,7 +517,7 @@ def _merge_ta_detail_into_records(
         # Merge all TA fields GP doesn't have
         merge_fields = [
             "star_rating", "price_range", "amenities", "styles",
-            "sentiment_summary", "ta_ranking", "description",
+            "sentiment_summary", "ranking_string", "ta_ranking", "description",
             "subratings", "rating_breakdown", "trip_types",
             "tripadvisor_url", "photo_count", "city", "state", "postal_code",
         ]

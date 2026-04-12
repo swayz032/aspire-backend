@@ -1619,6 +1619,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             # so gpt-4o-mini processes it fast and the voice response isn't delayed.
             # The summary text includes the full count ("Found 16 hotels...").
             _MAX_LLM_RECORDS = 10
+            _MAX_CARD_RECORDS = 50
 
             # Strip HEAVY NESTED ARRAYS that bloat the response (50KB+ per record).
             # Keep ALL scalar fields (owner, mortgage, tax, equity, sale basics) — these
@@ -1730,7 +1731,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     # processing it and went silent (audio dropout). Now we send ONLY what the LLM
                     # needs: artifact_type, slim records (for show_cards params), and total_count.
                     slim_records = [_slim_for_cards(r) for r in safe_records[:_MAX_LLM_RECORDS]]
-                    full_records = safe_records[:_MAX_LLM_RECORDS]
+                    full_records = safe_records[:_MAX_CARD_RECORDS]
 
                     # Minimal data for LLM — just enough to call show_cards and narrate
                     response_data = {
