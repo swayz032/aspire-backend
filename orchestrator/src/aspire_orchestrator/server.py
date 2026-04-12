@@ -1464,13 +1464,15 @@ async def a2a_dispatch(request: Request) -> JSONResponse:
 
 
 # =============================================================================
-# POST /v1/agents/invoke-sync — Thin sync API (no LangGraph, no task queue)
+# POST /v1/agents/invoke (+ /v1/agents/invoke-sync legacy alias)
+# Thin sync API (no LangGraph, no task queue)
 # =============================================================================
 
 
 SYNC_INVOKE_AGENTS = {"quinn", "adam", "tec"}
 
 
+@app.post("/v1/agents/invoke")
 @app.post("/v1/agents/invoke-sync")
 async def agents_invoke_sync(request: Request) -> JSONResponse:
     """Call a skillpack agent directly and return the response inline.
@@ -2144,7 +2146,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "approval_id": _approval_id,
                         "tenant_id": safe_suite_id,
                         "run_id": ctx.correlation_id,
-                        "orchestrator": "invoke-sync",
+                        "orchestrator": "invoke",
                         "tool": "invoke_quinn",
                         "operation": "quote.create" if is_quote else "invoice.create",
                         "resource_type": "quote" if is_quote else "invoice",
@@ -2244,7 +2246,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             "approval_id": _approval_id,
                             "tenant_id": safe_suite_id,
                             "run_id": ctx.correlation_id,
-                            "orchestrator": "invoke-sync",
+                            "orchestrator": "invoke",
                             "tool": f"invoke_{agent}",
                             "operation": "create_invoice",
                             "resource_type": "invoice",
@@ -2279,7 +2281,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error("invoke-sync error for %s: %s", agent, e, exc_info=True)
+        logger.error("invoke error for %s: %s", agent, e, exc_info=True)
         return JSONResponse(
             status_code=500,
             content={
