@@ -1,3 +1,4 @@
+// [STATUS: v1] — ElevenLabs Conversational AI agents call these endpoints. V1 path (provider's LLM is the brain).
 /**
  * ElevenLabs Agent Tool Endpoints — Pass 1A Hybrid Architecture
  *

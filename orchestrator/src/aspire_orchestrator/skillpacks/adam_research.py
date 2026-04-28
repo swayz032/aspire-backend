@@ -1,3 +1,4 @@
+# [STATUS: v1-active, BYPASS] — Reachable via /v1/agents/invoke-sync (server.py:1467-1472, SYNC_INVOKE_AGENTS). Bypasses LangGraph: no policy gate, no token mint, no central receipt audit. Migration debt — route through /v1/intents.
 """Adam Research Skill Pack — Web search, places, vendor comparison, RFQ generation.
 
 All GREEN tier (no approval needed). Uses the search_router for cascading

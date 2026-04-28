@@ -1,3 +1,4 @@
+// [STATUS: v1] — Validates x-elevenlabs-secret on V1 ElevenLabs tool webhook calls.
 /**
  * ElevenLabs Tool Auth Middleware — Shared Secret Verification (Law #3: Fail Closed)
  *

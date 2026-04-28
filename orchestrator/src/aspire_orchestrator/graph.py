@@ -1,3 +1,4 @@
+# [STATUS: v2] — V2 path. LangGraph IS the brain. Reached via POST /v1/intents → invoke_orchestrator_graph().
 """Aspire LangGraph Orchestrator Graph — the Single Brain (Law #1).
 
 Dual-path flow (14 nodes):

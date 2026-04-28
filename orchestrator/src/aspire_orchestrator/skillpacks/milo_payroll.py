@@ -1,3 +1,4 @@
+# [STATUS: discontinued] — Milo is decommissioned (user confirmed 2026-04-28). DO NOT EXTEND. Inventoried in System Map Appendix A; removal in follow-up plan.
 """Milo Payroll Skill Pack — Payroll processing via Gusto (RED tier).
 
 Milo handles:

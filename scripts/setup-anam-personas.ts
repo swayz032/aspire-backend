@@ -1,3 +1,5 @@
+// [STATUS: v2] — Sets up V2 Anam personas (Ava-Anam, Finn-Anam) where LangGraph is the brain.
+// NOTE: KNOWN_PERSONA_IDS.ava (line ~102) is a stale setup-only ID. Live runtime persona is 58f82b89-... (set in Aspire-desktop/server/routes.ts:22-23).
 /**
  * setup-anam-personas.ts
  *

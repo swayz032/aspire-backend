@@ -1,3 +1,4 @@
+# [STATUS: discontinued] — Teressa is decommissioned (user confirmed 2026-04-28). DO NOT EXTEND. Inventoried in System Map Appendix A; removal in follow-up plan.
 """Teressa Books Skill Pack — Bookkeeping, QuickBooks sync, categorization, reports, journal entries.
 
 Teressa is the Books desk. She handles:
