@@ -1,14 +1,23 @@
 """TRAVEL Playbooks — hotel research for business trips.
 
 Playbook: Business Trip Hotel Research
-Strategy: Google Places (primary, full data) + TripAdvisor (enrichment via Details API)
+Strategy: SerpApi Google Hotels (single-call, voice-budget aligned)
 Guardrail: research and recommendation only, NO booking in v1.
+
+The previous 3-phase pipeline (Google Places + TripAdvisor text + per-location
+details + Exa sentiment) is retained for desktop-research mode where latency
+is unconstrained. For the live-voice path Anam imposes a ~5s ceiling, which
+is why this playbook now uses SerpApi's `google_hotels` engine — a single
+request returns name, rating, reviews, photos, amenities, hotel_class and
+gps_coordinates inside the budget.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re as _re
+import time as _time
 from typing import Any
 
 from aspire_orchestrator.services.adam.schemas.business_record import SourceAttribution
@@ -19,6 +28,23 @@ from aspire_orchestrator.services.adam.verifier import verify_records
 logger = logging.getLogger(__name__)
 
 
+def _extract_location(query: str, destination: str) -> str:
+    """Best-effort location extraction from a free-form query.
+
+    Used as the locality-level fallback for SerpApi Google Hotels properties
+    (which don't expose a postal address on the listing object).
+    """
+    if destination:
+        return destination
+    loc_match = _re.search(
+        r'\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:,?\s*[A-Z]{2})?)',
+        query,
+    )
+    if loc_match:
+        return loc_match.group(1)
+    return query.strip()
+
+
 async def execute_business_trip_hotel_research(
     query: str,
     ctx: PlaybookContext,
@@ -27,21 +53,163 @@ async def execute_business_trip_hotel_research(
     budget_max: float | None = None,
     preferences: list[str] | None = None,
 ) -> ResearchResponse:
-    """BUSINESS_TRIP_HOTEL_RESEARCH — Find hotel options with full details.
+    """BUSINESS_TRIP_HOTEL_RESEARCH — Live-voice hotel discovery.
 
-    Time-budgeted execution — completes within 30s for voice responsiveness.
-    All data is preserved; optional enrichment stages degrade gracefully
-    under time pressure (they still run, just with tighter per-call timeouts).
+    Single-call provider: SerpApi Google Hotels (`engine=google_hotels`).
+    One request returns the full property catalog: name, photos, rating,
+    review count, hotel_class, amenities, price, gps_coordinates. p99 ~3s.
+
+    Guardrail: research and recommendation only, NO booking in v1.
+    """
+    from aspire_orchestrator.providers.serpapi_hotels_client import (
+        execute_serpapi_google_hotels_search,
+    )
+    from aspire_orchestrator.services.adam.normalizers.hotel_normalizer import (
+        normalize_from_serpapi_google_hotels,
+    )
+
+    _t0 = _time.monotonic()
+    location = _extract_location(query, destination)
+    logger.info("Executing BUSINESS_TRIP_HOTEL_RESEARCH (serpapi_google_hotels) for: %s", query[:80])
+
+    records: list[dict[str, Any]] = []
+    sources: list[SourceAttribution] = []
+    providers_called: list[str] = ["serpapi_google_hotels"]
+    seen_names: set[str] = set()
+
+    serp_payload: dict[str, Any] = {
+        "query": f"hotels in {location}" if "hotel" not in query.lower() else query,
+    }
+    if budget_max is not None:
+        # Sort by lowest price when caller cares about budget; SerpApi sort_by=3.
+        serp_payload["sort_by"] = 3
+
+    serp_result = await execute_serpapi_google_hotels_search(
+        payload=serp_payload,
+        correlation_id=ctx.correlation_id,
+        suite_id=ctx.suite_id,
+        office_id=ctx.office_id,
+    )
+
+    if serp_result.outcome.value != "success" or not serp_result.data:
+        logger.warning(
+            "BUSINESS_TRIP_HOTEL_RESEARCH: serpapi_google_hotels failed: %s",
+            serp_result.error,
+        )
+        return ResearchResponse(
+            artifact_type="error",
+            summary=(
+                f"I couldn't pull hotel listings for {location} right now. "
+                f"Please try again in a moment."
+            ),
+            records=[],
+            sources=[],
+            freshness={"mode": "live"},
+            confidence={"status": "unverified", "score": 0.0},
+            missing_fields=["properties"],
+            next_queries=[
+                f"Try a different city near {location}",
+                "Try again in a moment",
+            ],
+            segment="travel",
+            intent="hotel_research",
+            playbook="BUSINESS_TRIP_HOTEL_RESEARCH",
+            providers_called=providers_called,
+            extra={"hard_fail": True, "provider_error": serp_result.error or ""},
+        )
+
+    properties = serp_result.data.get("properties", []) or []
+    ads = serp_result.data.get("ads", []) or []
+    candidates: list[dict[str, Any]] = list(properties) + list(ads)
+
+    for prop in candidates:
+        if not isinstance(prop, dict):
+            continue
+        hotel = normalize_from_serpapi_google_hotels(prop, fallback_locality=location)
+        if not hotel.name:
+            continue
+        name_key = hotel.name.lower().strip()
+        if name_key in seen_names:
+            continue
+        seen_names.add(name_key)
+        records.append(hotel.to_dict())
+        sources.extend(hotel.sources)
+
+    # Safety scoring + business-traveler verdict (pure CPU, instant).
+    city_name = location.split(",")[0].split()[-1] if location else ""
+    for rec in records:
+        safety = _compute_safety_score(rec, target_city=city_name)
+        rec["safety_score"] = safety["score"]
+        rec["safety_verdict"] = safety["verdict"]
+        rec["safety_flags"] = safety["flags"]
+
+    def _sort_key(r: dict) -> tuple:
+        verdict_order = {
+            "Recommended for business travel": 0,
+            "Acceptable": 1,
+            "Use caution": 2,
+            "Not recommended": 3,
+        }
+        return (
+            verdict_order.get(r.get("safety_verdict", ""), 9),
+            -(r.get("traveler_rating") or 0),
+        )
+
+    records.sort(key=_sort_key)
+
+    report = verify_records(
+        records=records,
+        sources=sources,
+        required_fields=["name", "normalized_address", "traveler_rating"],
+    )
+
+    elapsed = _time.monotonic() - _t0
+    return ResearchResponse(
+        artifact_type="HotelShortlist",
+        summary=(
+            f"Found {len(records)} hotels in {location}. "
+            f"Provider: serpapi_google_hotels. "
+            f"Verification: {report.status} ({elapsed:.1f}s)."
+        ),
+        records=records,
+        sources=sources,
+        freshness={"mode": "live"},
+        confidence={"status": report.status, "score": report.confidence_score},
+        missing_fields=list(report.missing_fields),
+        next_queries=[
+            f"Compare prices on booking sites for {location}",
+            "Check amenities and parking details",
+            f"Find restaurants near hotels in {location}",
+        ],
+        verification_report=report,
+        segment="travel",
+        intent="hotel_research",
+        playbook="BUSINESS_TRIP_HOTEL_RESEARCH",
+        providers_called=providers_called,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Legacy 3-phase TripAdvisor pipeline (NOT used by the live-voice path).
+# Kept for the desktop research mode where latency is unconstrained.
+# ---------------------------------------------------------------------------
+
+async def _legacy_business_trip_hotel_research_tripadvisor(
+    query: str,
+    ctx: PlaybookContext,
+    destination: str = "",
+    meeting_address: str = "",
+    budget_max: float | None = None,
+    preferences: list[str] | None = None,
+) -> ResearchResponse:
+    """Legacy TripAdvisor-enriched pipeline. Out-of-band research only — DO
+    NOT call this from any voice or low-latency path.
 
     Strategy:
       Phase 1 (0-8s):   Google Places + TripAdvisor search — ALL in parallel
       Phase 2 (8-18s):  TripAdvisor detail enrichment (top 8 locations)
-      Phase 3 (18-30s): Name enrichment + Exa sentiment + photos — ALL in parallel
-      Safety scoring + sort always runs (pure CPU, ~0s)
-
-    Guardrail: research and recommendation only, NO booking in v1.
+      Phase 3 (18-30s): Name enrichment + Exa sentiment + photos
     """
-    import time as _time
     from aspire_orchestrator.providers.google_places_client import execute_google_places_search
     from aspire_orchestrator.providers.tripadvisor_client import (
         execute_tripadvisor_search,
@@ -55,7 +223,7 @@ async def execute_business_trip_hotel_research(
     )
 
     _t0 = _time.monotonic()
-    _TIME_BUDGET_SECS = 30.0  # Total budget — leaves 15s margin in 45s playbook timeout
+    _TIME_BUDGET_SECS = 30.0
     _MAX_TA_DETAIL_ENRICH = 20
     _MAX_NAME_ENRICH = 12
     _MAX_PHOTO_ENRICH = 20
@@ -67,17 +235,12 @@ async def execute_business_trip_hotel_research(
     def _remaining() -> float:
         return max(0.0, _TIME_BUDGET_SECS - _elapsed())
 
-    logger.info("Executing BUSINESS_TRIP_HOTEL_RESEARCH for: %s", query[:80])
+    logger.info(
+        "Executing legacy TripAdvisor-enriched hotel research for: %s",
+        query[:80],
+    )
 
-    # Extract location from query if destination not provided
-    import re
-    location = destination
-    if not location:
-        loc_match = re.search(r'\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:,?\s*[A-Z]{2})?)', query)
-        if loc_match:
-            location = loc_match.group(1)
-        else:
-            location = query
+    location = _extract_location(query, destination)
     records: list[dict[str, Any]] = []
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []

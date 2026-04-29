@@ -9,6 +9,7 @@ Rule: Never invent parcel facts. If a field is missing, leave it empty.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +19,76 @@ from aspire_orchestrator.services.adam.schemas.property_record import (
     PropertyRecord,
     SaleRecord,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# Property types that ATTOM tracks at unit-level. If the normalized record
+# for one of these types comes back with an absurdly small living area, the
+# upstream query was almost certainly resolved at building/master-parcel
+# level instead of unit level — a data-contract failure that must surface
+# as a typed error rather than silently shipping bad data.
+_UNIT_PROPERTY_TYPES: frozenset[str] = frozenset({
+    "SFR", "CONDO", "TOWNHOUSE",
+    "SINGLE FAMILY RESIDENCE", "SINGLE FAMILY", "TOWN HOUSE",
+})
+
+
+class AttomUnitDataMissingError(Exception):
+    """Raised when ATTOM returns building-level placeholders for a unit address.
+
+    The provider responded successfully but the unit-level fields are absent
+    or stubbed (`living_sqft < 100`, `tax_market_value < ~5`). This is a
+    contract failure — the orchestrator should surface it as a structured
+    error to the user instead of rendering meaningless data.
+    """
+
+    def __init__(self, normalized_address: str, living_sqft: int | None,
+                 property_type: str, tax_market_value: float | None = None) -> None:
+        self.normalized_address = normalized_address
+        self.living_sqft = living_sqft
+        self.property_type = property_type
+        self.tax_market_value = tax_market_value
+        super().__init__(
+            "ATTOM returned building-level placeholders for unit address "
+            f"'{normalized_address}' (type={property_type}, "
+            f"living_sqft={living_sqft}, tax_market_value={tax_market_value}). "
+            "Expected unit-level data from /property/expandedprofile."
+        )
+
+
+def assert_unit_data_complete(record: dict[str, Any]) -> None:
+    """Contract guard: raise AttomUnitDataMissingError if record looks building-level.
+
+    Triggered when:
+      - property_type is in {SFR, CONDO, TOWNHOUSE} (or canonical equivalents)
+      - AND living_sqft is suspiciously small (< 100) OR missing entirely while
+        tax_market_value is nominal (< 5)
+
+    Why both checks: some commercial parcels legitimately report tiny living
+    areas; pairing the type + size signals isolates condo/SFR contract
+    failures specifically.
+    """
+    living_sqft = record.get("living_sqft")
+    tax_market = record.get("tax_market_value")
+    prop_type = (record.get("property_type") or "").upper().strip()
+
+    if not prop_type:
+        return  # Type unknown — cannot make a contract claim.
+
+    if prop_type not in _UNIT_PROPERTY_TYPES:
+        return  # Commercial / land / multi-family handled elsewhere.
+
+    bad_size = isinstance(living_sqft, int) and living_sqft < 100
+    bad_tax = isinstance(tax_market, (int, float)) and tax_market < 5
+
+    if bad_size or bad_tax:
+        raise AttomUnitDataMissingError(
+            normalized_address=record.get("normalized_address", ""),
+            living_sqft=living_sqft if isinstance(living_sqft, int) else None,
+            property_type=prop_type,
+            tax_market_value=float(tax_market) if isinstance(tax_market, (int, float)) else None,
+        )
 
 
 def normalize_from_attom_detail(data: dict[str, Any]) -> PropertyRecord:

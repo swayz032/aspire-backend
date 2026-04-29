@@ -356,10 +356,14 @@ async def execute_tool_material_price_check(
 
         hd_products = [r for r in records if r.get("retailer") == "Home Depot"]
         complete_products = [r for r in hd_products if not _product_missing_fields(r)]
+        # Sub-item 1.1: surface SerpApi search_information.store_name as
+        # store_summary.name so the store-summary card has the correct local
+        # store label even when the resolver disagrees with SerpApi's pin.
         store_summary = {
             "card_kind": "store_summary",
             "store_id": hd_store_info.get("store_id", ""),
             "store_name": hd_store_info.get("store_name", ""),
+            "name": hd_store_info.get("store_name", ""),
             "address": hd_store_info.get("address", ""),
             "city": hd_store_info.get("city", ""),
             "state": hd_store_info.get("state", ""),

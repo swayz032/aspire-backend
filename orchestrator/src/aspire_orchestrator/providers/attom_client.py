@@ -20,6 +20,7 @@ Address normalization: HERE geocoding BEFORE querying ATTOM.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from aspire_orchestrator.config.settings import settings
@@ -177,11 +178,49 @@ async def _attom_request(
     )
 
 
+# Unit suffix detection: APT 4802 / UNIT 12 / STE 200 / #B  (case-insensitive)
+# Captures the leading marker word + the unit token. Trailing chars after the
+# unit token (e.g. comma, end-of-string) are the boundary.
+_UNIT_RE = re.compile(
+    # Anchor on start-of-string, whitespace, or comma so the marker is its own
+    # token. Cannot use \b before "#" — both whitespace and "#" are non-word
+    # characters so \b never matches that transition (e.g. "789 Elm St #B-7"
+    # would silently fail without this anchor).
+    r"(?:^|[\s,])(?:APT|APARTMENT|UNIT|STE|SUITE|#)\s*([A-Za-z0-9\-]+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _extract_unit_number(address1: str) -> tuple[str, str]:
+    """Return (address1_without_unit, unit_token) for APT/UNIT/STE/# suffixes.
+
+    ATTOM's unit-aware endpoints require the unit number to be sent as a
+    SEPARATE `unitnumber` parameter — including it in `address1` returns
+    building-level placeholder data for the master parcel. This helper
+    surgically removes the unit token from address1 so the cleaned street
+    address can be used unmodified in the rest of the request.
+    """
+    if not isinstance(address1, str) or not address1.strip():
+        return address1, ""
+    match = _UNIT_RE.search(address1)
+    if not match:
+        return address1, ""
+    unit = match.group(1).strip()
+    cleaned = address1[: match.start()].rstrip(" ,")
+    return cleaned, unit
+
+
 def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str,
                        correlation_id: str, suite_id: str, office_id: str,
                        capability_token_id: str | None = None,
                        capability_token_hash: str | None = None) -> ToolExecutionResult | dict[str, str]:
-    """Validate and extract address params. Returns query_params dict or ToolExecutionResult on error."""
+    """Validate and extract address params. Returns query_params dict or ToolExecutionResult on error.
+
+    Unit-suffixed addresses (`APT 4802`, `STE 200`, `#B`) are split into a
+    cleaned `address1` plus a separate `unitnumber` query parameter so the
+    ATTOM endpoint can resolve to the unit-level record instead of the master
+    parcel.
+    """
     address = payload.get("address", "")
     if not address:
         receipt = _build_receipt(
@@ -213,7 +252,6 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
         else:
             # No comma — try to split "123 Main St Lexington KY 40509" intelligently
             # Look for state abbreviation pattern to split street from city/state/zip
-            import re
             match = re.search(r'\b([A-Z]{2})\s+(\d{5})\b', address)
             if match:
                 # Found "KY 40509" — everything before the city is address1
@@ -237,6 +275,15 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
                 params["address1"] = address
                 params["address2"] = ""
 
+        # Unit detection: split APT/UNIT/STE/# token out of address1 into the
+        # required `unitnumber` query parameter. Required for ATTOM unit
+        # resolution (condos, apartments, multi-unit buildings).
+        if params.get("address1"):
+            cleaned, unit_token = _extract_unit_number(params["address1"])
+            if unit_token:
+                params["address1"] = cleaned
+                params["unitnumber"] = unit_token
+
     return params
 
 
@@ -254,7 +301,14 @@ async def execute_attom_property_detail(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Property detail — base parcel facts, characteristics, ownership."""
+    """Property detail — base parcel facts, characteristics, ownership.
+
+    For unit-suffixed addresses (condos/apartments) the request is routed to
+    `/property/expandedprofile` instead of `/property/detail`. The plain
+    `detail` endpoint is NOT unit-aware and returns master-parcel placeholders
+    for unit fields. `expandedprofile` accepts `unitnumber` and returns
+    unit-level `livingsize`, `assessed`, `market`, owner, and sale fields.
+    """
     tool_id = "attom.property_detail"
     client = _get_client()
 
@@ -265,8 +319,12 @@ async def execute_attom_property_detail(
     if isinstance(result, ToolExecutionResult):
         return result
 
+    # Unit-aware routing: when unitnumber is present, query the expanded
+    # profile endpoint (unit-level) instead of the building-level detail.
+    path = "/property/expandedprofile" if result.get("unitnumber") else "/property/detail"
+
     return await _attom_request(
-        path="/property/detail",
+        path=path,
         query_params=result,
         tool_id=tool_id,
         correlation_id=correlation_id,
@@ -353,7 +411,12 @@ async def execute_attom_detail_mortgage_owner(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Property detail + mortgage + owner — full profile in one call."""
+    """Property detail + mortgage + owner — full profile in one call.
+
+    For unit-suffixed addresses, `/property/expandedprofile` is used because
+    `/property/detailmortgageowner` is not unit-aware and returns
+    building-level placeholders for unit fields.
+    """
     tool_id = "attom.detail_mortgage_owner"
     client = _get_client()
 
@@ -364,8 +427,14 @@ async def execute_attom_detail_mortgage_owner(
     if isinstance(result, ToolExecutionResult):
         return result
 
+    path = (
+        "/property/expandedprofile"
+        if result.get("unitnumber")
+        else "/property/detailmortgageowner"
+    )
+
     return await _attom_request(
-        path="/property/detailmortgageowner",
+        path=path,
         query_params=result,
         tool_id=tool_id,
         correlation_id=correlation_id,

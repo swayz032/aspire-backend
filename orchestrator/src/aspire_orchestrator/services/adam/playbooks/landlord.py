@@ -571,6 +571,55 @@ async def execute_property_facts(
         avm_v = prop_dict.get("estimated_value")
         prop_dict["property_value"] = tax_mv or avm_v
         prop_dict["property_value_source"] = "county_tax_assessment" if tax_mv else "avm_estimate"
+
+        # Contract guard: if the merged record looks like building-level
+        # placeholders for a unit address (tiny living_sqft, near-zero tax
+        # market value on a SFR/CONDO/TOWNHOUSE), surface a structured error
+        # instead of pretending the data is good. NO web-research fallback.
+        from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+            AttomUnitDataMissingError,
+            assert_unit_data_complete,
+        )
+        try:
+            assert_unit_data_complete(prop_dict)
+        except AttomUnitDataMissingError as exc:
+            logger.warning(
+                "landlord.property_facts: ATTOM unit-level data missing for %s "
+                "(type=%s, living_sqft=%s, tax_market_value=%s)",
+                exc.normalized_address, exc.property_type, exc.living_sqft,
+                exc.tax_market_value,
+                extra={"correlation_id": context.correlation_id},
+            )
+            return ResearchResponse(
+                artifact_type="error",
+                summary=(
+                    f"I couldn't pull unit-level records for "
+                    f"{exc.normalized_address or normalized_address}. The "
+                    "county data only resolved at the building level. Want "
+                    "me to look it up another way?"
+                ),
+                records=[],
+                sources=sources,
+                freshness={"mode": "live", "provider": "attom"},
+                confidence={"status": "unverified", "score": 0.0},
+                missing_fields=["unit_level_living_sqft", "unit_level_assessment"],
+                next_queries=[
+                    f"Try a different unit format: {normalized_address}",
+                    "Verify with the county assessor directly",
+                ],
+                segment="landlord",
+                intent="property_facts",
+                playbook="landlord.property_facts",
+                providers_called=list(dict.fromkeys(providers_called)),
+                extra={
+                    "error_code": "ATTOM_UNIT_DATA_MISSING",
+                    "normalized_address": exc.normalized_address,
+                    "property_type": exc.property_type,
+                    "living_sqft": exc.living_sqft,
+                    "tax_market_value": exc.tax_market_value,
+                },
+            )
+
         records.append(prop_dict)
 
     report = verify_records(

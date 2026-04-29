@@ -480,6 +480,74 @@ class TestNormalizeFromSerpApiHomeDepot:
         record = normalize_from_serpapi_homedepot(self._payload())
         assert record.sources[0].provider == "serpapi_home_depot"
 
+    # -------- Wave 1.1 / 1.2 / 1.3 (production polish) --------
+
+    def test_store_name_read_from_pickup_nested_only(self):
+        """sub-item 1.1: store_name comes from pickup.store_name on the per-product
+        object — never from the legacy flat `pickup_store` key."""
+        payload = self._payload()
+        # Plant a wrong value at the legacy flat key to prove it's not read.
+        payload["pickup_store"] = "BANGOR"
+        payload["pickup"] = {"quantity": 4, "store_name": "Louisville East", "store_id": "0723"}
+        record = normalize_from_serpapi_homedepot(payload)
+        assert record.store_name == "Louisville East"
+        assert record.store_id == "0723"
+
+    def test_thd_image_upgraded_to_1000(self):
+        """sub-item 1.2: thdstatic.com URLs are rewritten to _1000.jpg."""
+        payload = self._payload()
+        payload["thumbnail"] = "https://images.thdstatic.com/productImages/rheem_64_65.jpg"
+        record = normalize_from_serpapi_homedepot(payload)
+        assert record.image_url.endswith("_1000.jpg")
+        assert "thdstatic.com" in record.image_url
+
+    def test_thd_image_upgrade_handles_each_size_suffix(self):
+        """All Home Depot CDN size variants must be rewritten to _1000.jpg."""
+        from aspire_orchestrator.services.adam.normalizers.product_normalizer import (
+            upgrade_thd_image,
+        )
+        for suffix in ("_64_65", "_100", "_145", "_300", "_400", "_600"):
+            url = f"https://images.thdstatic.com/asset/rheem{suffix}.jpg"
+            assert upgrade_thd_image(url).endswith("_1000.jpg")
+
+    def test_thd_image_non_thdstatic_unchanged(self):
+        """Non-Home-Depot CDN URLs are passed through unchanged (not our domain)."""
+        from aspire_orchestrator.services.adam.normalizers.product_normalizer import (
+            upgrade_thd_image,
+        )
+        url = "https://img.example.com/something_400.jpg"
+        assert upgrade_thd_image(url) == url
+
+    def test_thumbnails_gallery_upgraded_in_full(self):
+        """sub-item 1.2: every entry in thumbnails[] is high-res-upgraded."""
+        payload = self._payload()
+        payload["thumbnails"] = [
+            "https://images.thdstatic.com/p/rheem_300.jpg",
+            "https://images.thdstatic.com/p/rheem_alt_400.jpg",
+        ]
+        record = normalize_from_serpapi_homedepot(payload)
+        # Both entries must end in _1000.jpg
+        assert all(u.endswith("_1000.jpg") for u in record.thumbnails if "thdstatic.com" in u)
+
+    def test_extended_fields_surfaced(self):
+        """sub-item 1.3: description/specs/dimensions/variants reach the record."""
+        payload = self._payload()
+        payload["description"] = "Powerful 3-ton condenser for residential cooling."
+        payload["specifications"] = {"BTU": "36000", "SEER": "16"}
+        payload["dimensions"] = {"height": "30 in", "width": "30 in", "depth": "30 in"}
+        payload["weight"] = "165 lb"
+        payload["variants"] = [{"color": "Beige"}, {"color": "White"}]
+        payload["sku"] = "INTERNET_205678901"
+        payload["upc"] = "012345678905"
+        record = normalize_from_serpapi_homedepot(payload)
+        assert "condenser" in record.description.lower()
+        assert record.specifications.get("BTU") == "36000"
+        assert record.dimensions.get("height") == "30 in"
+        assert record.weight == "165 lb"
+        assert len(record.variants) == 2
+        assert record.sku == "INTERNET_205678901"
+        assert record.upc == "012345678905"
+
 
 # ---------------------------------------------------------------------------
 # Tripadvisor hotel normalizer
@@ -824,6 +892,114 @@ class TestNormalizeFromHereHotel:
 
 
 # ---------------------------------------------------------------------------
+# Wave 1.5 — SerpApi Google Hotels normalizer
+# ---------------------------------------------------------------------------
+
+from aspire_orchestrator.services.adam.normalizers.hotel_normalizer import (
+    normalize_from_serpapi_google_hotels,
+)
+
+
+class TestNormalizeFromSerpApiGoogleHotels:
+    """normalize_from_serpapi_google_hotels maps Google Hotels property fields."""
+
+    def _payload(self) -> dict:
+        return {
+            "name": "Hotel Indigo Tallahassee - Collegetown",
+            "description": "Boutique hotel near Florida State University.",
+            "link": "https://www.ihg.com/hotelindigo/...",
+            "gps_coordinates": {"latitude": 30.4399, "longitude": -84.2967},
+            "check_in_time": "3:00 PM",
+            "check_out_time": "11:00 AM",
+            "rate_per_night": {"lowest": "$189", "extracted_lowest": 189.0},
+            "total_rate": {"lowest": "$210"},
+            "hotel_class": "3-star hotel",
+            "extracted_hotel_class": 3,
+            "images": [
+                {"thumbnail": "https://t.googleusercontent.com/x_thumb.jpg",
+                 "original_image": "https://t.googleusercontent.com/x_full.jpg"},
+                {"thumbnail": "https://t.googleusercontent.com/y_thumb.jpg",
+                 "original_image": "https://t.googleusercontent.com/y_full.jpg"},
+            ],
+            "overall_rating": 4.4,
+            "reviews": 612,
+            "location_rating": 4.6,
+            "amenities": ["Free Wi-Fi", "Pool", "Restaurant"],
+            "essential_info": ["W College Ave, Tallahassee, FL 32306"],
+            "property_token": "ChgIxxxx",
+            "serpapi_property_details_link": "https://serpapi.com/search.json?engine=google_hotels&property_token=...",
+        }
+
+    def test_name_mapped(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert "Hotel Indigo" in record.name
+
+    def test_traveler_rating_mapped(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.traveler_rating == 4.4
+
+    def test_review_count_mapped(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.review_count == 612
+
+    def test_star_rating_from_extracted_hotel_class(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.star_rating == 3.0
+
+    def test_lat_lng_mapped(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.latitude == 30.4399
+        assert record.longitude == -84.2967
+
+    def test_amenities_mapped(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert "Free Wi-Fi" in record.amenities
+
+    def test_photos_extracted_in_order(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert len(record.photos) >= 2
+        assert record.photos[0].endswith("x_full.jpg")
+
+    def test_image_url_present_for_card_render(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.extra.get("image_url", "").startswith("https://")
+
+    def test_price_range_mapped(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert "$" in record.price_range
+
+    def test_address_falls_back_to_essential_info(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert "Tallahassee" in record.normalized_address
+
+    def test_address_falls_back_to_locality_when_essential_missing(self):
+        payload = self._payload()
+        payload["essential_info"] = []
+        record = normalize_from_serpapi_google_hotels(
+            payload, fallback_locality="Tallahassee, FL",
+        )
+        assert record.normalized_address == "Tallahassee, FL"
+
+    def test_property_token_in_extra(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.extra.get("property_token") == "ChgIxxxx"
+
+    def test_source_attribution(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert record.sources[0].provider == "serpapi_google_hotels"
+
+    def test_returns_hotel_record(self):
+        record = normalize_from_serpapi_google_hotels(self._payload())
+        assert isinstance(record, HotelRecord)
+
+    def test_handles_minimal_payload(self):
+        # Sparse property — should not raise; returns whatever fields it has.
+        record = normalize_from_serpapi_google_hotels({"name": "Tiny Inn"})
+        assert record.name == "Tiny Inn"
+        assert record.traveler_rating is None
+
+
+# ---------------------------------------------------------------------------
 # Property normalizer — sales history, valuation, rental (coverage gap fix)
 # ---------------------------------------------------------------------------
 
@@ -954,3 +1130,111 @@ class TestNormalizeAttomRental:
     def test_empty_property_returns_empty_dict(self):
         result = normalize_from_attom_rental({"property": []})
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Wave 1.4 — ATTOM unit-level parsing + contract guard
+# ---------------------------------------------------------------------------
+
+from aspire_orchestrator.providers.attom_client import _extract_unit_number
+from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+    AttomUnitDataMissingError,
+    assert_unit_data_complete,
+)
+
+
+class TestExtractUnitNumber:
+    """_extract_unit_number splits APT/UNIT/STE/# tokens out of address1."""
+
+    def test_apt_uppercase(self):
+        cleaned, unit = _extract_unit_number("1575 Paul Russell Rd APT 4802")
+        assert cleaned == "1575 Paul Russell Rd"
+        assert unit == "4802"
+
+    def test_apt_lowercase_with_period(self):
+        cleaned, unit = _extract_unit_number("1575 Paul Russell Rd Apt 4802")
+        assert cleaned == "1575 Paul Russell Rd"
+        assert unit == "4802"
+
+    def test_unit_keyword(self):
+        cleaned, unit = _extract_unit_number("100 Main St UNIT 12B")
+        assert cleaned == "100 Main St"
+        assert unit == "12B"
+
+    def test_ste_keyword(self):
+        cleaned, unit = _extract_unit_number("250 Oak Ave STE 200")
+        assert cleaned == "250 Oak Ave"
+        assert unit == "200"
+
+    def test_hash_marker(self):
+        cleaned, unit = _extract_unit_number("789 Elm St #B-7")
+        assert cleaned == "789 Elm St"
+        assert unit == "B-7"
+
+    def test_no_unit_returns_unchanged(self):
+        cleaned, unit = _extract_unit_number("4863 Price Street")
+        assert cleaned == "4863 Price Street"
+        assert unit == ""
+
+
+class TestAssertUnitDataComplete:
+    """assert_unit_data_complete raises when ATTOM returns building-level data."""
+
+    def test_raises_on_tiny_living_sqft_for_condo(self):
+        with pytest.raises(AttomUnitDataMissingError):
+            assert_unit_data_complete({
+                "normalized_address": "1575 Paul Russell Rd APT 4802",
+                "property_type": "CONDO",
+                "living_sqft": 378,
+                "tax_market_value": 2.0,
+            })
+
+    def test_raises_on_tiny_living_sqft_for_sfr(self):
+        with pytest.raises(AttomUnitDataMissingError):
+            assert_unit_data_complete({
+                "normalized_address": "X",
+                "property_type": "SFR",
+                "living_sqft": 50,
+                "tax_market_value": 100000,
+            })
+
+    def test_passes_for_valid_condo(self):
+        # Should NOT raise — realistic condo data.
+        assert_unit_data_complete({
+            "normalized_address": "1575 Paul Russell Rd APT 4802",
+            "property_type": "CONDO",
+            "living_sqft": 1500,
+            "tax_market_value": 165000,
+        })
+
+    def test_passes_when_property_type_unknown(self):
+        # Type unknown — cannot make a contract claim, so do not raise.
+        assert_unit_data_complete({
+            "normalized_address": "X",
+            "property_type": "",
+            "living_sqft": 50,
+        })
+
+    def test_skipped_for_non_unit_property_types(self):
+        # Commercial / land parcels can legitimately have small living areas.
+        assert_unit_data_complete({
+            "normalized_address": "Industrial Park",
+            "property_type": "COMMERCIAL",
+            "living_sqft": 50,
+        })
+
+    def test_error_carries_context(self):
+        try:
+            assert_unit_data_complete({
+                "normalized_address": "1575 Paul Russell Rd APT 4802",
+                "property_type": "CONDO",
+                "living_sqft": 378,
+                "tax_market_value": 2.0,
+            })
+        except AttomUnitDataMissingError as exc:
+            assert exc.normalized_address == "1575 Paul Russell Rd APT 4802"
+            assert exc.living_sqft == 378
+            assert exc.property_type == "CONDO"
+            assert exc.tax_market_value == 2.0
+        else:
+            pytest.fail("AttomUnitDataMissingError not raised")
