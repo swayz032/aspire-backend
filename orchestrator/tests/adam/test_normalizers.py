@@ -510,6 +510,39 @@ class TestNormalizeFromSerpApiHomeDepot:
             url = f"https://images.thdstatic.com/asset/rheem{suffix}.jpg"
             assert upgrade_thd_image(url).endswith("_1000.jpg")
 
+    def test_thd_image_real_production_url_pattern(self):
+        """Real HD CDN URLs are <base>-<sku>-<asset>_<size>.jpg — the asset
+        prefix (e.g. "64", "e4") must be preserved on rewrite, not stripped.
+        """
+        from aspire_orchestrator.services.adam.normalizers.product_normalizer import (
+            upgrade_thd_image,
+        )
+        cases = [
+            (
+                "https://images.thdstatic.com/productImages/abc/svn/graco-airless-paint-sprayers-262805-64_65.jpg",
+                "graco-airless-paint-sprayers-262805-64_1000.jpg",
+            ),
+            (
+                "https://images.thdstatic.com/productImages/def/svn/sealant-107655-e4_65.jpg",
+                "sealant-107655-e4_1000.jpg",
+            ),
+            (
+                "https://images.thdstatic.com/productImages/xyz/svn/wagner-hvlp-2419306-64_300.jpg",
+                "wagner-hvlp-2419306-64_1000.jpg",
+            ),
+        ]
+        for src, expected_tail in cases:
+            out = upgrade_thd_image(src)
+            assert out.endswith(expected_tail), f"{src} -> {out}"
+
+    def test_thd_image_already_high_res_passthrough(self):
+        """URLs already at _1000.jpg ship unchanged (no double-rewrite)."""
+        from aspire_orchestrator.services.adam.normalizers.product_normalizer import (
+            upgrade_thd_image,
+        )
+        url = "https://images.thdstatic.com/productImages/abc/svn/already-100634350-64_1000.jpg"
+        assert upgrade_thd_image(url) == url
+
     def test_thd_image_non_thdstatic_unchanged(self):
         """Non-Home-Depot CDN URLs are passed through unchanged (not our domain)."""
         from aspire_orchestrator.services.adam.normalizers.product_normalizer import (

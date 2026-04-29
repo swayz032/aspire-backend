@@ -17,11 +17,20 @@ from aspire_orchestrator.services.adam.schemas.product_record import ProductReco
 logger = logging.getLogger(__name__)
 
 
-# Match thdstatic CDN size suffixes: _64_65 / _100 / _145 / _300 / _400 / _600
+# Match thdstatic CDN size suffixes. Real Home Depot CDN URL shape is
+#   <base>-<sku>-<asset>_<size>.jpg
+# where <asset> is numeric/alphanumeric (e.g. "64", "e4") and <size> is one of
+# 65 / 100 / 145 / 300 / 400 / 600 / 1000. Verified live via paint-sprayer
+# probes — earlier `_(?:64_65|100|145|300|400|600)\.jpg$` only fired when the
+# asset prefix was the constant "64" AND was preceded by an underscore, so
+# real product URLs (which use a hyphen between SKU and asset) never matched.
+# Match the size token only; the asset prefix is preserved by the substitution.
 _THD_SIZE_RE = re.compile(
-    r"_(?:64_65|100|145|300|400|600)\.jpg(\?.*)?$",
+    r"_(?:65|100|145|300|400|600)\.jpg(\?.*)?$",
     re.IGNORECASE,
 )
+# Already-high-res URL — no rewrite needed, no warning.
+_THD_HIRES_RE = re.compile(r"_1000\.jpg(\?.*)?$", re.IGNORECASE)
 
 
 def upgrade_thd_image(url: str) -> str:
@@ -29,13 +38,17 @@ def upgrade_thd_image(url: str) -> str:
 
     Home Depot's CDN supports interchangeable size suffixes on the same asset
     path. Backend produces the high-res URL once, at the source — UI does not
-    re-rewrite. Non-thdstatic URLs and unexpected patterns ship unchanged
-    (logged as a data-contract anomaly).
+    re-rewrite. Non-thdstatic URLs and already-high-res URLs ship unchanged.
+    Truly unrecognized patterns are logged as a data-contract anomaly.
     """
     if not isinstance(url, str) or not url.strip():
         return ""
     cleaned = url.strip()
     if "thdstatic.com" not in cleaned:
+        return cleaned
+
+    # Already at _1000.jpg — pass through silently.
+    if _THD_HIRES_RE.search(cleaned):
         return cleaned
 
     match = _THD_SIZE_RE.search(cleaned)
