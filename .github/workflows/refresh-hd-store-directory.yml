@@ -1,0 +1,64 @@
+name: refresh-hd-store-directory
+
+on:
+  schedule:
+    # First day of every month at 00:00 UTC.
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Refresh static directory from SerpApi canonical JSON
+        run: |
+          python orchestrator/scripts/refresh_hd_store_directory.py \
+            orchestrator/src/aspire_orchestrator/services/adam/data/home_depot_stores_us.json
+
+      - name: Detect drift
+        id: drift
+        run: |
+          if git diff --quiet -- orchestrator/src/aspire_orchestrator/services/adam/data/home_depot_stores_us.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No drift detected — nothing to commit."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff --stat -- orchestrator/src/aspire_orchestrator/services/adam/data/home_depot_stores_us.json
+          fi
+
+      - name: Open PR with refreshed directory
+        if: steps.drift.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/refresh-hd-store-directory
+          base: main
+          commit-message: "chore(adam): refresh HD store directory from SerpApi"
+          title: "chore(adam): refresh HD store directory"
+          body: |
+            Automated monthly refresh of the static Home Depot store directory.
+
+            Source: https://serpapi.com/home-depot-stores-us.json
+            Script: `orchestrator/scripts/refresh_hd_store_directory.py`
+
+            Review the diff carefully — the directory is the primary source of
+            store identity (name, address, city, state) for the trades.py
+            material-price-check playbook. Unexpected size drops (more than
+            ~5%) usually mean SerpApi changed their format and the parser
+            needs updating, not a real store closure.
+          labels: |
+            bot
+            adam
+            data
+          delete-branch: true
