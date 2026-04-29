@@ -168,15 +168,57 @@ skill_packs:
     risk_tier: yellow
     status: active
     description: "Strategic finance manager — snapshots, exceptions, proposals, A2A delegation, tax strategy"
-    actions: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.create]
-    providers: [internal]
-    capability_scopes: [finance:snapshot:read, finance:exceptions:read, finance:packet:draft, finance:proposal:create, a2a:create]
-    tools: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.dispatch]
+    actions: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.create, finn.memory.get_context, finn.memory.get_overview, finn.memory.get_cash_truth, finn.memory.get_review_queue, finn.memory.get_reconciliation_queue, finn.memory.get_reports_summary, finn.memory.get_ar_aging, finn.memory.get_rules, finn.memory.simulate_rule, finn.memory.preview_writeback, finn.memory.apply_writeback, finn.memory.get_money_trail, finn.memory.save_finance_memory]
+    providers: [internal, plaid]
+    capability_scopes: [finance:snapshot:read, finance:exceptions:read, finance:packet:draft, finance:proposal:create, a2a:create, finance_read, finance_write]
+    tools: [finance.snapshot.read, finance.exceptions.read, finance.packet.draft, finance.proposal.create, a2a.dispatch, finn.memory.get_context, finn.memory.get_overview, finn.memory.get_cash_truth, finn.memory.get_review_queue, finn.memory.get_reconciliation_queue, finn.memory.get_reports_summary, finn.memory.get_ar_aging, finn.memory.get_rules, finn.memory.simulate_rule, finn.memory.preview_writeback, finn.memory.apply_writeback, finn.memory.get_money_trail, finn.memory.save_finance_memory]
     per_suite_enabled: true
     knowledge_domains:
       - domain: finance
         table: finance_knowledge_chunks
         retrieval_service: FinancialRetrievalService
+
+  nora_orchestration_tools:
+    id: nora_orchestration_tools
+    name: "Nora Orchestration Tools"
+    owner: nora
+    category: channel
+    risk_tier: yellow
+    status: active
+    description: "A2A dispatch tools for Nora: invoke Adam/Quinn/Clara/Tec, post office messages, save office memory"
+    actions: [nora.orchestration.invoke_adam, nora.orchestration.invoke_quinn, nora.orchestration.invoke_clara, nora.orchestration.invoke_tec, nora.orchestration.post_office_message, nora.orchestration.save_office_memory]
+    providers: [internal]
+    capability_scopes: [office_read, office_write]
+    tools: [nora.orchestration.invoke_adam, nora.orchestration.invoke_quinn, nora.orchestration.invoke_clara, nora.orchestration.invoke_tec, nora.orchestration.post_office_message, nora.orchestration.save_office_memory]
+    per_suite_enabled: true
+
+  sarah_frontdesk_tools:
+    id: sarah_frontdesk_tools
+    name: "Sarah Front Desk Tools"
+    owner: sarah
+    category: channel
+    risk_tier: yellow
+    status: active
+    description: "Internal front-desk tools for Sarah: context, search, thread memory, handoff notes, callback triage, escalation"
+    actions: [sarah.frontdesk.get_context, sarah.frontdesk.search_memory, sarah.frontdesk.get_thread_memory, sarah.frontdesk.create_handoff_note, sarah.frontdesk.triage_callback_queue, sarah.frontdesk.escalate_to_owner]
+    providers: [internal]
+    capability_scopes: [office_read, office_write]
+    tools: [sarah.frontdesk.get_context, sarah.frontdesk.search_memory, sarah.frontdesk.get_thread_memory, sarah.frontdesk.create_handoff_note, sarah.frontdesk.triage_callback_queue, sarah.frontdesk.escalate_to_owner]
+    per_suite_enabled: true
+
+  ava_chief_of_staff:
+    id: ava_chief_of_staff
+    name: "Ava Chief of Staff"
+    owner: ava
+    category: channel
+    risk_tier: yellow
+    status: active
+    description: "10 chief-of-staff tools for Ava: memory brief, search, thread brief, 3-object handoff write, session summary, promote artifact, route to 4 specialists"
+    actions: [ava.memory.get_memory_brief, ava.memory.search_memory, ava.memory.get_thread_memory, ava.memory.create_handoff_note, ava.memory.save_session_summary, ava.memory.promote_artifact, ava.routing.route_to_eli, ava.routing.route_to_nora, ava.routing.route_to_finn, ava.routing.route_to_sarah]
+    providers: [internal]
+    capability_scopes: [ava.memory.read, ava.memory.write, ava.routing.create]
+    tools: [ava.memory.get_memory_brief, ava.memory.search_memory, ava.memory.get_thread_memory, ava.memory.create_handoff_note, ava.memory.save_session_summary, ava.memory.promote_artifact, ava.routing.route_to_eli, ava.routing.route_to_nora, ava.routing.route_to_finn, ava.routing.route_to_sarah]
+    per_suite_enabled: true
 
   milo_payroll:
     id: milo_payroll
@@ -307,6 +349,151 @@ skill_packs:
     per_suite_enabled: true
 
 tools:
+  # Finn memory tools (13)
+  finn.memory.get_context:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.get_overview:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.get_cash_truth:
+    provider: plaid
+    category: finance
+    risk_tier: green
+  finn.memory.get_review_queue:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.get_reconciliation_queue:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.get_reports_summary:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.get_ar_aging:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.get_rules:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.simulate_rule:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.preview_writeback:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.apply_writeback:
+    provider: internal
+    category: finance
+    risk_tier: red
+  finn.memory.get_money_trail:
+    provider: internal
+    category: finance
+    risk_tier: green
+  finn.memory.save_finance_memory:
+    provider: internal
+    category: finance
+    risk_tier: yellow
+  # Nora orchestration tools (6)
+  nora.orchestration.invoke_adam:
+    provider: internal
+    category: a2a
+    risk_tier: green
+  nora.orchestration.invoke_quinn:
+    provider: internal
+    category: a2a
+    risk_tier: yellow
+  nora.orchestration.invoke_clara:
+    provider: internal
+    category: a2a
+    risk_tier: yellow
+  nora.orchestration.invoke_tec:
+    provider: internal
+    category: a2a
+    risk_tier: yellow
+  nora.orchestration.post_office_message:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  nora.orchestration.save_office_memory:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  # Sarah Front Desk tools (6)
+  sarah.frontdesk.get_context:
+    provider: internal
+    category: telephony
+    risk_tier: green
+  sarah.frontdesk.search_memory:
+    provider: internal
+    category: office
+    risk_tier: green
+  sarah.frontdesk.get_thread_memory:
+    provider: internal
+    category: office
+    risk_tier: green
+  sarah.frontdesk.create_handoff_note:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  sarah.frontdesk.triage_callback_queue:
+    provider: internal
+    category: telephony
+    risk_tier: green
+  sarah.frontdesk.escalate_to_owner:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  # Ava chief of staff tools (10)
+  ava.memory.get_memory_brief:
+    provider: internal
+    category: office
+    risk_tier: green
+  ava.memory.search_memory:
+    provider: internal
+    category: office
+    risk_tier: green
+  ava.memory.get_thread_memory:
+    provider: internal
+    category: office
+    risk_tier: green
+  ava.memory.create_handoff_note:
+    provider: internal
+    category: office
+    risk_tier: yellow
+  ava.memory.save_session_summary:
+    provider: internal
+    category: office
+    risk_tier: green
+  ava.memory.promote_artifact:
+    provider: internal
+    category: office
+    risk_tier: green
+  ava.routing.route_to_eli:
+    provider: internal
+    category: routing
+    risk_tier: green
+  ava.routing.route_to_nora:
+    provider: internal
+    category: routing
+    risk_tier: green
+  ava.routing.route_to_finn:
+    provider: internal
+    category: routing
+    risk_tier: green
+  ava.routing.route_to_sarah:
+    provider: internal
+    category: routing
+    risk_tier: green
+  # Existing tools below
   google.calendar.read:
     provider: google
     category: calendar

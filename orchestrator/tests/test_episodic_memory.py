@@ -125,7 +125,7 @@ class TestSummarizeAndStore:
 
         # Verify receipt has required fields
         receipt = mock_receipts.call_args[0][0][0]
-        assert receipt["event_type"] == "memory.episode_stored"
+        assert receipt["receipt_type"] == "memory.episode_stored"
         assert receipt["suite_id"] == SUITE_ID
         assert receipt["outcome"] == "success"
 
@@ -217,3 +217,196 @@ class TestEpisodicMemorySingleton:
         m2 = get_episodic_memory()
         assert m1 is m2
         mod._memory = None
+
+
+# ---------------------------------------------------------------------------
+# Pass 7 dual-read shadow mode (memory_objects parity)
+# ---------------------------------------------------------------------------
+
+class TestDualReadShadowMode:
+    """Verify the shadow read against memory_objects runs alongside the legacy
+    path, logs divergence at WARNING when results disagree, logs nothing
+    extraordinary when they match, and is no-op when the feature flag is off.
+    The shadow path must NEVER affect the value returned to the caller.
+    """
+
+    @pytest.mark.asyncio
+    async def test_parity_no_divergence_warning(self, em, caplog):
+        """Same IDs in legacy + shadow -> no DIVERGENCE warning, returns legacy."""
+        import logging as _logging
+
+        rpc_rows = [
+            {
+                "id": "11111111-1111-4111-1111-111111111111",
+                "agent_id": "finn",
+                "session_id": "sess-a",
+                "summary": "summary a",
+                "key_topics": [],
+                "key_entities": {},
+                "turn_count": 3,
+                "created_at": "2026-04-01T10:00:00Z",
+                "similarity": 0.9,
+            }
+        ]
+        shadow_rows = [
+            # Same memory_id as legacy id -> sets match -> parity OK
+            {
+                "memory_id": "11111111-1111-4111-1111-111111111111",
+                "memory_type": "session_summary",
+                "last_activity_at": "2026-04-01T10:00:00Z",
+            }
+        ]
+
+        with patch(
+            "aspire_orchestrator.services.legal_embedding_service.embed_text",
+            new_callable=AsyncMock, return_value=[0.1] * 3072,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_rpc",
+            new_callable=AsyncMock, return_value=rpc_rows,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new_callable=AsyncMock, return_value=shadow_rows,
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=True,
+        ):
+            with caplog.at_level(_logging.DEBUG, logger="aspire_orchestrator.services.memory_dual_read"):
+                episodes = await em.search_relevant_episodes("query", SUITE_ID, AGENT_ID)
+
+        assert len(episodes) == 1
+        assert episodes[0].episode_id == "11111111-1111-4111-1111-111111111111"
+        # Parity should produce DEBUG log, not WARNING
+        warnings = [r for r in caplog.records
+                    if r.levelno >= _logging.WARNING and "DIVERGENCE" in r.getMessage()]
+        assert warnings == [], f"Unexpected DIVERGENCE warnings on parity: {warnings}"
+
+    @pytest.mark.asyncio
+    async def test_divergence_logs_warning(self, em, caplog):
+        """Different IDs between legacy + shadow -> WARNING with DIVERGENCE."""
+        import logging as _logging
+
+        rpc_rows = [
+            {
+                "id": "11111111-1111-4111-1111-111111111111",
+                "agent_id": "finn",
+                "session_id": "sess-a",
+                "summary": "in legacy only",
+                "key_topics": [],
+                "key_entities": {},
+                "turn_count": 3,
+                "created_at": "2026-04-01T10:00:00Z",
+                "similarity": 0.9,
+            }
+        ]
+        shadow_rows = [
+            {
+                "memory_id": "22222222-2222-4222-2222-222222222222",
+                "memory_type": "session_summary",
+                "last_activity_at": "2026-04-01T10:00:00Z",
+            }
+        ]
+
+        with patch(
+            "aspire_orchestrator.services.legal_embedding_service.embed_text",
+            new_callable=AsyncMock, return_value=[0.1] * 3072,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_rpc",
+            new_callable=AsyncMock, return_value=rpc_rows,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new_callable=AsyncMock, return_value=shadow_rows,
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=True,
+        ):
+            with caplog.at_level(_logging.WARNING, logger="aspire_orchestrator.services.memory_dual_read"):
+                episodes = await em.search_relevant_episodes("query", SUITE_ID, AGENT_ID)
+
+        # Legacy result still returned unchanged
+        assert len(episodes) == 1
+        assert episodes[0].episode_id == "11111111-1111-4111-1111-111111111111"
+        warnings = [r for r in caplog.records
+                    if r.levelno >= _logging.WARNING and "DIVERGENCE" in r.getMessage()]
+        assert len(warnings) == 1, f"Expected exactly 1 DIVERGENCE warning, got {warnings}"
+        assert "episodic_memory.search_relevant_episodes" in warnings[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_dual_read_disabled_skips_shadow(self, em):
+        """When ASPIRE_MEMORY_DUAL_READ_ENABLED=0 the shadow read is a no-op."""
+        rpc_rows = [
+            {
+                "id": "33333333-3333-4333-3333-333333333333",
+                "agent_id": "finn",
+                "session_id": "sess-c",
+                "summary": "legacy only",
+                "key_topics": [],
+                "key_entities": {},
+                "turn_count": 1,
+                "created_at": "2026-04-01T10:00:00Z",
+                "similarity": 0.9,
+            }
+        ]
+        shadow_select = AsyncMock(return_value=[])
+
+        with patch(
+            "aspire_orchestrator.services.legal_embedding_service.embed_text",
+            new_callable=AsyncMock, return_value=[0.1] * 3072,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_rpc",
+            new_callable=AsyncMock, return_value=rpc_rows,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            shadow_select,
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=False,
+        ):
+            episodes = await em.search_relevant_episodes("query", SUITE_ID, AGENT_ID)
+
+        assert len(episodes) == 1
+        # supabase_select must NOT be called when dual-read is disabled
+        # (the legacy RPC path doesn't use supabase_select on the happy path)
+        assert shadow_select.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_shadow_read_failure_does_not_break_legacy(self, em, caplog):
+        """If the shadow path raises, the legacy result must still be returned."""
+        import logging as _logging
+
+        rpc_rows = [
+            {
+                "id": "44444444-4444-4444-4444-444444444444",
+                "agent_id": "finn",
+                "session_id": "sess-d",
+                "summary": "legacy",
+                "key_topics": [],
+                "key_entities": {},
+                "turn_count": 1,
+                "created_at": "2026-04-01T10:00:00Z",
+                "similarity": 0.9,
+            }
+        ]
+
+        with patch(
+            "aspire_orchestrator.services.legal_embedding_service.embed_text",
+            new_callable=AsyncMock, return_value=[0.1] * 3072,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_rpc",
+            new_callable=AsyncMock, return_value=rpc_rows,
+        ), patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new_callable=AsyncMock, side_effect=Exception("simulated shadow failure"),
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=True,
+        ):
+            with caplog.at_level(_logging.WARNING, logger="aspire_orchestrator.services.memory_dual_read"):
+                episodes = await em.search_relevant_episodes("query", SUITE_ID, AGENT_ID)
+
+        # Legacy path still succeeds
+        assert len(episodes) == 1
+        assert episodes[0].episode_id == "44444444-4444-4444-4444-444444444444"
+        # Shadow failure is logged at WARNING via memory_dual_read.log_shadow_error
+        shadow_errors = [r for r in caplog.records
+                         if "shadow_error" in r.getMessage()]
+        assert len(shadow_errors) == 1

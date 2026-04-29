@@ -47,8 +47,8 @@ class TestRegistryLoading:
         assert registry.version == "1.0.0"
 
     def test_loads_all_skill_packs(self, registry: ControlPlaneRegistry):
-        """All 17 skill packs loaded (11 customer + 6 internal)."""
-        assert len(registry.skill_packs) == 17
+        """All skill packs loaded — 17 original + 3 new agent tool packs (Pass 8)."""
+        assert len(registry.skill_packs) == 20
 
     def test_loads_all_tools(self, registry: ControlPlaneRegistry):
         """All tool definitions loaded."""
@@ -210,7 +210,8 @@ class TestFiltering:
     def test_filter_by_category(self, registry: ControlPlaneRegistry):
         """Filter by category returns correct subset."""
         channel_packs = registry.list_skill_packs(category="channel")
-        assert len(channel_packs) == 7
+        # 7 original + 3 new agent tool packs (ava_chief_of_staff, nora_orchestration_tools, sarah_frontdesk_tools)
+        assert len(channel_packs) == 10
 
         finance_packs = registry.list_skill_packs(category="finance")
         assert len(finance_packs) == 3
@@ -230,12 +231,13 @@ class TestFiltering:
         assert len(red_packs) == 3  # milo, clara, security_review
 
         yellow_packs = registry.list_skill_packs(risk_tier=RiskTier.YELLOW)
-        assert len(yellow_packs) == 11
+        # 11 original + 3 new agent tool packs (all yellow)
+        assert len(yellow_packs) == 14
 
     def test_filter_by_status(self, registry: ControlPlaneRegistry):
         """All packs are in 'active' status after Phase 1 deployment."""
         active = registry.list_skill_packs(status="active")
-        assert len(active) == 17
+        assert len(active) == 20
 
     def test_combined_filters(self, registry: ControlPlaneRegistry):
         """Multiple filters combine correctly."""
@@ -259,7 +261,7 @@ class TestCapabilityDiscovery:
     def test_lists_all_capabilities(self, registry: ControlPlaneRegistry):
         """list_capabilities returns all registered skill packs."""
         caps = registry.list_capabilities()
-        assert len(caps) == 17
+        assert len(caps) == 20
 
     def test_capability_has_required_fields(self, registry: ControlPlaneRegistry):
         """Each capability entry has the required discovery fields."""
@@ -292,7 +294,7 @@ class TestStats:
     def test_stats_totals(self, registry: ControlPlaneRegistry):
         """Stats include correct totals."""
         stats = registry.get_stats()
-        assert stats["total_skill_packs"] == 17
+        assert stats["total_skill_packs"] == 20
         assert stats["total_tools"] >= 33
         assert stats["total_providers"] >= 14
         assert stats["total_actions_mapped"] >= 17
@@ -301,7 +303,8 @@ class TestStats:
         """Stats by category match expectations."""
         stats = registry.get_stats()
         by_cat = stats["by_category"]
-        assert by_cat.get("channel") == 7
+        # 7 original + 3 Pass 8 (ava_chief_of_staff, nora_orchestration_tools, sarah_frontdesk_tools)
+        assert by_cat.get("channel") == 10
         assert by_cat.get("finance") == 3
         assert by_cat.get("legal") == 1
         assert by_cat.get("internal") == 4
@@ -312,7 +315,8 @@ class TestStats:
         stats = registry.get_stats()
         by_risk = stats["by_risk_tier"]
         assert by_risk.get("green") == 3
-        assert by_risk.get("yellow") == 11
+        # 11 original + 3 new Pass 8 agent packs (all yellow)
+        assert by_risk.get("yellow") == 14
         assert by_risk.get("red") == 3
 
 

@@ -248,3 +248,172 @@ class TestSemanticMemorySingleton:
         m2 = get_semantic_memory()
         assert m1 is m2
         mod._memory = None
+
+
+# ---------------------------------------------------------------------------
+# Pass 7 dual-read shadow mode (memory_objects parity)
+# ---------------------------------------------------------------------------
+
+class TestDualReadShadowMode:
+    """Shadow-read parallel against memory_objects.decision_fact for parity
+    verification. Legacy result is always returned to caller; dual-read is
+    purely observability."""
+
+    @pytest.mark.asyncio
+    async def test_parity_no_divergence_warning(self, sm, caplog):
+        """Same row IDs -> no DIVERGENCE warning."""
+        import logging as _logging
+
+        # Legacy row keyed by 'id'; shadow row keyed by 'memory_id'.
+        legacy_id = "abcdef00-0000-4000-8000-000000000001"
+        legacy_rows = [{
+            "id": legacy_id,
+            "fact_type": "industry",
+            "fact_key": "industry",
+            "fact_value": "wooden pallets",
+            "confidence": 0.9,
+            "created_at": "2026-04-01T10:00:00Z",
+            "updated_at": "2026-04-01T10:00:00Z",
+        }]
+        shadow_rows = [{
+            "memory_id": legacy_id,
+            "memory_type": "decision_fact",
+            "last_activity_at": "2026-04-01T10:00:00Z",
+        }]
+
+        async def select_router(table, *args, **kwargs):
+            if table == "agent_semantic_memory":
+                return legacy_rows
+            if table == "memory_objects":
+                return shadow_rows
+            return []
+
+        with patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new=AsyncMock(side_effect=select_router),
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=True,
+        ):
+            with caplog.at_level(_logging.DEBUG, logger="aspire_orchestrator.services.memory_dual_read"):
+                facts = await sm.get_user_facts(SUITE_ID, USER_ID, AGENT_ID)
+
+        assert len(facts) == 1
+        assert facts[0].fact_id == legacy_id
+        warnings = [r for r in caplog.records
+                    if r.levelno >= _logging.WARNING and "DIVERGENCE" in r.getMessage()]
+        assert warnings == []
+
+    @pytest.mark.asyncio
+    async def test_divergence_logs_warning(self, sm, caplog):
+        """Different IDs in legacy vs shadow -> WARNING."""
+        import logging as _logging
+
+        legacy_rows = [{
+            "id": "11111111-1111-4111-8111-111111111111",
+            "fact_type": "preference",
+            "fact_key": "k1",
+            "fact_value": "v1",
+            "confidence": 0.7,
+            "created_at": "2026-04-01T10:00:00Z",
+            "updated_at": "2026-04-01T10:00:00Z",
+        }]
+        shadow_rows = [{
+            "memory_id": "22222222-2222-4222-8222-222222222222",
+            "memory_type": "decision_fact",
+            "last_activity_at": "2026-04-01T10:00:00Z",
+        }]
+
+        async def select_router(table, *args, **kwargs):
+            if table == "agent_semantic_memory":
+                return legacy_rows
+            if table == "memory_objects":
+                return shadow_rows
+            return []
+
+        with patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new=AsyncMock(side_effect=select_router),
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=True,
+        ):
+            with caplog.at_level(_logging.WARNING, logger="aspire_orchestrator.services.memory_dual_read"):
+                facts = await sm.get_user_facts(SUITE_ID, USER_ID, AGENT_ID)
+
+        # Legacy result preserved
+        assert len(facts) == 1
+        warnings = [r for r in caplog.records
+                    if r.levelno >= _logging.WARNING and "DIVERGENCE" in r.getMessage()]
+        assert len(warnings) == 1
+        assert "semantic_memory.get_user_facts" in warnings[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_dual_read_disabled_skips_shadow(self, sm):
+        """ASPIRE_MEMORY_DUAL_READ_ENABLED=0 -> shadow query never runs."""
+        legacy_rows = [{
+            "id": "33333333-3333-4333-8333-333333333333",
+            "fact_type": "industry",
+            "fact_key": "k",
+            "fact_value": "v",
+            "confidence": 0.5,
+            "created_at": "2026-04-01T10:00:00Z",
+            "updated_at": "2026-04-01T10:00:00Z",
+        }]
+
+        select_calls: list[str] = []
+
+        async def select_router(table, *args, **kwargs):
+            select_calls.append(table)
+            if table == "agent_semantic_memory":
+                return legacy_rows
+            return []
+
+        with patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new=AsyncMock(side_effect=select_router),
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=False,
+        ):
+            facts = await sm.get_user_facts(SUITE_ID, USER_ID, AGENT_ID)
+
+        assert len(facts) == 1
+        # Shadow path never queried memory_objects
+        assert "memory_objects" not in select_calls
+
+    @pytest.mark.asyncio
+    async def test_shadow_read_failure_does_not_break_legacy(self, sm, caplog):
+        """Shadow exception is logged; legacy result is returned unchanged."""
+        import logging as _logging
+
+        legacy_rows = [{
+            "id": "44444444-4444-4444-8444-444444444444",
+            "fact_type": "industry",
+            "fact_key": "k",
+            "fact_value": "v",
+            "confidence": 0.9,
+            "created_at": "2026-04-01T10:00:00Z",
+            "updated_at": "2026-04-01T10:00:00Z",
+        }]
+
+        async def select_router(table, *args, **kwargs):
+            if table == "agent_semantic_memory":
+                return legacy_rows
+            if table == "memory_objects":
+                raise Exception("simulated shadow read failure")
+            return []
+
+        with patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new=AsyncMock(side_effect=select_router),
+        ), patch(
+            "aspire_orchestrator.services.memory_dual_read.is_dual_read_enabled",
+            return_value=True,
+        ):
+            with caplog.at_level(_logging.WARNING, logger="aspire_orchestrator.services.memory_dual_read"):
+                facts = await sm.get_user_facts(SUITE_ID, USER_ID, AGENT_ID)
+
+        assert len(facts) == 1
+        shadow_errors = [r for r in caplog.records if "shadow_error" in r.getMessage()]
+        assert len(shadow_errors) == 1

@@ -141,6 +141,17 @@ class Settings(BaseSettings):
     ava_admin_prompt_version: str | None = None    # AVA_ADMIN_PROMPT_VERSION env var
     ava_safe_mode: bool = False                    # AVA_SAFE_MODE=1 for incident operation
 
+    # --- Office Memory Engine (Pass 7) ---
+    # Dual-read shadow mode: when enabled, episodic_memory / semantic_memory /
+    # agent_memory_mixin issue a parallel read against memory_objects (the new
+    # spine) alongside the legacy agent_episodes / agent_semantic_memory tables
+    # and emit a structured WARNING log when the two paths diverge. The legacy
+    # table result is always returned to the caller, so dual-read is a pure
+    # observability layer -- it never changes production behaviour. Set to
+    # False (ASPIRE_MEMORY_DUAL_READ_ENABLED=0) to disable shadow reads if the
+    # new path is misbehaving in production.
+    memory_dual_read_enabled: bool = True
+
     model_config = {"env_prefix": "ASPIRE_", "extra": "ignore"}
 
     def model_post_init(self, __context: object) -> None:

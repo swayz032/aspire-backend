@@ -471,6 +471,190 @@ elevenlabsToolsRouter.post('/invoke', async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /v1/tools/search_emails — Canonical email search endpoint (Eli v1 rename)
+// Auth: ElevenLabs tool secret
+// Replaces legacy /search when domain=emails. Source of truth for Eli searches.
+// ---------------------------------------------------------------------------
+elevenlabsToolsRouter.post('/search_emails', async (req: Request, res: Response) => {
+  const correlationId = req.correlationId;
+  const { suiteId, officeId, actorId } = req.auth;
+  const { query } = req.body ?? {};
+
+  if (typeof query !== 'string' || query.length === 0) {
+    res.status(400).json({
+      error: 'SCHEMA_VALIDATION_FAILED',
+      message: 'Missing required field: query',
+      correlation_id: correlationId,
+    });
+    return;
+  }
+
+  logger.info('eli.search_emails called', {
+    correlation_id: correlationId,
+    suite_id: suiteId.substring(0, 8),
+    query_len: query.length,
+  });
+
+  try {
+    const orchestratorResponse = await proxyToOrchestrator({
+      path: '/v1/intents',
+      method: 'POST',
+      body: {
+        intent: 'search',
+        suite_id: suiteId,
+        user_id: actorId,
+        query,
+        domain: 'emails',
+        correlation_id: correlationId,
+      },
+      correlationId,
+      suiteId,
+      officeId,
+      actorId,
+    });
+
+    res.status(orchestratorResponse.status).json(orchestratorResponse.body);
+  } catch (err) {
+    handleToolError(err, res, correlationId, suiteId, actorId, '/search_emails');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/tools/draft_email — Canonical email draft endpoint (Eli v1 rename)
+// Auth: ElevenLabs tool secret
+// Replaces legacy /draft for email drafts. Source of truth for Eli drafts.
+// ---------------------------------------------------------------------------
+elevenlabsToolsRouter.post('/draft_email', async (req: Request, res: Response) => {
+  const correlationId = req.correlationId;
+  const { suiteId, officeId, actorId } = req.auth;
+  const { action, params } = req.body ?? {};
+
+  if (typeof action !== 'string' || action.length === 0) {
+    res.status(400).json({
+      error: 'SCHEMA_VALIDATION_FAILED',
+      message: 'Missing required field: action',
+      correlation_id: correlationId,
+    });
+    return;
+  }
+
+  if (typeof params !== 'object' || params === null) {
+    res.status(400).json({
+      error: 'SCHEMA_VALIDATION_FAILED',
+      message: 'Missing required field: params (must be an object)',
+      correlation_id: correlationId,
+    });
+    return;
+  }
+
+  logger.info('eli.draft_email called', {
+    correlation_id: correlationId,
+    suite_id: suiteId.substring(0, 8),
+    action,
+  });
+
+  try {
+    const orchestratorResponse = await proxyToOrchestrator({
+      path: '/v1/intents',
+      method: 'POST',
+      body: {
+        intent: 'draft_action',
+        suite_id: suiteId,
+        user_id: actorId,
+        action,
+        params,
+        domain: 'emails',
+        correlation_id: correlationId,
+      },
+      correlationId,
+      suiteId,
+      officeId,
+      actorId,
+    });
+
+    const responseBody = orchestratorResponse.body as Record<string, unknown> | null;
+
+    res.status(orchestratorResponse.status).json({
+      ...responseBody,
+      requires_confirmation: true,
+      correlation_id: correlationId,
+    });
+  } catch (err) {
+    handleToolError(err, res, correlationId, suiteId, actorId, '/draft_email');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/tools/create_draft — DEPRECATED alias → /draft_email
+// Kept for backward compatibility with ElevenLabs agents not yet migrated.
+// Logs deprecation metric. Routes to draft_email canonical handler.
+// ---------------------------------------------------------------------------
+elevenlabsToolsRouter.post('/create_draft', async (req: Request, res: Response) => {
+  const correlationId = req.correlationId;
+  const { suiteId, officeId, actorId } = req.auth;
+
+  // Deprecation metric
+  logger.warn('DEPRECATED_ALIAS_USED: /create_draft → /draft_email', {
+    correlation_id: correlationId,
+    suite_id: suiteId.substring(0, 8),
+    alias: 'create_draft',
+    canonical: 'draft_email',
+  });
+
+  const { action, params } = req.body ?? {};
+
+  if (typeof action !== 'string' || action.length === 0) {
+    res.status(400).json({
+      error: 'SCHEMA_VALIDATION_FAILED',
+      message: 'Missing required field: action',
+      correlation_id: correlationId,
+    });
+    return;
+  }
+
+  if (typeof params !== 'object' || params === null) {
+    res.status(400).json({
+      error: 'SCHEMA_VALIDATION_FAILED',
+      message: 'Missing required field: params (must be an object)',
+      correlation_id: correlationId,
+    });
+    return;
+  }
+
+  try {
+    const orchestratorResponse = await proxyToOrchestrator({
+      path: '/v1/intents',
+      method: 'POST',
+      body: {
+        intent: 'draft_action',
+        suite_id: suiteId,
+        user_id: actorId,
+        action,
+        params,
+        domain: 'emails',
+        correlation_id: correlationId,
+      },
+      correlationId,
+      suiteId,
+      officeId,
+      actorId,
+    });
+
+    const responseBody = orchestratorResponse.body as Record<string, unknown> | null;
+
+    res.status(orchestratorResponse.status).json({
+      ...responseBody,
+      requires_confirmation: true,
+      deprecated_alias: 'create_draft',
+      canonical_endpoint: '/v1/tools/draft_email',
+      correlation_id: correlationId,
+    });
+  } catch (err) {
+    handleToolError(err, res, correlationId, suiteId, actorId, '/create_draft');
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Shared error handler — follows intents.ts pattern
 // ---------------------------------------------------------------------------
 function handleToolError(

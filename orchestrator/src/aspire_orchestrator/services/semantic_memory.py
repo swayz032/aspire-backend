@@ -373,7 +373,7 @@ class SemanticMemory:
             )
             rows = await supabase_select("agent_semantic_memory", filters)
 
-            return [
+            facts = [
                 Fact(
                     fact_id=str(row.get("id", "")),
                     fact_type=row.get("fact_type", ""),
@@ -386,9 +386,94 @@ class SemanticMemory:
                 for row in rows
             ]
 
+            # Pass 7 dual-read: shadow query memory_objects in parallel.
+            # Wrapped in an extra try/except so even an import error or
+            # unexpected exception in the shadow path cannot mask the legacy
+            # result that's already been built above.
+            try:
+                await self._shadow_read_decision_facts(
+                    suite_id=suite_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    legacy_facts=facts,
+                    surface="semantic_memory.get_user_facts",
+                )
+            except Exception as shadow_exc:  # noqa: BLE001 - never propagate
+                logger.warning(
+                    "memory_dual_read shadow_path_outer_error: surface=%s err=%s",
+                    "semantic_memory.get_user_facts", shadow_exc,
+                )
+
+            return facts
+
         except Exception as e:
             logger.warning("SemanticMemory load failed (non-fatal): %s", e)
             return []
+
+    async def _shadow_read_decision_facts(
+        self,
+        *,
+        suite_id: str,
+        user_id: str,
+        agent_id: str,
+        legacy_facts: list[Fact],
+        surface: str,
+    ) -> None:
+        """Pass 7 dual-read: parallel read against memory_objects for decision_facts.
+
+        Compares legacy `agent_semantic_memory` row IDs against the
+        `memory_objects` rows backfilled by migration 100. The legacy result is
+        always returned to the caller; this method only logs divergence.
+        """
+        from aspire_orchestrator.services.memory_dual_read import (
+            is_dual_read_enabled,
+            log_divergence,
+            log_shadow_error,
+        )
+
+        if not is_dual_read_enabled():
+            return
+        if not _is_uuid(suite_id):
+            return
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            canonical_map = {
+                "ava": "ava", "finn": "finn", "eli": "eli", "nora": "nora",
+                "tim": "tim", "sarah": "sarah",
+                "sarah-front-desk": "sarah", "sarah-frontdesk": "sarah",
+                "sarah-receptionist": "sarah", "finn-finance": "finn",
+            }
+            source_agent = canonical_map.get((agent_id or "").lower(), "system")
+
+            filter_str = (
+                f"tenant_id=eq.{suite_id}"
+                f"&suite_id=eq.{suite_id}"
+                f"&memory_type=eq.decision_fact"
+                f"&source_agent=eq.{source_agent}"
+            )
+            shadow_rows = await supabase_select(
+                "memory_objects",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=max(100, len(legacy_facts) * 4),
+            )
+
+            # Migration 100 preserves the legacy id as memory_id.
+            legacy_ids = [f.fact_id for f in legacy_facts]
+            shadow_ids = [str(r.get("memory_id", "")) for r in (shadow_rows or [])]
+
+            log_divergence(
+                surface=surface,
+                legacy_ids=legacy_ids,
+                shadow_ids=shadow_ids,
+                legacy_count=len(legacy_facts),
+                shadow_count=len(shadow_rows or []),
+                extra={"agent_id": agent_id, "source_agent": source_agent},
+            )
+        except Exception as exc:
+            log_shadow_error(surface=surface, error=exc)
 
 
 # ---------------------------------------------------------------------------

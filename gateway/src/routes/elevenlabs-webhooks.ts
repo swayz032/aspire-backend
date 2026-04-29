@@ -479,3 +479,140 @@ elevenlabsWebhooksRouter.post('/transcripts', async (req: Request, res: Response
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// POST /v1/sarah/personalization
+// Canonical per-call personalization webhook for Receptionist Sarah.
+// ElevenLabs fires this before Sarah speaks, keyed off called_number.
+// Returns: dynamic_variables dict with all contract-specified fields.
+//
+// Contract (08_RECEPTIONIST_SARAH_TOOLS_CONTRACT_v2.md):
+//   Request:  { called_number, caller_id, agent_id, call_sid }
+//   Response: { dynamic_variables: { business_name, first_name, last_name,
+//               industry, time_of_day, is_open_now, after_hours_mode,
+//               busy_mode, public_number_mode, catch_mode,
+//               greeting_name_override, pronunciation_override,
+//               routing_contacts_summary } }
+//
+// Auth: ElevenLabs tool secret
+// Law #3: Fail-open for missing config (call still answers with generic vars)
+// Law #9: caller_id is truncated in logs (PII)
+// ---------------------------------------------------------------------------
+elevenlabsWebhooksRouter.post('/v1/sarah/personalization', async (req: Request, res: Response) => {
+  const correlationId = req.correlationId;
+
+  // Auth check (tool secret)
+  const toolSecret = process.env.ELEVENLABS_TOOL_SECRET;
+  const providedSecret = req.headers['x-elevenlabs-secret'];
+  if (toolSecret && providedSecret !== toolSecret) {
+    logger.warn('sarah.personalization auth failed', { correlation_id: correlationId });
+    res.status(401).json({ error: 'AUTH_FAILED', correlation_id: correlationId });
+    return;
+  }
+
+  const { called_number, caller_id, agent_id, call_sid } = req.body ?? {};
+
+  // Log without PII — caller_id truncated
+  logger.info('sarah.personalization called', {
+    correlation_id: correlationId,
+    called_number: called_number ? `${String(called_number).substring(0, 6)}...` : 'none',
+    caller_id: caller_id ? `${String(caller_id).substring(0, 4)}...` : 'none',
+    agent_id: agent_id || 'none',
+  });
+
+  if (!called_number) {
+    res.status(200).json({ dynamic_variables: buildGenericPersonalizationVars() });
+    return;
+  }
+
+  try {
+    const desktopUrl = process.env.RAILWAY_SERVICE_ASPIRE_DESKTOP_URL
+      ? `https://${process.env.RAILWAY_SERVICE_ASPIRE_DESKTOP_URL}`
+      : (process.env.DESKTOP_SERVER_URL || 'http://localhost:3000');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const configResponse = await fetch(
+      `${desktopUrl}/api/frontdesk/config-by-number?called_number=${encodeURIComponent(String(called_number))}`,
+      {
+        headers: { 'x-elevenlabs-secret': process.env.ELEVENLABS_TOOL_SECRET || '' },
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timeoutId);
+
+    if (!configResponse.ok) {
+      logger.warn('sarah.personalization: no config for number, using generic vars', {
+        correlation_id: correlationId,
+        status: configResponse.status,
+      });
+      res.status(200).json({ dynamic_variables: buildGenericPersonalizationVars() });
+      return;
+    }
+
+    const config = await configResponse.json() as Record<string, unknown>;
+
+    const isOpenNow = checkBusinessHours(config.business_hours as Record<string, unknown> | null);
+    const timeOfDay = getTimeOfDay();
+
+    // Build routing_contacts_summary from team_members
+    const teamMembers = config.team_members as Array<{ name: string; role: string; phone?: string }> || [];
+    const routingContactsSummary = teamMembers.length > 0
+      ? teamMembers.map(m => `${m.name} (${m.role})`).join('; ')
+      : '';
+
+    const firstName = String(config.owner_first_name || config.first_name || '');
+    const lastName = String(config.owner_last_name || config.last_name || '');
+
+    const dynamicVars = {
+      business_name: String(config.business_name || 'the business'),
+      first_name: firstName,
+      last_name: lastName,
+      industry: String(config.industry || ''),
+      time_of_day: timeOfDay,
+      is_open_now: String(isOpenNow),
+      after_hours_mode: String(config.after_hours_mode || 'TAKE_MESSAGE'),
+      busy_mode: String(config.busy_mode || 'TAKE_MESSAGE'),
+      public_number_mode: String(config.public_number_mode || 'STANDARD'),
+      catch_mode: String(config.catch_mode || 'TAKE_MESSAGE'),
+      greeting_name_override: String(config.greeting_name_override || config.business_name || ''),
+      pronunciation_override: String(config.pronunciation || config.business_name || ''),
+      routing_contacts_summary: routingContactsSummary,
+    };
+
+    logger.info('sarah.personalization vars built', {
+      correlation_id: correlationId,
+      business_name: dynamicVars.business_name,
+      is_open_now: dynamicVars.is_open_now,
+      team_count: teamMembers.length,
+    });
+
+    res.status(200).json({ dynamic_variables: dynamicVars });
+  } catch (err) {
+    // Fail-open — call still answers with generic prompt
+    logger.error('sarah.personalization error, using generic vars', {
+      correlation_id: correlationId,
+      error: err instanceof Error ? err.message : 'unknown',
+    });
+    res.status(200).json({ dynamic_variables: buildGenericPersonalizationVars() });
+  }
+});
+
+function buildGenericPersonalizationVars(): Record<string, string> {
+  return {
+    business_name: 'the business',
+    first_name: '',
+    last_name: '',
+    industry: '',
+    time_of_day: getTimeOfDay(),
+    is_open_now: 'true',
+    after_hours_mode: 'TAKE_MESSAGE',
+    busy_mode: 'TAKE_MESSAGE',
+    public_number_mode: 'STANDARD',
+    catch_mode: 'TAKE_MESSAGE',
+    greeting_name_override: '',
+    pronunciation_override: '',
+    routing_contacts_summary: '',
+  };
+}

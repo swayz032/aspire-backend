@@ -62,8 +62,8 @@ class TestRegistryCapabilities:
         res = await client.get("/v1/registry/capabilities")
         assert res.status_code == 200
         body = res.json()
-        assert body["count"] == 17
-        assert len(body["capabilities"]) == 17
+        assert body["count"] == 20
+        assert len(body["capabilities"]) == 20
 
     @pytest.mark.asyncio
     async def test_filter_by_category(self, client):
@@ -71,7 +71,7 @@ class TestRegistryCapabilities:
         res = await client.get("/v1/registry/capabilities?category=channel")
         assert res.status_code == 200
         body = res.json()
-        assert body["count"] == 7
+        assert body["count"] == 10
         assert all(c["category"] == "channel" for c in body["capabilities"])
 
     @pytest.mark.asyncio
@@ -96,7 +96,7 @@ class TestRegistryCapabilities:
         res = await client.get("/v1/registry/capabilities")
         body = res.json()
         assert "stats" in body
-        assert body["stats"]["total_skill_packs"] == 17
+        assert body["stats"]["total_skill_packs"] == 20
 
 
 class TestRegistrySkillPacks:

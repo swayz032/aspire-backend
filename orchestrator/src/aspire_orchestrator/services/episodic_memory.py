@@ -291,11 +291,105 @@ class EpisodicMemory:
                 "EpisodicMemory: found %d relevant episodes for agent=%s",
                 len(episodes), agent_id,
             )
+
+            # Pass 7 dual-read: shadow query memory_objects in parallel and log
+            # any divergence vs the legacy path. Production result (legacy) is
+            # NEVER affected by failures in this path. The extra try/except
+            # below means even an import error or unexpected exception in the
+            # shadow path cannot mask the legacy result we already computed.
+            try:
+                await self._shadow_read_session_summaries(
+                    suite_id=suite_id,
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    legacy_episodes=episodes,
+                    surface="episodic_memory.search_relevant_episodes",
+                )
+            except Exception as shadow_exc:  # noqa: BLE001 - never propagate
+                logger.warning(
+                    "memory_dual_read shadow_path_outer_error: surface=%s err=%s",
+                    "episodic_memory.search_relevant_episodes", shadow_exc,
+                )
+
             return episodes
 
         except Exception as e:
             logger.warning("Episode search failed (non-fatal): %s", e)
             return []
+
+    async def _shadow_read_session_summaries(
+        self,
+        *,
+        suite_id: str,
+        agent_id: str,
+        user_id: str | None,
+        legacy_episodes: list[Episode],
+        surface: str,
+    ) -> None:
+        """Pass 7 dual-read: query memory_objects in parallel for parity check.
+
+        This method is a SHADOW reader. It MUST NOT raise -- the legacy path
+        always wins. We simply log divergence at WARNING level to flag any
+        scope/index/RLS mismatch before Pass 12 cutover.
+
+        Filters:
+          - tenant_id = suite_id (canonical convention; see migration 100)
+          - suite_id = suite_id
+          - memory_type = 'session_summary'
+          - source_agent matches the canonical 7-value enum (best-effort coercion)
+        """
+        from aspire_orchestrator.services.memory_dual_read import (
+            is_dual_read_enabled,
+            log_divergence,
+            log_shadow_error,
+        )
+
+        if not is_dual_read_enabled():
+            return
+        if not _is_uuid(suite_id):
+            return
+
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select
+
+            # Coerce legacy agent_id text to the memory_objects.source_agent
+            # CHECK constraint values; fall back to 'system' on no match.
+            canonical_map = {
+                "ava": "ava", "finn": "finn", "eli": "eli", "nora": "nora",
+                "tim": "tim", "sarah": "sarah",
+                "sarah-front-desk": "sarah", "sarah-frontdesk": "sarah",
+                "sarah-receptionist": "sarah", "finn-finance": "finn",
+            }
+            source_agent = canonical_map.get((agent_id or "").lower(), "system")
+
+            filter_str = (
+                f"tenant_id=eq.{suite_id}"
+                f"&suite_id=eq.{suite_id}"
+                f"&memory_type=eq.session_summary"
+                f"&source_agent=eq.{source_agent}"
+            )
+            shadow_rows = await supabase_select(
+                "memory_objects",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=max(50, len(legacy_episodes) * 4),
+            )
+
+            # Legacy episode_ids are agent_episodes.id values; in memory_objects
+            # those same UUIDs are the memory_id (migration 100 preserves them).
+            legacy_ids = [ep.episode_id for ep in legacy_episodes]
+            shadow_ids = [str(r.get("memory_id", "")) for r in (shadow_rows or [])]
+
+            log_divergence(
+                surface=surface,
+                legacy_ids=legacy_ids,
+                shadow_ids=shadow_ids,
+                legacy_count=len(legacy_episodes),
+                shadow_count=len(shadow_rows or []),
+                extra={"agent_id": agent_id, "source_agent": source_agent},
+            )
+        except Exception as exc:
+            log_shadow_error(surface=surface, error=exc)
 
     async def _fallback_text_episode_search(
         self,

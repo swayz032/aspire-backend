@@ -131,6 +131,11 @@ class AgentMemoryMixin:
 
         Returns most recent episodes ordered by creation time.
         For semantic search, use search_memory() instead.
+
+        Pass 7 dual-read: a parallel shadow query against memory_objects
+        (memory_type='session_summary') runs alongside the legacy read; any
+        divergence is logged at WARNING level. The legacy result is always
+        returned to the caller -- the new path never blocks production.
         """
         from aspire_orchestrator.services.supabase_client import supabase_select
 
@@ -144,10 +149,97 @@ class AgentMemoryMixin:
                 order_by="created_at.desc",
                 limit=limit,
             )
-            return rows or []
+            legacy_rows = rows or []
+
+            # Shadow read -- best-effort, never raises. Wrapped in an extra
+            # try/except so even an import error in the shadow module cannot
+            # mask the legacy result that's already been retrieved above.
+            try:
+                await self._shadow_recall_episodes(
+                    suite_id=ctx.suite_id,
+                    agent_id=self._agent_id,  # type: ignore[attr-defined]
+                    limit=limit,
+                    legacy_rows=legacy_rows,
+                    surface="agent_memory_mixin.recall_episodes",
+                )
+            except Exception as shadow_exc:  # noqa: BLE001 - never propagate
+                logger.warning(
+                    "memory_dual_read shadow_path_outer_error: surface=%s err=%s",
+                    "agent_memory_mixin.recall_episodes", shadow_exc,
+                )
+
+            return legacy_rows
         except Exception as e:
             logger.error("Failed to recall episodes: %s", e)
             return []
+
+    async def _shadow_recall_episodes(
+        self,
+        *,
+        suite_id: str,
+        agent_id: str,
+        limit: int,
+        legacy_rows: list[dict[str, Any]],
+        surface: str,
+    ) -> None:
+        """Shadow-read memory_objects for parity verification (Pass 7).
+
+        Mirrors the filter shape of the legacy `agent_episodes` query so we
+        can compare ID sets. Failures are caught and logged via
+        `memory_dual_read.log_shadow_error` -- they MUST NOT propagate.
+        """
+        try:
+            from aspire_orchestrator.services.memory_dual_read import (
+                is_dual_read_enabled,
+                log_divergence,
+                log_shadow_error,
+            )
+            from aspire_orchestrator.services.supabase_client import supabase_select
+        except Exception:
+            return
+
+        if not is_dual_read_enabled():
+            return
+
+        try:
+            canonical_map = {
+                "ava": "ava", "finn": "finn", "eli": "eli", "nora": "nora",
+                "tim": "tim", "sarah": "sarah",
+                "sarah-front-desk": "sarah", "sarah-frontdesk": "sarah",
+                "sarah-receptionist": "sarah", "finn-finance": "finn",
+            }
+            source_agent = canonical_map.get((agent_id or "").lower(), "system")
+
+            filter_str = (
+                f"tenant_id=eq.{suite_id}"
+                f"&suite_id=eq.{suite_id}"
+                f"&memory_type=eq.session_summary"
+                f"&source_agent=eq.{source_agent}"
+            )
+            shadow_rows = await supabase_select(
+                "memory_objects",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=max(50, limit * 4),
+            )
+
+            legacy_ids = [str(r.get("id", "")) for r in legacy_rows]
+            shadow_ids = [str(r.get("memory_id", "")) for r in (shadow_rows or [])]
+
+            log_divergence(
+                surface=surface,
+                legacy_ids=legacy_ids,
+                shadow_ids=shadow_ids,
+                legacy_count=len(legacy_rows),
+                shadow_count=len(shadow_rows or []),
+                extra={"agent_id": agent_id, "source_agent": source_agent},
+            )
+        except Exception as exc:
+            try:
+                from aspire_orchestrator.services.memory_dual_read import log_shadow_error
+                log_shadow_error(surface=surface, error=exc)
+            except Exception:
+                pass  # never raise from shadow path
 
     # ── Tier 3: Semantic Memory (persistent facts, agent_semantic_memory) ─
 
