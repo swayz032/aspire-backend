@@ -262,18 +262,24 @@ async def execute_tool_material_price_check(
         return missing
 
     def _store_missing_fields(store: dict[str, Any]) -> list[str]:
-        # Essential contract: store_name + address. Without these the card has
-        # no useful identity and is worth blocking on.
-        # Phone + website are SUPPLEMENTARY: rendered when present, omitted
-        # gracefully when not. Treating them as required wedged the playbook
-        # into rejecting every response when Google Places /details/json
-        # enrichment was rate-limited or returned no detail — even though
-        # store_name and address were both populated correctly. The card UI
-        # renders fine without phone/website; users get the products they
-        # asked for. Production-grade primary path: ship what's correct,
-        # don't gate the entire response on optional metadata.
+        # Irreducible contract: store_name. Without a name the card has no
+        # identity worth showing. Everything else (address, phone, website) is
+        # supplementary metadata — present when populated, omitted gracefully
+        # when not.
+        #
+        # Phone + website were dropped first because Google Places
+        # /details/json enrichment was unreliable. Address followed because
+        # the same resolver populates it AND the resolver was returning
+        # empty fields for no-zip city queries (common Anam path: "find
+        # paint sprayers in Tallahassee"). The card UI handles missing
+        # fields cleanly — users get the products they asked for and the
+        # store's identifiable name (correct via Pass 1.1 — pickup.store_name
+        # / search_information.store_name).
+        #
+        # Follow-up tracked separately: fix the Google Places resolver path
+        # for no-zip queries so address/phone/website reliably populate.
         missing: list[str] = []
-        for field in ("store_name", "address"):
+        for field in ("store_name",):
             v = store.get(field)
             if v is None or (isinstance(v, str) and not str(v).strip()):
                 missing.append(field)
