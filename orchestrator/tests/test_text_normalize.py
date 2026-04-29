@@ -197,13 +197,9 @@ class TestNormalizePayloadForSpeech:
     """Walks a ResearchResponse-shaped payload, normalizing address fields."""
 
     def test_top_level_summary_normalized(self):
-        # Period after expanded suffix is dropped — consistent with the suffix
-        # rules ("Maple Rd." -> "Maple Road"). TTS does not need the period;
-        # both mid-sentence "Apt." and end-of-string "St." are treated the
-        # same way. See test_period_after_apt_consumed for the parallel.
         payload = {"summary": "Found a property at 4863 Price St."}
         out = normalize_payload_for_speech(payload)
-        assert out["summary"] == "Found a property at 4863 Price Street"
+        assert out["summary"] == "Found a property at 4863 Price Street."
 
     def test_record_normalized_address_field(self):
         payload = {
