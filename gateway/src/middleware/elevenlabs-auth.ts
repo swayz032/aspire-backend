@@ -1,14 +1,19 @@
-// [STATUS: v1] — Validates x-elevenlabs-secret on V1 ElevenLabs tool webhook calls.
+// [STATUS: v1+v2] — Validates shared tool secret on V1 ElevenLabs + V2 Anam tool webhook calls.
 /**
- * ElevenLabs Tool Auth Middleware — Shared Secret Verification (Law #3: Fail Closed)
+ * Tool Auth Middleware — Shared Secret Verification (Law #3: Fail Closed)
  *
- * Validates requests from ElevenLabs server tools using a shared secret.
- * ElevenLabs agents call our tool endpoints with this secret in the header.
+ * Validates requests from V1 ElevenLabs server tools AND V2 Anam persona tools
+ * using a shared secret. Both call our `/v1/tools/*` endpoints with the secret
+ * in the header. Header name varies by source (historical):
+ *   - V1 ElevenLabs agents send `x-elevenlabs-secret`
+ *   - V2 Anam personas send `x-aspire-tool-secret`
+ * Both are validated against the same `ELEVENLABS_TOOL_SECRET` env var.
  *
  * Auth flow:
- * 1. Check `x-elevenlabs-secret` header matches ELEVENLABS_TOOL_SECRET env var
- * 2. Extract suite_id from request body (ElevenLabs passes it via dynamic variables)
- * 3. Set req.auth with extracted context for downstream handlers
+ * 1. Read either `x-elevenlabs-secret` OR `x-aspire-tool-secret` header (whichever present)
+ * 2. Constant-time compare against ELEVENLABS_TOOL_SECRET env var
+ * 3. Extract suite_id from request body (passed via dynamic variables) or x-suite-id header
+ * 4. Set req.auth with extracted context for downstream handlers
  *
  * Law #3: Missing secret or mismatch = 401 (fail-closed)
  * Law #6: suite_id validated server-side
@@ -34,13 +39,21 @@ export function elevenlabsToolAuthMiddleware(req: Request, res: Response, next: 
     return;
   }
 
-  const providedSecret = req.headers['x-elevenlabs-secret'];
+  // Accept either header — V1 ElevenLabs agents send `x-elevenlabs-secret`,
+  // V2 Anam personas send `x-aspire-tool-secret`. Both authenticate against
+  // the same ELEVENLABS_TOOL_SECRET env var.
+  const elevenlabsHeader = req.headers['x-elevenlabs-secret'];
+  const anamHeader = req.headers['x-aspire-tool-secret'];
+  const providedSecret =
+    (typeof elevenlabsHeader === 'string' && elevenlabsHeader) ||
+    (typeof anamHeader === 'string' && anamHeader) ||
+    '';
 
   // Law #3: Fail-closed — missing header = deny
-  if (typeof providedSecret !== 'string' || providedSecret.length === 0) {
+  if (!providedSecret) {
     res.status(401).json({
       error: 'AUTH_FAILED',
-      message: 'Missing x-elevenlabs-secret header',
+      message: 'Missing x-elevenlabs-secret or x-aspire-tool-secret header',
       correlation_id: req.correlationId ?? 'unknown',
     });
     return;
