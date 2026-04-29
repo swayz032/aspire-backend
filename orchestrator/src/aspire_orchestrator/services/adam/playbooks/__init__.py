@@ -11,6 +11,9 @@ from typing import Any
 
 from aspire_orchestrator.services.adam.schemas.playbook_context import PlaybookContext
 from aspire_orchestrator.services.adam.schemas.research_response import ResearchResponse
+from aspire_orchestrator.services.adam.text_normalize import (
+    normalize_research_response_in_place,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +115,9 @@ async def dispatch_playbook(
         import inspect
         sig = inspect.signature(execute_fn)
         if "context" in sig.parameters:
-            return await execute_fn(query=query, context=ctx, **kwargs)
-        return await execute_fn(query=query, ctx=ctx, **kwargs)
+            response = await execute_fn(query=query, context=ctx, **kwargs)
+        else:
+            response = await execute_fn(query=query, ctx=ctx, **kwargs)
     except Exception as exc:
         logger.error(
             "Playbook %s execution failed: %s", playbook_name, exc, exc_info=True,
@@ -124,3 +128,10 @@ async def dispatch_playbook(
             playbook=playbook_name,
             confidence={"status": "unverified", "score": 0.0},
         )
+
+    # Wave 2.1 — speech-readiness post-processor. Single chokepoint for every
+    # Adam response: address abbreviations (Rd, Pl, Apt, etc.) are spelled out
+    # before the response leaves the orchestrator, so the LLM and TTS see only
+    # fully-spelled forms. Idempotent and side-effect-free aside from in-place
+    # mutation of `summary`, `records`, and `extra` on the response instance.
+    return normalize_research_response_in_place(response)
