@@ -325,13 +325,17 @@ async def execute_property_facts(
 ) -> ResearchResponse:
     """Build a full property fact pack from ATTOM authoritative data.
 
-    Provider plan:
-      here:   geocode address -> normalized address string
-      attom:  property_detail_with_schools + sales_history + valuation_avm + rental_avm
-              (parallel calls after geocoding)
+    Deterministic primary path (NO fallback chain — Aspire no-fallback principle):
+      1. parse_us_address(query) -> address1, address2 (raises ParseError if
+         street_number/street_name/city/state are missing)
+      2. ATTOM /expandedprofile + supporting endpoints called in parallel with
+         the parsed address1+address2 (no HERE geocoding round-trip required;
+         usaddress is a CRF tagger trained on the USPS address corpus)
+      3. ParseError surfaces as a Yellow-tier `needs_more_input` artifact
+         asking the user for a complete address — NOT a degraded fallback
 
     required_fields: normalized_address, living_sqft, year_built, owner_name
-    Returns: LandlordPropertyPack artifact.
+    Returns: PropertyFactPack artifact (legacy alias: LandlordPropertyPack).
     """
     logger.info(
         "landlord.property_facts start",
@@ -343,11 +347,54 @@ async def execute_property_facts(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # Step 1: Normalize address with HERE (fallback to extracted address).
-    normalized_address = await _geocode_address(query, context)
-    providers_called.append("here")
+    # Step 1: Deterministic address parse (usaddress CRF tagger).
+    # ATTOM /expandedprofile expects address1 + address2 in normalized USPS
+    # form. parse_us_address produces them directly — no HERE geocoding needed.
+    from aspire_orchestrator.services.adam.address_parser import (
+        ParseError, parse_us_address,
+    )
+    try:
+        parsed = parse_us_address(query)
+    except ParseError as exc:
+        logger.info(
+            "landlord.property_facts: address parse failed (asking user) — %s",
+            exc,
+            extra={"correlation_id": context.correlation_id},
+        )
+        return ResearchResponse(
+            artifact_type="needs_more_input",
+            summary=(
+                "I need a city and state to look that up — "
+                "what's the full address?"
+            ),
+            records=[],
+            sources=[],
+            freshness={"mode": "live", "provider": "address_parser"},
+            confidence={"status": "needs_input", "score": 0.0},
+            missing_fields=["city", "state"],
+            next_queries=[
+                "Provide street, city, state (and ZIP if you have it)",
+            ],
+            segment="landlord",
+            intent="property_facts",
+            playbook="landlord.property_facts",
+            providers_called=[],
+            extra={"parse_error": str(exc), "raw_query": query},
+        )
 
-    attom_payload = {"address": normalized_address}
+    normalized_address = f"{parsed.address1}, {parsed.address2}"
+    providers_called.append("address_parser")
+
+    # Pass structured components directly to ATTOM. _validate_address now
+    # honors `address1`/`address2` payload keys when present (deterministic
+    # primary path — no internal regex split, no HERE round-trip).
+    attom_payload = {
+        "address1": parsed.address1,
+        "address2": parsed.address2,
+        # Keep `address` for callers/normalizers that still expect a single
+        # combined string in source attribution.
+        "address": normalized_address,
+    }
 
     # Step 2: 6 parallel ATTOM calls — FULL property intelligence in one shot
     from aspire_orchestrator.providers.attom_client import (
@@ -572,53 +619,12 @@ async def execute_property_facts(
         prop_dict["property_value"] = tax_mv or avm_v
         prop_dict["property_value_source"] = "county_tax_assessment" if tax_mv else "avm_estimate"
 
-        # Contract guard: if the merged record looks like building-level
-        # placeholders for a unit address (tiny living_sqft, near-zero tax
-        # market value on a SFR/CONDO/TOWNHOUSE), surface a structured error
-        # instead of pretending the data is good. NO web-research fallback.
-        from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
-            AttomUnitDataMissingError,
-            assert_unit_data_complete,
-        )
-        try:
-            assert_unit_data_complete(prop_dict)
-        except AttomUnitDataMissingError as exc:
-            logger.warning(
-                "landlord.property_facts: ATTOM unit-level data missing for %s "
-                "(type=%s, living_sqft=%s, tax_market_value=%s)",
-                exc.normalized_address, exc.property_type, exc.living_sqft,
-                exc.tax_market_value,
-                extra={"correlation_id": context.correlation_id},
-            )
-            return ResearchResponse(
-                artifact_type="error",
-                summary=(
-                    f"I couldn't pull unit-level records for "
-                    f"{exc.normalized_address or normalized_address}. The "
-                    "county data only resolved at the building level. Want "
-                    "me to look it up another way?"
-                ),
-                records=[],
-                sources=sources,
-                freshness={"mode": "live", "provider": "attom"},
-                confidence={"status": "unverified", "score": 0.0},
-                missing_fields=["unit_level_living_sqft", "unit_level_assessment"],
-                next_queries=[
-                    f"Try a different unit format: {normalized_address}",
-                    "Verify with the county assessor directly",
-                ],
-                segment="landlord",
-                intent="property_facts",
-                playbook="landlord.property_facts",
-                providers_called=list(dict.fromkeys(providers_called)),
-                extra={
-                    "error_code": "ATTOM_UNIT_DATA_MISSING",
-                    "normalized_address": exc.normalized_address,
-                    "property_type": exc.property_type,
-                    "living_sqft": exc.living_sqft,
-                    "tax_market_value": exc.tax_market_value,
-                },
-            )
+        # Deterministic primary path: /expandedprofile delivers unit-level data
+        # directly when the parsed address1 + unitnumber resolve to a unit. The
+        # legacy `assert_unit_data_complete → artifact_type=error` fallback was
+        # removed — if expandedprofile cannot find unit-level records the empty
+        # PropertyFactPack flows through verify_records and surfaces the
+        # missing fields naturally, no degraded artifact_type=error path.
 
         records.append(prop_dict)
 

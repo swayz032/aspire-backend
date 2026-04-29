@@ -15,6 +15,7 @@ Tools:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -85,6 +86,7 @@ async def execute_serpapi_homedepot_search(
     risk_tier: str = "green",
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
+    timeout: float = 8.0,
 ) -> ToolExecutionResult:
     """Execute serpapi_home_depot.search — product search via SerpApi Home Depot engine.
 
@@ -163,16 +165,36 @@ async def execute_serpapi_homedepot_search(
     if payload.get("hd_filter_tokens"):
         query_params["hd_filter_tokens"] = str(payload["hd_filter_tokens"])
 
-    response = await client._request(
-        ProviderRequest(
-            method="GET",
-            path="/search",
-            query_params=query_params,
+    request = ProviderRequest(
+        method="GET",
+        path="/search",
+        query_params=query_params,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+    )
+
+    # Per-call timeout (voice path uses 4s; default 8s preserves prior behavior).
+    try:
+        response = await asyncio.wait_for(client._request(request), timeout=timeout)
+    except asyncio.TimeoutError:
+        receipt = client.make_receipt_data(
             correlation_id=correlation_id,
             suite_id=suite_id,
             office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.NETWORK_TIMEOUT.value,
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
         )
-    )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=f"SerpApi Home Depot timeout after {timeout}s",
+            receipt_data=receipt,
+        )
 
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
     reason = "EXECUTED" if response.success else (

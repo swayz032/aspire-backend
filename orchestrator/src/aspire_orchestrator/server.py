@@ -106,7 +106,10 @@ from aspire_orchestrator.services.openai_client import (
 from aspire_orchestrator.routes.intents import router as intents_router
 from aspire_orchestrator.routes.admin import router as admin_router
 from aspire_orchestrator.routes.robots import router as robots_router
+from aspire_orchestrator.routes.tools import router as tools_router
 from aspire_orchestrator.routes.webhooks import router as webhooks_router
+from aspire_orchestrator.routes import memory as memory_router_mod
+from aspire_orchestrator.routes import memory_pages as memory_pages_router_mod
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -231,6 +234,13 @@ app.include_router(robots_router)
 
 # Include Webhook routes (Stripe Connect callbacks)
 app.include_router(webhooks_router)
+
+# Include Bounded Tool routes (lazy SerpApi product enrichment, etc.)
+app.include_router(tools_router)
+
+# Include Memory Engine Coordination Spine routes (Pass 4)
+app.include_router(memory_router_mod.router, prefix="", tags=["memory-spine"])
+app.include_router(memory_pages_router_mod.router, prefix="", tags=["memory-pages"])
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
@@ -1610,10 +1620,18 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if agent == "adam":
             import asyncio as _asyncio
 
-            from aspire_orchestrator.services.adam.router import route_to_playbook
+            from aspire_orchestrator.services.adam.router import route_to_playbook, get_playbook
             from aspire_orchestrator.services.adam.playbooks import dispatch_playbook
             from aspire_orchestrator.services.adam.schemas.playbook_context import PlaybookContext as AdamContext
             from aspire_orchestrator.nodes.respond import _strip_pii_from_record
+
+            ENTITY_PLAYBOOK_FORCE = {
+                "property": "PROPERTY_FACTS",
+                "hotel": "BUSINESS_TRIP_HOTEL_RESEARCH",
+                "product": "TOOL_MATERIAL_PRICE_CHECK",
+                "vendor": "TURNOVER_VENDOR_SCOUT",
+                "hotel_shortlist": "BUSINESS_TRIP_HOTEL_RESEARCH",
+            }
 
             # Max records returned to the LLM — keeps the tool response under 20KB
             # so gpt-4o-mini processes it fast and the voice response isn't delayed.
@@ -1664,6 +1682,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
 
             # Step 1: Classify & route to the right playbook
             classification, playbook = route_to_playbook(full_task)
+
+            forced_playbook_name = ENTITY_PLAYBOOK_FORCE.get(
+                str(body.get("entity_type") or "").lower()
+            )
+            if forced_playbook_name:
+                forced_playbook = get_playbook(forced_playbook_name)
+                if forced_playbook is not None:
+                    playbook = forced_playbook
+                    logger.info(
+                        "Adam Ultra (forced by entity_type=%s): playbook=%s",
+                        body.get("entity_type"), forced_playbook_name,
+                    )
+                else:
+                    logger.warning(
+                        "Adam Ultra: entity_type=%s mapped to %s but playbook not registered",
+                        body.get("entity_type"), forced_playbook_name,
+                    )
+
             logger.info(
                 "Adam Ultra: segment=%s intent=%s playbook=%s confidence=%.2f for: %s",
                 classification.segment, classification.intent,

@@ -223,14 +223,18 @@ async def execute_estimate_research(
 
 async def execute_tool_material_price_check(
     query: str, ctx: PlaybookContext, zip_code: str = "", store_id: str = "",
-    on_sale: bool = False,
+    on_sale: bool = False, voice_path: bool | None = None,
 ) -> ResearchResponse:
     """TOOL_MATERIAL_PRICE_CHECK - Find current pricing, stock, and store info for tools/materials.
 
     Strict policy for product cards:
       1. Run search with resolved location/store context.
-      2. Retry with tightened query up to 3 attempts.
+      2. Retry with tightened query up to 3 attempts (text path) or single attempt (voice).
       3. Fail closed (no partial cards) if required product/store-summary fields are incomplete.
+
+    Voice path budget: 5s end-to-end. When voice_path is True we run one attempt with
+    a 4s SerpApi timeout and skip the Google Shopping cross-check entirely. When None,
+    voice is auto-detected as "no zip + no store_id" (Ava's typical voice query).
     """
     import re as _re
     from aspire_orchestrator.providers.serpapi_shopping_client import execute_serpapi_shopping_search
@@ -239,6 +243,7 @@ async def execute_tool_material_price_check(
         normalize_from_serpapi_shopping,
         normalize_from_serpapi_homedepot,
     )
+    from aspire_orchestrator.services.adam.hd_store_directory import lookup_store_by_id
     from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
 
     logger.info("Executing TOOL_MATERIAL_PRICE_CHECK for: %s", query[:80])
@@ -291,11 +296,24 @@ async def execute_tool_material_price_check(
     final_sources: list[SourceAttribution] = []
     final_store_summary: dict[str, Any] = {}
 
-    query_attempts = [
-        query,
-        f"{query} Home Depot",
-        f"{query} Home Depot {location_hint}".strip(),
-    ]
+    # Voice path = no zip, no store_id, no city hint. When the request has no
+    # location signal, Ava's voice flow is the most common caller and the 5s
+    # response budget cannot afford 3 retry attempts × 8s = 24s.
+    if voice_path is None:
+        voice_path = not zip_code and not store_id and not location_hint
+
+    if voice_path:
+        query_attempts = [query]
+        hd_timeout = 4.0
+        skip_google_shopping = True
+    else:
+        query_attempts = [
+            query,
+            f"{query} Home Depot",
+            f"{query} Home Depot {location_hint}".strip(),
+        ]
+        hd_timeout = 8.0
+        skip_google_shopping = False
 
     for attempt_idx, attempt_query in enumerate(query_attempts, start=1):
         records: list[dict[str, Any]] = []
@@ -335,22 +353,27 @@ async def execute_tool_material_price_check(
                 correlation_id=ctx.correlation_id,
                 suite_id=ctx.suite_id,
                 office_id=ctx.office_id,
+                timeout=hd_timeout,
             )
 
-        hd_result, shopping_result = await asyncio.gather(
-            _resolve_and_search_hd(),
-            execute_serpapi_shopping_search(
-                payload=shopping_payload,
-                correlation_id=ctx.correlation_id,
-                suite_id=ctx.suite_id,
-                office_id=ctx.office_id,
-            ),
-            return_exceptions=True,
-        )
+        if skip_google_shopping:
+            hd_result = await _resolve_and_search_hd()
+            shopping_result = None
+        else:
+            hd_result, shopping_result = await asyncio.gather(
+                _resolve_and_search_hd(),
+                execute_serpapi_shopping_search(
+                    payload=shopping_payload,
+                    correlation_id=ctx.correlation_id,
+                    suite_id=ctx.suite_id,
+                    office_id=ctx.office_id,
+                ),
+                return_exceptions=True,
+            )
 
         if "serpapi_home_depot" not in providers_called:
             providers_called.append("serpapi_home_depot")
-        if "serpapi_shopping" not in providers_called:
+        if not skip_google_shopping and "serpapi_shopping" not in providers_called:
             providers_called.append("serpapi_shopping")
 
         if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
@@ -359,12 +382,47 @@ async def execute_tool_material_price_check(
                 hd_store_info["store_name"] = serpapi_store["store_name"]
             if not hd_store_info.get("store_id") and serpapi_store.get("store_id"):
                 hd_store_info["store_id"] = serpapi_store["store_id"]
-            for item in hd_result.data.get("results", [])[:8]:
+
+            # Primary store-identity path: read pickup.store_id from the first
+            # product and resolve name + address from the static directory.
+            # This is deterministic and doesn't depend on Google Places. Phone
+            # and website remain optional enrichment (Task #20).
+            raw_results = hd_result.data.get("results", [])
+            if raw_results:
+                pickup = raw_results[0].get("pickup") or {}
+                pickup_store_id = (
+                    str(pickup.get("store_id", "")).strip()
+                    or str(serpapi_store.get("store_id", "")).strip()
+                )
+                if pickup_store_id:
+                    directory_record = lookup_store_by_id(pickup_store_id)
+                    if directory_record:
+                        # Static directory wins for name + address fields.
+                        hd_store_info["store_id"] = directory_record["store_id"]
+                        hd_store_info["store_name"] = directory_record["name"]
+                        hd_store_info["address"] = directory_record["address"]
+                        hd_store_info["city"] = directory_record["city"]
+                        hd_store_info["state"] = directory_record["state"]
+                        hd_store_info["postal_code"] = directory_record["postal_code"]
+                        resolved_store_id = directory_record["store_id"]
+                    else:
+                        logger.warning(
+                            "HD store_id %s not in static directory — "
+                            "falling back to SerpApi store name",
+                            pickup_store_id,
+                        )
+
+            for item in raw_results[:8]:
                 product = normalize_from_serpapi_homedepot(item)
                 records.append(product.to_dict())
                 sources.extend(product.sources)
 
-        if not isinstance(shopping_result, Exception) and shopping_result.outcome.value == "success" and shopping_result.data:
+        if (
+            shopping_result is not None
+            and not isinstance(shopping_result, Exception)
+            and shopping_result.outcome.value == "success"
+            and shopping_result.data
+        ):
             for item in shopping_result.data.get("results", [])[:6]:
                 product = normalize_from_serpapi_shopping(item)
                 records.append(product.to_dict())

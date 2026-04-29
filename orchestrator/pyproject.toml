@@ -34,6 +34,7 @@ dependencies = [
     "cryptography>=43.0.0,<44.0",  # AES-256-GCM for PayloadCodec encryption
     "opentelemetry-api>=1.20.0,<2.0",  # OTel trace propagation for Temporal interceptor
     "requests>=2.32.4,<3.0",  # Pin minimum for CVE fix (.netrc credential leak)
+    "usaddress>=0.5.10,<1.0",  # Deterministic US address parsing (CRF tagger) for ATTOM /expandedprofile
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,7 @@ dev = [
     "pytest-cov>=6.0,<7.0",
     "httpx",  # for TestClient
     "moto[s3]>=5.0,<6.0",  # S3 mocking for provider tests
+    "vcrpy>=6.0,<7.0",  # HTTP cassette recording for ATTOM real-address tests
 ]
 
 [tool.pytest.ini_options]

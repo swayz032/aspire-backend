@@ -1,9 +1,14 @@
-"""Home Depot store resolver - finds nearest store using Google Places + SerpApi store directory.
+"""Home Depot store resolver — OPTIONAL phone/website enrichment via Google Places v1.
 
-Strategy:
-  1. Google Places text search: "Home Depot near {location}" -> real address
-  2. Match Google result address against SerpApi store directory -> store_id
-  3. Fallback: ZIP-based match from directory if Google Places unavailable
+Demoted role (post-Task #19): primary store identity (name, address, city, state) now
+comes from the static directory in `hd_store_directory.py`, keyed by `pickup.store_id`
+returned by SerpApi. This resolver only contributes phone + website + open_now via
+Google Places v1 (`places.googleapis.com/v1/places:searchText`), which is best-effort.
+
+If Google Places fails or is unconfigured, the store card still has name + address
+from the static directory — no fallback chain required.
+
+Risk tier: GREEN (read-only).
 """
 
 from __future__ import annotations
@@ -14,10 +19,19 @@ import re
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 _STORE_DATA: list[dict[str, Any]] | None = None
 _ZIP_INDEX: dict[str, dict[str, Any]] | None = None
+
+_PLACES_V1_URL = "https://places.googleapis.com/v1/places:searchText"
+_PLACES_V1_FIELD_MASK = (
+    "places.displayName,places.formattedAddress,"
+    "places.nationalPhoneNumber,places.websiteUri"
+)
+_PLACES_V1_TIMEOUT_SECONDS = 5.0
 
 
 def _load_stores() -> None:
@@ -90,46 +104,71 @@ async def resolve_store_async(
             "website": store.get("website", ""),
         }
 
-    try:
-        from aspire_orchestrator.providers.google_places_client import execute_google_places_search
-
-        location_query = location_hint or zip_code
-        result = await execute_google_places_search(
-            payload={
-                "query": f"Home Depot near {location_query}",
-                "type": "home_goods_store",
-            },
-            correlation_id=correlation_id or "hd_store_lookup",
-            suite_id=suite_id or "adam",
-            office_id=office_id or "adam",
-        )
-
-        if result.outcome.value == "success" and result.data:
-            places = result.data.get("results", [])
-            if places:
-                place = places[0]
-                gp_address = place.get("formatted_address", "")
-                gp_name = place.get("name", "")
-
-                matched = _match_store_by_address(gp_address)
-
-                store_info: dict[str, Any] = {
-                    "store_id": str(matched.get("store_id", "")) if matched else "",
-                    "store_name": gp_name,
-                    "address": gp_address,
-                    "city": matched.get("city", "") if matched else "",
-                    "state": matched.get("state", "") if matched else "",
-                    "postal_code": matched.get("postal_code", "") if matched else "",
-                    "rating": place.get("rating"),
-                    "open_now": (place.get("opening_hours") or {}).get("open_now"),
-                    "phone": place.get("phone", ""),
-                    "website": place.get("website", ""),
-                }
-                return store_info
-    except Exception as exc:
-        logger.warning("Google Places store lookup failed: %s", exc)
+    place = await _places_v1_searchtext(
+        f"Home Depot near {location_hint or zip_code}",
+    )
+    if place is not None:
+        gp_name = place.get("name", "")
+        gp_address = place.get("address", "")
+        matched = _match_store_by_address(gp_address) if gp_address else None
+        return {
+            "store_id": str(matched.get("store_id", "")) if matched else "",
+            "store_name": gp_name,
+            "address": gp_address,
+            "city": matched.get("city", "") if matched else "",
+            "state": matched.get("state", "") if matched else "",
+            "postal_code": matched.get("postal_code", "") if matched else "",
+            "phone": place.get("phone", ""),
+            "website": place.get("website", ""),
+        }
 
     return _fallback_zip_match(zc)
+
+
+async def _places_v1_searchtext(query: str) -> dict[str, Any] | None:
+    """Call Google Places v1 searchText. Returns first place's normalized fields.
+
+    Reads v1 field names: `displayName.text`, `formattedAddress`,
+    `nationalPhoneNumber`, `websiteUri`. Sends `X-Goog-FieldMask` header.
+
+    Returns None on any failure — caller continues without phone/website.
+    """
+    from aspire_orchestrator.config.settings import settings
+
+    api_key = getattr(settings, "google_maps_api_key", "") or ""
+    if not api_key:
+        logger.debug("Google Places v1 disabled — no API key configured")
+        return None
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": _PLACES_V1_FIELD_MASK,
+    }
+    body = {"textQuery": query}
+
+    try:
+        async with httpx.AsyncClient(timeout=_PLACES_V1_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                _PLACES_V1_URL, json=body, headers=headers,
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Google Places v1 lookup failed: %s", exc)
+        return None
+
+    places = payload.get("places") or []
+    if not places:
+        return None
+
+    place = places[0]
+    return {
+        "name": (place.get("displayName") or {}).get("text", ""),
+        "address": place.get("formattedAddress", ""),
+        "phone": place.get("nationalPhoneNumber", ""),
+        "website": place.get("websiteUri", ""),
+    }
 
 
 def resolve_store(zip_code: str, **_kwargs: Any) -> dict[str, Any] | None:

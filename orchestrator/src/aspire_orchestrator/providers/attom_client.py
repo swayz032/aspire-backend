@@ -216,13 +216,24 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
                        capability_token_hash: str | None = None) -> ToolExecutionResult | dict[str, str]:
     """Validate and extract address params. Returns query_params dict or ToolExecutionResult on error.
 
+    Accepts (in order of precedence):
+      1. attomid (direct ATTOM ID lookup)
+      2. apn + fips (parcel ID lookup)
+      3. address1 + address2 (pre-parsed by parse_us_address — deterministic primary path)
+      4. address (free-form string — legacy regex split, kept for callers that
+         haven't migrated to address_parser)
+
     Unit-suffixed addresses (`APT 4802`, `STE 200`, `#B`) are split into a
     cleaned `address1` plus a separate `unitnumber` query parameter so the
     ATTOM endpoint can resolve to the unit-level record instead of the master
     parcel.
     """
+    pre_address1 = payload.get("address1", "")
+    pre_address2 = payload.get("address2", "")
     address = payload.get("address", "")
-    if not address:
+
+    if not (payload.get("attomid") or (payload.get("apn") and payload.get("fips"))
+            or (pre_address1 and pre_address2) or address):
         receipt = _build_receipt(
             client, tool_id, correlation_id, suite_id, office_id,
             Outcome.FAILED, "INPUT_MISSING_REQUIRED",
@@ -232,17 +243,30 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id=tool_id,
-            error="Missing required parameter: address (fail-closed per Law #3)",
+            error="Missing required parameter: address or address1+address2 (fail-closed per Law #3)",
             receipt_data=receipt,
         )
 
     params: dict[str, str] = {}
-    # Support both full address string and structured components
+    # Priority 1-2: direct identifiers
     if payload.get("attomid"):
         params["attomid"] = str(payload["attomid"])
     elif payload.get("apn") and payload.get("fips"):
         params["apn"] = payload["apn"]
         params["fips"] = payload["fips"]
+    # Priority 3: pre-parsed address1+address2 (deterministic primary path)
+    elif pre_address1 and pre_address2:
+        params["address1"] = pre_address1.strip()
+        params["address2"] = pre_address2.strip()
+        # Unit detection on pre-parsed address1 too — usaddress places APT/UNIT
+        # inside address1 by design, but ATTOM needs unitnumber as a SEPARATE
+        # query parameter for unit-level resolution.
+        cleaned, unit_token = _extract_unit_number(params["address1"])
+        if unit_token:
+            params["address1"] = cleaned
+            params["unitnumber"] = unit_token
+        if payload.get("unitnumber"):
+            params["unitnumber"] = str(payload["unitnumber"])
     else:
         # Parse address into ATTOM format: address1=street, address2=City, ST ZIP
         parts = address.split(",")
