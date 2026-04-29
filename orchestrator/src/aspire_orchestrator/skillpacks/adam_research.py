@@ -268,9 +268,19 @@ class AdamResearchSkillPack:
         else:
             _emit_activity_event("error", f"Playbook failed: {response.summary}", "error")
 
+        # Wave 2.1: deterministic address-text post-processor for TTS. Runs on
+        # every Adam response so the LLM sees only fully-spelled forms ("Road"
+        # / "Place" / "Apartment") and never reads "Rd" / "Pl" / "Apt"
+        # literally on a live voice call. Belt-and-suspenders for the prompt
+        # rule, which is non-deterministic LLM behavior.
+        from aspire_orchestrator.services.adam.text_normalize import (
+            normalize_payload_for_speech,
+        )
+        normalized_payload = normalize_payload_for_speech(response.to_dict())
+
         return SkillPackResult(
             success=is_success,
-            data=response.to_dict(),
+            data=normalized_payload,
             receipt=receipt,
             error=None if is_success else response.summary,
         )
