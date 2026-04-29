@@ -63,6 +63,13 @@ _ST_NUMERIC_PRECEDED_RE = re.compile(
     # `\.?\b` would fail on "Main St." at end-of-string because period and EOS
     # are both non-word.
     r"St(?P<trail>\.?(?![A-Za-z]))",
+    # ATTOM/SerpApi return addresses in all-caps ("4863 PRICE ST"). The St
+    # rule must match regardless of case. The numeric-prefix lead pattern
+    # (`\d+`) and the capitalized-word requirement (`[A-Z][A-Za-z]+`) keep
+    # this from matching prose like "ST JAMES PLACE" — those would lack
+    # the leading digit token. IGNORECASE applies to the literal "St"
+    # token so "ST" / "st" / "St" all match.
+    re.IGNORECASE,
 )
 
 # Cardinal abbreviations as a directional prefix between number and street name:

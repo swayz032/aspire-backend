@@ -1743,12 +1743,30 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "card_records": full_records,
                     }
 
+                    # Wave 2.1: server-side TTS post-processor. Runs deterministically
+                    # on every Adam response — expands "Rd" → "Road", "Pl" → "Place",
+                    # "Apt" → "Apartment", etc., on every address-shaped string field.
+                    # Without this, Anam's GPT 4.1 Mini reads the abbreviations
+                    # literally on a live voice call. Belt-and-suspenders for the
+                    # prompt rule (which is non-deterministic LLM behavior).
+                    #
+                    # Hooked here (server response build) rather than in
+                    # adam_research.py — the v1 sync invoke endpoint bypasses the
+                    # SkillPack class entirely and goes straight from
+                    # `dispatch_playbook` to this response builder.
+                    from aspire_orchestrator.services.adam.text_normalize import (
+                        normalize_payload_for_speech,
+                    )
+                    response_data = normalize_payload_for_speech(response_data)
+                    response_text_normalized = normalize_payload_for_speech(response_text) \
+                        if isinstance(response_text, str) else response_text
+
                     return JSONResponse(
                         status_code=200,
                         content={
                             "success": total_count > 0 and research.artifact_type != "error",
                             "agent": "adam",
-                            "result": response_text,
+                            "result": response_text_normalized,
                             "data": response_data,
                             "receipt_id": ctx.correlation_id,
                             "error": None if research.artifact_type != "error" else research.summary,
