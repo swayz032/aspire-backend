@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -261,6 +262,31 @@ def _fuzzy_pick_store_from_query(
     if len(matches) == 1:
         return dict(matches[0])
     return None
+
+
+_GOOGLE_FORMATTED_ADDRESS_CITY_STATE_RE = re.compile(
+    r",\s*([A-Za-z][A-Za-z\s\-\.']+?),\s*([A-Z]{2})\s+\d{5}",
+)
+
+
+def _parse_city_state_from_formatted_address(addr: str) -> tuple[str, str]:
+    """Extract (city, state) from a Google Places formattedAddress.
+
+    Examples:
+      "1490 Capital Circle Northwest, Tallahassee, FL 32303, USA"
+        -> ("Tallahassee", "FL")
+      "650 Stillwater Ave, Bangor, ME 04401, USA"
+        -> ("Bangor", "ME")
+
+    Returns ("", "") when the regex doesn't match — caller falls back to
+    whatever city/state was already in store_summary.
+    """
+    if not addr:
+        return "", ""
+    match = _GOOGLE_FORMATTED_ADDRESS_CITY_STATE_RE.search(addr)
+    if not match:
+        return "", ""
+    return match.group(1).strip(), match.group(2).strip()
 
 
 def _build_store_disambiguation_response(
@@ -668,24 +694,36 @@ async def execute_tool_material_price_check(
             "retailer": "Home Depot",
         }
 
-        # Round 4: when nearest_store is set, override the Google-derived
-        # fields (formatted address + photo + distance). The static directory
-        # still contributes city/state/postal_code/store_id since those are
-        # what SerpApi keys against. distance_miles is hero data for the card.
+        # Round 4: when nearest_store is set (Google Places searchText found
+        # the actual nearest HD to the user's job site), it's AUTHORITATIVE
+        # for the user-visible card. Overwrite name/address/city/state/zip
+        # with the Google result. The previous logic kept hd_store_info's
+        # values (which come from SerpApi search_information.store_name and
+        # may be a stale account-default like "Bangor"), causing the card
+        # address to show Tallahassee but the store name to say "Bangor".
         if nearest_store is not None:
+            store_summary["name"] = nearest_store.name or store_summary["name"]
+            store_summary["store_name"] = nearest_store.name or store_summary["store_name"]
             store_summary["address"] = nearest_store.address or store_summary["address"]
+            store_summary["postal_code"] = nearest_store.postal_code or store_summary["postal_code"]
+            # Parse city + state from Google's formattedAddress (e.g.
+            # "1490 Capital Cir NW, Tallahassee, FL 32303, USA"). Only
+            # overwrite when the parse succeeds; otherwise fall back.
+            parsed_city, parsed_state = _parse_city_state_from_formatted_address(
+                nearest_store.address,
+            )
+            if parsed_city:
+                store_summary["city"] = parsed_city
+            if parsed_state:
+                store_summary["state"] = parsed_state
             if nearest_store.photo_url:
                 store_summary["image_url"] = nearest_store.photo_url
             store_summary["distance_miles"] = round(nearest_store.distance_miles, 1)
-            # If the static directory missed (unknown pickup.store_id), still
-            # show the user something — Google's name + Google's place_id.
-            if not store_summary.get("store_name"):
-                store_summary["store_name"] = nearest_store.name
-                store_summary["name"] = nearest_store.name
+            # store_id: keep static directory's SerpApi store_id when present
+            # (used by downstream enrichment); Google place_id only as fallback
+            # for cases where the static directory had no match.
             if not store_summary.get("store_id"):
                 store_summary["store_id"] = nearest_store.place_id
-            if not store_summary.get("postal_code"):
-                store_summary["postal_code"] = nearest_store.postal_code
 
         store_missing = _store_missing_fields(store_summary)
         last_missing_fields = sorted({
