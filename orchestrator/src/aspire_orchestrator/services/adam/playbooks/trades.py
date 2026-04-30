@@ -309,6 +309,7 @@ async def execute_tool_material_price_check(
     voice_path: bool | None = None,
     city: str = "",
     state: str = "",
+    user_address: str = "",
 ) -> ResearchResponse:
     """TOOL_MATERIAL_PRICE_CHECK - Find current pricing, stock, and store info for tools/materials.
 
@@ -320,6 +321,14 @@ async def execute_tool_material_price_check(
     Voice path budget: 5s end-to-end. When voice_path is True we run one attempt with
     a 4s SerpApi timeout and skip the Google Shopping cross-check entirely. When None,
     voice is auto-detected as "no zip + no store_id + no city" (Ava's typical voice query).
+
+    Round 4 — user_address PRIMARY path (Task #43):
+      - When `user_address` is provided (e.g. trades worker on a job site), we
+        Geocode + Places searchNearby to pin the closest Home Depot to THAT
+        address — not the office. Sets `delivery_zip` from the resolved store's
+        postal_code and skips the city -> zip / multi-store disambiguation
+        flow entirely. On any failure (timeout, no HD within 50km, API error)
+        we fall through to the existing Wave A.5 path.
 
     Multi-store disambiguation (Wave A.5 / Task #32):
       - When `city` is set and the directory has multiple HD stores in (city, state):
@@ -343,11 +352,42 @@ async def execute_tool_material_price_check(
         find_nearest_store,
     )
     from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
+    from aspire_orchestrator.services.adam.places_nearest_finder import (
+        find_nearest_home_depot_by_address,
+        NearestStore,
+    )
 
     logger.info(
-        "Executing TOOL_MATERIAL_PRICE_CHECK for: %s (city=%r state=%r store_id=%r zip=%r)",
-        query[:80], city, state, store_id, zip_code,
+        "Executing TOOL_MATERIAL_PRICE_CHECK for: %s (city=%r state=%r store_id=%r zip=%r user_address=%r)",
+        query[:80], city, state, store_id, zip_code, (user_address or "")[:60],
     )
+
+    # Round 4 — PRIMARY path: nearest HD by user_address. When this resolves
+    # successfully we pin delivery_zip from the resolved store's postal_code
+    # and skip the city -> zip lookup entirely. On any failure we fall through
+    # to Wave A.5 (city -> zip + multi-store disambiguation).
+    #
+    # The resolved NearestStore carries Google's formattedAddress + photo + a
+    # haversine distance. Those override the static-directory fields in the
+    # final store_summary because the user is at a job site — the Google
+    # address is what they recognize, and distance_miles is hero data.
+    nearest_store: NearestStore | None = None
+    if user_address and user_address.strip():
+        nearest_store = await find_nearest_home_depot_by_address(
+            user_address.strip(),
+            # Outer caller guard. Helper enforces an internal asyncio.wait_for
+            # at the same value — keeping the boundary single-owned simplifies
+            # cancellation semantics. Voice path budget is 5s end-to-end;
+            # 3s here leaves 2s for SerpApi.
+            timeout=3.0,
+        )
+        if nearest_store is not None:
+            # Pin zip BEFORE the city/store_id branches below run.
+            zip_code = nearest_store.postal_code or zip_code
+            # Note: place_id is Google's, not a Home Depot store_id — we do
+            # NOT set store_id from place_id (SerpApi rejects unknown ids).
+            # The static directory still gets a chance to resolve store_id
+            # from pickup.store_id in the SerpApi response below.
 
     if not zip_code:
         zip_match = _re.search(r"\b(\d{5})\b", query)
@@ -437,6 +477,26 @@ async def execute_tool_material_price_check(
     final_records: list[dict[str, Any]] = []
     final_sources: list[SourceAttribution] = []
     final_store_summary: dict[str, Any] = {}
+
+    # Track Round-4 provider call for cost attribution. The helper itself does
+    # not emit a receipt — the playbook wrapper at server.py records the call
+    # via providers_called, and Outcome rolls up to SUCCESS/FAILED on the
+    # whole playbook. Logging both branches preserves Law #2 evidence.
+    if user_address and user_address.strip():
+        if nearest_store is not None:
+            providers_called.append("google_places_nearest")
+            logger.info(
+                "Round-4 nearest HD resolved: %s (zip=%s, %.1fmi from user)",
+                nearest_store.name, nearest_store.postal_code,
+                nearest_store.distance_miles,
+            )
+        else:
+            providers_called.append("google_places_nearest_failed")
+            logger.info(
+                "Round-4 nearest HD lookup returned None for user_address=%r — "
+                "falling through to Wave A.5 (city -> zip)",
+                user_address[:60],
+            )
 
     # Voice path = no zip, no store_id, no city hint. When the request has no
     # location signal, Ava's voice flow is the most common caller and the 5s
@@ -607,6 +667,26 @@ async def execute_tool_material_price_check(
             "rating": hd_store_info.get("rating"),
             "retailer": "Home Depot",
         }
+
+        # Round 4: when nearest_store is set, override the Google-derived
+        # fields (formatted address + photo + distance). The static directory
+        # still contributes city/state/postal_code/store_id since those are
+        # what SerpApi keys against. distance_miles is hero data for the card.
+        if nearest_store is not None:
+            store_summary["address"] = nearest_store.address or store_summary["address"]
+            if nearest_store.photo_url:
+                store_summary["image_url"] = nearest_store.photo_url
+            store_summary["distance_miles"] = round(nearest_store.distance_miles, 1)
+            # If the static directory missed (unknown pickup.store_id), still
+            # show the user something — Google's name + Google's place_id.
+            if not store_summary.get("store_name"):
+                store_summary["store_name"] = nearest_store.name
+                store_summary["name"] = nearest_store.name
+            if not store_summary.get("store_id"):
+                store_summary["store_id"] = nearest_store.place_id
+            if not store_summary.get("postal_code"):
+                store_summary["postal_code"] = nearest_store.postal_code
+
         store_missing = _store_missing_fields(store_summary)
         last_missing_fields = sorted({
             *[m for r in hd_products for m in _product_missing_fields(r)],

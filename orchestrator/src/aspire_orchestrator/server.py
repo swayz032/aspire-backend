@@ -1740,6 +1740,10 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             ("zip_code", "zip_code"),
                             ("on_sale", "on_sale"),
                             ("voice_path", "voice_path"),
+                            # Round 4 (Task #43): user_address pins nearest HD
+                            # via Google Places — primary path for trades workers
+                            # at a job site (job site != office address).
+                            ("user_address", "user_address"),
                         ):
                             val = body.get(body_key)
                             if val is not None:
