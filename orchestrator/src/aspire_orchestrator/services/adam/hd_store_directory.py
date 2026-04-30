@@ -184,3 +184,44 @@ def find_nearest_store(
 def directory_size() -> int:
     """Number of stores in the directory (used by health checks and tests)."""
     return len(_load())
+
+
+def all_stores() -> list[dict[str, Any]]:
+    """Return every store record (immutable copies) — used by approximate-zip fallback."""
+    return [dict(record) for record in _load().values()]
+
+
+def lookup_store_by_zip_code(zip_code: str) -> dict[str, Any] | None:
+    """O(1)-ish ZIP -> first store record. Returns None when no exact match.
+
+    Provides a single source of truth for ZIP lookups so callers don't maintain
+    parallel indexes (F-MED-2). Builds a lazy ZIP -> record cache on first call.
+    """
+    if not zip_code:
+        return None
+    zc = str(zip_code).strip().zfill(5)
+    if not zc:
+        return None
+    cache = _zip_index()
+    record = cache.get(zc)
+    return dict(record) if record is not None else None
+
+
+_ZIP_INDEX: dict[str, dict[str, Any]] | None = None
+
+
+def _zip_index() -> dict[str, dict[str, Any]]:
+    """Build (or return) the ZIP -> record index, anchored to the canonical _load() dict."""
+    global _ZIP_INDEX
+    if _ZIP_INDEX is not None:
+        return _ZIP_INDEX
+    with _LOAD_LOCK:
+        if _ZIP_INDEX is not None:
+            return _ZIP_INDEX
+        index: dict[str, dict[str, Any]] = {}
+        for record in _load().values():
+            zc = str(record.get("postal_code", "")).strip().zfill(5)
+            if zc and zc not in index:
+                index[zc] = record
+        _ZIP_INDEX = index
+        return _ZIP_INDEX

@@ -115,8 +115,36 @@ async def execute_property_facts_and_permits(
         prop = normalize_from_attom_detail(detail_result.data)
         records.append(prop.to_dict())
         sources.extend(prop.sources)
+    else:
+        # F-HIGH-8 + F-MED-1: ATTOM 500/timeout/network used to swallow the
+        # outcome and emit an empty PropertyFactPack. Surface a structured
+        # error response so Ava can tell the user "the property service is
+        # unavailable" instead of "I found nothing".
+        logger.warning(
+            "ATTOM property detail unavailable for %s — outcome=%s",
+            attom_address[:60], detail_result.outcome.value,
+        )
+        return ResearchResponse(
+            artifact_type="error",
+            summary="The property records service is temporarily unavailable. Try again in 30 seconds.",
+            records=[],
+            sources=[],
+            freshness={"mode": "live"},
+            confidence={"status": "unverified", "score": 0.0},
+            missing_fields=["property"],
+            next_queries=["Try again shortly", "Pull property facts again in a moment"],
+            segment="trades",
+            intent="property_fact",
+            playbook="PROPERTY_FACTS_AND_PERMITS",
+            providers_called=providers_called,
+            extra={
+                "reason": "attom_unavailable",
+                "suggested_retry_after_seconds": 30,
+                "provider_outcome": detail_result.outcome.value,
+            },
+        )
 
-    # 2. ATTOM sales history
+    # 2. ATTOM sales history (best-effort — primary path is detail above).
     history_result = await execute_attom_sales_history(
         payload={"address": attom_address},
         correlation_id=ctx.correlation_id,
@@ -134,6 +162,15 @@ async def execute_property_facts_and_permits(
                  "buyer": s.buyer, "seller": s.seller}
                 for s in sales
             ]
+    elif history_result.outcome.value != "success":
+        # F-MED-1: log + provider attribution. The detail path already gave
+        # us core property data; sales history is supplementary, so we note
+        # the failure in providers_called rather than returning an error.
+        logger.info(
+            "ATTOM sales history unavailable (outcome=%s) — continuing without history",
+            history_result.outcome.value,
+        )
+        providers_called.append("attom_sales_history_failed")
 
     # Verify
     report = verify_records(
@@ -269,6 +306,22 @@ _GOOGLE_FORMATTED_ADDRESS_CITY_STATE_RE = re.compile(
 )
 
 
+# F-MED-6: ZIP regex used to autodetect a ZIP in the user's free-text query.
+# Must NOT match product quantities like "10000 ft of pipe" or "20000 BTU".
+# Anchors:
+#   - Preceded by a comma + optional whitespace (matches "..., FL 32308")
+#     OR by 2-letter state abbreviation + whitespace ("FL 32308" / "GA 30297")
+#   - Followed by a non-digit boundary (so "30297-1234" matches "30297" then "-1234")
+#   - Optional ZIP+4 tail
+#   - 5-digit value within the legal US range (00501..99950)
+_ZIP_IN_QUERY_RE = re.compile(
+    r"(?:,\s*|\b[A-Z]{2}\s+)"
+    r"(0050[1-9]|005[1-9]\d|00[6-9]\d{2}|0[1-9]\d{3}|[1-9]\d{4}(?<!00000))"
+    r"(?:-\d{4})?"
+    r"(?!\d)",
+)
+
+
 def _parse_city_state_from_formatted_address(addr: str) -> tuple[str, str]:
     """Extract (city, state) from a Google Places formattedAddress.
 
@@ -294,7 +347,13 @@ def _build_store_disambiguation_response(
     candidates: list[dict[str, Any]],
     providers_called: list[str],
 ) -> ResearchResponse:
-    """Return a StoreDisambiguation artifact so Ava + desktop can prompt for choice."""
+    """Return a StoreDisambiguation artifact so Ava + desktop can prompt for choice.
+
+    F-HIGH-1: candidates ride at top-level `records` (consistent with all other
+    artifacts: PriceComparison, PropertyFactPack, etc.) rather than nested
+    inside `extra`. The desktop reads `records[]` uniformly, and the LLM
+    response builder counts records to decide success/error states.
+    """
     candidate_records: list[dict[str, Any]] = []
     for store in candidates:
         candidate_records.append({
@@ -312,7 +371,7 @@ def _build_store_disambiguation_response(
             f"Multiple Home Depot stores in {candidates[0].get('city', '')}. "
             "Which one would you like?"
         ),
-        records=[],
+        records=candidate_records,
         sources=[],
         freshness={"mode": "live"},
         confidence={"status": "verified", "score": 1.0},
@@ -322,8 +381,30 @@ def _build_store_disambiguation_response(
         intent="price_check",
         playbook="TOOL_MATERIAL_PRICE_CHECK",
         providers_called=providers_called,
+        # `extra.candidates` retained for one release as a compatibility shim;
+        # current callers (desktop AdamCardsRenderer) should switch to records.
         extra={"candidates": candidate_records, "query": query},
     )
+
+
+def _redact_user_address(addr: str) -> str:
+    """PII-safe representation of a user-provided address.
+
+    F-HIGH-6: prior code logged `user_address[:60]` at INFO. Operators need a
+    log signal that an address was supplied without exposing the address
+    itself. We hash it (truncated) so identical inputs collapse into a single
+    log line for correlation. ASPIRE_DEBUG_PII=1 reverts to a 60-char snippet
+    for local debugging only.
+    """
+    import hashlib as _hashlib
+    import os as _os
+
+    if not addr:
+        return ""
+    if (_os.getenv("ASPIRE_DEBUG_PII") or "").strip().lower() in {"1", "true", "yes"}:
+        return addr[:60]
+    digest = _hashlib.sha256(addr.encode("utf-8")).hexdigest()[:10]
+    return f"<addr:{len(addr)}c:{digest}>"
 
 
 async def execute_tool_material_price_check(
@@ -384,9 +465,35 @@ async def execute_tool_material_price_check(
     )
 
     logger.info(
-        "Executing TOOL_MATERIAL_PRICE_CHECK for: %s (city=%r state=%r store_id=%r zip=%r user_address=%r)",
-        query[:80], city, state, store_id, zip_code, (user_address or "")[:60],
+        "Executing TOOL_MATERIAL_PRICE_CHECK for: %s (city=%r state=%r store_id=%r zip=%r user_address=%s)",
+        query[:80], city, state, store_id, zip_code, _redact_user_address(user_address or ""),
     )
+
+    # F-CRIT-1: voice_path MUST be decided from caller-supplied signals BEFORE
+    # the nearest-store resolver runs. The resolver pins zip_code from the
+    # Google Places result, which would otherwise flip voice_path to False
+    # mid-request (`not zip_code` → False) and route every Anam call into the
+    # 3-attempt × 8s text loop (24s) inside the 5s voice budget.
+    #
+    # Inputs that count as "voice context": NO zip_code, NO store_id, NO city
+    # at the public entry point. user_address by itself is a voice-friendly
+    # signal (Anam's dynamic variable) so it does NOT flip voice_path off.
+    if voice_path is None:
+        # F-MED-6: tighter ZIP regex used here so a 5-digit product quantity
+        # (e.g. "10000 ft of pipe") doesn't pre-populate zip_code and break
+        # voice-path detection.
+        query_zip_match = _ZIP_IN_QUERY_RE.search(query)
+        query_has_zip = bool(query_zip_match)
+        query_has_city = bool(
+            _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\b", query)
+        )
+        voice_path = (
+            not zip_code
+            and not store_id
+            and not city
+            and not query_has_zip
+            and not query_has_city
+        )
 
     # Round 4 — PRIMARY path: nearest HD by user_address. When this resolves
     # successfully we pin delivery_zip from the resolved store's postal_code
@@ -416,7 +523,7 @@ async def execute_tool_material_price_check(
             # from pickup.store_id in the SerpApi response below.
 
     if not zip_code:
-        zip_match = _re.search(r"\b(\d{5})\b", query)
+        zip_match = _ZIP_IN_QUERY_RE.search(query)
         if zip_match:
             zip_code = zip_match.group(1)
 
@@ -524,12 +631,9 @@ async def execute_tool_material_price_check(
                 user_address[:60],
             )
 
-    # Voice path = no zip, no store_id, no city hint. When the request has no
-    # location signal, Ava's voice flow is the most common caller and the 5s
-    # response budget cannot afford 3 retry attempts × 8s = 24s.
-    if voice_path is None:
-        voice_path = not zip_code and not store_id and not location_hint
-
+    # voice_path was already finalized at the top of this function from the
+    # caller-supplied signals. Don't re-derive it here — that would let the
+    # nearest_store-pinned zip_code flip it back to False (the F-CRIT-1 bug).
     if voice_path:
         query_attempts = [query]
         hd_timeout = 4.0
@@ -619,6 +723,41 @@ async def execute_tool_material_price_check(
             providers_called.append("serpapi_home_depot")
         if not skip_google_shopping and "serpapi_shopping" not in providers_called:
             providers_called.append("serpapi_shopping")
+
+        # F-MED-4: distinguish hard cancellation/timeout (break loop, retry
+        # would only make latency worse) from soft failures (continue to next
+        # tightened attempt). asyncio.TimeoutError, asyncio.CancelledError =>
+        # break. Generic Exception => log and continue.
+        if isinstance(hd_result, (asyncio.TimeoutError, asyncio.CancelledError)):
+            logger.warning(
+                "TOOL_MATERIAL_PRICE_CHECK attempt=%s aborted by %s — breaking retry loop",
+                attempt_idx, type(hd_result).__name__,
+            )
+            break
+        if isinstance(hd_result, Exception):
+            logger.warning(
+                "TOOL_MATERIAL_PRICE_CHECK attempt=%s soft error: %s",
+                attempt_idx, hd_result,
+            )
+
+        # F-HIGH-7: SerpApi 429 — retrying just burns budget AND quota. Break
+        # immediately and surface a structured rate-limit response. Reason
+        # comes back from the underlying SerpApi client (response.error_code).
+        if (
+            not isinstance(hd_result, Exception)
+            and hd_result.outcome.value != "success"
+            and (
+                hasattr(hd_result, "error")
+                and isinstance(hd_result.error, str)
+                and "RATE_LIMITED" in hd_result.error.upper()
+            )
+        ):
+            logger.warning(
+                "TOOL_MATERIAL_PRICE_CHECK: SerpApi RATE_LIMITED on attempt=%s — short-circuiting retries",
+                attempt_idx,
+            )
+            providers_called.append("serpapi_home_depot_rate_limited")
+            break
 
         if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
             serpapi_store = hd_result.data.get("store", {})
@@ -718,7 +857,11 @@ async def execute_tool_material_price_check(
                 store_summary["state"] = parsed_state
             if nearest_store.photo_url:
                 store_summary["image_url"] = nearest_store.photo_url
-            store_summary["distance_miles"] = round(nearest_store.distance_miles, 1)
+            # F-MED-7: distance_miles is None on the searchText primary path
+            # (no user coords). Only emit the field when we actually computed
+            # it via haversine — the card UI shows "—" when missing.
+            if nearest_store.distance_miles is not None and nearest_store.distance_miles > 0:
+                store_summary["distance_miles"] = round(nearest_store.distance_miles, 1)
             # store_id: keep static directory's SerpApi store_id when present
             # (used by downstream enrichment); Google place_id only as fallback
             # for cases where the static directory had no match.

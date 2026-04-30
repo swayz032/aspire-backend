@@ -2,19 +2,32 @@
 
 Currently exposes:
   - POST /v1/tools/enrich_product — Lazy SerpApi `home_depot_product` fetch.
+  - GET  /v1/places/photo         — Server-side Google Places photo proxy.
 
-Why lazy? The basic SerpApi `home_depot` search returns enough fields for the
-voice carousel. Detail fields (gallery, specs, bay/aisle) cost an extra SerpApi
-unit per product; we only spend that unit when the user opens the modal.
+Why lazy product enrichment? The basic SerpApi `home_depot` search returns
+enough fields for the voice carousel. Detail fields (gallery, specs, bay/aisle)
+cost an extra SerpApi unit per product; we only spend that unit when the user
+opens the modal.
+
+Why a photo proxy? Google Places photo URLs require an API key as a query
+parameter. Embedding `&key=...` in client-visible store_summary cards leaked
+the production GOOGLE_MAPS_API_KEY through the desktop UI. The proxy accepts
+the opaque resource name only and signs the upstream call server-side.
 
 Law compliance:
-  - Law #1: This endpoint executes a bounded tool. Decisions stay with the
-    orchestrator — the Desktop only calls this AFTER the user explicitly opens
-    a product card.
-  - Law #2: Every call emits a receipt (success or failure) via the SerpApi
-    client's `make_receipt_data`.
+  - Law #1: These endpoints execute bounded tools. Decisions stay with the
+    orchestrator — the Desktop only calls them AFTER the user explicitly
+    interacts with a card.
+  - Law #2: Enrich_product emits success/failure receipts via the SerpApi
+    client's `make_receipt_data`. Photo proxy is GREEN read-only and does not
+    emit per-fetch receipts (the upstream Place lookup that produced the
+    resource_name carries the relevant audit record).
   - Law #3: Missing auth headers -> 401 + denial receipt.
-  - Law #5: Capability token required (validated via token_service).
+  - Law #5: enrich_product requires a capability token (validated via
+    token_service). Photo proxy validates only the auth headers + a strict
+    resource-name shape — no capability token needed because the resource
+    name is opaque and was already minted by a previous capability-gated
+    Places search.
   - Law #6: suite_id/office_id from request headers; mismatch -> 401.
   - Risk tier: GREEN (read-only).
 """
@@ -24,16 +37,24 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from aspire_orchestrator.providers.serpapi_homedepot_product_client import (
     fetch_product_details,
+)
+from aspire_orchestrator.services.photo_proxy import (
+    clamp_dim,
+    fetch_place_photo_bytes,
+    is_valid_resource_name,
 )
 from aspire_orchestrator.services.receipt_store import store_receipts
 from aspire_orchestrator.services.token_service import (
@@ -47,6 +68,30 @@ router = APIRouter()
 
 _TOOL_ID = "serpapi_home_depot_product.fetch"
 _REQUIRED_SCOPE = "research.product.enrich"
+
+# THREAT-008 — per-suite rolling-window rate limit on enrich_product.
+# Single-replica accuracy only; multi-replica deployment requires a shared
+# Redis-backed limiter (tracked in F-HIGH-3 / production gate work).
+_ENRICH_RATE_LIMIT_PER_MINUTE = 60
+_ENRICH_RATE_WINDOW_SECONDS = 60.0
+_enrich_rate_log: dict[str, deque[float]] = {}
+_enrich_rate_lock = Lock()
+
+
+def _check_enrich_rate_limit(suite_id: str) -> bool:
+    """True when the suite is under the per-minute limit. Mutates the rolling log."""
+    if not suite_id:
+        return True
+    now = time.monotonic()
+    cutoff = now - _ENRICH_RATE_WINDOW_SECONDS
+    with _enrich_rate_lock:
+        log = _enrich_rate_log.setdefault(suite_id, deque())
+        while log and log[0] < cutoff:
+            log.popleft()
+        if len(log) >= _ENRICH_RATE_LIMIT_PER_MINUTE:
+            return False
+        log.append(now)
+        return True
 
 
 class EnrichProductRequest(BaseModel):
@@ -155,6 +200,26 @@ async def enrich_product(request: Request) -> JSONResponse:
             status_code=401,
         )
 
+    if not _check_enrich_rate_limit(suite_id):
+        store_receipts(
+            [
+                _denial_receipt(
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    actor_id=actor_id,
+                    reason_code="RATE_LIMITED",
+                    details={"limit_per_minute": _ENRICH_RATE_LIMIT_PER_MINUTE},
+                )
+            ]
+        )
+        return _error(
+            error="RATE_LIMITED",
+            message="Too many product enrichment requests; retry shortly.",
+            correlation_id=correlation_id,
+            status_code=429,
+        )
+
     try:
         body_raw = await request.json()
     except Exception:
@@ -256,5 +321,59 @@ async def enrich_product(request: Request) -> JSONResponse:
         content={
             "correlation_id": correlation_id,
             "product": result.data,
+        },
+    )
+
+
+# =========================================================================
+# Server-side Google Places photo proxy (THREAT-004 / receipt #26).
+#
+# The Desktop renders <img src="/v1/places/photo?ref=places/.../photos/...">.
+# The orchestrator fetches the underlying JPEG with the server-side API key
+# and streams it back, so the key never crosses the client boundary.
+# =========================================================================
+
+
+@router.get("/v1/places/photo")
+async def places_photo(
+    ref: str = Query(..., description="Google Places resource name: places/{ID}/photos/{REF}"),
+    maxHeightPx: int | None = Query(None, ge=1, le=1200),
+    maxWidthPx: int | None = Query(None, ge=1, le=1200),
+) -> Response:
+    """Proxy a Google Places photo by opaque resource name.
+
+    Validates the resource name against a strict shape, then signs the
+    upstream call with the server-side API key. Returns the raw image
+    bytes with a long cache-control so repeat card renders avoid extra
+    upstream calls (Google's photo URLs are stable per resource name).
+    """
+    if not is_valid_resource_name(ref):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "INVALID_RESOURCE_NAME"},
+        )
+
+    height = clamp_dim(maxHeightPx, 400, 1200)
+    width = clamp_dim(maxWidthPx, 600, 1200)
+
+    fetched = await fetch_place_photo_bytes(
+        resource_name=ref,
+        max_height_px=height,
+        max_width_px=width,
+    )
+    if fetched is None:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "PHOTO_UNAVAILABLE"},
+        )
+
+    image_bytes, content_type = fetched
+    return Response(
+        content=image_bytes,
+        media_type=content_type,
+        headers={
+            # Resource names are stable for the lifetime of the underlying
+            # Place — cache aggressively at the browser/CDN.
+            "Cache-Control": "public, max-age=86400, immutable",
         },
     )

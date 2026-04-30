@@ -285,12 +285,15 @@ class TestMockedHappyPath:
             assert isinstance(result, NearestStore)
             assert "Home Depot" in result.name
             assert result.postal_code == "32308"
+            assert result.distance_miles is not None
             assert result.distance_miles < 50
             assert result.distance_miles > 0
-            assert result.photo_url.startswith(
-                "https://places.googleapis.com/v1/places/ChIJ_HOME_DEPOT_TLH/photos/"
-            )
-            assert "key=test-key-abc" in result.photo_url
+            # F-CRIT-5: photo_url is now the server-side proxy path. The
+            # GOOGLE_MAPS_API_KEY must NEVER appear in client-visible URLs.
+            assert result.photo_url.startswith("/v1/places/photo?ref=")
+            assert "places%2FChIJ_HOME_DEPOT_TLH%2Fphotos%2FPHOTO_REF_123" in result.photo_url
+            assert "key=" not in result.photo_url
+            assert "test-key-abc" not in result.photo_url
             assert result.place_id == "ChIJ_HOME_DEPOT_TLH"
             assert result.user_lat == 30.4383
             assert result.user_lng == -84.2807
@@ -401,10 +404,12 @@ async def test_nearest_home_depot_real_address(
     assert 0 < result.distance_miles < 50, (
         f"distance_miles out of expected range: {result.distance_miles}"
     )
-    assert result.photo_url.startswith("https://places.googleapis.com/v1/places/"), (
+    # F-CRIT-5: server-side proxy path; the API key must not appear in
+    # client-visible URLs. The proxy itself signs the upstream Google call.
+    assert result.photo_url.startswith("/v1/places/photo?ref="), (
         f"photo_url shape unexpected: {result.photo_url!r}"
     )
-    assert "/media" in result.photo_url
+    assert "key=" not in result.photo_url
     assert result.place_id, "place_id must be non-empty"
     # Address should mention the state we asked about — best-effort.
     assert fixture["expected_state_in_address"] in result.address, (

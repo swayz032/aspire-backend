@@ -137,6 +137,23 @@ async def _app_lifespan(_: FastAPI):
     _hd_store_count = directory_size()
     logger.info("[hd_store_directory] preloaded %d stores", _hd_store_count)
 
+    # F-ARCH-1: startup self-test. Verifies bundled prompt sections, HD
+    # directory size floor, env var presence, signing key length, and prompt
+    # hash parity. Result is cached for /readyz.
+    try:
+        from aspire_orchestrator.startup_self_test import run_self_test, set_last_report
+        _self_test_report = run_self_test()
+        set_last_report(_self_test_report)
+        if not _self_test_report.passed:
+            logger.error(
+                "[startup_self_test] FAILED — checks: %s",
+                _self_test_report.failures,
+            )
+        else:
+            logger.info("[startup_self_test] all checks passed")
+    except Exception as _self_test_exc:  # noqa: BLE001
+        logger.error("[startup_self_test] crashed: %s", _self_test_exc, exc_info=True)
+
     await warm_orchestrator_graph()
 
     # Warm the LLM connection pool — prevents first-request cold penalty
@@ -379,6 +396,25 @@ async def readyz() -> JSONResponse:
         ),
         "graph_built": True,
     }
+
+    # F-ARCH-1: surface the startup self-test result. Each named check
+    # becomes a `startup_self_test.<name>` key in `checks` so the readiness
+    # probe shows exactly which gate failed.
+    self_test_failures: list[str] = []
+    try:
+        from aspire_orchestrator.startup_self_test import get_last_report
+        _report = get_last_report()
+        if _report is not None:
+            for c in _report.checks:
+                checks[f"startup_self_test.{c.name}"] = c.passed
+                if not c.passed:
+                    self_test_failures.append(c.name)
+        else:
+            checks["startup_self_test"] = False
+            self_test_failures.append("not_run")
+    except Exception:
+        checks["startup_self_test"] = False
+        self_test_failures.append("crashed")
 
     # Check DLP initialization (must verify Presidio actually loaded, not just object exists)
     try:
@@ -1687,11 +1723,16 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 return slimmed
 
             # Wave A.5: office coordinates power haversine-based store
-            # disambiguation when a city has multiple HD stores.
-            # TODO: add address_lat / address_lng columns to suite_profiles
-            # (see migration 051) and populate here via supabase_select. For
-            # now we pass None — disambiguation falls back to fuzzy hint or
-            # a StoreDisambiguation artifact returned to Ava.
+            # disambiguation when a city has multiple HD stores. They remain
+            # disabled until suite_profiles gains address_lat/address_lng
+            # columns and a backfill — until then disambiguation falls
+            # through to fuzzy address-hint or a StoreDisambiguation
+            # artifact (the user-pickable list). Passing None is a
+            # deliberate behavior contract, not a forgotten TODO.
+            #
+            # F-MED-3: when those columns ship, swap the two None values for
+            # `office_profile.get("address_lat")` / `..._lng` reads — no
+            # other code change required.
             adam_ctx = AdamContext(
                 suite_id=safe_suite_id,
                 office_id=safe_office_id,
@@ -1699,6 +1740,35 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 office_lat=None,
                 office_lng=None,
             )
+
+            # F-CRIT-2/3/4 + F-HIGH-5: every Adam dispatch path emits a receipt.
+            # This local helper collapses the boilerplate (uuid, hash, actor,
+            # timestamp) across the ~6 outcome branches below.
+            def _adam_receipt(
+                *,
+                action_type: str,
+                outcome: str,
+                reason_code: str,
+                tool_used: str = "adam.research",
+                redacted_outputs: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
+                return {
+                    "id": str(uuid.uuid4()),
+                    "correlation_id": ctx.correlation_id,
+                    "suite_id": safe_suite_id,
+                    "office_id": safe_office_id,
+                    "actor_type": "agent",
+                    "actor_id": "adam",
+                    "action_type": action_type,
+                    "risk_tier": "green",
+                    "tool_used": tool_used,
+                    "outcome": outcome,
+                    "reason_code": reason_code,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "receipt_type": "agent_research",
+                    "receipt_hash": "",
+                    "redacted_outputs": redacted_outputs,
+                }
 
             # Step 1: Classify & route to the right playbook
             classification, playbook = route_to_playbook(full_task)
@@ -1786,7 +1856,16 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         f" and the records array from this response. Do not skip this step."
                     )
 
-                    if total_count == 1 and research.artifact_type in (
+                    # F-CRIT-6: StoreDisambiguation has 0 records-with-product-data
+                    # but is a SUCCESSFUL outcome — the user just needs to pick a
+                    # store. Treat it as success and tell Ava to render candidates.
+                    if research.artifact_type == "StoreDisambiguation":
+                        candidate_count = len(safe_records)
+                        response_text = (
+                            f"I found {candidate_count} Home Depot stores in your area. "
+                            "Which one would you like?"
+                        ) + _SHOW_CARDS_REMINDER
+                    elif total_count == 1 and research.artifact_type in (
                         "LandlordPropertyPack", "PropertyFactPack", "RentCompPack",
                         "PermitContextPack", "NeighborhoodDemandBrief",
                     ):
@@ -1839,43 +1918,123 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     response_text_normalized = normalize_payload_for_speech(response_text) \
                         if isinstance(response_text, str) else response_text
 
+                    # F-CRIT-6: success when records present OR artifact is the
+                    # StoreDisambiguation prompt (no records-with-product-data,
+                    # but a valid resolved outcome — user just needs to pick).
+                    is_success = (
+                        research.artifact_type != "error"
+                        and (
+                            total_count > 0
+                            or research.artifact_type == "StoreDisambiguation"
+                        )
+                    )
+
+                    # F-HIGH-5 + F-CRIT-2/3/4: persist a real receipt and
+                    # return its id (not the correlation_id) so client traces
+                    # link to the orchestrator's audit row.
+                    success_receipt = _adam_receipt(
+                        action_type="adam.research_complete",
+                        outcome="success" if is_success else "failed",
+                        reason_code="EXECUTED" if is_success else "PLAYBOOK_NO_RESULTS",
+                        tool_used=f"adam.playbook.{playbook.name}",
+                        redacted_outputs={
+                            "artifact_type": research.artifact_type,
+                            "total_count": total_count,
+                            "providers_called": list(research.providers_called or []),
+                        },
+                    )
+                    try:
+                        store_receipts([success_receipt])
+                    except Exception as rec_err:  # noqa: BLE001
+                        logger.warning("Adam success receipt persist failed: %s", rec_err)
+
                     return JSONResponse(
                         status_code=200,
                         content={
-                            "success": total_count > 0 and research.artifact_type != "error",
+                            "success": is_success,
                             "agent": "adam",
                             "result": response_text_normalized,
                             "data": response_data,
-                            "receipt_id": ctx.correlation_id,
+                            "receipt_id": success_receipt["id"],
                             "error": None if research.artifact_type != "error" else research.summary,
                         },
                     )
                 except _asyncio.TimeoutError:
                     logger.error("Adam playbook %s timed out for: %s", playbook.name, full_task[:80])
+                    # F-CRIT-2: emit a failure receipt for timeout (Law #2 — every
+                    # outcome generates a receipt, and 45s of LLM-blocking work
+                    # was a state-changing event from the audit perspective).
+                    timeout_receipt = _adam_receipt(
+                        action_type="adam.research_timeout",
+                        outcome="failed",
+                        reason_code="PLAYBOOK_TIMEOUT",
+                        tool_used=f"adam.playbook.{playbook.name}",
+                        redacted_outputs={"playbook": playbook.name, "timeout_seconds": 45.0},
+                    )
+                    try:
+                        store_receipts([timeout_receipt])
+                    except Exception as rec_err:  # noqa: BLE001
+                        logger.warning("Adam timeout receipt persist failed: %s", rec_err)
                     return JSONResponse(
                         status_code=200,
                         content={
                             "success": False,
                             "agent": "adam",
                             "result": "That research is taking longer than expected. Try a more specific query or try again.",
+                            "receipt_id": timeout_receipt["id"],
                             "error": "PLAYBOOK_TIMEOUT",
                         },
                     )
                 except Exception as pb_err:
+                    # F-CRIT-3: emit a failure receipt AND surface only a
+                    # generic error code to the client. The raw exception
+                    # message can leak internal paths, provider tokens, or
+                    # other sensitive data — those stay server-side in the log.
                     logger.error("Adam playbook %s failed: %s", playbook.name, pb_err, exc_info=True)
+                    error_receipt = _adam_receipt(
+                        action_type="adam.research_error",
+                        outcome="failed",
+                        reason_code="PLAYBOOK_ERROR",
+                        tool_used=f"adam.playbook.{playbook.name}",
+                        redacted_outputs={
+                            "playbook": playbook.name,
+                            "error_class": type(pb_err).__name__,
+                        },
+                    )
+                    try:
+                        store_receipts([error_receipt])
+                    except Exception as rec_err:  # noqa: BLE001
+                        logger.warning("Adam error receipt persist failed: %s", rec_err)
                     return JSONResponse(
                         status_code=200,
                         content={
                             "success": False,
                             "agent": "adam",
-                            "result": f"I ran into an issue researching that. Let me try a different approach — can you rephrase?",
-                            "error": str(pb_err)[:200],
+                            "result": "I ran into an issue researching that. Let me try a different approach — can you rephrase?",
+                            "receipt_id": error_receipt["id"],
+                            "error": "INTERNAL_ERROR",
                         },
                     )
 
             # Step 3: No playbook matched — fall back to legacy web+places search
             # This handles general SMB queries that don't fit any specialized playbook
             logger.info("Adam: no playbook match, falling back to legacy search for: %s", full_task[:80])
+
+            # F-CRIT-4: emit an entry receipt the moment we leave the playbook
+            # path. The legacy chain is itself a state-changing audit event —
+            # without this entry the legacy outcome receipt below has no
+            # paired "started" record.
+            legacy_entry_receipt = _adam_receipt(
+                action_type="adam.legacy_fallback_started",
+                outcome="success",
+                reason_code="NO_PLAYBOOK_MATCH",
+                tool_used="adam.legacy_search",
+            )
+            try:
+                store_receipts([legacy_entry_receipt])
+            except Exception as rec_err:  # noqa: BLE001
+                logger.warning("Adam legacy entry receipt persist failed: %s", rec_err)
+
             # Legacy fallback: simple web + places search for unrecognized queries
             from aspire_orchestrator.services.search_router import (
                 _web_search_chain, _places_search_chain,
@@ -1950,6 +2109,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             else:
                 response_text = "I wasn't able to find results for that. Try a more specific query or different location."
 
+            # F-CRIT-4: legacy fallback final receipt. Outcome rolls up to
+            # success when at least one provider returned data; failure
+            # otherwise (chain exhausted or all timed out).
+            legacy_final_receipt = _adam_receipt(
+                action_type="adam.legacy_fallback_complete",
+                outcome="success" if total > 0 else "failed",
+                reason_code="EXECUTED" if total > 0 else "NO_RESULTS",
+                tool_used="adam.legacy_search",
+                redacted_outputs={
+                    "web_count": len(web_results),
+                    "places_count": len(places_results),
+                },
+            )
+            try:
+                store_receipts([legacy_final_receipt])
+            except Exception as rec_err:  # noqa: BLE001
+                logger.warning("Adam legacy final receipt persist failed: %s", rec_err)
+
             return JSONResponse(
                 status_code=200,
                 content={
@@ -1962,7 +2139,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "places_results": places_results[:10],
                         "total": total,
                     },
-                    "receipt_id": ctx.correlation_id,
+                    "receipt_id": legacy_final_receipt["id"],
                     "error": None if total > 0 else "No results found",
                 },
             )

@@ -375,10 +375,31 @@ def validate_token(
 def revoke_token(token_id: str) -> None:
     """Revoke a capability token by adding it to the revocation set.
 
-    In Phase 1, this uses an in-memory set. Phase 2 moves to DB persistence.
+    SECURITY GAP — F-HIGH-3 / THREAT-007:
+      The revocation set is **in-memory only** today, which means a revocation
+      that happens on replica A will not be visible on replica B until the
+      next process restart. Tokens are short-lived (<60s, Law #5) so the
+      blast radius is bounded — but for any deployment with >1 orchestrator
+      replica, a malicious actor with a leaked-but-unrevoked token can use
+      it on the unaffected replica until expiry.
+
+      Mitigation already in place:
+        - Token TTL is capped at 59s (validate_token Check 2).
+        - Tokens are scoped to (suite, office, tool, action) via Check 4-6.
+        - Every successful execution emits a receipt linked to the token
+          hash (compute_token_hash) so post-incident forensics can trace.
+
+      Production fix (separate PR):
+        - Add `revoked_tokens` table (token_hash text PK, expires_at
+          timestamptz, revoked_at timestamptz). On revoke: INSERT.
+          On validate (Check 3): SELECT WHERE token_hash = $1 AND
+          expires_at > now(). Add a 1s in-memory cache to keep validate
+          off the hot DB path.
+        - Until then, run with a single replica OR set
+          ASPIRE_ALLOW_INMEM_TOKEN_REVOCATION=1 + accept the gap.
     """
     _revoked_tokens.add(token_id)
-    logger.info("Token revoked: %s", token_id[:8])
+    logger.info("Token revoked: %s (in-memory only — see F-HIGH-3 gap)", token_id[:8])
 
 
 def is_revoked(token_id: str) -> bool:

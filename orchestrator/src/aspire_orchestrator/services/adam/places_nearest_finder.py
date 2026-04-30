@@ -25,8 +25,10 @@ costs ~$0.04 — flagged in receipt.extra.cost_estimate_usd by the caller.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
+import os
 import re
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -35,11 +37,29 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+def _redact_address(addr: str) -> str:
+    """Hash an address for log correlation without leaking PII.
+
+    Per Aspire Law #9 + DLP policy: user addresses are PII. We never log them
+    raw at INFO. Set ASPIRE_DEBUG_PII=1 to override for local debugging.
+    """
+    if not addr:
+        return ""
+    if (os.getenv("ASPIRE_DEBUG_PII") or "").strip().lower() in {"1", "true", "yes"}:
+        return addr[:60]
+    digest = hashlib.sha256(addr.encode("utf-8")).hexdigest()[:10]
+    return f"<addr:{len(addr)}c:{digest}>"
+
 # Google endpoints
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 _PLACES_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
 _PLACES_TEXT_URL = "https://places.googleapis.com/v1/places:searchText"
-_PLACES_PHOTO_MEDIA_URL = "https://places.googleapis.com/v1/{name}/media"
+
+# Server-side photo proxy path. The Desktop client constructs a full URL by
+# prefixing this with the orchestrator base URL it already uses for /v1/intents.
+# We never embed the GOOGLE_MAPS_API_KEY in client-visible URLs (THREAT-004).
+_PLACES_PHOTO_PROXY_PATH = "/v1/places/photo"
 
 # Field mask for Places searchNearby v1 — keep tight so we only pay for
 # fields we actually consume (Google bills per-field-mask category).
@@ -80,6 +100,12 @@ class NearestStore:
     All distances are miles (the trades-worker UI shows miles, not km).
     `place_id` is Google's place_id, NOT a Home Depot store_id — the
     trades playbook uses postal_code to route the SerpApi search.
+
+    `distance_miles`, `user_lat`, `user_lng` are Optional. The searchText
+    primary path does not have user coordinates available (Places does the
+    geocoding internally), so distance is unknown until the haversine
+    fallback runs — we surface None rather than a 0.0 sentinel that would
+    misrepresent the card.
     """
 
     place_id: str
@@ -88,10 +114,10 @@ class NearestStore:
     postal_code: str
     lat: float
     lng: float
-    distance_miles: float
+    distance_miles: float | None
     photo_url: str
-    user_lat: float
-    user_lng: float
+    user_lat: float | None
+    user_lng: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -127,13 +153,13 @@ async def find_nearest_home_depot_by_address(
     except asyncio.TimeoutError:
         logger.warning(
             "find_nearest_home_depot_by_address timed out at %.1fs for %s",
-            timeout, addr[:60],
+            timeout, _redact_address(addr),
         )
         return None
     except Exception as exc:  # noqa: BLE001 — logged then swallowed by design
         logger.warning(
             "find_nearest_home_depot_by_address failed for %s: %s",
-            addr[:60], exc,
+            _redact_address(addr), exc,
         )
         return None
 
@@ -171,7 +197,10 @@ async def _resolve_nearest(addr: str) -> NearestStore | None:
         return text_result
 
     # --- FALLBACK: Geocode + searchNearby (requires Geocoding API) -------
-    logger.info("searchText returned nothing for %s — trying geocode + nearby", addr[:60])
+    logger.info(
+        "searchText returned nothing for %s — trying geocode + nearby",
+        _redact_address(addr),
+    )
     user_lat, user_lng = await _geocode(addr, api_key=api_key)
     if user_lat is None or user_lng is None:
         return None
@@ -189,7 +218,7 @@ async def _resolve_nearest(addr: str) -> NearestStore | None:
     if not hd_candidates:
         logger.info(
             "No Home Depot result within %.0fkm of %s",
-            _SEARCH_RADIUS_METERS / 1000.0, addr[:60],
+            _SEARCH_RADIUS_METERS / 1000.0, _redact_address(addr),
         )
         return None
 
@@ -224,7 +253,10 @@ async def _search_text_for_nearest_hd(
 
     places = list(payload.get("places") or [])
     if not places:
-        logger.info("Places searchText returned 0 results for: Home Depot near %s", addr[:60])
+        logger.info(
+            "Places searchText returned 0 results for: Home Depot near %s",
+            _redact_address(addr),
+        )
         return None
 
     # Filter to Home Depot brand — searchText sometimes returns other home
@@ -266,20 +298,27 @@ def _build_nearest_store_from_place(
 
     name = ((place.get("displayName") or {}).get("text", "") or "").strip() or "Home Depot"
 
+    # Photo URL: emit a server-side proxy URL (THREAT-004). The Desktop client
+    # fetches the JPEG via the orchestrator, which signs the upstream Google
+    # call with the API key. The resource name is opaque to the client.
     photo_url = ""
     photos = place.get("photos") or []
     if photos:
         first_photo_name = str(photos[0].get("name", "")).strip()
         if first_photo_name:
+            from urllib.parse import quote
+
             photo_url = (
-                f"{_PLACES_PHOTO_MEDIA_URL.format(name=first_photo_name)}"
-                f"?maxHeightPx={_PHOTO_MAX_HEIGHT_PX}"
+                f"{_PLACES_PHOTO_PROXY_PATH}"
+                f"?ref={quote(first_photo_name, safe='')}"
+                f"&maxHeightPx={_PHOTO_MAX_HEIGHT_PX}"
                 f"&maxWidthPx={_PHOTO_MAX_WIDTH_PX}"
-                f"&key={api_key}"
             )
 
     # Distance only when we have both endpoints (searchNearby path).
-    distance_miles = 0.0
+    # F-MED-7: leave distance/user-coords as None when we did not compute them
+    # rather than smuggling a 0.0 sentinel into card data.
+    distance_miles: float | None = None
     if user_lat is not None and user_lng is not None:
         distance_miles = _haversine_miles(
             float(user_lat), float(user_lng), float(place_lat), float(place_lng),
@@ -294,8 +333,8 @@ def _build_nearest_store_from_place(
         lng=float(place_lng),
         distance_miles=distance_miles,
         photo_url=photo_url,
-        user_lat=float(user_lat) if user_lat is not None else 0.0,
-        user_lng=float(user_lng) if user_lng is not None else 0.0,
+        user_lat=float(user_lat) if user_lat is not None else None,
+        user_lng=float(user_lng) if user_lng is not None else None,
     )
 
 
@@ -308,12 +347,12 @@ async def _geocode(addr: str, *, api_key: str) -> tuple[float | None, float | No
             resp.raise_for_status()
             payload = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
-        logger.warning("Geocoding failed for %s: %s", addr[:60], exc)
+        logger.warning("Geocoding failed for %s: %s", _redact_address(addr), exc)
         return None, None
 
     status = payload.get("status", "")
     if status != "OK":
-        logger.info("Geocoding status=%s for %s", status, addr[:60])
+        logger.info("Geocoding status=%s for %s", status, _redact_address(addr))
         return None, None
 
     results = payload.get("results") or []
