@@ -40,6 +40,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
 from aspire_orchestrator.services import receipt_store
 from aspire_orchestrator.services.supabase_client import (
@@ -111,6 +112,19 @@ def _validate_cap_token(
                 "message": result.error_message or "",
             },
         )
+
+
+def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
+    """Extract deterministic capability_token_id for receipt tracing."""
+    if not cap_token:
+        return ""
+    if cap_token.get("id"):
+        return str(cap_token["id"])
+    sig = cap_token.get("signature") or cap_token.get("token") or ""
+    if sig:
+        import hashlib
+        return hashlib.sha256(str(sig).encode()).hexdigest()[:16]
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +257,9 @@ async def patch_config(
         "tool_used": "front_desk_config",
         "risk_tier": "yellow",
         "redacted_outputs": {"version_no": new_row["version_no"], "config_id": new_row["id"]},
+        "trace_id": get_trace_id(),
+        "correlation_id": get_correlation_id(),
+        "capability_token_id": _cap_token_id(req.capability_token) or None,
         "created_at": now,
     }])
 
@@ -350,6 +367,9 @@ async def test_call(
         "risk_tier": "yellow",
         "redacted_inputs": {"to_number": to_number},
         "redacted_outputs": {"call_sid": twilio_call_sid},
+        "trace_id": get_trace_id(),
+        "correlation_id": get_correlation_id(),
+        "capability_token_id": _cap_token_id(capability_token) or None,
         "created_at": now,
     }])
 
@@ -404,6 +424,9 @@ async def create_routing_contact(
         "tool_used": "front_desk_routing",
         "risk_tier": "yellow",
         "redacted_outputs": {"contact_id": row["id"], "role": req.role},
+        "trace_id": get_trace_id(),
+        "correlation_id": get_correlation_id(),
+        "capability_token_id": _cap_token_id(req.capability_token) or None,
         "created_at": now,
     }])
 
@@ -457,6 +480,9 @@ async def update_routing_contact(
         "tool_used": "front_desk_routing",
         "risk_tier": "yellow",
         "redacted_inputs": {"contact_id": contact_id},
+        "trace_id": get_trace_id(),
+        "correlation_id": get_correlation_id(),
+        "capability_token_id": _cap_token_id(req.capability_token) or None,
         "created_at": now,
     }])
 
@@ -499,6 +525,9 @@ async def delete_routing_contact(
         "tool_used": "front_desk_routing",
         "risk_tier": "yellow",
         "redacted_inputs": {"contact_id": contact_id},
+        "trace_id": get_trace_id(),
+        "correlation_id": get_correlation_id(),
+        "capability_token_id": _cap_token_id(capability_token) or None,
         "created_at": now,
     }])
 

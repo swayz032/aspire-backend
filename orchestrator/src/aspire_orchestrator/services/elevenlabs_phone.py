@@ -26,8 +26,20 @@ from typing import Any
 import httpx
 
 from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.services.resilience import (
+    ELEVENLABS_RETRY,
+    CircuitOpenError,
+    RetryableError,
+    elevenlabs_breaker,
+    resilient_call,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _is_retryable_el_status(status_code: int) -> bool:
+    """EL responses that warrant retry on idempotent-but-transient failures."""
+    return status_code == 429 or 500 <= status_code < 600
 
 # Verified 2026-04-29 via `mcp__elevenlabs__list_agents`
 SARAH_RECEPTIONIST_AGENT_ID = "agent_6501kp71h69jfqysgd055hemqhrq"
@@ -60,6 +72,23 @@ class ElevenLabsPhoneError(Exception):
         super().__init__(message)
 
 
+async def _do_import_post(
+    *, body: dict[str, Any], headers: dict[str, str]
+) -> tuple[int, dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        resp = await client.post(
+            f"{_EL_BASE_URL}/v1/convai/phone-numbers",
+            json=body,
+            headers=headers,
+        )
+    if resp.status_code >= 400 and _is_retryable_el_status(resp.status_code):
+        raise RetryableError("EL_TRANSIENT", f"EL import transient {resp.status_code}")
+    try:
+        return resp.status_code, resp.json()
+    except Exception:
+        return resp.status_code, {}
+
+
 async def import_to_elevenlabs(
     phone_number: str,
     label: str,
@@ -74,6 +103,10 @@ async def import_to_elevenlabs(
     Idempotent: if already imported (phone_number + twilio_sid), returns existing ID.
     EL auto-configures voice_url on Twilio number upon successful import.
 
+    Pass 18+ Lane 2: wrapped with resilient_call. We mark idempotent=True because
+    EL itself is idempotent on (phone_number + twilio_sid) — duplicate retries
+    safely hit the 409-handling branch and resolve to the existing record.
+
     Law #9: twilio_sid and twilio_token are NOT logged.
     """
     headers = _el_headers()
@@ -85,32 +118,42 @@ async def import_to_elevenlabs(
         "token": twilio_token,
     }
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
-            f"{_EL_BASE_URL}/v1/convai/phone-numbers",
-            json=body,
+    try:
+        status_code, data = await resilient_call(
+            _do_import_post,
+            body=body,
             headers=headers,
+            breaker=elevenlabs_breaker(),
+            policy=ELEVENLABS_RETRY,
+            idempotent=True,
         )
+    except CircuitOpenError as ce:
+        raise ElevenLabsPhoneError(
+            "EL_CIRCUIT_OPEN",
+            f"ElevenLabs is degraded — import rejected ({ce})",
+            503,
+        ) from ce
 
     # Idempotency: if already imported, EL returns 409 or a duplicate-matching error.
-    # GET existing record in that case.
-    if resp.status_code == 409:
+    if status_code == 409:
         logger.info(
             "el_phone_import idempotent_replay phone=%s — fetching existing",
             phone_number,
         )
         return await _get_existing_el_phone_id(phone_number, twilio_sid)
 
-    if resp.status_code >= 400:
-        _raise_el_error("import_to_elevenlabs", resp)
+    if status_code >= 400:
+        # Build a synthetic httpx.Response for _raise_el_error
+        import json as _json
+        synth = httpx.Response(status_code=status_code, content=_json.dumps(data).encode())
+        _raise_el_error("import_to_elevenlabs", synth)
 
-    data = resp.json()
     el_id = data.get("phone_number_id") or data.get("id") or ""
     if not el_id:
         raise ElevenLabsPhoneError(
             "MISSING_PHONE_NUMBER_ID",
             f"EL import succeeded but response missing phone_number_id: {list(data.keys())}",
-            resp.status_code,
+            status_code,
         )
 
     logger.info(
@@ -121,18 +164,42 @@ async def import_to_elevenlabs(
     return el_id
 
 
-async def _get_existing_el_phone_id(phone_number: str, twilio_sid: str) -> str:
-    """Fetch the existing EL phone_number_id for a Twilio number (idempotency path)."""
-    headers = _el_headers()
+async def _do_get_phone_numbers(*, headers: dict[str, str]) -> tuple[int, Any]:
     async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
         resp = await client.get(
             f"{_EL_BASE_URL}/v1/convai/phone-numbers",
             headers=headers,
         )
-    if resp.status_code >= 400:
-        _raise_el_error("get_existing_el_phone", resp)
+    if resp.status_code >= 400 and _is_retryable_el_status(resp.status_code):
+        raise RetryableError("EL_TRANSIENT", f"EL list transient {resp.status_code}")
+    try:
+        return resp.status_code, resp.json()
+    except Exception:
+        return resp.status_code, []
 
-    records = resp.json()
+
+async def _get_existing_el_phone_id(phone_number: str, twilio_sid: str) -> str:
+    """Fetch the existing EL phone_number_id for a Twilio number (idempotency path)."""
+    headers = _el_headers()
+    try:
+        status_code, records = await resilient_call(
+            _do_get_phone_numbers,
+            headers=headers,
+            breaker=elevenlabs_breaker(),
+            policy=ELEVENLABS_RETRY,
+            idempotent=True,
+        )
+    except CircuitOpenError as ce:
+        raise ElevenLabsPhoneError(
+            "EL_CIRCUIT_OPEN",
+            f"ElevenLabs is degraded — list rejected ({ce})",
+            503,
+        ) from ce
+    if status_code >= 400:
+        import json as _json
+        synth = httpx.Response(status_code=status_code, content=_json.dumps(records).encode())
+        _raise_el_error("get_existing_el_phone", synth)
+
     if isinstance(records, dict) and "phone_numbers" in records:
         records = records["phone_numbers"]
     for record in records or []:
@@ -151,6 +218,22 @@ async def _get_existing_el_phone_id(phone_number: str, twilio_sid: str) -> str:
     )
 
 
+async def _do_patch_attach(
+    *, el_phone_number_id: str, agent_id: str, headers: dict[str, str]
+) -> int:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        resp = await client.patch(
+            f"{_EL_BASE_URL}/v1/convai/phone-numbers/{el_phone_number_id}",
+            json={"agent_id": agent_id},
+            headers=headers,
+        )
+    if resp.status_code >= 400:
+        if _is_retryable_el_status(resp.status_code):
+            raise RetryableError("EL_TRANSIENT", f"EL attach transient {resp.status_code}")
+        _raise_el_error("attach_to_agent", resp)
+    return resp.status_code
+
+
 async def attach_to_agent(
     el_phone_number_id: str,
     agent_id: str = SARAH_RECEPTIONIST_AGENT_ID,
@@ -159,17 +242,27 @@ async def attach_to_agent(
 
     PATCH /v1/convai/phone-numbers/{el_phone_number_id} with {agent_id}.
     Default agent: Sarah Receptionist (verified 2026-04-29).
+
+    Pass 18+ Lane 2: PATCH is idempotent (re-applying same agent_id is a no-op),
+    so we mark idempotent=True to retry on transient 5xx/429.
     """
     headers = _el_headers()
-    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-        resp = await client.patch(
-            f"{_EL_BASE_URL}/v1/convai/phone-numbers/{el_phone_number_id}",
-            json={"agent_id": agent_id},
+    try:
+        await resilient_call(
+            _do_patch_attach,
+            el_phone_number_id=el_phone_number_id,
+            agent_id=agent_id,
             headers=headers,
+            breaker=elevenlabs_breaker(),
+            policy=ELEVENLABS_RETRY,
+            idempotent=True,
         )
-    if resp.status_code >= 400:
-        _raise_el_error("attach_to_agent", resp)
-
+    except CircuitOpenError as ce:
+        raise ElevenLabsPhoneError(
+            "EL_CIRCUIT_OPEN",
+            f"ElevenLabs is degraded — attach rejected ({ce})",
+            503,
+        ) from ce
     logger.info(
         "el_phone_attach success el_id=%s... agent_id=%s...",
         el_phone_number_id[:12],
@@ -177,29 +270,74 @@ async def attach_to_agent(
     )
 
 
-async def detach_from_elevenlabs(el_phone_number_id: str) -> None:
-    """Delete (detach + remove) an EL phone number record.
-
-    DELETE /v1/convai/phone-numbers/{el_phone_number_id}.
-    Called before Twilio release to ensure EL no longer owns the voice_url.
-    """
-    headers = _el_headers()
+async def _do_delete_phone(
+    *, el_phone_number_id: str, headers: dict[str, str]
+) -> int:
     async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
         resp = await client.delete(
             f"{_EL_BASE_URL}/v1/convai/phone-numbers/{el_phone_number_id}",
             headers=headers,
         )
-    # 404 = already removed — treat as success (idempotent)
     if resp.status_code == 404:
+        return 404
+    if resp.status_code >= 400:
+        if _is_retryable_el_status(resp.status_code):
+            raise RetryableError("EL_TRANSIENT", f"EL delete transient {resp.status_code}")
+        _raise_el_error("detach_from_elevenlabs", resp)
+    return resp.status_code
+
+
+async def detach_from_elevenlabs(el_phone_number_id: str) -> None:
+    """Delete (detach + remove) an EL phone number record.
+
+    DELETE /v1/convai/phone-numbers/{el_phone_number_id}.
+    Called before Twilio release to ensure EL no longer owns the voice_url.
+
+    Pass 18+ Lane 2: DELETE is naturally idempotent (404 = already removed),
+    so we mark idempotent=True to retry on transient 5xx/429.
+    """
+    headers = _el_headers()
+    try:
+        status_code = await resilient_call(
+            _do_delete_phone,
+            el_phone_number_id=el_phone_number_id,
+            headers=headers,
+            breaker=elevenlabs_breaker(),
+            policy=ELEVENLABS_RETRY,
+            idempotent=True,
+        )
+    except CircuitOpenError as ce:
+        raise ElevenLabsPhoneError(
+            "EL_CIRCUIT_OPEN",
+            f"ElevenLabs is degraded — detach rejected ({ce})",
+            503,
+        ) from ce
+    if status_code == 404:
         logger.info(
             "el_phone_detach 404 el_id=%s... — already removed",
             el_phone_number_id[:12],
         )
         return
-    if resp.status_code >= 400:
-        _raise_el_error("detach_from_elevenlabs", resp)
-
     logger.info("el_phone_detach success el_id=%s...", el_phone_number_id[:12])
+
+
+async def _do_outbound_call_post(
+    *, body: dict[str, Any], headers: dict[str, str]
+) -> tuple[int, dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        resp = await client.post(
+            f"{_EL_BASE_URL}/v1/convai/twilio/outbound-call",
+            json=body,
+            headers=headers,
+        )
+    # outbound-call is NOT idempotent (each call dials a phone, possibly bills);
+    # we never raise RetryableError so only true network-level errors retry.
+    if resp.status_code >= 400:
+        _raise_el_error("outbound_call", resp)
+    try:
+        return resp.status_code, resp.json()
+    except Exception:
+        return resp.status_code, {}
 
 
 async def outbound_call(
@@ -213,6 +351,10 @@ async def outbound_call(
     POST /v1/convai/twilio/outbound-call.
     Returns call_sid from the EL response.
     Yellow tier — capability token validated upstream by route layer.
+
+    Pass 18+ Lane 2: idempotent=False — outbound calls have side effects
+    (place a call, bill). Only network-level errors before remote sees the
+    request will retry.
     """
     headers = _el_headers()
     body: dict[str, Any] = {
@@ -221,16 +363,22 @@ async def outbound_call(
         "phone_number_id": el_phone_number_id,
         "dynamic_variables": dynamic_variables,
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
-            f"{_EL_BASE_URL}/v1/convai/twilio/outbound-call",
-            json=body,
+    try:
+        _, data = await resilient_call(
+            _do_outbound_call_post,
+            body=body,
             headers=headers,
+            breaker=elevenlabs_breaker(),
+            policy=ELEVENLABS_RETRY,
+            idempotent=False,
         )
-    if resp.status_code >= 400:
-        _raise_el_error("outbound_call", resp)
+    except CircuitOpenError as ce:
+        raise ElevenLabsPhoneError(
+            "EL_CIRCUIT_OPEN",
+            f"ElevenLabs is degraded — outbound rejected ({ce})",
+            503,
+        ) from ce
 
-    data = resp.json()
     call_sid = data.get("call_sid") or data.get("sid") or ""
     logger.info(
         "el_outbound_call initiated to=%s call_sid=%s...",

@@ -34,6 +34,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
 from aspire_orchestrator.services.token_service import validate_token
 from aspire_orchestrator.services.twilio_provisioning import (
@@ -107,6 +108,24 @@ def _resolve_scope(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": "INVALID_SCOPE_HEADERS", "message": str(exc)},
         ) from exc
+
+
+def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
+    """Extract a deterministic capability_token_id for receipt tracing (Law #2).
+
+    Uses the token's own 'id' field if present; falls back to a SHA-256 of the
+    token's 'signature' field (first 16 hex chars).  Returns "" if neither is
+    available — the receipt is still cut, just without a token correlation.
+    """
+    if not cap_token:
+        return ""
+    if cap_token.get("id"):
+        return str(cap_token["id"])
+    sig = cap_token.get("signature") or cap_token.get("token") or ""
+    if sig:
+        import hashlib
+        return hashlib.sha256(str(sig).encode()).hexdigest()[:16]
+    return ""
 
 
 def _validate_capability_token_for(
@@ -194,6 +213,9 @@ async def purchase_number_route(
             phone_number=req.phone_number,
             scope=scope,
             idempotency_key=req.idempotency_key,
+            trace_id=get_trace_id(),
+            correlation_id=get_correlation_id(),
+            capability_token_id=_cap_token_id(req.capability_token),
         )
     except TwilioProvisioningError as exc:
         raise HTTPException(
@@ -228,7 +250,13 @@ async def release_number_route(
         # Pass 18 fix THREAT-015: pass scope so release_number binds the
         # phone_number_id lookup to the authenticated suite. Cross-tenant
         # release with a valid same-tenant token is now blocked with 404.
-        await release_number(phone_number_id, scope=scope)
+        await release_number(
+            phone_number_id,
+            scope=scope,
+            trace_id=get_trace_id(),
+            correlation_id=get_correlation_id(),
+            capability_token_id=_cap_token_id(capability_token),
+        )
     except TwilioProvisioningError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND if exc.status_code == 404 else status.HTTP_502_BAD_GATEWAY,

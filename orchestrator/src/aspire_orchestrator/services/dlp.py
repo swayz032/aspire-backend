@@ -153,6 +153,33 @@ class DLPService:
             redacted = pattern.sub(label, redacted)
         return redacted
 
+    def redact_text_ingestion(self, text: str) -> str:
+        """Redact PII using Presidio first, then a regex second-pass.
+
+        Presidio's context-dependent recognizers (US_SSN in particular) require
+        surrounding context words to trigger at high confidence.  The regex
+        second-pass catches bare patterns (e.g. '123-45-6789' with no surrounding
+        context) that Presidio may miss.
+
+        Use this method on the ingestion path where stored PII is permanent.
+        The combination of Presidio + regex provides maximum recall at the cost
+        of slightly higher false-positive rate (acceptable for stored memory).
+        """
+        if not text or not isinstance(text, str):
+            return text
+        self._ensure_initialized()
+        # First pass: Presidio (handles EMAIL, PHONE, CREDIT_CARD with context well)
+        try:
+            text = self.redact_text(text)
+        except Exception as exc:
+            logger.warning("DLP presidio pass failed during ingestion scrub: %s", exc)
+        # Second pass: regex (catches bare SSN, CC, email, phone patterns Presidio missed)
+        try:
+            text = self._regex_redact_text(text)
+        except Exception as exc:
+            logger.warning("DLP regex pass failed during ingestion scrub: %s", exc)
+        return text
+
     def redact_text(self, text: str) -> str:
         """Redact PII from a text string using Presidio.
 
@@ -355,6 +382,23 @@ def redact_text(text: str) -> str:
     return get_dlp_service().redact_text(text)
 
 
+async def scrub_text(text: str) -> str:
+    """Async ingestion-path PII scrub: Presidio first, then regex second-pass.
+
+    Uses redact_text_ingestion() which applies both Presidio and the regex
+    fallback to maximise recall.  Presidio's context-dependent recognizers
+    (US_SSN especially) can miss bare patterns — the regex second-pass catches
+    those.  This belt-and-suspenders approach is correct for the ingestion path
+    where stored PII is permanent (unlike log scrubbing where false positives
+    are recovered on next deploy).
+
+    Per Law #9 (Security & Privacy): canonical entry-point for all
+    ingestion-path PII scrubbing.  Fail-open: DLP failure returns the original
+    text with a WARNING — ingestion must NOT be blocked by DLP failures.
+    """
+    return get_dlp_service().redact_text_ingestion(text)
+
+
 def redact_receipt(
     receipt: dict[str, Any],
     *,
@@ -371,3 +415,14 @@ def redact_receipts(
 ) -> list[dict[str, Any]]:
     """Convenience: redact PII from a list of receipts."""
     return get_dlp_service().redact_receipts(receipts, redact_fields=redact_fields)
+
+
+__all__ = [
+    "DLPInitializationError",
+    "DLPService",
+    "get_dlp_service",
+    "redact_text",
+    "scrub_text",
+    "redact_receipt",
+    "redact_receipts",
+]

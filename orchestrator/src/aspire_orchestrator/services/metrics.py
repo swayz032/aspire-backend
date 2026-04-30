@@ -109,6 +109,52 @@ RETRIEVAL_GROUNDING_SCORE = Histogram(
     buckets=(0.0, 0.2, 0.4, 0.55, 0.7, 0.85, 1.0),
 )
 
+# =============================================================================
+# Pass 18+ Lane 2 — Telephony / SMS / Personalization instruments
+# =============================================================================
+
+TELEPHONY_PURCHASE_COUNTER = Counter(
+    "aspire_telephony_purchase_total",
+    "Total Twilio phone-number purchase attempts by outcome",
+    ["outcome"],  # success | failed | timeout | circuit_open | idempotent_replay
+)
+
+TELEPHONY_RELEASE_COUNTER = Counter(
+    "aspire_telephony_release_total",
+    "Total Twilio phone-number release attempts by outcome",
+    ["outcome"],
+)
+
+SMS_SEND_COUNTER = Counter(
+    "aspire_sms_send_total",
+    "Total outbound SMS attempts by outcome",
+    ["outcome"],  # success | failed | timeout | circuit_open
+)
+
+SMS_OUTBOUND_LATENCY = Histogram(
+    "aspire_sms_outbound_latency_seconds",
+    "Outbound SMS send latency (request -> Twilio response)",
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0),
+)
+
+PERSONALIZATION_LATENCY = Histogram(
+    "aspire_personalization_latency_seconds",
+    "Sarah personalization webhook end-to-end latency",
+    buckets=(0.05, 0.1, 0.2, 0.3, 0.5, 0.65, 0.8, 1.0, 2.0),
+)
+
+PERSONALIZATION_CACHE_FALLBACK_COUNTER = Counter(
+    "aspire_personalization_cache_fallback_total",
+    "Sarah personalization fell back to cached config by reason",
+    ["reason"],  # timeout | db_error | circuit_open
+)
+
+INGESTION_COUNTER = Counter(
+    "aspire_ingestion_total",
+    "Inbound provider ingestion attempts by provider and outcome",
+    ["provider", "outcome"],  # provider in {twilio_sms, twilio_voice, elevenlabs, ...}
+)
+
 # Service info — static labels for service identification
 SERVICE_INFO = Info(
     "aspire_orchestrator",
@@ -140,6 +186,13 @@ class MetricsCollector:
     response_quality_score = RESPONSE_QUALITY_SCORE
     retrieval_router_counter = RETRIEVAL_ROUTER_COUNTER
     retrieval_grounding_score = RETRIEVAL_GROUNDING_SCORE
+    telephony_purchase_counter = TELEPHONY_PURCHASE_COUNTER
+    telephony_release_counter = TELEPHONY_RELEASE_COUNTER
+    sms_send_counter = SMS_SEND_COUNTER
+    sms_outbound_latency = SMS_OUTBOUND_LATENCY
+    personalization_latency = PERSONALIZATION_LATENCY
+    personalization_cache_fallback_counter = PERSONALIZATION_CACHE_FALLBACK_COUNTER
+    ingestion_counter = INGESTION_COUNTER
 
     def record_request(
         self,

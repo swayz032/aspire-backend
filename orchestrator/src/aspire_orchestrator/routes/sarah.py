@@ -45,8 +45,11 @@ Table assumptions:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -54,8 +57,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Request, HTTPException, status
 
 from aspire_orchestrator.config.settings import settings
+from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.services import receipt_store
 from aspire_orchestrator.services.ingestion.signatures import verify_elevenlabs
+from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_select,
@@ -64,6 +69,44 @@ from aspire_orchestrator.services.supabase_client import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/sarah", tags=["sarah"])
+
+# ── Last-known-good (LKG) config cache for Sarah personalization ─────────────
+# In-memory LRU keyed by called_number. Used when DB lookups exceed the 800ms
+# budget — Sarah still gets a personalized response built from a recent valid
+# resolution. Pod restart wipes the cache (acceptable: first call repopulates
+# within budget under normal load).
+_LKG_CACHE_SIZE = 256
+_LKG_CACHE_TTL_SECONDS = 600.0  # 10 min — staler than this we prefer defaults
+_lkg_cache: "OrderedDict[str, tuple[float, dict[str, Any], dict[str, Any]]]" = OrderedDict()
+# value tuple: (cached_at_monotonic, dyn_vars, scope_dict)
+
+
+def _cache_put(called_number: str, dyn_vars: dict[str, Any], scope: dict[str, Any]) -> None:
+    if called_number in _lkg_cache:
+        _lkg_cache.move_to_end(called_number)
+    _lkg_cache[called_number] = (time.monotonic(), dict(dyn_vars), dict(scope))
+    while len(_lkg_cache) > _LKG_CACHE_SIZE:
+        _lkg_cache.popitem(last=False)
+
+
+def _cache_get(
+    called_number: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Return (dyn_vars, scope) if cached and fresh, else None."""
+    item = _lkg_cache.get(called_number)
+    if item is None:
+        return None
+    cached_at, dyn_vars, scope = item
+    if time.monotonic() - cached_at > _LKG_CACHE_TTL_SECONDS:
+        _lkg_cache.pop(called_number, None)
+        return None
+    _lkg_cache.move_to_end(called_number)
+    return dict(dyn_vars), dict(scope)
+
+
+# Personalization total wall-clock budget (Pass 16 §16.D: <800ms).
+_PERSONALIZATION_BUDGET_SECONDS = 0.8
+_PER_QUERY_TIMEOUT_SECONDS = 0.2  # 800ms / 4 sequential queries
 
 # Routing role → dynamic variable name mapping (§16 constant)
 _ROLE_TO_DYN_VAR: dict[str, str] = {
@@ -175,6 +218,10 @@ async def personalization(request: Request) -> dict[str, Any]:
     sig_header = request.headers.get("ElevenLabs-Signature", "")
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    # Extract trace context from middleware contextvars (degrades gracefully
+    # if called outside a middleware-wrapped request — returns "" in that case).
+    trace_id = get_trace_id()
+    correlation_id = get_correlation_id()
 
     # ── Signature verification (Law #3: fail closed) ─────────────────────
     # Pass 18 fix: an empty secret + missing/invalid signature must STILL fail
@@ -195,6 +242,8 @@ async def personalization(request: Request) -> dict[str, Any]:
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
             "reason_code": "MISSING_WEBHOOK_SECRET",
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "created_at": now,
         }])
         raise HTTPException(
@@ -211,6 +260,8 @@ async def personalization(request: Request) -> dict[str, Any]:
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
             "reason_code": "INVALID_SIGNATURE",
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "created_at": now,
         }])
         raise HTTPException(
@@ -250,6 +301,8 @@ async def personalization(request: Request) -> dict[str, Any]:
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
             "reason_code": "INVALID_CALLED_NUMBER",
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "created_at": now,
         }])
         raise HTTPException(
@@ -257,13 +310,112 @@ async def personalization(request: Request) -> dict[str, Any]:
             detail={"error": "INVALID_CALLED_NUMBER", "message": "called_number must be E.164"},
         )
 
-    # ── Resolve tenant from called_number ─────────────────────────────────
-    phone_rows = await _safe_select(
-        "tenant_phone_numbers",
-        f"phone_number=eq.{called_number}&status=eq.active",
-        limit=1,
-    )
-    if not phone_rows:
+    # ── Resolve tenant + config under 800ms wall-clock budget ─────────────
+    handler_start = time.monotonic()
+    fallback_reason: str | None = None
+    used_cache = False
+
+    try:
+        resolution = await asyncio.wait_for(
+            _resolve_personalization(called_number=called_number),
+            timeout=_PERSONALIZATION_BUDGET_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        fallback_reason = "timeout"
+        resolution = None
+    except Exception as exc:
+        # Unexpected — never 500 a personalization call (Sarah goes silent otherwise).
+        logger.error(
+            "sarah_personalization resolution_error called=%s err=%s",
+            called_number,
+            exc,
+        )
+        fallback_reason = "error"
+        resolution = None
+
+    if resolution is None:
+        # Attempt LKG cache fallback before defaults
+        cached = _cache_get(called_number)
+        if cached is not None:
+            dyn_vars, scope = cached
+            suite_id = scope.get("suite_id", "")
+            office_id = scope.get("office_id", "")
+            tenant_id = scope.get("tenant_id", "")
+            front_desk_config_id = scope.get("front_desk_config_id", "")
+            is_open = bool(dyn_vars.get("is_open_now", True))
+            time_of_day = str(dyn_vars.get("time_of_day", "morning"))
+            used_cache = True
+        else:
+            # No cache → safe defaults so EL still gets a complete response.
+            dyn_vars = dict(_DEFAULT_DYN_VARS)
+            tz_name = "America/New_York"
+            dyn_vars["time_of_day"] = _compute_time_of_day(tz_name)
+            suite_id = ""
+            office_id = ""
+            tenant_id = ""
+            front_desk_config_id = ""
+            is_open = True
+            time_of_day = dyn_vars["time_of_day"]
+
+        latency = time.monotonic() - handler_start
+        METRICS.personalization_latency.observe(latency)
+        METRICS.personalization_cache_fallback_counter.labels(
+            reason=fallback_reason or "no_resolution"
+        ).inc()
+        # Cut a fallback receipt (Law #2 — even degraded paths are state changes
+        # in the trace).
+        receipt_store.store_receipts([{
+            "id": receipt_id,
+            "receipt_type": "personalization_cache_fallback",
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "tenant_id": tenant_id,
+            "outcome": "degraded",
+            "action_type": "sarah_personalization",
+            "tool_used": "sarah_personalization",
+            "risk_tier": "green",
+            "reason_code": "STALE_CONFIG_FALLBACK" if used_cache else "DEFAULT_CONFIG_FALLBACK",
+            "redacted_inputs": {
+                "called_number": called_number,
+                "caller_id_prefix": caller_id_log,
+                "call_sid": call_sid,
+                "fallback_reason": fallback_reason or "unknown",
+            },
+            "redacted_outputs": {
+                "is_open_now": is_open,
+                "time_of_day": time_of_day,
+                "used_lkg_cache": used_cache,
+                "latency_seconds": round(latency, 3),
+            },
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
+            "created_at": now,
+        }])
+        first_message = _build_first_message(dyn_vars, is_open)
+        logger.warning(
+            "sarah_personalization fallback called=%s reason=%s used_cache=%s latency=%.3fs",
+            called_number,
+            fallback_reason or "unknown",
+            used_cache,
+            latency,
+        )
+        return {
+            "type": "conversation_initiation_client_data",
+            "dynamic_variables": dyn_vars,
+            "conversation_config_override": {
+                "agent": {
+                    "first_message": first_message,
+                    "language": "en",
+                }
+            },
+            # Soft signal to downstream tooling that this response is degraded
+            # — EL ignores unknown top-level keys, so it's a safe addition.
+            "_aspire_fallback": True,
+        }
+
+    if resolution.get("unknown_number"):
+        latency = time.monotonic() - handler_start
+        METRICS.personalization_latency.observe(latency)
         logger.warning(
             "sarah_personalization unknown_number called=%s",
             called_number,
@@ -277,6 +429,8 @@ async def personalization(request: Request) -> dict[str, Any]:
             "risk_tier": "green",
             "reason_code": "UNKNOWN_NUMBER",
             "redacted_inputs": {"called_number": called_number},
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "created_at": now,
         }])
         raise HTTPException(
@@ -284,80 +438,30 @@ async def personalization(request: Request) -> dict[str, Any]:
             detail={"error": "UNKNOWN_NUMBER", "message": f"No tenant for number {called_number}"},
         )
 
-    phone_row = phone_rows[0]
-    suite_id = phone_row.get("suite_id", "")
-    office_id = phone_row.get("office_id", "")
-    tenant_id = phone_row.get("tenant_id", "")
+    dyn_vars = resolution["dyn_vars"]
+    suite_id = resolution["suite_id"]
+    office_id = resolution["office_id"]
+    tenant_id = resolution["tenant_id"]
+    front_desk_config_id = resolution["front_desk_config_id"]
+    is_open = resolution["is_open"]
+    time_of_day = resolution["time_of_day"]
+    config_version = resolution["version_no"]
 
-    # ── Fetch front_desk_configs (max version = current) ──────────────────
-    config_rows = await _safe_select(
-        "front_desk_configs",
-        f"office_id=eq.{office_id}&is_current=eq.true",
-        order_by="version_no.desc",
-        limit=1,
-    )
-    config: dict[str, Any] = config_rows[0] if config_rows else {}
-    front_desk_config_id = config.get("id", "")
-
-    # ── Fetch routing contacts ────────────────────────────────────────────
-    routing_rows = await _safe_select(
-        "front_desk_routing_contacts",
-        f"office_id=eq.{office_id}",
-    )
-
-    # ── Fetch business name + profile ────────────────────────────────────
-    biz_name, first_name, last_name, industry, tz_name = await _fetch_profile(
-        suite_id=suite_id,
-        office_id=office_id,
-        tenant_id=tenant_id,
+    # Populate LKG cache for future degraded calls.
+    _cache_put(
+        called_number,
+        dyn_vars,
+        {
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "tenant_id": tenant_id,
+            "front_desk_config_id": front_desk_config_id,
+        },
     )
 
-    # ── Fetch business hours ──────────────────────────────────────────────
-    hours_rows = await _safe_select(
-        "business_hours",
-        f"office_id=eq.{office_id}",
-    )
-
-    # ── Compute time-of-day + is_open ─────────────────────────────────────
-    time_of_day = _compute_time_of_day(tz_name)
-    is_open = _is_open_now(hours_rows, tz_name) if hours_rows else True
-
-    # ── Build routing dynamic vars ────────────────────────────────────────
-    routing_dyn: dict[str, str] = {v: "" for v in _ROLE_TO_DYN_VAR.values()}
-    routing_summary_parts: list[str] = []
-    for row in routing_rows or []:
-        role = row.get("role", "")
-        dyn_var = _ROLE_TO_DYN_VAR.get(role)
-        if dyn_var:
-            phone = row.get("phone") or ""
-            routing_dyn[dyn_var] = phone
-            label = row.get("label") or row.get("name") or role
-            if phone:
-                routing_summary_parts.append(f"{label} ({role})")
-
-    routing_contacts_summary = ", ".join(routing_summary_parts)
-
-    # ── Assemble dynamic_variables ────────────────────────────────────────
-    dyn_vars: dict[str, Any] = {
-        **_DEFAULT_DYN_VARS,
-        "business_name": biz_name,
-        "first_name": first_name,
-        "last_name": last_name,
-        "industry": industry,
-        "time_of_day": time_of_day,
-        "is_open_now": is_open,
-        "after_hours_mode": config.get("after_hours_mode", "take_message"),
-        "busy_mode": config.get("busy_mode", "take_message"),
-        "public_number_mode": config.get("public_number_mode", "ASPIRE_NUMBER"),
-        "catch_mode": config.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
-        "greeting_name_override": config.get("greeting_name_override") or "",
-        "pronunciation_override": config.get("pronunciation_override") or "",
-        "routing_contacts_summary": routing_contacts_summary,
-        **routing_dyn,
-    }
-
-    # ── Build first_message ───────────────────────────────────────────────
     first_message = _build_first_message(dyn_vars, is_open)
+    latency = time.monotonic() - handler_start
+    METRICS.personalization_latency.observe(latency)
 
     # ── Cut receipt (Law #2) — idempotent on call_sid ─────────────────────
     receipt_store.store_receipts([{
@@ -377,19 +481,23 @@ async def personalization(request: Request) -> dict[str, Any]:
         },
         "redacted_outputs": {
             "front_desk_config_id": front_desk_config_id,
-            "version_no": config.get("version_no", 0),
+            "version_no": config_version,
             "is_open_now": is_open,
             "time_of_day": time_of_day,
+            "latency_seconds": round(latency, 3),
         },
+        "trace_id": trace_id,
+        "correlation_id": correlation_id,
         "created_at": now,
     }])
 
     logger.info(
-        "sarah_personalization resolved called=%s caller=%s is_open=%s tod=%s",
+        "sarah_personalization resolved called=%s caller=%s is_open=%s tod=%s latency=%.3fs",
         called_number,
         caller_id_log,
         is_open,
         time_of_day,
+        latency,
     )
 
     return {
@@ -404,6 +512,105 @@ async def personalization(request: Request) -> dict[str, Any]:
     }
 
 
+async def _resolve_personalization(
+    *, called_number: str
+) -> dict[str, Any] | None:
+    """Run the 4 sequential lookups + dyn_vars assembly under outer wait_for.
+
+    Returns:
+      None if a fatal error before tenant resolution.
+      {"unknown_number": True} if no tenant matches called_number.
+      Otherwise a dict with dyn_vars + scope fields.
+
+    The outer `asyncio.wait_for(_PERSONALIZATION_BUDGET_SECONDS)` cancels this
+    coroutine if total wall time exceeds 800ms, surfacing as TimeoutError to
+    the caller which then falls back to LKG cache or defaults.
+    """
+    phone_rows = await _safe_select(
+        "tenant_phone_numbers",
+        f"phone_number=eq.{called_number}&status=eq.active",
+        limit=1,
+    )
+    if not phone_rows:
+        return {"unknown_number": True}
+
+    phone_row = phone_rows[0]
+    suite_id = phone_row.get("suite_id", "")
+    office_id = phone_row.get("office_id", "")
+    tenant_id = phone_row.get("tenant_id", "")
+
+    config_rows = await _safe_select(
+        "front_desk_configs",
+        f"office_id=eq.{office_id}&is_current=eq.true",
+        order_by="version_no.desc",
+        limit=1,
+    )
+    config: dict[str, Any] = config_rows[0] if config_rows else {}
+    front_desk_config_id = config.get("id", "")
+
+    routing_rows = await _safe_select(
+        "front_desk_routing_contacts",
+        f"office_id=eq.{office_id}",
+    )
+
+    biz_name, first_name, last_name, industry, tz_name = await _fetch_profile(
+        suite_id=suite_id,
+        office_id=office_id,
+        tenant_id=tenant_id,
+    )
+
+    hours_rows = await _safe_select(
+        "business_hours",
+        f"office_id=eq.{office_id}",
+    )
+
+    time_of_day = _compute_time_of_day(tz_name)
+    is_open = _is_open_now(hours_rows, tz_name) if hours_rows else True
+
+    routing_dyn: dict[str, str] = {v: "" for v in _ROLE_TO_DYN_VAR.values()}
+    routing_summary_parts: list[str] = []
+    for row in routing_rows or []:
+        role = row.get("role", "")
+        dyn_var = _ROLE_TO_DYN_VAR.get(role)
+        if dyn_var:
+            phone = row.get("phone") or ""
+            routing_dyn[dyn_var] = phone
+            label = row.get("label") or row.get("name") or role
+            if phone:
+                routing_summary_parts.append(f"{label} ({role})")
+
+    routing_contacts_summary = ", ".join(routing_summary_parts)
+
+    dyn_vars: dict[str, Any] = {
+        **_DEFAULT_DYN_VARS,
+        "business_name": biz_name,
+        "first_name": first_name,
+        "last_name": last_name,
+        "industry": industry,
+        "time_of_day": time_of_day,
+        "is_open_now": is_open,
+        "after_hours_mode": config.get("after_hours_mode", "take_message"),
+        "busy_mode": config.get("busy_mode", "take_message"),
+        "public_number_mode": config.get("public_number_mode", "ASPIRE_NUMBER"),
+        "catch_mode": config.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
+        "greeting_name_override": config.get("greeting_name_override") or "",
+        "pronunciation_override": config.get("pronunciation_override") or "",
+        "routing_contacts_summary": routing_contacts_summary,
+        **routing_dyn,
+    }
+
+    return {
+        "dyn_vars": dyn_vars,
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "tenant_id": tenant_id,
+        "front_desk_config_id": front_desk_config_id,
+        "version_no": config.get("version_no", 0),
+        "is_open": is_open,
+        "time_of_day": time_of_day,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -415,9 +622,24 @@ async def _safe_select(
     order_by: str | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """supabase_select wrapper that returns [] on error (personalization must not 500)."""
+    """supabase_select wrapper bounded to 200ms (Pass 18+ Lane 2 — 800ms / 4 calls).
+
+    Returns [] on error or timeout — personalization must never 500. Outer
+    asyncio.wait_for(0.8) in the handler enforces the global budget.
+    """
     try:
-        return await supabase_select(table, filters, order_by=order_by, limit=limit)
+        return await asyncio.wait_for(
+            supabase_select(table, filters, order_by=order_by, limit=limit),
+            timeout=_PER_QUERY_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "sarah_personalization db_timeout table=%s filters=%s budget=%.0fms",
+            table,
+            filters,
+            _PER_QUERY_TIMEOUT_SECONDS * 1000,
+        )
+        return []
     except SupabaseClientError as exc:
         logger.error("sarah_personalization db error table=%s filters=%s: %s", table, filters, exc)
         return []

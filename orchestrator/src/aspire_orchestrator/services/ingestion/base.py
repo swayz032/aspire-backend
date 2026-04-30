@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from uuid import UUID
 
+from aspire_orchestrator.services.dlp import scrub_text
 from aspire_orchestrator.schemas.memory_v1 import (
     MemoryObjectIn,
     MemoryObjectOut,
@@ -100,6 +101,98 @@ class BaseIngestionAdapter(ABC):
     ) -> None:
         self._memory_service = memory_service or MemoryService()
         self._thread_resolver = thread_resolver or EntityThreadResolver()
+
+    # ---- PII scrubbing (Law #9) -----------------------------------------------
+
+    # Fields in detail dicts that may contain free-text PII.
+    # Extend per adapter by overriding _pii_text_fields().
+    _PII_TEXT_FIELDS: frozenset[str] = frozenset({
+        "body",
+        "transcript_text",
+        "transcription_text",
+        "description",
+        "summary_text",
+        "text",
+        "message",
+        "notes",
+        "file_name",
+    })
+
+    # Email / phone fields: we hash rather than blank so correlation is still
+    # possible in audit, but the raw value is not stored.
+    _PII_EMAIL_FIELDS: frozenset[str] = frozenset({
+        "viewer_email",
+        "recipient_email",
+        "signer_email",
+        "email",
+    })
+
+    def _pii_text_fields(self) -> frozenset[str]:
+        """Return the set of text fields to run through scrub_text.
+
+        Subclasses may override to extend with adapter-specific field names.
+        The base set already covers the fields mandated by THREAT-016.
+        """
+        return self._PII_TEXT_FIELDS
+
+    @staticmethod
+    def _hash_email(email: str) -> str:
+        """Replace an email with a hashed prefix for audit while removing PII."""
+        import hashlib
+        digest = hashlib.sha256(email.encode()).hexdigest()
+        prefix = email[:3] if len(email) >= 3 else email
+        return f"{prefix}...<sha256:{digest[:12]}>"
+
+    async def _scrub_detail_pii(self, detail: dict[str, Any]) -> dict[str, Any]:
+        """Recursively scrub PII fields in a detail dict (Law #9, THREAT-016).
+
+        - Free-text fields (body, transcript_text, description, …) → Presidio
+          scrub_text() which replaces recognised entities with typed placeholders
+          (<SSN_REDACTED>, <EMAIL_REDACTED>, etc.).
+        - Email identity fields (viewer_email, recipient_email, …) → SHA-256
+          hash with 3-char prefix so correlation is possible but raw address is
+          not stored.
+
+        Fail-open: DLP failure MUST NOT fail ingestion (Law #3 only applies to
+        capability tokens + signatures; DLP is best-effort per THREAT-016 spec).
+        Logs a WARNING on failure; returns the original detail unmodified so the
+        memory write always proceeds.
+
+        Does not mutate the input dict — returns a new dict.
+        """
+        import copy
+        text_fields = self._pii_text_fields()
+        result: dict[str, Any] = copy.copy(detail)
+
+        for key, value in detail.items():
+            try:
+                if key in text_fields and isinstance(value, str) and value:
+                    result[key] = await scrub_text(value)
+                elif key in self._PII_EMAIL_FIELDS and isinstance(value, str) and value:
+                    result[key] = self._hash_email(value)
+                elif isinstance(value, dict):
+                    result[key] = await self._scrub_detail_pii(value)
+                elif isinstance(value, list):
+                    scrubbed_list: list[Any] = []
+                    for item in value:
+                        if isinstance(item, dict):
+                            scrubbed_list.append(await self._scrub_detail_pii(item))
+                        elif isinstance(item, str) and key in text_fields and item:
+                            scrubbed_list.append(await scrub_text(item))
+                        else:
+                            scrubbed_list.append(item)
+                    result[key] = scrubbed_list
+            except Exception as exc:
+                logger.warning(
+                    "ingestion_dlp_scrub_field_failed provider=%s key=%s error=%s "
+                    "— proceeding with original value (fail-open on DLP per THREAT-016)",
+                    self.provider_name,
+                    key,
+                    exc,
+                )
+                result[key] = value  # restore original on per-field failure
+
+        return result
 
     # ---- subclass hooks ----------------------------------------------------
 
@@ -239,6 +332,25 @@ class BaseIngestionAdapter(ABC):
                 status_code=422,
             ) from exc
 
+        # 4b. Scrub PII from envelope before writing (Law #9, THREAT-016).
+        #     Fail-open: DLP failure logs a warning but does NOT abort ingestion.
+        #     Capability token + signature failures (above) remain fail-closed
+        #     per Law #3 — DLP is a best-effort privacy control, not a security gate.
+        try:
+            envelope = envelope.model_copy(
+                update={
+                    "detail": await self._scrub_detail_pii(envelope.detail or {}),
+                    "summary": await scrub_text(envelope.summary or ""),
+                }
+            )
+        except Exception as exc:
+            logger.warning(
+                "ingestion_dlp_scrub_envelope_failed provider=%s error=%s "
+                "— proceeding with unscrubbed envelope (fail-open on DLP)",
+                self.provider_name,
+                exc,
+            )
+
         # 5. Write — MemoryService cuts the receipt internally (Law #2)
         try:
             memory = await self._memory_service.write(envelope, scope=scope, embed=True)
@@ -250,6 +362,14 @@ class BaseIngestionAdapter(ABC):
                 exc.code,
                 exc.tenant_id,
             )
+            try:
+                from aspire_orchestrator.services.metrics import METRICS as _M
+                _M.ingestion_counter.labels(
+                    provider=self.provider_name,
+                    outcome="failed",
+                ).inc()
+            except Exception:  # noqa: BLE001
+                pass
             raise IngestionError(
                 f"{self.provider_name} memory write failed: {exc.code}",
                 code="MEMORY_WRITE_FAILED",
@@ -270,6 +390,16 @@ class BaseIngestionAdapter(ABC):
             memory.memory_id,
             str(scope.tenant_id),
         )
+        # Pass 18+ Lane 2 — emit success metric. Imported lazily to avoid a
+        # circular import (services.metrics doesn't depend on services.ingestion).
+        try:
+            from aspire_orchestrator.services.metrics import METRICS as _M
+            _M.ingestion_counter.labels(
+                provider=self.provider_name,
+                outcome="success",
+            ).inc()
+        except Exception:  # noqa: BLE001 — metric failure must never block ingestion
+            pass
         return IngestionResult(memory=memory, deduplicated=deduplicated)
 
 

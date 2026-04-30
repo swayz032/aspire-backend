@@ -1,9 +1,9 @@
-"""Twilio phone-number provisioning service (Pass 16 — §16.B).
+"""Twilio phone-number provisioning service (Pass 16 — §16.B; Pass 18+ Lane 2).
 
 Provides:
   - search_available_numbers: search available US local numbers via Twilio REST API.
-  - purchase_number: atomic Yellow-tier purchase → EL import → EL attach → receipt.
-  - release_number: EL detach → Twilio release → mark released_at.
+  - purchase_number: atomic Yellow-tier purchase -> EL import -> EL attach -> receipt.
+  - release_number: EL detach -> Twilio release -> mark released_at.
 
 Aspire Laws enforced:
   Law #2 — every state change cuts an immutable receipt.
@@ -11,11 +11,19 @@ Aspire Laws enforced:
   Law #4 — Yellow tier: capability token validated upstream by route layer.
   Law #6 — suite_id/office_id scoped; never cross-tenant.
   Law #9 — twilio_account_sid and twilio_auth_token never logged.
+  Law #10 — circuit breaker + retry on every external HTTP call.
 
-Idempotency:
-  purchase_number accepts a client-generated idempotency_key.
-  Duplicate key returns cached PurchasedNumber without re-executing Twilio call.
-  Window: 24 hours (in-memory; Redis/Supabase migration in Phase 2).
+Pass 18+ Lane 2 changes:
+  - All Twilio HTTP calls wrapped with `resilient_call` (breaker + retry).
+  - GET /AvailablePhoneNumbers retried (idempotent=True).
+  - POST /IncomingPhoneNumbers (purchase) retried ONLY on true network errors
+    (idempotent=False) — Twilio billing already happened on any HTTP response.
+  - DELETE rollback retried with `idempotent=True` (delete is naturally idempotent
+    on Twilio side: 404 means already gone).
+  - Persistent idempotency: `tenant_phone_numbers.purchase_idempotency_key`
+    (migration 104) replaces the in-memory `_idem_store` dict. Survives restarts.
+  - Prometheus metrics: aspire_telephony_purchase_total{outcome=...},
+    aspire_telephony_release_total{outcome=...}.
 """
 
 from __future__ import annotations
@@ -38,6 +46,14 @@ from aspire_orchestrator.services.elevenlabs_phone import (
     detach_from_elevenlabs,
     import_to_elevenlabs,
 )
+from aspire_orchestrator.services.metrics import METRICS
+from aspire_orchestrator.services.resilience import (
+    TWILIO_RETRY,
+    CircuitOpenError,
+    RetryableError,
+    resilient_call,
+    twilio_breaker,
+)
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_insert,
@@ -52,9 +68,6 @@ _TIMEOUT_SECONDS = 4.5  # <5s per Law #10 reliability standard
 
 # Orchestrator production URL — configurable via env for staging/dev overrides
 _ASPIRE_ORCHESTRATOR_URL = "https://orchestrator.aspire.app"
-
-# In-memory idempotency store (24h window, Phase 1)
-_idem_store: dict[str, "PurchasedNumber"] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +145,42 @@ def _raise_twilio_error(operation: str, resp: httpx.Response) -> None:
     )
 
 
+def _is_retryable_twilio_status(status_code: int) -> bool:
+    """Twilio responses that warrant a retry on idempotent operations.
+
+    429 throttling, 5xx server errors. NEVER 4xx (auth/validation).
+    """
+    return status_code == 429 or 500 <= status_code < 600
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+async def _twilio_get_available_numbers(
+    *,
+    account_sid: str,
+    auth_token: str,
+    params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Single attempt of the search call. Wrapped by resilient_call below."""
+    url = f"{_TWILIO_BASE}/Accounts/{account_sid}/AvailablePhoneNumbers/US/Local.json"
+    async with httpx.AsyncClient(
+        auth=(account_sid, auth_token),
+        timeout=_TIMEOUT_SECONDS,
+    ) as client:
+        resp = await client.get(url, params=params)
+
+    if resp.status_code >= 400:
+        if _is_retryable_twilio_status(resp.status_code):
+            raise RetryableError(
+                "TWILIO_TRANSIENT",
+                f"Twilio search transient {resp.status_code}",
+            )
+        _raise_twilio_error("search_available_numbers", resp)
+
+    return resp.json().get("available_phone_numbers", []) or []
 
 
 async def search_available_numbers(
@@ -147,6 +193,7 @@ async def search_available_numbers(
     GET /AvailablePhoneNumbers/US/Local.json?AreaCode={n}&Contains={c}
     Returns sanitized list — Twilio account SID never included in response.
 
+    Idempotent (GET) — wrapped with circuit breaker + retry on transient failures.
     Law #9: account_sid used only in auth, never returned.
     """
     account_sid, auth_token = _twilio_auth()
@@ -158,19 +205,26 @@ async def search_available_numbers(
     if contains:
         params["Contains"] = contains
 
-    url = f"{_TWILIO_BASE}/Accounts/{account_sid}/AvailablePhoneNumbers/US/Local.json"
-    async with httpx.AsyncClient(
-        auth=(account_sid, auth_token),
-        timeout=_TIMEOUT_SECONDS,
-    ) as client:
-        resp = await client.get(url, params=params)
+    try:
+        raw_numbers = await resilient_call(
+            _twilio_get_available_numbers,
+            account_sid=account_sid,
+            auth_token=auth_token,
+            params=params,
+            breaker=twilio_breaker(),
+            policy=TWILIO_RETRY,
+            idempotent=True,
+        )
+    except CircuitOpenError:
+        logger.warning("twilio_search circuit_open area_code=%s", area_code)
+        raise TwilioProvisioningError(
+            "TWILIO_CIRCUIT_OPEN",
+            "Twilio is degraded — search temporarily unavailable",
+            503,
+        )
 
-    if resp.status_code >= 400:
-        _raise_twilio_error("search_available_numbers", resp)
-
-    data = resp.json()
     numbers: list[AvailableNumber] = []
-    for raw in data.get("available_phone_numbers", []):
+    for raw in raw_numbers:
         caps_raw = raw.get("capabilities", {})
         caps = PhoneCapabilities(
             voice=bool(caps_raw.get("voice", False)),
@@ -195,18 +249,101 @@ async def search_available_numbers(
     return numbers
 
 
+async def _twilio_purchase_post(
+    *,
+    account_sid: str,
+    auth_token: str,
+    body: dict[str, str],
+) -> dict[str, Any]:
+    """Single POST attempt — NOT retried on HTTP responses (would double-charge).
+
+    Only network-level errors retry via resilient_call's _NETWORK_ERRORS path.
+    """
+    url = f"{_TWILIO_BASE}/Accounts/{account_sid}/IncomingPhoneNumbers.json"
+    async with httpx.AsyncClient(
+        auth=(account_sid, auth_token),
+        timeout=_TIMEOUT_SECONDS,
+    ) as client:
+        resp = await client.post(url, data=body)
+    if resp.status_code >= 400:
+        _raise_twilio_error("purchase_number", resp)
+    return resp.json()
+
+
+async def _twilio_delete_number(
+    *,
+    account_sid: str,
+    auth_token: str,
+    twilio_sid: str,
+) -> int:
+    """Single DELETE attempt of an IncomingPhoneNumber. 404 = already gone."""
+    url = f"{_TWILIO_BASE}/Accounts/{account_sid}/IncomingPhoneNumbers/{twilio_sid}.json"
+    async with httpx.AsyncClient(
+        auth=(account_sid, auth_token),
+        timeout=_TIMEOUT_SECONDS,
+    ) as client:
+        resp = await client.delete(url)
+    if resp.status_code == 404:
+        return 404
+    if resp.status_code >= 400:
+        if _is_retryable_twilio_status(resp.status_code):
+            raise RetryableError("TWILIO_TRANSIENT", f"Twilio delete transient {resp.status_code}")
+        _raise_twilio_error("release_number", resp)
+    return resp.status_code
+
+
+async def _lookup_idempotency(suite_id: str, idempotency_key: str) -> PurchasedNumber | None:
+    """Persistent idempotency lookup by (suite_id, purchase_idempotency_key).
+
+    Returns the cached PurchasedNumber if the (suite_id, key) tuple has already
+    produced a successful purchase. Returns None on miss or DB error.
+    """
+    try:
+        rows = await supabase_select(
+            "tenant_phone_numbers",
+            f"suite_id=eq.{suite_id}&purchase_idempotency_key=eq.{idempotency_key}",
+            limit=1,
+        )
+    except SupabaseClientError as exc:
+        logger.warning("idempotency_lookup db_error suite=%s err=%s", suite_id, exc)
+        return None
+    if not rows:
+        return None
+    row = rows[0]
+    # Find a matching prior receipt to surface the receipt_id (best-effort).
+    receipt_id = row.get("purchase_receipt_id") or ""
+    return PurchasedNumber(
+        phone_number=row.get("phone_number", ""),
+        twilio_sid=row.get("twilio_sid", ""),
+        elevenlabs_phone_number_id=row.get("elevenlabs_phone_number_id", "") or "",
+        attached_to_agent_id=row.get("attached_to_agent_id", "") or "",
+        tenant_id=str(row.get("tenant_id", "")),
+        suite_id=str(row.get("suite_id", "")),
+        office_id=str(row.get("office_id", "")),
+        receipt_id=receipt_id,
+        purchased_at=str(row.get("purchased_at", "")),
+    )
+
+
 async def purchase_number(
     phone_number: str,
     *,
     scope: ScopedIdentity,
     idempotency_key: str,
+    trace_id: str = "",
+    correlation_id: str = "",
+    capability_token_id: str = "",
 ) -> PurchasedNumber:
     """Atomic Yellow-tier phone number purchase flow.
 
     Steps (all-or-nothing — rollback on any failure):
-      1. Check idempotency (return cached if duplicate key).
-      2. POST to Twilio IncomingPhoneNumbers with sms_url + status callbacks.
-      3. INSERT into tenant_phone_numbers (status='reserved').
+      1. Persistent idempotency lookup by (suite_id, idempotency_key) — return
+         cached PurchasedNumber if already executed (Pass 18+ Lane 2 — survives restart).
+      2. POST to Twilio IncomingPhoneNumbers — NOT retried on HTTP responses
+         (only on true network errors before remote sees the request).
+      3. INSERT into tenant_phone_numbers (status='reserved') WITH
+         purchase_idempotency_key set — UNIQUE constraint catches the race
+         where two concurrent requests both pass step 1.
       4. POST to EL phone-numbers (import).
       5. PATCH EL phone-number to attach to Sarah Receptionist.
       6. UPDATE tenant_phone_numbers: status='active', el IDs.
@@ -218,17 +355,20 @@ async def purchase_number(
     Law #4: Yellow tier — capability token validated upstream by route layer.
     Law #9: account_sid never in logs; auth_token never in logs.
     """
-    # Idempotency check (Law #3: duplicate key = return cached, no re-execute)
-    idem_cache_key = f"{scope.suite_id}:{idempotency_key}"
-    if idem_cache_key in _idem_store:
+    suite_id = str(scope.suite_id)
+
+    # Persistent idempotency check (Pass 18+ Lane 2 — survives restart)
+    existing = await _lookup_idempotency(suite_id, idempotency_key)
+    if existing is not None:
         logger.info(
-            "purchase_number idempotent_replay key=%s...",
+            "purchase_number idempotent_replay suite=%s key=%s...",
+            suite_id,
             idempotency_key[:12],
         )
-        return _idem_store[idem_cache_key]
+        METRICS.telephony_purchase_counter.labels(outcome="idempotent_replay").inc()
+        return existing
 
     account_sid, auth_token = _twilio_auth()
-    suite_id = str(scope.suite_id)
     office_id = str(scope.office_id)
     tenant_id = str(scope.tenant_id)
 
@@ -253,20 +393,30 @@ async def purchase_number(
             "VoiceMethod": "POST",
             # voice_url left blank — EL overwrites via import (§16.B note)
         }
-        url = f"{_TWILIO_BASE}/Accounts/{account_sid}/IncomingPhoneNumbers.json"
-        async with httpx.AsyncClient(
-            auth=(account_sid, auth_token),
-            timeout=_TIMEOUT_SECONDS,
-        ) as client:
-            resp = await client.post(url, data=twilio_body)
-        if resp.status_code >= 400:
-            _raise_twilio_error("purchase_number", resp)
+        try:
+            twilio_data = await resilient_call(
+                _twilio_purchase_post,
+                account_sid=account_sid,
+                auth_token=auth_token,
+                body=twilio_body,
+                breaker=twilio_breaker(),
+                policy=TWILIO_RETRY,
+                idempotent=False,  # POST: only network-level retries
+            )
+        except CircuitOpenError as ce:
+            METRICS.telephony_purchase_counter.labels(outcome="circuit_open").inc()
+            raise TwilioProvisioningError(
+                "TWILIO_CIRCUIT_OPEN",
+                f"Twilio is degraded — purchase rejected ({ce})",
+                503,
+            ) from ce
 
-        twilio_data = resp.json()
         twilio_sid = twilio_data.get("sid", "")
         friendly_name = twilio_data.get("friendly_name", phone_number)
 
         # ── Step 3: INSERT tenant_phone_numbers (status=reserved) ─────────
+        # purchase_idempotency_key set NOW — UNIQUE partial index catches
+        # any concurrent duplicate that lost the step-1 race.
         row: dict[str, Any] = {
             "id": str(uuid.uuid4()),
             "tenant_id": tenant_id,
@@ -280,8 +430,41 @@ async def purchase_number(
             "sms_enabled": True,
             "monthly_cost_cents": 100,
             "purchased_at": now,
+            "purchase_idempotency_key": idempotency_key,
         }
-        inserted = await supabase_insert("tenant_phone_numbers", row)
+        try:
+            inserted = await supabase_insert("tenant_phone_numbers", row)
+        except SupabaseClientError as ins_exc:
+            # If a UNIQUE violation on idempotency_key fired (concurrent purchase),
+            # re-read the existing row and treat as idempotent replay.
+            err_str = str(ins_exc)
+            if "23505" in err_str or "duplicate" in err_str.lower() or "idempotency" in err_str.lower():
+                logger.info(
+                    "purchase_number unique_race suite=%s key=%s... — re-reading",
+                    suite_id,
+                    idempotency_key[:12],
+                )
+                # Best-effort: rollback the Twilio purchase we just made (the OTHER
+                # request will own the EL side). Fail-safe: if rollback fails,
+                # the lifecycle reaper will release orphaned Twilio numbers.
+                if twilio_sid:
+                    try:
+                        await _twilio_delete_number(
+                            account_sid=account_sid,
+                            auth_token=auth_token,
+                            twilio_sid=twilio_sid,
+                        )
+                    except Exception as drop_exc:
+                        logger.error(
+                            "purchase_number duplicate_rollback failed sid=%s: %s",
+                            twilio_sid,
+                            drop_exc,
+                        )
+                existing = await _lookup_idempotency(suite_id, idempotency_key)
+                if existing is not None:
+                    METRICS.telephony_purchase_counter.labels(outcome="idempotent_replay").inc()
+                    return existing
+            raise
         db_row_id = inserted.get("id") or row["id"]
 
         # ── Step 4: Import to ElevenLabs ──────────────────────────────────
@@ -315,6 +498,7 @@ async def purchase_number(
             account_sid=account_sid,
             auth_token=auth_token,
         )
+        METRICS.telephony_purchase_counter.labels(outcome="failed").inc()
         receipt_store.store_receipts([{
             "id": receipt_id,
             "receipt_type": "phone_number_purchase_failed",
@@ -326,7 +510,13 @@ async def purchase_number(
             "tool_used": "twilio_provisioning",
             "risk_tier": "yellow",
             "reason_code": getattr(exc, "code", "UNKNOWN_ERROR"),
-            "redacted_inputs": {"phone_number": phone_number},
+            "redacted_inputs": {
+                "phone_number": phone_number,
+                "idempotency_key": idempotency_key,
+            },
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
+            "capability_token_id": capability_token_id or None,
             "created_at": now,
         }])
         raise
@@ -342,12 +532,18 @@ async def purchase_number(
         "action_type": "phone_number_purchase",
         "tool_used": "twilio_provisioning",
         "risk_tier": "yellow",
-        "redacted_inputs": {"phone_number": phone_number},
+        "redacted_inputs": {
+            "phone_number": phone_number,
+            "idempotency_key": idempotency_key,
+        },
         "redacted_outputs": {
             "twilio_sid": twilio_sid,
             "el_phone_number_id": el_phone_number_id,
             "attached_to_agent_id": SARAH_RECEPTIONIST_AGENT_ID,
         },
+        "trace_id": trace_id,
+        "correlation_id": correlation_id,
+        "capability_token_id": capability_token_id or None,
         "created_at": now,
     }])
 
@@ -363,8 +559,7 @@ async def purchase_number(
         purchased_at=now,
     )
 
-    # Cache for idempotency (Law #3)
-    _idem_store[idem_cache_key] = result
+    METRICS.telephony_purchase_counter.labels(outcome="success").inc()
 
     logger.info(
         "purchase_number success phone=%s twilio_sid=%s el_id=%s...",
@@ -391,15 +586,18 @@ async def _rollback_purchase(
         except Exception as exc:
             logger.error("rollback: EL detach failed for %s: %s", el_phone_number_id[:12], exc)
 
-    # Release from Twilio if purchase succeeded
+    # Release from Twilio if purchase succeeded — DELETE is idempotent (404 = ok)
     if twilio_sid:
         try:
-            url = f"{_TWILIO_BASE}/Accounts/{account_sid}/IncomingPhoneNumbers/{twilio_sid}.json"
-            async with httpx.AsyncClient(
-                auth=(account_sid, auth_token),
-                timeout=_TIMEOUT_SECONDS,
-            ) as client:
-                await client.delete(url)
+            await resilient_call(
+                _twilio_delete_number,
+                account_sid=account_sid,
+                auth_token=auth_token,
+                twilio_sid=twilio_sid,
+                breaker=twilio_breaker(),
+                policy=TWILIO_RETRY,
+                idempotent=True,
+            )
             logger.info("rollback: Twilio number %s released", twilio_sid)
         except Exception as exc:
             logger.error("rollback: Twilio release failed for %s: %s", twilio_sid, exc)
@@ -420,8 +618,11 @@ async def release_number(
     phone_number_id: str,
     *,
     scope: ScopedIdentity | None = None,
+    trace_id: str = "",
+    correlation_id: str = "",
+    capability_token_id: str = "",
 ) -> None:
-    """Yellow-tier: detach from EL → release from Twilio → mark released_at.
+    """Yellow-tier: detach from EL -> release from Twilio -> mark released_at.
 
     Law #2: cuts phone_number_release receipt.
     Law #4: Yellow tier — capability token validated upstream.
@@ -437,8 +638,6 @@ async def release_number(
     now = datetime.now(timezone.utc).isoformat()
 
     # Pass 18 fix THREAT-015: bind to authenticated scope when provided.
-    # Returns 404 (PHONE_NUMBER_NOT_FOUND) for cross-tenant attempts so the
-    # caller cannot distinguish "doesn't exist" from "exists in another tenant".
     if scope is not None:
         filter_str = (
             f"id=eq.{phone_number_id}"
@@ -469,18 +668,33 @@ async def release_number(
 
     # Detach from EL first (so it stops handling voice calls)
     if el_id:
-        await detach_from_elevenlabs(el_id)
+        try:
+            await detach_from_elevenlabs(el_id)
+        except Exception as exc:
+            logger.error("release_number: EL detach failed for %s: %s", el_id[:12], exc)
 
-    # Release from Twilio
+    # Release from Twilio (resilient)
     if twilio_sid:
-        url = f"{_TWILIO_BASE}/Accounts/{account_sid}/IncomingPhoneNumbers/{twilio_sid}.json"
-        async with httpx.AsyncClient(
-            auth=(account_sid, auth_token),
-            timeout=_TIMEOUT_SECONDS,
-        ) as client:
-            resp = await client.delete(url)
-        if resp.status_code >= 400 and resp.status_code != 404:
-            _raise_twilio_error("release_number", resp)
+        try:
+            await resilient_call(
+                _twilio_delete_number,
+                account_sid=account_sid,
+                auth_token=auth_token,
+                twilio_sid=twilio_sid,
+                breaker=twilio_breaker(),
+                policy=TWILIO_RETRY,
+                idempotent=True,
+            )
+        except CircuitOpenError as ce:
+            METRICS.telephony_release_counter.labels(outcome="circuit_open").inc()
+            raise TwilioProvisioningError(
+                "TWILIO_CIRCUIT_OPEN",
+                f"Twilio is degraded — release rejected ({ce})",
+                503,
+            ) from ce
+        except TwilioProvisioningError:
+            METRICS.telephony_release_counter.labels(outcome="failed").inc()
+            raise
 
     # Mark released in DB
     await supabase_update(
@@ -501,9 +715,13 @@ async def release_number(
         "tool_used": "twilio_provisioning",
         "risk_tier": "yellow",
         "redacted_inputs": {"phone_number": phone_number},
+        "trace_id": trace_id,
+        "correlation_id": correlation_id,
+        "capability_token_id": capability_token_id or None,
         "created_at": now,
     }])
 
+    METRICS.telephony_release_counter.labels(outcome="success").inc()
     logger.info(
         "release_number success phone=%s twilio_sid=%s",
         phone_number,

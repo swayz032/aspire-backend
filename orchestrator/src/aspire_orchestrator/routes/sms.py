@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
+from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
 from aspire_orchestrator.services.sms_io import SmsIoError, send_sms
 from aspire_orchestrator.services.token_service import validate_token
@@ -70,6 +71,19 @@ def _resolve_scope(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": "INVALID_SCOPE_HEADERS", "message": str(exc)},
         ) from exc
+
+
+def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
+    """Extract deterministic capability_token_id for receipt tracing."""
+    if not cap_token:
+        return ""
+    if cap_token.get("id"):
+        return str(cap_token["id"])
+    sig = cap_token.get("signature") or cap_token.get("token") or ""
+    if sig:
+        import hashlib
+        return hashlib.sha256(str(sig).encode()).hexdigest()[:16]
+    return ""
 
 
 def _validate_cap_token(
@@ -125,6 +139,9 @@ async def sms_send(
             scope=scope,
             capability_token=str(req.capability_token),
             idempotency_key=req.idempotency_key,
+            trace_id=get_trace_id(),
+            correlation_id=get_correlation_id(),
+            capability_token_id=_cap_token_id(req.capability_token),
         )
     except SmsIoError as exc:
         raise HTTPException(

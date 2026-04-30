@@ -47,6 +47,7 @@ dependencies = [
     "pygments>=2.20.0",  # CVE fix
     "python-dotenv>=1.2.2",  # CVE fix
     "simpleeval>=1.0.5",  # CVE fix
+    "tenacity>=9.1.0,<10.0",  # Pass 18+ Lane 2 — retry primitives (already transitive via langgraph)
 ]
 
 [project.optional-dependencies]

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -27,6 +28,13 @@ import httpx
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
 from aspire_orchestrator.services import receipt_store
+from aspire_orchestrator.services.metrics import METRICS
+from aspire_orchestrator.services.resilience import (
+    TWILIO_RETRY,
+    CircuitOpenError,
+    resilient_call,
+    twilio_breaker,
+)
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_insert,
@@ -89,6 +97,9 @@ async def send_sms(
     scope: ScopedIdentity,
     capability_token: str,
     idempotency_key: str,
+    trace_id: str = "",
+    correlation_id: str = "",
+    capability_token_id: str = "",
 ) -> dict[str, Any]:
     """Yellow-tier: send an outbound SMS via Twilio Messages API.
 
@@ -157,13 +168,46 @@ async def send_sms(
         "StatusCallbackMethod": "POST",
     }
     url = f"{_TWILIO_BASE}/Accounts/{account_sid}/Messages.json"
-    async with httpx.AsyncClient(
-        auth=(account_sid, auth_token),
-        timeout=_TIMEOUT_SECONDS,
-    ) as client:
-        resp = await client.post(url, data=msg_body)
+
+    # Pass 18+ Lane 2: forward our deterministic idempotency_key to Twilio
+    # via the Idempotency-Key HTTP header. Twilio dedups identical (account, key)
+    # tuples server-side, preventing duplicate sends from a retry storm.
+    twilio_headers = {"Idempotency-Key": idempotency_key}
+
+    async def _do_post_message() -> httpx.Response:
+        async with httpx.AsyncClient(
+            auth=(account_sid, auth_token),
+            timeout=_TIMEOUT_SECONDS,
+        ) as client:
+            return await client.post(url, data=msg_body, headers=twilio_headers)
+
+    start = time.monotonic()
+    try:
+        # SMS send is non-idempotent from our side: Twilio dedupes via the
+        # header, but the response itself is a side effect (billing). Mark
+        # idempotent=False so retries fire ONLY on true network errors before
+        # Twilio sees the request.
+        resp = await resilient_call(
+            _do_post_message,
+            breaker=twilio_breaker(),
+            policy=TWILIO_RETRY,
+            idempotent=False,
+        )
+    except CircuitOpenError as ce:
+        METRICS.sms_send_counter.labels(outcome="circuit_open").inc()
+        raise SmsIoError(
+            "TWILIO_CIRCUIT_OPEN",
+            f"Twilio is degraded — SMS send rejected ({ce})",
+            503,
+        ) from ce
+    except Exception:
+        METRICS.sms_send_counter.labels(outcome="timeout").inc()
+        raise
+    finally:
+        METRICS.sms_outbound_latency.observe(time.monotonic() - start)
 
     if resp.status_code >= 400:
+        METRICS.sms_send_counter.labels(outcome="failed").inc()
         detail_str = f"HTTP {resp.status_code}"
         try:
             err = resp.json()
@@ -254,12 +298,17 @@ async def send_sms(
         "redacted_inputs": {
             "thread_memory_id": thread_memory_id,
             "to_prefix": to_prefix,
+            "from_prefix": from_prefix,
             "body_preview": body_preview,
+            "idempotency_key": idempotency_key,
         },
         "redacted_outputs": {
             "message_sid": message_sid,
             "status": message_status,
         },
+        "trace_id": trace_id,
+        "correlation_id": correlation_id,
+        "capability_token_id": capability_token_id or None,
         "created_at": now,
     }])
 
@@ -272,6 +321,7 @@ async def send_sms(
         message_status,
         body,
     )
+    METRICS.sms_send_counter.labels(outcome="success").inc()
     return {"message_sid": message_sid, "status": message_status, "receipt_id": receipt_id}
 
 
