@@ -185,3 +185,89 @@ async def test_voice_path_auto_detected_when_no_zip_or_store():
 
     assert hd_mock.await_count == 1
     assert shopping_mock.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_voice_path_resolver_capped_at_1500ms():
+    """Voice path: resolver wrapped in asyncio.wait_for(timeout=1.5)."""
+    async def slow_resolver(*args, **kwargs):
+        await asyncio.sleep(3.0)
+        return {
+            "store_id": "0254",
+            "store_name": "Home Depot - Tallahassee",
+            "address": "3200 Capital Cir Ne",
+            "city": "Tallahassee",
+            "state": "FL",
+            "postal_code": "32308",
+            "phone": "",
+            "website": "",
+            "image_url": "",
+        }
+
+    hd_mock = AsyncMock(return_value=_ok("serpapi_home_depot.search", _HD_OK))
+
+    with patch(
+        "aspire_orchestrator.services.adam.hd_store_resolver.resolve_store_async",
+        side_effect=slow_resolver,
+    ), patch(
+        "aspire_orchestrator.providers.serpapi_homedepot_client.execute_serpapi_homedepot_search",
+        hd_mock,
+    ):
+        start = time.perf_counter()
+        await execute_tool_material_price_check(
+            query="sheetrock",
+            ctx=_ctx(),
+            zip_code="32308",
+            voice_path=True,
+        )
+        elapsed = time.perf_counter() - start
+
+    # Resolver should have timed out at 1.5s, leaving ~3s slack for SerpApi
+    # synthetic mock to return immediately. Total budget < 2.5s.
+    assert elapsed < 2.5, (
+        f"voice path took {elapsed:.2f}s; resolver should cap at 1.5s "
+        "and SerpApi mock returns instantly"
+    )
+
+
+@pytest.mark.asyncio
+async def test_voice_path_end_to_end_under_4500ms_with_resolver_and_serpapi():
+    """End-to-end voice path budget: 1.0s resolver + 1.5s SerpApi < 4.5s."""
+    async def medium_resolver(*args, **kwargs):
+        await asyncio.sleep(1.0)
+        return {
+            "store_id": "0254",
+            "store_name": "Home Depot - Tallahassee",
+            "address": "3200 Capital Cir Ne",
+            "city": "Tallahassee",
+            "state": "FL",
+            "postal_code": "32308",
+            "phone": "",
+            "website": "",
+            "image_url": "https://places.googleapis.com/v1/places/X/photos/Y/media",
+        }
+
+    async def slow_hd(*args, **kwargs):
+        await asyncio.sleep(1.5)
+        return _ok("serpapi_home_depot.search", _HD_OK)
+
+    with patch(
+        "aspire_orchestrator.services.adam.hd_store_resolver.resolve_store_async",
+        side_effect=medium_resolver,
+    ), patch(
+        "aspire_orchestrator.providers.serpapi_homedepot_client.execute_serpapi_homedepot_search",
+        side_effect=slow_hd,
+    ):
+        start = time.perf_counter()
+        await execute_tool_material_price_check(
+            query="sheetrock",
+            ctx=_ctx(),
+            zip_code="32308",
+            voice_path=True,
+        )
+        elapsed = time.perf_counter() - start
+
+    assert elapsed < 4.5, (
+        f"voice path took {elapsed:.2f}s; budget is <4.5s "
+        "(1.0s resolver + 1.5s SerpApi sequential + small overhead)"
+    )

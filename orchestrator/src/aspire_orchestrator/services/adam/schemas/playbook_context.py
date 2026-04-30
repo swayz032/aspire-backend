@@ -15,3 +15,7 @@ class PlaybookContext:
     capability_token_id: str | None = None
     capability_token_hash: str | None = None
     tenant_id: str = ""
+    # Office address coordinates — used for haversine-based store disambiguation
+    # (Wave A.5). Populated from suite_profiles in server.py when available.
+    office_lat: float | None = None
+    office_lng: float | None = None

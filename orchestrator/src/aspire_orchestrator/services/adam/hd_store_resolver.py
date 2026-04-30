@@ -29,9 +29,13 @@ _ZIP_INDEX: dict[str, dict[str, Any]] | None = None
 _PLACES_V1_URL = "https://places.googleapis.com/v1/places:searchText"
 _PLACES_V1_FIELD_MASK = (
     "places.displayName,places.formattedAddress,"
-    "places.nationalPhoneNumber,places.websiteUri"
+    "places.nationalPhoneNumber,places.websiteUri,"
+    "places.photos"
 )
 _PLACES_V1_TIMEOUT_SECONDS = 5.0
+_PLACES_V1_PHOTO_MEDIA_URL = "https://places.googleapis.com/v1/{name}/media"
+_PHOTO_MAX_HEIGHT_PX = 400
+_PHOTO_MAX_WIDTH_PX = 600
 
 
 def _load_stores() -> None:
@@ -93,6 +97,11 @@ async def resolve_store_async(
     zc = str(zip_code).strip().zfill(5)
     if zc and zc in (_ZIP_INDEX or {}):
         store = _ZIP_INDEX[zc]
+        # Opportunistic Places lookup for image_url + phone + website. The card
+        # still renders without these — they're enrichment, not core identity.
+        place = await _places_v1_searchtext(
+            f"Home Depot {store.get('address', '')} {store.get('city', '')} {store.get('state', '')}".strip(),
+        )
         return {
             "store_id": str(store.get("store_id", "")),
             "store_name": store.get("name", "Home Depot"),
@@ -100,8 +109,9 @@ async def resolve_store_async(
             "city": store.get("city", ""),
             "state": store.get("state", ""),
             "postal_code": store.get("postal_code", ""),
-            "phone": store.get("phone", ""),
-            "website": store.get("website", ""),
+            "phone": (place or {}).get("phone", "") or store.get("phone", ""),
+            "website": (place or {}).get("website", "") or store.get("website", ""),
+            "image_url": (place or {}).get("image_url", ""),
         }
 
     place = await _places_v1_searchtext(
@@ -120,6 +130,7 @@ async def resolve_store_async(
             "postal_code": matched.get("postal_code", "") if matched else "",
             "phone": place.get("phone", ""),
             "website": place.get("website", ""),
+            "image_url": place.get("image_url", ""),
         }
 
     return _fallback_zip_match(zc)
@@ -163,11 +174,27 @@ async def _places_v1_searchtext(query: str) -> dict[str, Any] | None:
         return None
 
     place = places[0]
+    photos = place.get("photos") or []
+    image_url = ""
+    if photos:
+        # Photo "name" comes back as: places/{PLACE_ID}/photos/{PHOTO_REF}.
+        # Construct the media URL with the same API key — the v1 photo endpoint
+        # returns a 302 to the actual JPEG when called with maxHeightPx/maxWidthPx.
+        first_photo_name = str(photos[0].get("name", "")).strip()
+        if first_photo_name:
+            image_url = (
+                f"{_PLACES_V1_PHOTO_MEDIA_URL.format(name=first_photo_name)}"
+                f"?maxHeightPx={_PHOTO_MAX_HEIGHT_PX}"
+                f"&maxWidthPx={_PHOTO_MAX_WIDTH_PX}"
+                f"&key={api_key}"
+            )
+
     return {
         "name": (place.get("displayName") or {}).get("text", ""),
         "address": place.get("formattedAddress", ""),
         "phone": place.get("nationalPhoneNumber", ""),
         "website": place.get("websiteUri", ""),
+        "image_url": image_url,
     }
 
 

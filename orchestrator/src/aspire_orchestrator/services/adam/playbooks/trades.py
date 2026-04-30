@@ -221,9 +221,94 @@ async def execute_estimate_research(
     )
 
 
+def _fuzzy_pick_store_from_query(
+    query: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Pick a store from a candidate list when the query mentions a street/area.
+
+    Examples that resolve silently:
+      "sheetrock at the Capital Circle one" -> store with "Capital Cir" in address
+      "the Tenleytown Home Depot" -> store with "Tenleytown" in address
+
+    Uses a simple substring match on normalized address tokens. If exactly one
+    candidate's address shares a meaningful token (3+ chars, alpha) with the
+    query, that's the pick. Multiple matches or none -> None (caller falls back).
+    """
+    import re as _re
+
+    def _normalize_tokens(text: str) -> set[str]:
+        return {t for t in _re.findall(r"[A-Za-z]{3,}", text.lower())}
+
+    # Drop common stopwords that would create false positives.
+    _STOPWORDS = {
+        "home", "depot", "store", "the", "and", "near", "for", "from",
+        "drive", "road", "street", "avenue", "boulevard", "lane", "way",
+        "place", "court", "circle", "highway", "parkway", "terrace",
+        "north", "south", "east", "west",
+    }
+
+    query_tokens = _normalize_tokens(query) - _STOPWORDS
+    if not query_tokens:
+        return None
+
+    matches: list[dict[str, Any]] = []
+    for store in candidates:
+        addr_tokens = _normalize_tokens(store.get("address", "")) - _STOPWORDS
+        if query_tokens & addr_tokens:
+            matches.append(store)
+
+    if len(matches) == 1:
+        return dict(matches[0])
+    return None
+
+
+def _build_store_disambiguation_response(
+    query: str,
+    candidates: list[dict[str, Any]],
+    providers_called: list[str],
+) -> ResearchResponse:
+    """Return a StoreDisambiguation artifact so Ava + desktop can prompt for choice."""
+    candidate_records: list[dict[str, Any]] = []
+    for store in candidates:
+        candidate_records.append({
+            "card_kind": "store_candidate",
+            "store_id": store.get("store_id", ""),
+            "name": store.get("name", ""),
+            "address": store.get("address", ""),
+            "city": store.get("city", ""),
+            "state": store.get("state", ""),
+            "postal_code": store.get("postal_code", ""),
+        })
+    return ResearchResponse(
+        artifact_type="StoreDisambiguation",
+        summary=(
+            f"Multiple Home Depot stores in {candidates[0].get('city', '')}. "
+            "Which one would you like?"
+        ),
+        records=[],
+        sources=[],
+        freshness={"mode": "live"},
+        confidence={"status": "verified", "score": 1.0},
+        missing_fields=[],
+        next_queries=[],
+        segment="trades",
+        intent="price_check",
+        playbook="TOOL_MATERIAL_PRICE_CHECK",
+        providers_called=providers_called,
+        extra={"candidates": candidate_records, "query": query},
+    )
+
+
 async def execute_tool_material_price_check(
-    query: str, ctx: PlaybookContext, zip_code: str = "", store_id: str = "",
-    on_sale: bool = False, voice_path: bool | None = None,
+    query: str,
+    ctx: PlaybookContext,
+    zip_code: str = "",
+    store_id: str = "",
+    on_sale: bool = False,
+    voice_path: bool | None = None,
+    city: str = "",
+    state: str = "",
 ) -> ResearchResponse:
     """TOOL_MATERIAL_PRICE_CHECK - Find current pricing, stock, and store info for tools/materials.
 
@@ -234,7 +319,15 @@ async def execute_tool_material_price_check(
 
     Voice path budget: 5s end-to-end. When voice_path is True we run one attempt with
     a 4s SerpApi timeout and skip the Google Shopping cross-check entirely. When None,
-    voice is auto-detected as "no zip + no store_id" (Ava's typical voice query).
+    voice is auto-detected as "no zip + no store_id + no city" (Ava's typical voice query).
+
+    Multi-store disambiguation (Wave A.5 / Task #32):
+      - When `city` is set and the directory has multiple HD stores in (city, state):
+        1. Try fuzzy-match the query against each store's address (e.g. "the one on
+           Capital Circle" -> Capital Cir NE). If hit, silent auto-pick.
+        2. Fall back to haversine via ctx.office_lat/office_lng. Pick closest within 50km.
+        3. Otherwise return artifact_type="StoreDisambiguation" with candidate list.
+      - When `store_id` is set explicitly: skip city -> zip; use that store directly.
     """
     import re as _re
     from aspire_orchestrator.providers.serpapi_shopping_client import execute_serpapi_shopping_search
@@ -243,10 +336,18 @@ async def execute_tool_material_price_check(
         normalize_from_serpapi_shopping,
         normalize_from_serpapi_homedepot,
     )
-    from aspire_orchestrator.services.adam.hd_store_directory import lookup_store_by_id
+    from aspire_orchestrator.services.adam.hd_store_directory import (
+        lookup_store_by_id,
+        lookup_zip_by_city,
+        find_stores_in_city,
+        find_nearest_store,
+    )
     from aspire_orchestrator.services.adam.hd_store_resolver import resolve_store_async
 
-    logger.info("Executing TOOL_MATERIAL_PRICE_CHECK for: %s", query[:80])
+    logger.info(
+        "Executing TOOL_MATERIAL_PRICE_CHECK for: %s (city=%r state=%r store_id=%r zip=%r)",
+        query[:80], city, state, store_id, zip_code,
+    )
 
     if not zip_code:
         zip_match = _re.search(r"\b(\d{5})\b", query)
@@ -254,9 +355,50 @@ async def execute_tool_material_price_check(
             zip_code = zip_match.group(1)
 
     location_hint = ""
-    city_match = _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\b", query)
-    if city_match:
-        location_hint = city_match.group(1).strip(" .,")
+    if city:
+        location_hint = f"{city}, {state}".strip(", ") if state else city
+    else:
+        city_match = _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\b", query)
+        if city_match:
+            location_hint = city_match.group(1).strip(" .,")
+
+    # Wave A.5: explicit store_id beats city/zip — use the directory record directly.
+    if store_id:
+        directory_record = lookup_store_by_id(store_id)
+        if directory_record:
+            zip_code = zip_code or directory_record.get("postal_code", "")
+    elif city:
+        # Wave A.5: multi-store disambiguation in a city.
+        candidates = find_stores_in_city(city, state or None)
+        if len(candidates) > 1:
+            # (a) fuzzy address-hint auto-pick (e.g. "the one on Capital Circle").
+            picked = _fuzzy_pick_store_from_query(query, candidates)
+            # (b) haversine via office_lat/office_lng if available.
+            if picked is None:
+                office_lat = getattr(ctx, "office_lat", None)
+                office_lng = getattr(ctx, "office_lng", None)
+                if office_lat is not None and office_lng is not None:
+                    nearest = find_nearest_store(
+                        float(office_lat), float(office_lng),
+                        city=city, state=state or None, max_km=50.0,
+                    )
+                    if nearest:
+                        picked = nearest
+            # (c) no hint and no office address -> return disambiguation artifact.
+            if picked is None:
+                return _build_store_disambiguation_response(
+                    query=query, candidates=candidates, providers_called=[],
+                )
+            zip_code = zip_code or picked.get("postal_code", "")
+            store_id = picked.get("store_id", "")
+        elif len(candidates) == 1 and not zip_code:
+            zip_code = candidates[0].get("postal_code", "") or zip_code
+            store_id = store_id or candidates[0].get("store_id", "")
+        elif not zip_code:
+            # City→zip lookup (Wave A.2). Single primary path. No fallback chain.
+            looked_up = lookup_zip_by_city(city, state or None)
+            if looked_up:
+                zip_code = looked_up
 
     def _product_missing_fields(r: dict[str, Any]) -> list[str]:
         missing: list[str] = []
@@ -332,13 +474,29 @@ async def execute_tool_material_price_check(
         async def _resolve_and_search_hd() -> Any:
             nonlocal resolved_store_id, hd_store_info
             if not resolved_store_id and (zip_code or location_hint):
-                store_match = await resolve_store_async(
+                # Voice path budget is 4s end-to-end. Cap the resolver at 1.5s so
+                # a slow Google Places call cannot consume the entire window —
+                # the static directory + SerpApi response carry the card even
+                # when phone/website/image_url enrichment times out.
+                resolver_coro = resolve_store_async(
                     zip_code=zip_code,
                     location_hint=location_hint,
                     correlation_id=ctx.correlation_id,
                     suite_id=ctx.suite_id,
                     office_id=ctx.office_id,
                 )
+                store_match: dict[str, Any] | None
+                if voice_path:
+                    try:
+                        store_match = await asyncio.wait_for(resolver_coro, timeout=1.5)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Voice path: resolve_store_async timed out at 1.5s — "
+                            "continuing without enrichment"
+                        )
+                        store_match = None
+                else:
+                    store_match = await resolver_coro
                 if store_match:
                     resolved_store_id = str(store_match.get("store_id", "")).strip()
                     hd_store_info = dict(store_match)
@@ -444,6 +602,7 @@ async def execute_tool_material_price_check(
             "postal_code": hd_store_info.get("postal_code", ""),
             "phone": hd_store_info.get("phone", ""),
             "website": hd_store_info.get("website", ""),
+            "image_url": hd_store_info.get("image_url", ""),
             "open_now": hd_store_info.get("open_now"),
             "rating": hd_store_info.get("rating"),
             "retailer": "Home Depot",

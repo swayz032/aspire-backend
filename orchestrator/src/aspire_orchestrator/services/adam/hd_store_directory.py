@@ -23,12 +23,17 @@ logger = logging.getLogger(__name__)
 _DATA_PATH = Path(__file__).resolve().parent / "data" / "home_depot_stores_us.json"
 
 _INDEX: dict[str, dict[str, Any]] | None = None
+_BY_CITY: dict[tuple[str, str], list[dict[str, Any]]] = {}
 _LOAD_LOCK = Lock()
 
 
 def _load() -> dict[str, dict[str, Any]]:
-    """Load the directory once (process-wide) into a store_id -> record dict."""
-    global _INDEX
+    """Load the directory once (process-wide) into a store_id -> record dict.
+
+    Also builds a (city.lower(), state.upper()) -> [records] secondary index
+    so city→zip and city→[stores] lookups are O(1).
+    """
+    global _INDEX, _BY_CITY
     if _INDEX is not None:
         return _INDEX
     with _LOAD_LOCK:
@@ -39,23 +44,38 @@ def _load() -> dict[str, dict[str, Any]]:
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             logger.error("HD store directory unavailable: %s", exc)
             _INDEX = {}
+            _BY_CITY = {}
             return _INDEX
 
         idx: dict[str, dict[str, Any]] = {}
+        by_city: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for record in raw:
             store_id = str(record.get("store_id", "")).strip()
             if not store_id:
                 continue
-            idx[store_id] = {
+            normalized = {
                 "store_id": store_id,
                 "name": record.get("name", "") or "",
                 "address": record.get("address", "") or "",
                 "city": record.get("city", "") or "",
                 "state": record.get("state", "") or "",
                 "postal_code": record.get("postal_code", "") or "",
+                # Coordinates for haversine — best-effort; not all rows have them.
+                "lat": record.get("lat") or record.get("latitude"),
+                "lng": record.get("lng") or record.get("longitude"),
             }
+            idx[store_id] = normalized
+
+            city_key = (normalized["city"].lower().strip(), normalized["state"].upper().strip())
+            if city_key[0]:
+                by_city.setdefault(city_key, []).append(normalized)
+
         _INDEX = idx
-        logger.info("Loaded %d Home Depot stores from static directory", len(idx))
+        _BY_CITY = by_city
+        logger.info(
+            "Loaded %d Home Depot stores from static directory (cities indexed: %d)",
+            len(idx), len(by_city),
+        )
         return _INDEX
 
 
@@ -74,6 +94,91 @@ def lookup_store_by_id(store_id: str | int | None) -> dict[str, Any] | None:
     if record is None:
         return None
     return dict(record)
+
+
+def lookup_zip_by_city(city: str, state: str | None = None) -> str | None:
+    """Return the postal_code of the FIRST store matching (city, state).
+
+    Case-insensitive on city, normalized to upper on state. Returns None when
+    the city/state pair has no Home Depot store on record. State is required
+    for disambiguation (Springfield, IL ≠ Springfield, MO).
+
+    Returned postal codes are zero-padded to 5 digits (NE/CT/MA stores in the
+    source JSON sometimes lose leading zeros — "4401" -> "04401").
+    """
+    if not city or not city.strip():
+        return None
+    _load()
+    state_key = (state or "").upper().strip()
+    matches = _BY_CITY.get((city.lower().strip(), state_key))
+    if not matches:
+        return None
+    postal = str(matches[0].get("postal_code", "")).strip()
+    if not postal:
+        return None
+    return postal.zfill(5) if len(postal) < 5 else postal
+
+
+def find_stores_in_city(city: str, state: str | None = None) -> list[dict[str, Any]]:
+    """Return ALL store records for a (city, state). Empty list when none found."""
+    if not city or not city.strip():
+        return []
+    _load()
+    state_key = (state or "").upper().strip()
+    matches = _BY_CITY.get((city.lower().strip(), state_key))
+    if not matches:
+        return []
+    return [dict(record) for record in matches]
+
+
+def find_nearest_store(
+    lat: float,
+    lng: float,
+    city: str | None = None,
+    state: str | None = None,
+    max_km: float = 50.0,
+) -> dict[str, Any] | None:
+    """Return the nearest store within max_km of (lat, lng) via haversine.
+
+    If city/state are provided, the search is restricted to stores in that city.
+    Stores without coordinates in the directory are skipped. Returns None when
+    no store with coordinates is within max_km (or none in the city pool).
+    """
+    import math
+
+    _load()
+    if city:
+        candidates = find_stores_in_city(city, state)
+    else:
+        candidates = list((_INDEX or {}).values())
+    if not candidates:
+        return None
+
+    def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+        radius_km = 6371.0
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lng2 - lng1)
+        a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+        return 2 * radius_km * math.asin(math.sqrt(a))
+
+    best: dict[str, Any] | None = None
+    best_km: float = float("inf")
+    for record in candidates:
+        s_lat = record.get("lat")
+        s_lng = record.get("lng")
+        if s_lat is None or s_lng is None:
+            continue
+        try:
+            distance_km = _haversine_km(float(lat), float(lng), float(s_lat), float(s_lng))
+        except (TypeError, ValueError):
+            continue
+        if distance_km < best_km and distance_km <= max_km:
+            best = dict(record)
+            best["distance_km"] = distance_km
+            best["distance_miles"] = distance_km * 0.621371
+            best_km = distance_km
+    return best
 
 
 def directory_size() -> int:

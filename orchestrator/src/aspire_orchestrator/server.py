@@ -131,6 +131,11 @@ async def _app_lifespan(_: FastAPI):
     from aspire_orchestrator.config.logging_config import configure_logging
     configure_logging()
 
+    # Preload HD store directory (334KB JSON) — keeps it off the first request critical path.
+    from aspire_orchestrator.services.adam.hd_store_directory import directory_size
+    _hd_store_count = directory_size()
+    logger.info("[hd_store_directory] preloaded %d stores", _hd_store_count)
+
     await warm_orchestrator_graph()
 
     # Warm the LLM connection pool — prevents first-request cold penalty
@@ -1674,10 +1679,18 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     slimmed["amenities"] = slimmed["amenities"][:5]
                 return slimmed
 
+            # Wave A.5: office coordinates power haversine-based store
+            # disambiguation when a city has multiple HD stores.
+            # TODO: add address_lat / address_lng columns to suite_profiles
+            # (see migration 051) and populate here via supabase_select. For
+            # now we pass None — disambiguation falls back to fuzzy hint or
+            # a StoreDisambiguation artifact returned to Ava.
             adam_ctx = AdamContext(
                 suite_id=safe_suite_id,
                 office_id=safe_office_id,
                 correlation_id=ctx.correlation_id,
+                office_lat=None,
+                office_lng=None,
             )
 
             # Step 1: Classify & route to the right playbook
@@ -1715,11 +1728,29 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             # Step 2: Execute playbook (or fall back to legacy)
             if playbook:
                 try:
+                    # Wave A — pass through optional location/store hints from the request
+                    # body. Only TOOL_MATERIAL_PRICE_CHECK currently consumes these; other
+                    # playbooks ignore unknown kwargs via their explicit signatures.
+                    extra_kwargs: dict[str, Any] = {}
+                    if playbook.name == "TOOL_MATERIAL_PRICE_CHECK":
+                        for body_key, kwarg_key in (
+                            ("city", "city"),
+                            ("state", "state"),
+                            ("store_id", "store_id"),
+                            ("zip_code", "zip_code"),
+                            ("on_sale", "on_sale"),
+                            ("voice_path", "voice_path"),
+                        ):
+                            val = body.get(body_key)
+                            if val is not None:
+                                extra_kwargs[kwarg_key] = val
+
                     research = await _asyncio.wait_for(
                         dispatch_playbook(
                             playbook_name=playbook.name,
                             query=full_task,
                             ctx=adam_ctx,
+                            **extra_kwargs,
                         ),
                         timeout=45.0,  # 45s — leaves 10s margin within ElevenLabs 55s tool timeout
                     )
