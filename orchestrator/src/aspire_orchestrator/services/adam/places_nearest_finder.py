@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 # Google endpoints
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 _PLACES_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
+_PLACES_TEXT_URL = "https://places.googleapis.com/v1/places:searchText"
 _PLACES_PHOTO_MEDIA_URL = "https://places.googleapis.com/v1/{name}/media"
 
 # Field mask for Places searchNearby v1 — keep tight so we only pay for
@@ -138,7 +139,25 @@ async def find_nearest_home_depot_by_address(
 
 
 async def _resolve_nearest(addr: str) -> NearestStore | None:
-    """Inner pipeline. May raise — outer wrapper logs and returns None."""
+    """Inner pipeline. May raise — outer wrapper logs and returns None.
+
+    Two-strategy approach (resilient to GCP API enablement):
+
+    PRIMARY: Places searchText with query "Home Depot near {addr}" — Places API
+    handles the address geocoding internally + returns matching HD stores
+    ranked by relevance (which correlates with proximity for "near X" queries).
+    Works with any GCP key that has Places API (New) enabled — no separate
+    Geocoding API enablement required.
+
+    FALLBACK: Geocoding + searchNearby — only fires if searchText returned
+    nothing. Requires Geocoding API enabled in GCP console (separate from
+    Places API) — if disabled, this path silently returns None.
+
+    Distance calculation: when only searchText fired, we don't have the
+    user's coordinates. Distance is approximated by Places' relevance order
+    (the first result is the closest in nearly all cases for "near X"
+    queries). When the fallback fires, we compute exact haversine.
+    """
     from aspire_orchestrator.config.settings import settings
 
     api_key = (getattr(settings, "google_maps_api_key", "") or "").strip()
@@ -146,19 +165,21 @@ async def _resolve_nearest(addr: str) -> NearestStore | None:
         logger.debug("Google Places nearest finder disabled — no API key")
         return None
 
-    # --- Step 1: Geocode user address -------------------------------------
+    # --- PRIMARY: Places searchText (no Geocoding API dependency) --------
+    text_result = await _search_text_for_nearest_hd(addr, api_key=api_key)
+    if text_result:
+        return text_result
+
+    # --- FALLBACK: Geocode + searchNearby (requires Geocoding API) -------
+    logger.info("searchText returned nothing for %s — trying geocode + nearby", addr[:60])
     user_lat, user_lng = await _geocode(addr, api_key=api_key)
     if user_lat is None or user_lng is None:
         return None
 
-    # --- Step 2: Places searchNearby v1 -----------------------------------
-    candidates = await _search_nearby(
-        lat=user_lat, lng=user_lng, api_key=api_key,
-    )
+    candidates = await _search_nearby(lat=user_lat, lng=user_lng, api_key=api_key)
     if not candidates:
         return None
 
-    # --- Step 3: filter to Home Depot brand -------------------------------
     hd_candidates = [
         p for p in candidates
         if _HOME_DEPOT_NAME_PATTERN.search(
@@ -167,34 +188,86 @@ async def _resolve_nearest(addr: str) -> NearestStore | None:
     ]
     if not hd_candidates:
         logger.info(
-            "No Home Depot branded result within %.0fkm of %s",
+            "No Home Depot result within %.0fkm of %s",
             _SEARCH_RADIUS_METERS / 1000.0, addr[:60],
         )
         return None
 
-    # rankPreference=DISTANCE means index 0 IS the closest (per Google docs),
-    # but we still compute haversine because we need distance_miles for UI.
-    closest = hd_candidates[0]
+    return _build_nearest_store_from_place(
+        hd_candidates[0], user_lat=user_lat, user_lng=user_lng, api_key=api_key,
+    )
 
-    location = closest.get("location") or {}
+
+async def _search_text_for_nearest_hd(
+    addr: str, *, api_key: str,
+) -> NearestStore | None:
+    """Places searchText (POST). Query encodes the user's address inline so
+    Places does the geocoding for us — no Geocoding API dependency."""
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": _PLACES_FIELD_MASK,
+    }
+    body = {
+        "textQuery": f"Home Depot near {addr}",
+        "includedType": "home_improvement_store",
+        "maxResultCount": 5,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_PLACES_TIMEOUT) as client:
+            resp = await client.post(_PLACES_TEXT_URL, json=body, headers=headers)
+            resp.raise_for_status()
+            payload = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Places searchText failed: %s", exc)
+        return None
+
+    places = list(payload.get("places") or [])
+    if not places:
+        logger.info("Places searchText returned 0 results for: Home Depot near %s", addr[:60])
+        return None
+
+    # Filter to Home Depot brand — searchText sometimes returns other home
+    # improvement stores even with the keyword in the query.
+    hd = [
+        p for p in places
+        if _HOME_DEPOT_NAME_PATTERN.search(
+            (p.get("displayName") or {}).get("text", "")
+        )
+    ]
+    if not hd:
+        return None
+
+    # No user lat/lng available without Geocoding — pass None for haversine.
+    return _build_nearest_store_from_place(
+        hd[0], user_lat=None, user_lng=None, api_key=api_key,
+    )
+
+
+def _build_nearest_store_from_place(
+    place: dict[str, Any],
+    *,
+    user_lat: float | None,
+    user_lng: float | None,
+    api_key: str,
+) -> NearestStore | None:
+    """Construct NearestStore from a Places API result. Used by both
+    searchText (no user lat/lng) and searchNearby (has user lat/lng) paths."""
+    location = place.get("location") or {}
     place_lat = location.get("latitude")
     place_lng = location.get("longitude")
     if place_lat is None or place_lng is None:
-        logger.warning("Closest HD result has no coordinates: %s", closest.get("id"))
+        logger.warning("HD result has no coordinates: %s", place.get("id"))
         return None
 
-    distance_miles = _haversine_miles(
-        user_lat, user_lng, float(place_lat), float(place_lng),
-    )
-
-    formatted_address = closest.get("formattedAddress", "") or ""
-    short_address = closest.get("shortFormattedAddress", "") or ""
+    formatted_address = place.get("formattedAddress", "") or ""
+    short_address = place.get("shortFormattedAddress", "") or ""
     postal_code = _extract_postal_code(formatted_address) or _extract_postal_code(short_address)
 
-    name = ((closest.get("displayName") or {}).get("text", "") or "").strip() or "Home Depot"
+    name = ((place.get("displayName") or {}).get("text", "") or "").strip() or "Home Depot"
 
     photo_url = ""
-    photos = closest.get("photos") or []
+    photos = place.get("photos") or []
     if photos:
         first_photo_name = str(photos[0].get("name", "")).strip()
         if first_photo_name:
@@ -205,8 +278,15 @@ async def _resolve_nearest(addr: str) -> NearestStore | None:
                 f"&key={api_key}"
             )
 
+    # Distance only when we have both endpoints (searchNearby path).
+    distance_miles = 0.0
+    if user_lat is not None and user_lng is not None:
+        distance_miles = _haversine_miles(
+            float(user_lat), float(user_lng), float(place_lat), float(place_lng),
+        )
+
     return NearestStore(
-        place_id=str(closest.get("id", "") or ""),
+        place_id=str(place.get("id", "") or ""),
         name=name,
         address=formatted_address,
         postal_code=postal_code or "",
@@ -214,8 +294,8 @@ async def _resolve_nearest(addr: str) -> NearestStore | None:
         lng=float(place_lng),
         distance_miles=distance_miles,
         photo_url=photo_url,
-        user_lat=float(user_lat),
-        user_lng=float(user_lng),
+        user_lat=float(user_lat) if user_lat is not None else 0.0,
+        user_lng=float(user_lng) if user_lng is not None else 0.0,
     )
 
 
