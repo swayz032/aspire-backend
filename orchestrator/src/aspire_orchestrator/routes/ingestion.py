@@ -46,7 +46,19 @@ from aspire_orchestrator.services.ingestion import (
     BaseIngestionAdapter,
     IngestionError,
 )
+from aspire_orchestrator.services.ingestion.anam_ingestion import AnamIngestionAdapter
+from aspire_orchestrator.services.ingestion.call_ingestion import (
+    CallRecordingIngestionAdapter,
+    CallTranscriptionIngestionAdapter,
+)
+from aspire_orchestrator.services.ingestion.elevenlabs_ingestion import ElevenLabsIngestionAdapter
+from aspire_orchestrator.services.ingestion.invoice_ingestion import InvoiceIngestionAdapter
+from aspire_orchestrator.services.ingestion.quote_ingestion import QuoteIngestionAdapter
 from aspire_orchestrator.services.ingestion.sms_ingestion import SMSIngestionAdapter
+from aspire_orchestrator.services.ingestion.zoom_ingestion import (
+    ZoomRecordingIngestionAdapter,
+    ZoomTranscriptIngestionAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,38 +117,30 @@ async def _dispatch(
 
 @router.post("/twilio/voice/recording-status")
 async def twilio_voice_recording_status(request: Request) -> dict[str, Any]:
-    """STUB — Twilio recording.completed callback (RecordingStatusCallback).
+    """Twilio RecordingStatusCallback → initial `call` memory_object.
 
-    Subagent (Lane B): implement `CallIngestionAdapter` in
-    `services/ingestion/call_ingestion.py`. Required fields per plan §14.C:
-    entity (caller_phone resolved to contact), direction, from, to, duration,
-    recording_url, outcome (transferred/voicemail/message_taken).
+    Fires when the .mp3 recording is ready. Creates the `call` row with
+    direction, duration, recording_url. Transcript fields are null at this
+    stage — they arrive via the transcription-callback below.
+    Form-encoded payload; signature verified via X-Twilio-Signature.
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "twilio voice recording-status adapter pending (Pass 14 Lane B)",
-        },
-    )
+    form = await request.form()
+    payload = {k: str(v) for k, v in form.items()}
+    return await _dispatch(CallRecordingIngestionAdapter(), request=request, payload=payload)
 
 
 @router.post("/twilio/voice/transcription-callback")
 async def twilio_voice_transcription_callback(request: Request) -> dict[str, Any]:
-    """STUB — Twilio transcription.completed callback.
+    """Twilio TranscribeCallback → superseding `call` memory_object.
 
-    Subagent (Lane B): adds `transcription_text` + `outcome` to the existing
-    `call` memory_object via supersede pattern.
+    Fires when transcription is ready. Writes a NEW append-only row with
+    transcription_text + outcome, linking back to the recording row via
+    detail.supersedes_idempotency_key (Law #2 — no UPDATE).
+    Form-encoded payload; signature verified via X-Twilio-Signature.
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "twilio voice transcription-callback adapter pending (Pass 14 Lane B)",
-        },
-    )
+    form = await request.form()
+    payload = {k: str(v) for k, v in form.items()}
+    return await _dispatch(CallTranscriptionIngestionAdapter(), request=request, payload=payload)
 
 
 # ===========================================================================
@@ -181,20 +185,13 @@ async def twilio_sms_status(request: Request) -> dict[str, Any]:
 
 @router.post("/stripe")
 async def stripe_webhook(request: Request) -> dict[str, Any]:
-    """STUB — Stripe events router (invoice.created / invoice.paid / invoice.voided).
+    """Stripe invoice events → memory_objects (type='invoice').
 
-    Subagent (Lane A): implement `InvoiceIngestionAdapter` (and sub-routes for
-    each Stripe event type if needed). Required fields per plan §14.C: entity
-    (customer), amount, due_date, status='draft', line_items[], pdf_url.
+    Handles invoice.created / invoice.paid / invoice.voided. Stripe sends JSON
+    bodies. Signature verified via Stripe-Signature header (HMAC SHA-256).
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "stripe ingestion adapter pending (Pass 14 Lane A)",
-        },
-    )
+    payload = await request.json()
+    return await _dispatch(InvoiceIngestionAdapter(), request=request, payload=payload)
 
 
 # ===========================================================================
@@ -204,19 +201,13 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
 
 @router.post("/pandadoc")
 async def pandadoc_webhook(request: Request) -> dict[str, Any]:
-    """STUB — PandaDoc events router (quote.sent / quote.viewed / quote.accepted/rejected).
+    """PandaDoc document_state_changed events → memory_objects (type='quote').
 
-    Subagent (Lane A): implement `QuoteIngestionAdapter`. Required fields per
-    plan §14.C: entity, amount, expiration, line_items[], pdf_url, quote_number.
+    Handles sent / viewed / completed / declined states. Signature verified via
+    X-PandaDoc-Signature header (SHA-256 HMAC of raw body, hex-encoded).
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "pandadoc ingestion adapter pending (Pass 14 Lane A)",
-        },
-    )
+    payload = await request.json()
+    return await _dispatch(QuoteIngestionAdapter(), request=request, payload=payload)
 
 
 # ===========================================================================
@@ -226,20 +217,19 @@ async def pandadoc_webhook(request: Request) -> dict[str, Any]:
 
 @router.post("/elevenlabs/post-call")
 async def elevenlabs_post_call(request: Request) -> dict[str, Any]:
-    """STUB — ElevenLabs post_call_webhook (every voice session for the 6 agents).
+    """ElevenLabs post_call_webhook → `transcript` + `session_summary` memory_objects.
 
-    Subagent (Lane D): create both `session_summary` (refined) AND `transcript`
-    (raw) memory_objects. Plan §14.C: agent_id, agent_name, runtime_family,
-    intents_detected, tools_invoked, correlation_id, duration.
+    Fires after every completed voice session for the 6 agents (Ava, Finn, Eli,
+    Nora, Receptionist Sarah, Front Desk Sarah). JSON body; signature verified
+    via ElevenLabs-Signature header (t=...,v0=... HMAC SHA-256).
+
+    Two memory_objects per session (both idempotent on conversation_id):
+      - transcript (raw turns)
+      - session_summary (refined, links to transcript via linked_memory_ids)
+    Returns the session_summary memory_id.
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "elevenlabs post-call adapter pending (Pass 14 Lane D)",
-        },
-    )
+    payload = await request.json()
+    return await _dispatch(ElevenLabsIngestionAdapter(), request=request, payload=payload)
 
 
 # ===========================================================================
@@ -249,19 +239,17 @@ async def elevenlabs_post_call(request: Request) -> dict[str, Any]:
 
 @router.post("/anam/session-end")
 async def anam_session_end(request: Request) -> dict[str, Any]:
-    """STUB — Anam session-end webhook.
+    """Anam session.ended webhook → `transcript` + `session_summary` memory_objects.
 
-    Subagent (Lane E): same shape as EL but `runtime_family='anam_video'`.
-    If `handoff_id` present, link to voice precursor via `linked_memory_ids`.
+    Fires after every Ava-video / Finn-video persona session. JSON body;
+    signature verified via X-Anam-Signature header (hex SHA-256 HMAC of body).
+
+    If metadata.handoff_id is present, the session_summary linked_memory_ids
+    will include the prior voice session memory_object (voice → video chain).
+    Returns the session_summary memory_id.
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "anam session-end adapter pending (Pass 14 Lane E)",
-        },
-    )
+    payload = await request.json()
+    return await _dispatch(AnamIngestionAdapter(), request=request, payload=payload)
 
 
 # ===========================================================================
@@ -271,37 +259,28 @@ async def anam_session_end(request: Request) -> dict[str, Any]:
 
 @router.post("/zoom/recording-completed")
 async def zoom_recording_completed(request: Request) -> dict[str, Any]:
-    """STUB — Zoom recording.completed.
+    """Zoom recording.completed → initial `meeting` memory_object.
 
-    Subagent (Lane F): create `meeting` memory_object with meeting_id, topic,
-    participants, duration, recording_url, host. Body initially null (filled
-    by transcript-completed follow-up).
+    Creates the meeting row with topic, duration, participant_count, and the
+    recording_files list. Status is null — transcript fields are filled by the
+    transcript-completed event below. JSON body; signature verified via
+    X-Zm-Signature + X-Zm-Request-Timestamp headers (HMAC SHA-256).
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "zoom recording-completed adapter pending (Pass 14 Lane F)",
-        },
-    )
+    payload = await request.json()
+    return await _dispatch(ZoomRecordingIngestionAdapter(), request=request, payload=payload)
 
 
 @router.post("/zoom/transcript-completed")
 async def zoom_transcript_completed(request: Request) -> dict[str, Any]:
-    """STUB — Zoom transcript.completed.
+    """Zoom recording.transcript_completed → enriched `meeting` memory_object.
 
-    Subagent (Lane F): supersede the existing `meeting` memory_object with
-    transcript_text + extracted key_decisions[] + action_items[].
+    Creates a NEW append-only memory_object (Law #2 — no UPDATE) with
+    transcript_text / transcript_download_url and linked_memory_ids referencing
+    the recording row. JSON body; signature verified via X-Zm-Signature +
+    X-Zm-Request-Timestamp headers (HMAC SHA-256).
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "zoom transcript-completed adapter pending (Pass 14 Lane F)",
-        },
-    )
+    payload = await request.json()
+    return await _dispatch(ZoomTranscriptIngestionAdapter(), request=request, payload=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -315,16 +294,18 @@ async def ingestion_healthz() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "ingestion",
-        "wired_adapters": ["twilio_sms_inbound"],
-        "stub_adapters": [
+        "wired_adapters": [
+            "twilio_sms_inbound",
             "twilio_voice_recording_status",
             "twilio_voice_transcription_callback",
-            "twilio_sms_status",
             "stripe",
             "pandadoc",
             "elevenlabs_post_call",
             "anam_session_end",
             "zoom_recording_completed",
             "zoom_transcript_completed",
+        ],
+        "stub_adapters": [
+            "twilio_sms_status",
         ],
     }
