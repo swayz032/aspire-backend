@@ -177,8 +177,31 @@ async def personalization(request: Request) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
 
     # ── Signature verification (Law #3: fail closed) ─────────────────────
+    # Pass 18 fix: an empty secret + missing/invalid signature must STILL fail
+    # closed. Previous form `if el_secret and not verify_elevenlabs(...)`
+    # silently bypassed verification when the secret env var was unset, which
+    # would let any unauthenticated POST through in dev/staging where the
+    # secret might not be configured.
     el_secret = settings.elevenlabs_webhook_secret
-    if el_secret and not verify_elevenlabs(body, sig_header, el_secret):
+    if not el_secret:
+        logger.error(
+            "sarah_personalization missing_webhook_secret — refusing to verify"
+        )
+        receipt_store.store_receipts([{
+            "id": receipt_id,
+            "receipt_type": "personalization_denied",
+            "outcome": "denied",
+            "action_type": "sarah_personalization",
+            "tool_used": "sarah_personalization",
+            "risk_tier": "green",
+            "reason_code": "MISSING_WEBHOOK_SECRET",
+            "created_at": now,
+        }])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "MISCONFIGURED", "message": "EL webhook secret not set"},
+        )
+    if not verify_elevenlabs(body, sig_header, el_secret):
         logger.warning("sarah_personalization invalid_signature")
         receipt_store.store_receipts([{
             "id": receipt_id,
@@ -208,6 +231,31 @@ async def personalization(request: Request) -> dict[str, Any]:
     call_sid = payload.get("call_sid", "")
     # Law #9: log only first 6 digits of caller_id
     caller_id_log = (payload.get("caller_id") or "")[:6] + "..."
+
+    # Pass 18 fix THREAT-014: validate E.164 format BEFORE building any
+    # PostgREST filter string. Without this, a forged HMAC could inject
+    # PostgREST operators (e.g. "+12125550198&suite_id=neq.<uuid>") to
+    # broaden the match and resolve a different tenant's scope.
+    import re as _re
+    if not isinstance(called_number, str) or not _re.match(r"^\+\d{7,15}$", called_number):
+        logger.warning(
+            "sarah_personalization invalid_called_number_format value=%r",
+            (called_number or "")[:20],
+        )
+        receipt_store.store_receipts([{
+            "id": receipt_id,
+            "receipt_type": "personalization_denied",
+            "outcome": "denied",
+            "action_type": "sarah_personalization",
+            "tool_used": "sarah_personalization",
+            "risk_tier": "green",
+            "reason_code": "INVALID_CALLED_NUMBER",
+            "created_at": now,
+        }])
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "INVALID_CALLED_NUMBER", "message": "called_number must be E.164"},
+        )
 
     # ── Resolve tenant from called_number ─────────────────────────────────
     phone_rows = await _safe_select(

@@ -225,7 +225,10 @@ async def release_number_route(
     _validate_capability_token_for(capability_token, scope, "telephony:release")
 
     try:
-        await release_number(phone_number_id)
+        # Pass 18 fix THREAT-015: pass scope so release_number binds the
+        # phone_number_id lookup to the authenticated suite. Cross-tenant
+        # release with a valid same-tenant token is now blocked with 404.
+        await release_number(phone_number_id, scope=scope)
     except TwilioProvisioningError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND if exc.status_code == 404 else status.HTTP_502_BAD_GATEWAY,

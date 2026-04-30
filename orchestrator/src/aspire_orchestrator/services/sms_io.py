@@ -235,6 +235,12 @@ async def send_sms(
 
     # ── Cut receipt (Law #2) ──────────────────────────────────────────────
     body_preview = body[:80] + ("…" if len(body) > 80 else "")
+    # Pass 18 fix THREAT-017: phone numbers are PII (Law #9). Receipts are
+    # immutable, so any leakage is permanent. Mask `to` to first 6 digits +
+    # ellipsis (matches caller_id_log pattern in sarah.py:210).
+    to_prefix = (to_number or "")[:6] + "..." if to_number else ""
+    from_prefix = (from_number or "")[:6] + "..." if from_number else ""
+
     receipt_store.store_receipts([{
         "id": receipt_id,
         "receipt_type": "sms_outbound",
@@ -247,7 +253,7 @@ async def send_sms(
         "risk_tier": "yellow",
         "redacted_inputs": {
             "thread_memory_id": thread_memory_id,
-            "to": to_number,
+            "to_prefix": to_prefix,
             "body_preview": body_preview,
         },
         "redacted_outputs": {
@@ -257,10 +263,11 @@ async def send_sms(
         "created_at": now,
     }])
 
+    # Pass 18 fix PII-1: also mask phone numbers in INFO log lines.
     logger.info(
         "sms_send success from=%s to=%s sid=%s status=%s body=%.80s",
-        from_number,
-        to_number,
+        from_prefix,
+        to_prefix,
         message_sid,
         message_status,
         body,

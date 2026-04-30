@@ -416,19 +416,41 @@ async def _rollback_purchase(
             logger.error("rollback: DB row update failed for %s: %s", db_row_id, exc)
 
 
-async def release_number(phone_number_id: str) -> None:
+async def release_number(
+    phone_number_id: str,
+    *,
+    scope: ScopedIdentity | None = None,
+) -> None:
     """Yellow-tier: detach from EL → release from Twilio → mark released_at.
 
     Law #2: cuts phone_number_release receipt.
     Law #4: Yellow tier — capability token validated upstream.
+    Law #6 (Pass 18 fix THREAT-015): scope binding — phone_number_id alone is
+        insufficient; we MUST also filter by suite_id from the authenticated
+        scope so an attacker with a valid release token for THEIR own suite
+        cannot release another tenant's number by supplying a foreign UUID.
+        `scope=None` is allowed for system-internal callers (lifecycle jobs)
+        but external API routes MUST pass scope.
     """
     account_sid, auth_token = _twilio_auth()
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    # Pass 18 fix THREAT-015: bind to authenticated scope when provided.
+    # Returns 404 (PHONE_NUMBER_NOT_FOUND) for cross-tenant attempts so the
+    # caller cannot distinguish "doesn't exist" from "exists in another tenant".
+    if scope is not None:
+        filter_str = (
+            f"id=eq.{phone_number_id}"
+            f"&suite_id=eq.{scope.suite_id}"
+            f"&office_id=eq.{scope.office_id}"
+        )
+    else:
+        filter_str = f"id=eq.{phone_number_id}"
+
     rows = await supabase_select(
         "tenant_phone_numbers",
-        f"id=eq.{phone_number_id}",
+        filter_str,
         limit=1,
     )
     if not rows:

@@ -66,6 +66,7 @@ from aspire_orchestrator.services.ingestion.zoom_ingestion import (
     ZoomTranscriptIngestionAdapter,
 )
 from aspire_orchestrator.services.sms_io import update_sms_status
+from aspire_orchestrator.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +97,59 @@ async def _dispatch(
     # Provide normalized header names too (Twilio header names vary by case)
     if "x-twilio-signature" in headers and "X-Twilio-Signature" not in headers:
         headers["X-Twilio-Signature"] = headers["x-twilio-signature"]
+    # Some adapter codes are NOT failures — they're success no-ops (e.g.
+    # Google Calendar push notifications that say "sync confirmation, nothing
+    # changed"). The route returns 200 + no_op=true and does NOT cut a
+    # failure receipt for these. Per output-critic finding: stop using
+    # IngestionError as control flow for legitimate non-events.
+    _NO_OP_CODES = {"SYNC_PING_NO_OP", "NO_EVENTS"}
+
     try:
         result = await adapter.ingest(body=body, headers=headers, payload=payload)
     except IngestionError as exc:
+        # No-op codes short-circuit to a clean 200 (no failure receipt).
+        if exc.code in _NO_OP_CODES:
+            return {
+                "ok": True,
+                "no_op": True,
+                "code": exc.code,
+                "memory_id": None,
+                "memory_type": adapter.memory_type,
+                "deduplicated": False,
+            }
+        # Pass 18 fix (receipt-ledger-auditor GAP-1): cut a failure receipt
+        # before raising so Law #2 holds on every state-attempted operation,
+        # not just successful writes. The receipt is best-effort — if the
+        # receipt store itself is down, we still raise to the caller.
+        try:
+            from aspire_orchestrator.services.receipt_store import store_receipts
+            from datetime import datetime, timezone
+            import uuid as _uuid
+            store_receipts([{
+                "receipt_id": _uuid.uuid4().hex,
+                "receipt_type": f"{adapter.provider_name}_ingest_failed",
+                "actor_id": "system",
+                "actor_type": "system",
+                "risk_tier": "green",
+                "status": "failed",
+                "summary": f"{adapter.provider_name} ingest failed: {exc.code}",
+                "detail": {
+                    "code": exc.code,
+                    "status_code": exc.status_code,
+                    "provider_name": adapter.provider_name,
+                    "memory_type": adapter.memory_type,
+                },
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }])
+        except Exception as receipt_exc:
+            # Receipt write failure must not mask the original ingestion error.
+            logger.warning(
+                "ingestion_failure_receipt_write_failed provider=%s "
+                "original_code=%s receipt_exc=%s",
+                adapter.provider_name,
+                exc.code,
+                str(receipt_exc)[:200],
+            )
         logger.warning(
             "ingestion_route_error provider=%s code=%s status=%d",
             adapter.provider_name,
@@ -343,16 +394,59 @@ async def zoom_transcript_completed(request: Request) -> dict[str, Any]:
 # ===========================================================================
 
 
+def _assert_internal_auth(request: Request, payload: dict[str, Any]) -> None:
+    """Enforce auth on internal-only ingestion routes (Pass 18 fix THREAT-013).
+
+    Webhook routes correctly trust HMAC signatures. But /document and
+    /aspire-calendar are INTERNAL routes called from the desktop app — they
+    MUST require:
+      1. Authorization: Bearer ... (JWT minted by server-side proxy)
+      2. X-Tenant-Id header (UUID)
+      3. Payload tenant_id matches X-Tenant-Id (no scope spoofing — Law #6)
+
+    Raises HTTPException(401) on any failure.
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        logger.warning("internal_ingest_unauthenticated path=%s", request.url.path)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"ok": False, "code": "UNAUTHENTICATED", "message": "Bearer token required"},
+        )
+    tenant_header = request.headers.get("X-Tenant-Id", "").strip()
+    if not tenant_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"ok": False, "code": "MISSING_TENANT_HEADER", "message": "X-Tenant-Id required"},
+        )
+    payload_tenant = str(payload.get("tenant_id") or "").strip()
+    if not payload_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"ok": False, "code": "MISSING_TENANT_IN_BODY", "message": "tenant_id required in body"},
+        )
+    if payload_tenant != tenant_header:
+        # Cross-tenant scope spoofing attempt — Law #6 violation.
+        logger.error(
+            "internal_ingest_scope_mismatch header=%s body=%s path=%s",
+            tenant_header, payload_tenant, request.url.path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"ok": False, "code": "SCOPE_MISMATCH", "message": "Tenant header and body do not match"},
+        )
+
+
 @router.post("/document")
 async def document_upload_ingest(request: Request) -> dict[str, Any]:
     """Aspire upload pipeline → memory_objects (type='document').
 
-    Called by the desktop app after a file upload completes. Requires a valid
-    JWT + capability token (enforced by FastAPI dependency in server.py).
+    Internal route: requires JWT + X-Tenant-Id + matching tenant_id in body.
     Body: JSON dict matching DocumentIngestionAdapter payload shape.
-    No external HMAC — security boundary is the route auth layer.
+    No external HMAC — security boundary is the route auth layer (Pass 18 fix).
     """
     payload = await request.json()
+    _assert_internal_auth(request, payload)
     return await _dispatch(DocumentIngestionAdapter(), request=request, payload=payload)
 
 
@@ -402,11 +496,12 @@ async def google_calendar_push(request: Request) -> dict[str, Any]:
 async def aspire_calendar_ingest(request: Request) -> dict[str, Any]:
     """Aspire internal calendar events → memory_objects (type='calendar_event').
 
-    Invoked when a calendar event is created, updated, or deleted in the
-    Aspire UI. Requires JWT + capability token. Body: JSON matching
-    AspireCalendarIngestionAdapter payload shape.
+    Internal route: requires JWT + X-Tenant-Id + matching tenant_id in body
+    (Pass 18 fix THREAT-013). Body: JSON matching AspireCalendarIngestionAdapter
+    payload shape.
     """
     payload = await request.json()
+    _assert_internal_auth(request, payload)
     return await _dispatch(AspireCalendarIngestionAdapter(), request=request, payload=payload)
 
 
