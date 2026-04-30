@@ -53,6 +53,10 @@ MemoryType = Literal[
     "meeting",       # Zoom meetings (recording + transcript)
     "transcript",    # Raw EL/Anam conversation transcripts
     "sms_thread",    # Twilio SMS threads (one per contact per office)
+    # Pass 14 expansion (migration 103) — contracts, document uploads, calendar
+    "contract",        # PandaDoc contracts (signed/declined) — distinct from quote
+    "document",        # User-uploaded files (PDF / image / doc) via Aspire upload pipeline
+    "calendar_event",  # Google Calendar / Outlook calendar events
 ]
 
 MemoryStatus = Literal[
@@ -98,6 +102,10 @@ SourceSurface = Literal[
     "receipt_ledger",
     "approval_queue",
     "system",
+    # Pass 14 expansion — new ingestion surface origins
+    "tec_documents",    # Aspire upload pipeline (user-uploaded files)
+    "google_calendar",  # Google Calendar push notifications
+    "aspire_calendar",  # Aspire internal calendar events
 ]
 
 SourceAgent = Literal[

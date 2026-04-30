@@ -47,10 +47,16 @@ from aspire_orchestrator.services.ingestion import (
     IngestionError,
 )
 from aspire_orchestrator.services.ingestion.anam_ingestion import AnamIngestionAdapter
+from aspire_orchestrator.services.ingestion.calendar_ingestion import (
+    AspireCalendarIngestionAdapter,
+    GoogleCalendarIngestionAdapter,
+)
 from aspire_orchestrator.services.ingestion.call_ingestion import (
     CallRecordingIngestionAdapter,
     CallTranscriptionIngestionAdapter,
 )
+from aspire_orchestrator.services.ingestion.contract_ingestion import ContractIngestionAdapter
+from aspire_orchestrator.services.ingestion.document_ingestion import DocumentIngestionAdapter
 from aspire_orchestrator.services.ingestion.elevenlabs_ingestion import ElevenLabsIngestionAdapter
 from aspire_orchestrator.services.ingestion.invoice_ingestion import InvoiceIngestionAdapter
 from aspire_orchestrator.services.ingestion.quote_ingestion import QuoteIngestionAdapter
@@ -232,13 +238,31 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
 
 @router.post("/pandadoc")
 async def pandadoc_webhook(request: Request) -> dict[str, Any]:
-    """PandaDoc document_state_changed events → memory_objects (type='quote').
+    """PandaDoc document_state_changed events → memory_objects (type='quote' or 'contract').
 
-    Handles sent / viewed / completed / declined states. Signature verified via
-    X-PandaDoc-Signature header (SHA-256 HMAC of raw body, hex-encoded).
+    Dispatches to ContractIngestionAdapter when payload.data.tags contains
+    'contract', otherwise to QuoteIngestionAdapter (preserves existing behavior).
+    Signature verified via X-PandaDoc-Signature (SHA-256 HMAC of raw body).
     """
     payload = await request.json()
-    return await _dispatch(QuoteIngestionAdapter(), request=request, payload=payload)
+    data: dict[str, Any] = payload.get("data") or {}
+    tags: list[str] = []
+
+    # Tags may be on the top-level data dict or nested under document
+    raw_tags = data.get("tags") or []
+    if isinstance(raw_tags, list):
+        tags = [str(t).lower() for t in raw_tags]
+    elif isinstance(data.get("document"), dict):
+        doc_tags = data["document"].get("tags") or []
+        tags = [str(t).lower() for t in doc_tags]
+
+    adapter: QuoteIngestionAdapter | ContractIngestionAdapter
+    if "contract" in tags:
+        adapter = ContractIngestionAdapter()
+    else:
+        adapter = QuoteIngestionAdapter()
+
+    return await _dispatch(adapter, request=request, payload=payload)
 
 
 # ===========================================================================
@@ -314,6 +338,78 @@ async def zoom_transcript_completed(request: Request) -> dict[str, Any]:
     return await _dispatch(ZoomTranscriptIngestionAdapter(), request=request, payload=payload)
 
 
+# ===========================================================================
+# Document upload (internal — authenticated route, not a third-party webhook)
+# ===========================================================================
+
+
+@router.post("/document")
+async def document_upload_ingest(request: Request) -> dict[str, Any]:
+    """Aspire upload pipeline → memory_objects (type='document').
+
+    Called by the desktop app after a file upload completes. Requires a valid
+    JWT + capability token (enforced by FastAPI dependency in server.py).
+    Body: JSON dict matching DocumentIngestionAdapter payload shape.
+    No external HMAC — security boundary is the route auth layer.
+    """
+    payload = await request.json()
+    return await _dispatch(DocumentIngestionAdapter(), request=request, payload=payload)
+
+
+# ===========================================================================
+# Google Calendar push notification
+# ===========================================================================
+
+
+@router.post("/google-calendar")
+async def google_calendar_push(request: Request) -> dict[str, Any]:
+    """Google Calendar push notification → memory_objects (type='calendar_event').
+
+    Google sends push pings with NO body. Channel ID and resource state are in
+    headers only (X-Goog-Channel-ID, X-Goog-Resource-ID, X-Goog-Resource-State).
+    The adapter fetches changed events from the Google Calendar API and writes
+    one memory_object per event.
+    """
+    channel_id = (
+        request.headers.get("X-Goog-Channel-ID")
+        or request.headers.get("x-goog-channel-id")
+        or ""
+    )
+    resource_id = (
+        request.headers.get("X-Goog-Resource-ID")
+        or request.headers.get("x-goog-resource-id")
+        or ""
+    )
+    resource_state = (
+        request.headers.get("X-Goog-Resource-State")
+        or request.headers.get("x-goog-resource-state")
+        or ""
+    )
+    payload: dict[str, Any] = {
+        "channel_id": channel_id,
+        "resource_id": resource_id,
+        "resource_state": resource_state,
+    }
+    return await _dispatch(GoogleCalendarIngestionAdapter(), request=request, payload=payload)
+
+
+# ===========================================================================
+# Aspire internal calendar (authenticated internal route)
+# ===========================================================================
+
+
+@router.post("/aspire-calendar")
+async def aspire_calendar_ingest(request: Request) -> dict[str, Any]:
+    """Aspire internal calendar events → memory_objects (type='calendar_event').
+
+    Invoked when a calendar event is created, updated, or deleted in the
+    Aspire UI. Requires JWT + capability token. Body: JSON matching
+    AspireCalendarIngestionAdapter payload shape.
+    """
+    payload = await request.json()
+    return await _dispatch(AspireCalendarIngestionAdapter(), request=request, payload=payload)
+
+
 # ---------------------------------------------------------------------------
 # Health probe — for monitoring + smoke tests. Always 200; never authed.
 # ---------------------------------------------------------------------------
@@ -332,10 +428,14 @@ async def ingestion_healthz() -> dict[str, Any]:
             "twilio_voice_transcription_callback",
             "stripe",
             "pandadoc",
+            "pandadoc_contract",
             "elevenlabs_post_call",
             "anam_session_end",
             "zoom_recording_completed",
             "zoom_transcript_completed",
+            "aspire_upload",
+            "google_calendar",
+            "aspire_calendar",
         ],
         "stub_adapters": [],
     }

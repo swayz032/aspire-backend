@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_s3_region: str = "us-east-1"
 
+    # --- Google Calendar OAuth2 (for push notification adapter) ---
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: str = ""
+
     # --- Plaid provider keys ---
     plaid_client_id: str = ""
     plaid_secret: str = ""
