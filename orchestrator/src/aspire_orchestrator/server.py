@@ -110,6 +110,7 @@ from aspire_orchestrator.routes.tools import router as tools_router
 from aspire_orchestrator.routes.webhooks import router as webhooks_router
 from aspire_orchestrator.routes import memory as memory_router_mod
 from aspire_orchestrator.routes import memory_pages as memory_pages_router_mod
+from aspire_orchestrator.routes.ingestion import router as ingestion_router
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -246,6 +247,12 @@ app.include_router(tools_router)
 # Include Memory Engine Coordination Spine routes (Pass 4)
 app.include_router(memory_router_mod.router, prefix="", tags=["memory-spine"])
 app.include_router(memory_pages_router_mod.router, prefix="", tags=["memory-pages"])
+
+# Include Ingestion Adapter routes (Pass 14)
+# Webhook endpoints for Stripe / Twilio / EL / Anam / Zoom / PandaDoc → memory_objects.
+# SMS adapter is wired (reference); 8 other adapters are stubbed (501) and filled in
+# by parallel mcp-toolsmith subagents per plan §19 Pass 14.
+app.include_router(ingestion_router)
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ

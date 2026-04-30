@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 # ---------------------------------------------------------------------------
 
 MemoryType = Literal[
+    # Original 14 types (Pass 1)
     "session_summary",
     "handoff_note",
     "pending_intent",
@@ -45,6 +46,13 @@ MemoryType = Literal[
     "artifact_reference",
     "receipt_reference",
     "workflow_reference",
+    # Pass 14 ingestion extensions (migration 101)
+    "invoice",       # Stripe invoice events
+    "quote",         # PandaDoc + internal estimate-studio quotes
+    "call",          # Twilio voice calls (recording + transcript)
+    "meeting",       # Zoom meetings (recording + transcript)
+    "transcript",    # Raw EL/Anam conversation transcripts
+    "sms_thread",    # Twilio SMS threads (one per contact per office)
 ]
 
 MemoryStatus = Literal[
