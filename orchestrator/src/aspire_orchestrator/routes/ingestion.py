@@ -59,6 +59,7 @@ from aspire_orchestrator.services.ingestion.zoom_ingestion import (
     ZoomRecordingIngestionAdapter,
     ZoomTranscriptIngestionAdapter,
 )
+from aspire_orchestrator.services.sms_io import update_sms_status
 
 logger = logging.getLogger(__name__)
 
@@ -163,19 +164,49 @@ async def twilio_sms_inbound(request: Request) -> dict[str, Any]:
 
 @router.post("/twilio/sms/status")
 async def twilio_sms_status(request: Request) -> dict[str, Any]:
-    """STUB — Twilio outbound SMS status callback (delivered / failed / undelivered).
+    """Twilio outbound SMS status callback — updates sms_messages.status.
 
-    Subagent (Lane G — Pass 16 prereq): updates `sms_messages.status` for
-    outbound messages. Pass 14 only handles inbound.
+    Wired in Pass 16 (replaces 501 stub). Fires when Twilio delivers / fails
+    an outbound SMS that was sent via sms_io.send_sms.
+
+    Twilio sends form-encoded fields: MessageSid, MessageStatus, ErrorCode.
+    Signature verified via X-Twilio-Signature (same as inbound SMS).
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail={
-            "ok": False,
-            "code": "NOT_IMPLEMENTED",
-            "message": "twilio sms status adapter pending (Pass 16 — sms_messages table)",
-        },
+    form = await request.form()
+    payload = {k: str(v) for k, v in form.items()}
+
+    # Signature verification (Law #3: fail closed)
+    from aspire_orchestrator.services.ingestion.signatures import verify_twilio
+    sig = request.headers.get("X-Twilio-Signature") or request.headers.get("x-twilio-signature", "")
+    full_url = str(request.url)
+    if settings.twilio_auth_token and not verify_twilio(
+        full_url=full_url,
+        params=payload,
+        sig_header=sig,
+        auth_token=settings.twilio_auth_token,
+    ):
+        logger.warning("twilio_sms_status invalid_signature")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"ok": False, "code": "INVALID_SIGNATURE"},
+        )
+
+    message_sid = payload.get("MessageSid") or payload.get("SmsSid", "")
+    message_status = payload.get("MessageStatus", "")
+    error_code = payload.get("ErrorCode") or None
+
+    if not message_sid or not message_status:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"ok": False, "code": "MISSING_FIELDS"},
+        )
+
+    await update_sms_status(
+        twilio_message_sid=message_sid,
+        new_status=message_status,
+        error_code=error_code,
     )
+    return {"ok": True, "message_sid": message_sid, "status": message_status}
 
 
 # ===========================================================================
@@ -296,6 +327,7 @@ async def ingestion_healthz() -> dict[str, Any]:
         "service": "ingestion",
         "wired_adapters": [
             "twilio_sms_inbound",
+            "twilio_sms_status",
             "twilio_voice_recording_status",
             "twilio_voice_transcription_callback",
             "stripe",
@@ -305,7 +337,5 @@ async def ingestion_healthz() -> dict[str, Any]:
             "zoom_recording_completed",
             "zoom_transcript_completed",
         ],
-        "stub_adapters": [
-            "twilio_sms_status",
-        ],
+        "stub_adapters": [],
     }

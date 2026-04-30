@@ -111,6 +111,10 @@ from aspire_orchestrator.routes.webhooks import router as webhooks_router
 from aspire_orchestrator.routes import memory as memory_router_mod
 from aspire_orchestrator.routes import memory_pages as memory_pages_router_mod
 from aspire_orchestrator.routes.ingestion import router as ingestion_router
+from aspire_orchestrator.routes.telephony import router as telephony_router
+from aspire_orchestrator.routes.sarah import router as sarah_router
+from aspire_orchestrator.routes.front_desk import router as front_desk_router
+from aspire_orchestrator.routes.sms import router as sms_router
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -270,6 +274,12 @@ app.include_router(memory_pages_router_mod.router, prefix="", tags=["memory-page
 # SMS adapter is wired (reference); 8 other adapters are stubbed (501) and filled in
 # by parallel mcp-toolsmith subagents per plan §19 Pass 14.
 app.include_router(ingestion_router)
+
+# Pass 16 — Sarah ↔ Front Desk Setup ↔ Twilio ↔ ElevenLabs wiring
+app.include_router(telephony_router)    # /v1/twilio/...
+app.include_router(sarah_router)        # /v1/sarah/personalization
+app.include_router(front_desk_router)   # /v1/front-desk/...
+app.include_router(sms_router)          # /v1/sms/send
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
