@@ -9,6 +9,9 @@ Transcripts:
              image cut off, "View details" ERROR, Ava interrupts
   055f610b — MISSING_TASK returned 3× despite populated body; UTC greeting bug
   214de471 — voice request timed out at 5160ms (>5s Anam ceiling)
+  3ca28bc6 — Round 7 (2026-04-30): invoke_adam returned MISSING_TASK 3×;
+             hole-in-wall PROBLEM mode + address ask worked, but invoke_adam
+             never resolved. Wave D.6 regression lock.
 """
 
 from __future__ import annotations
@@ -257,7 +260,10 @@ class TestTranscript055f610b:
         """Transcript 055f610b: receipt must be emitted on every successful dispatch.
 
         Law #2: No action without a receipt. Verify the response carries
-        receipt-related fields (providers_called, segment, playbook name).
+        receipt-related fields (providers_called, segment, playbook name) AND
+        that store_receipts was actually called — Round 7 H-2 found that the
+        prior version of this test only asserted response fields, so a future
+        regression where _emit_playbook_receipt silently fails would still pass.
         """
         hd_mock = AsyncMock(return_value=_ok("serpapi_home_depot.search", _TALLAHASSEE_HD_OK))
 
@@ -269,7 +275,9 @@ class TestTranscript055f610b:
         ), patch(
             "aspire_orchestrator.providers.serpapi_shopping_client.execute_serpapi_shopping_search",
             AsyncMock(return_value=_ok("serpapi_shopping.search", {"results": []})),
-        ):
+        ), patch(
+            "aspire_orchestrator.services.receipt_store.store_receipts"
+        ) as mock_store_receipts:
             response = await dispatch_playbook(
                 "TOOL_MATERIAL_PRICE_CHECK",
                 "sheetrock price",
@@ -281,6 +289,13 @@ class TestTranscript055f610b:
         assert response.segment, "receipt field 'segment' must be set"
         assert response.providers_called is not None, (
             "receipt field 'providers_called' must be present (Law #2)"
+        )
+        # Round 7 H-2: store_receipts must actually be invoked. Response fields
+        # alone are not sufficient evidence that a receipt was persisted.
+        assert mock_store_receipts.call_count >= 1, (
+            f"Law #2 regression: store_receipts was called "
+            f"{mock_store_receipts.call_count} times; expected >= 1 to confirm "
+            "_emit_playbook_receipt actually persisted a receipt."
         )
 
 
@@ -359,4 +374,145 @@ class TestTranscript214de471:
             f"Bug regression 214de471: voice path took {elapsed:.3f}s; "
             "budget is <4.5s (one attempt × 1.5s SerpApi + overhead). "
             "Ensure single-attempt + 4s timeout are active."
+        )
+
+
+# ─── Transcript 3ca28bc6 — Round 7 MISSING_TASK + hole-in-wall (2026-04-30) ──
+
+class TestTranscript3ca28bc6:
+    """Regression lock for transcript 3ca28bc6 (2026-04-30, 6:23 PM, 2.35 min).
+
+    Source: plan hey-can-you-deep-serene-elephant.md / user live test.
+
+    Bugs locked:
+      1. invoke_adam returned MISSING_TASK 3× with a fully-formed payload
+         (task, agent, query, entity_type, user_address all present).
+         Root cause: Anam sends invoke_adam args FLAT (no bodyParams wrapper).
+         Round 6 unwrapped bodyParams but invoke_adam was never wrapped — so
+         the fix addressed ava_get_context only. The dispatch_playbook path
+         must never return MISSING_TASK when task + query are present.
+      2. Session payload: task=TOOL_MATERIAL_PRICE_CHECK, agent=adam,
+         query='lightweight spackle, putty knife, fine-grit sandpaper, primer',
+         entity_type='material', user_address='<Tallahassee address>'.
+
+    Law #2 — receipt must be emitted regardless of outcome.
+    Law #3 — fail closed: MISSING_TASK is a hard fail; must not happen when
+              task+query are fully present.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dispatch_with_3ca28bc6_payload_does_not_return_missing_task(self):
+        """D.6: dispatch_playbook with session 3ca28bc6 payload must not return MISSING_TASK.
+
+        Replicates the exact task+query from the 2026-04-30 6:23 PM live session
+        where Ava correctly diagnosed the hole-in-wall problem and named materials
+        but invoke_adam returned MISSING_TASK 3 times in a row.
+        """
+        hd_mock = AsyncMock(return_value=_ok("serpapi_home_depot.search", _TALLAHASSEE_HD_OK))
+        shopping_mock = AsyncMock(return_value=_ok("serpapi_shopping.search", {"results": []}))
+
+        ctx = _ctx("transcript-3ca28bc6-dispatch")
+
+        with patch(
+            "aspire_orchestrator.providers.serpapi_homedepot_client.execute_serpapi_homedepot_search",
+            hd_mock,
+        ), patch(
+            "aspire_orchestrator.providers.serpapi_shopping_client.execute_serpapi_shopping_search",
+            shopping_mock,
+        ):
+            response = await dispatch_playbook(
+                # task as it appeared in the 3ca28bc6 session payload
+                "TOOL_MATERIAL_PRICE_CHECK",
+                # query as Ava diagnosed and sent: multi-material repair list
+                "lightweight spackle, putty knife, fine-grit sandpaper, primer",
+                ctx,
+            )
+
+        # Primary assertion: MISSING_TASK must not appear.
+        assert "MISSING_TASK" not in (response.summary or ""), (
+            f"Transcript 3ca28bc6 regression: MISSING_TASK returned despite fully-formed "
+            f"payload. artifact_type={response.artifact_type!r} summary={response.summary!r}"
+        )
+        assert response.artifact_type != "error" or "MISSING_TASK" not in (response.summary or ""), (
+            f"artifact_type='error' with MISSING_TASK is a hard regression. "
+            f"summary={response.summary!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_direct_with_3ca28bc6_payload_not_error(self):
+        """D.6: execute_tool_material_price_check with 3ca28bc6 params must not error.
+
+        Exercises the direct playbook call with the same params Anam sent
+        in session 3ca28bc6: multi-material query + voice_path=True + Tallahassee
+        user_address. artifact_type must NOT be 'error'.
+        """
+        hd_mock = AsyncMock(return_value=_ok("serpapi_home_depot.search", _TALLAHASSEE_HD_OK))
+
+        with patch(
+            "aspire_orchestrator.providers.serpapi_homedepot_client.execute_serpapi_homedepot_search",
+            hd_mock,
+        ), patch(
+            "aspire_orchestrator.providers.serpapi_shopping_client.execute_serpapi_shopping_search",
+            AsyncMock(return_value=_ok("serpapi_shopping.search", {"results": []})),
+        ):
+            response = await execute_tool_material_price_check(
+                query="lightweight spackle, putty knife, fine-grit sandpaper, primer",
+                ctx=_ctx("transcript-3ca28bc6-direct"),
+                user_address="1234 Miccosukee Rd, Tallahassee, FL 32308",
+                voice_path=True,
+            )
+
+        assert response.artifact_type != "error", (
+            f"Transcript 3ca28bc6 regression: artifact_type='error' for valid voice query. "
+            f"summary={response.summary!r}"
+        )
+        assert "MISSING_TASK" not in (response.summary or ""), (
+            f"Transcript 3ca28bc6 regression: MISSING_TASK in summary for direct call. "
+            f"summary={response.summary!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_3ca28bc6_response_carries_receipt_fields(self):
+        """D.6: every invoke from 3ca28bc6 payload must carry receipt evidence (Law #2).
+
+        providers_called, playbook, and segment must be set on the response
+        AND store_receipts must actually be invoked. Round 7 H-2 strengthened
+        this assertion — response fields alone are not proof a receipt was
+        persisted; a future regression where _emit_playbook_receipt silently
+        fails would have passed the prior version.
+        """
+        hd_mock = AsyncMock(return_value=_ok("serpapi_home_depot.search", _TALLAHASSEE_HD_OK))
+
+        ctx = _ctx("transcript-3ca28bc6-receipt")
+
+        with patch(
+            "aspire_orchestrator.providers.serpapi_homedepot_client.execute_serpapi_homedepot_search",
+            hd_mock,
+        ), patch(
+            "aspire_orchestrator.providers.serpapi_shopping_client.execute_serpapi_shopping_search",
+            AsyncMock(return_value=_ok("serpapi_shopping.search", {"results": []})),
+        ), patch(
+            "aspire_orchestrator.services.receipt_store.store_receipts"
+        ) as mock_store_receipts:
+            response = await dispatch_playbook(
+                "TOOL_MATERIAL_PRICE_CHECK",
+                "lightweight spackle, putty knife, fine-grit sandpaper, primer",
+                ctx,
+            )
+
+        assert response.playbook, (
+            "Transcript 3ca28bc6: receipt field 'playbook' must be set (Law #2)"
+        )
+        assert response.segment, (
+            "Transcript 3ca28bc6: receipt field 'segment' must be set (Law #2)"
+        )
+        assert response.providers_called is not None, (
+            "Transcript 3ca28bc6: providers_called must be set (Law #2 receipt evidence)"
+        )
+        # Round 7 H-2: store_receipts must actually be invoked.
+        assert mock_store_receipts.call_count >= 1, (
+            f"Law #2 regression: store_receipts was called "
+            f"{mock_store_receipts.call_count} times; expected >= 1 to confirm "
+            "_emit_playbook_receipt actually persisted a receipt for the "
+            "3ca28bc6 payload."
         )

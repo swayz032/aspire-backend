@@ -8,9 +8,14 @@ Playbooks: Property Facts & Permits, Estimate Research, Tool/Material Price Chec
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json as _json
 import logging
+import random as _random
 import re
+import uuid as _uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from aspire_orchestrator.services.adam.schemas.business_record import SourceAttribution
@@ -19,6 +24,73 @@ from aspire_orchestrator.services.adam.schemas.research_response import Research
 from aspire_orchestrator.services.adam.verifier import verify_records
 
 logger = logging.getLogger(__name__)
+
+# Round 7 A.2 — HD-too-far threshold (miles). Above this distance the prompt
+# offers Lowe's/Ace fallback. Tuneable without code rebuild.
+HD_TOO_FAR_MILES = 25.0
+
+# Round 7 A.2 — SerpApi shopping retry policy. Voice path budget is ≤ 4.5s P95;
+# we reserve ~1.5s of total slack for these retries. Two retries with
+# exponential-backoff-with-jitter (250ms, 500ms base + 0-100ms jitter), then
+# graceful degrade to empty.
+_SHOPPING_RETRY_MAX_ATTEMPTS = 2
+_SHOPPING_RETRY_BASE_MS = (250, 500)
+
+
+def _emit_playbook_receipt(
+    *,
+    ctx: PlaybookContext,
+    outcome_status: str,                # SUCCEEDED | FAILED | DENIED
+    reason_code: str,
+    playbook_name: str,
+    summary: dict[str, Any] | None = None,
+) -> None:
+    """Emit a playbook-rollup receipt for Adam (Law #2 — 100% coverage).
+
+    Provider clients already emit one receipt per HTTP call. This receipt is
+    the playbook-level rollup so every Adam outcome (success, MISSING_TASK,
+    shopping_429, hd_too_far, no_stock, multi_store_success) has at least
+    one receipt with actor_type=WORKER and the correct status. Best-effort:
+    receipt-store failures are logged and swallowed so receipt persistence
+    NEVER blocks the user-facing response (Law #2 + reliability balance).
+    """
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts
+
+        # Outcome string at the receipt-store layer is lowercased by status_map.
+        outcome_lower = outcome_status.lower()
+        receipt: dict[str, Any] = {
+            "id": str(_uuid.uuid4()),
+            "correlation_id": ctx.correlation_id or "",
+            "suite_id": ctx.suite_id or "",
+            "office_id": ctx.office_id or "",
+            "tenant_id": ctx.tenant_id or ctx.suite_id or "",
+            "actor_type": "WORKER",
+            "actor_id": "adam",
+            "action_type": f"adam.playbook.{playbook_name}",
+            "risk_tier": "green",
+            "tool_used": "adam_playbook",
+            "outcome": outcome_lower,
+            "reason_code": reason_code,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "receipt_type": "agent_playbook",
+            "redacted_inputs": None,
+            "redacted_outputs": summary or None,
+            "capability_token_id": ctx.capability_token_id,
+            "capability_token_hash": ctx.capability_token_hash,
+        }
+        # Receipt hash for chain integrity. Sort keys so the hash is deterministic.
+        try:
+            payload = _json.dumps(receipt, sort_keys=True, default=str)
+            receipt["receipt_hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        except Exception:
+            receipt["receipt_hash"] = ""
+        store_receipts([receipt])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Adam playbook receipt emission failed (outcome=%s reason=%s): %s",
+            outcome_status, reason_code, exc,
+        )
 
 
 def _extract_address_from_query(query: str) -> str:
@@ -417,6 +489,7 @@ async def execute_tool_material_price_check(
     city: str = "",
     state: str = "",
     user_address: str = "",
+    include_other_stores: bool = False,
 ) -> ResearchResponse:
     """TOOL_MATERIAL_PRICE_CHECK - Find current pricing, stock, and store info for tools/materials.
 
@@ -559,6 +632,17 @@ async def execute_tool_material_price_check(
                         picked = nearest
             # (c) no hint and no office address -> return disambiguation artifact.
             if picked is None:
+                _emit_playbook_receipt(
+                    ctx=ctx,
+                    outcome_status="SUCCEEDED",
+                    reason_code="store_disambiguation",
+                    playbook_name="TOOL_MATERIAL_PRICE_CHECK",
+                    summary={
+                        "candidate_count": len(candidates),
+                        "city": city,
+                        "state": state,
+                    },
+                )
                 return _build_store_disambiguation_response(
                     query=query, candidates=candidates, providers_called=[],
                 )
@@ -628,16 +712,23 @@ async def execute_tool_material_price_check(
             logger.info(
                 "Round-4 nearest HD lookup returned None for user_address=%r — "
                 "falling through to Wave A.5 (city -> zip)",
-                user_address[:60],
+                _redact_user_address(user_address),
             )
 
     # voice_path was already finalized at the top of this function from the
     # caller-supplied signals. Don't re-derive it here — that would let the
     # nearest_store-pinned zip_code flip it back to False (the F-CRIT-1 bug).
+    # Round 7 A.2 — multi-store gate. Voice path is HD-only by default; user
+    # explicit opt-in (include_other_stores=True) re-enables Google Shopping
+    # even on the voice path. Non-voice path always runs shopping.
+    run_shopping = (not voice_path) or include_other_stores
     if voice_path:
         query_attempts = [query]
+        # When include_other_stores=True we add ~1.5s budget for the shopping
+        # retry-with-backoff path; HD timeout stays at 4s so total stays under
+        # the 4.5s P95 voice SLO.
         hd_timeout = 4.0
-        skip_google_shopping = True
+        skip_google_shopping = not run_shopping
     else:
         query_attempts = [
             query,
@@ -645,7 +736,7 @@ async def execute_tool_material_price_check(
             f"{query} Home Depot {location_hint}".strip(),
         ]
         hd_timeout = 8.0
-        skip_google_shopping = False
+        skip_google_shopping = not run_shopping
 
     for attempt_idx, attempt_query in enumerate(query_attempts, start=1):
         records: list[dict[str, Any]] = []
@@ -704,18 +795,51 @@ async def execute_tool_material_price_check(
                 timeout=hd_timeout,
             )
 
+        # Round 7 A.2 — SerpApi shopping with exponential backoff + jitter on 429.
+        # Max 2 retries (3 total attempts), then graceful degrade to None so the
+        # HD result still carries the response. Receipt for the rate-limited
+        # outcome is emitted by the SerpApi client per call AND captured in the
+        # playbook rollup receipt below.
+        async def _shopping_with_backoff() -> Any:
+            attempts = _SHOPPING_RETRY_MAX_ATTEMPTS + 1
+            last_result: Any = None
+            for attempt in range(1, attempts + 1):
+                try:
+                    res = await execute_serpapi_shopping_search(
+                        payload=shopping_payload,
+                        correlation_id=ctx.correlation_id,
+                        suite_id=ctx.suite_id,
+                        office_id=ctx.office_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    last_result = exc
+                    break
+                last_result = res
+                # Detect 429 / RATE_LIMITED in the structured error string.
+                err_str = ""
+                if hasattr(res, "error") and isinstance(res.error, str):
+                    err_str = res.error.upper()
+                rate_limited = (
+                    res.outcome.value != "success"
+                    and ("RATE_LIMITED" in err_str or "429" in err_str)
+                )
+                if not rate_limited or attempt >= attempts:
+                    return res
+                # Exponential backoff with jitter — 250ms, 500ms (+ 0-100ms).
+                base_ms = (
+                    _SHOPPING_RETRY_BASE_MS[min(attempt - 1, len(_SHOPPING_RETRY_BASE_MS) - 1)]
+                )
+                jitter_ms = _random.randint(0, 100)
+                await asyncio.sleep((base_ms + jitter_ms) / 1000.0)
+            return last_result
+
         if skip_google_shopping:
             hd_result = await _resolve_and_search_hd()
             shopping_result = None
         else:
             hd_result, shopping_result = await asyncio.gather(
                 _resolve_and_search_hd(),
-                execute_serpapi_shopping_search(
-                    payload=shopping_payload,
-                    correlation_id=ctx.correlation_id,
-                    suite_id=ctx.suite_id,
-                    office_id=ctx.office_id,
-                ),
+                _shopping_with_backoff(),
                 return_exceptions=True,
             )
 
@@ -811,8 +935,16 @@ async def execute_tool_material_price_check(
                 records.append(product.to_dict())
                 sources.extend(product.sources)
 
+        # Round 7 A.2 — when include_other_stores=True, do NOT filter to HD-only;
+        # show all retailers (Lowe's, Walmart, Ace, Amazon) in carousel. HD
+        # products still drive the success-completion check below so the store
+        # summary card stays anchored on a real HD store.
+        if include_other_stores:
+            display_products = list(records)
+        else:
+            display_products = [r for r in records if r.get("retailer") == "Home Depot"]
         hd_products = [r for r in records if r.get("retailer") == "Home Depot"]
-        complete_products = [r for r in hd_products if not _product_missing_fields(r)]
+        complete_products = [r for r in display_products if not _product_missing_fields(r)]
         # Sub-item 1.1: surface SerpApi search_information.store_name as
         # store_summary.name so the store-summary card has the correct local
         # store label even when the resolver disagrees with SerpApi's pin.
@@ -880,14 +1012,75 @@ async def execute_tool_material_price_check(
         )
 
         if complete_products and not store_missing:
-            # Card pack is Home Depot-specific by design: include only the
-            # Home Depot store summary + Home Depot products.
+            # Card pack is Home Depot-anchored. When include_other_stores=True,
+            # also include non-HD complete products from display_products so the
+            # carousel mixes retailers; when False, HD-only.
             final_records = [store_summary, *complete_products]
             final_sources = sources
             final_store_summary = store_summary
             break
 
+    # Round 7 A.2 — decision flags computed for EVERY response (error or success).
+    # Prompt's FETCH MODE rule (Wave C.4) reads these to decide whether to offer
+    # Lowe's/Ace fallback. None means "unknown" (no HD resolved yet).
+    nearest_distance: float | None = (
+        round(nearest_store.distance_miles, 1)
+        if (nearest_store is not None and nearest_store.distance_miles is not None)
+        else None
+    )
+    # hd_too_far: True when (a) we have a distance and it exceeds threshold,
+    # OR (b) we tried to resolve nearest HD via user_address and got nothing
+    # (which means no HD within 50km — also "too far"). Default False when no
+    # user_address was supplied (we have no signal).
+    if nearest_store is None and user_address and user_address.strip():
+        hd_too_far = True
+    elif nearest_distance is not None and nearest_distance > HD_TOO_FAR_MILES:
+        hd_too_far = True
+    else:
+        hd_too_far = False
+
+    # hd_has_stock: True when at least one HD product (NOT non-HD) has in_store_stock > 0.
+    hd_in_stock_count = sum(
+        1 for r in final_records
+        if r.get("retailer") == "Home Depot"
+        and r.get("card_kind") != "store_summary"
+        and isinstance(r.get("in_store_stock"), (int, float))
+        and r["in_store_stock"] > 0
+    )
+    hd_has_stock = hd_in_stock_count > 0
+
+    decision_flags: dict[str, Any] = {
+        "nearest_store_distance_miles": nearest_distance,
+        "hd_too_far": hd_too_far,
+        "hd_has_stock": hd_has_stock,
+        "include_other_stores": include_other_stores,
+    }
+
     if not final_records:
+        # Error / no-match path. Receipt + decision flags still emitted so the
+        # prompt can decide the next step. Reason code distinguishes shopping-429
+        # (when SerpApi short-circuited) from generic no-match.
+        if "serpapi_home_depot_rate_limited" in providers_called:
+            reason_code = "shopping_429"
+        elif hd_too_far:
+            reason_code = "hd_too_far"
+        elif not hd_has_stock and hd_products:
+            reason_code = "no_stock"
+        else:
+            reason_code = "missing_required_fields"
+
+        _emit_playbook_receipt(
+            ctx=ctx,
+            outcome_status="FAILED",
+            reason_code=reason_code,
+            playbook_name="TOOL_MATERIAL_PRICE_CHECK",
+            summary={
+                **decision_flags,
+                "providers_called": providers_called,
+                "missing_fields": last_missing_fields,
+            },
+        )
+
         return ResearchResponse(
             artifact_type="error",
             summary="I could not retrieve complete Home Depot product and store details right now. Please try again in a moment.",
@@ -901,19 +1094,44 @@ async def execute_tool_material_price_check(
             intent="price_check",
             playbook="TOOL_MATERIAL_PRICE_CHECK",
             providers_called=providers_called,
-            extra={"hard_fail": True, "missing_fields": last_missing_fields},
+            extra={
+                "hard_fail": True,
+                "missing_fields": last_missing_fields,
+                **decision_flags,
+            },
         )
 
     report = verify_records(records=final_records, sources=final_sources, required_fields=["product_name", "price", "retailer"])
 
     hd_count = sum(1 for r in final_records if r.get("retailer") == "Home Depot" and r.get("card_kind") != "store_summary")
-    in_stock = sum(1 for r in final_records if r.get("retailer") == "Home Depot" and r.get("in_store_stock") and r["in_store_stock"] > 0)
+    other_count = sum(
+        1 for r in final_records
+        if r.get("retailer") and r.get("retailer") != "Home Depot"
+        and r.get("card_kind") != "store_summary"
+    )
+    in_stock = hd_in_stock_count
     summary_parts = [f"Price check for {query[:60]}"]
     if final_store_summary.get("store_name"):
         summary_parts.append(
             f"Home Depot store: {final_store_summary['store_name']} (#{final_store_summary.get('store_id', '')})"
         )
     summary_parts.append(f"{hd_count} Home Depot products, {in_stock} in stock")
+    if include_other_stores and other_count:
+        summary_parts.append(f"{other_count} other-retailer products via Google Shopping")
+
+    success_reason = "multi_store_success" if include_other_stores else "success"
+    _emit_playbook_receipt(
+        ctx=ctx,
+        outcome_status="SUCCEEDED",
+        reason_code=success_reason,
+        playbook_name="TOOL_MATERIAL_PRICE_CHECK",
+        summary={
+            **decision_flags,
+            "providers_called": providers_called,
+            "hd_product_count": hd_count,
+            "other_product_count": other_count,
+        },
+    )
 
     return ResearchResponse(
         artifact_type="PriceComparison",
@@ -932,7 +1150,11 @@ async def execute_tool_material_price_check(
         intent="price_check",
         playbook="TOOL_MATERIAL_PRICE_CHECK",
         providers_called=providers_called,
-        extra={"store_summary": final_store_summary, "cards_version": "v1"},
+        extra={
+            "store_summary": final_store_summary,
+            "cards_version": "v1",
+            **decision_flags,
+        },
     )
 
 async def execute_competitor_pricing_scan(

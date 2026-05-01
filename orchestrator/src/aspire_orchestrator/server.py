@@ -115,6 +115,8 @@ from aspire_orchestrator.routes.telephony import router as telephony_router
 from aspire_orchestrator.routes.sarah import router as sarah_router
 from aspire_orchestrator.routes.front_desk import router as front_desk_router
 from aspire_orchestrator.routes.sms import router as sms_router
+from aspire_orchestrator.routes.messages import router as messages_router
+from aspire_orchestrator.routes.calls import router as calls_router
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -280,6 +282,8 @@ app.include_router(telephony_router)    # /v1/twilio/...
 app.include_router(sarah_router)        # /v1/sarah/personalization
 app.include_router(front_desk_router)   # /v1/front-desk/...
 app.include_router(sms_router)          # /v1/sms/send
+app.include_router(messages_router)     # /v1/messages/*  — Pass 19 Lane E1
+app.include_router(calls_router)        # /v1/calls/*     — Pass 19 Lane B
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
@@ -1831,9 +1835,20 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             # via Google Places — primary path for trades workers
                             # at a job site (job site != office address).
                             ("user_address", "user_address"),
+                            # Round 7 A.2: multi-store opt-in. Default False
+                            # preserves HD-default voice behavior + latency.
+                            # True = also run Google Shopping (Lowe's/Walmart/etc).
+                            ("include_other_stores", "include_other_stores"),
                         ):
                             val = body.get(body_key)
-                            if val is not None:
+                            if body_key == "include_other_stores":
+                                # Default-deny strict bool coercion: opt-in flag must
+                                # be a real boolean. Strings like "true" are silently
+                                # ignored so the False default applies (Law #3).
+                                if isinstance(val, bool):
+                                    extra_kwargs[kwarg_key] = val
+                                # Non-bool values intentionally ignored — default False applies.
+                            elif val is not None:
                                 extra_kwargs[kwarg_key] = val
 
                     research = await _asyncio.wait_for(
