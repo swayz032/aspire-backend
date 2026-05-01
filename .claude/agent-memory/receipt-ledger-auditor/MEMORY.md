@@ -19,3 +19,15 @@
 - feature_flags receipt uses `risk_tier: "GREEN"` (uppercase) — may fail DB enum check
 - resume.py `_error()` uses `ReceiptType.TOOL_EXECUTION` for denial receipts — should be `ReceiptType.VALIDATION_FAILED` or similar
 - `store_receipts_strict` called-from-event-loop-thread edge case: schedules flush but does not await — creates a non-deterministic window where receipt may not be persisted before response
+
+## Pass 18 Audit Findings (2026-04-29) — Office Memory Engine Ship Gate
+- All 13 ingestion adapters delegate receipts via MemoryService.write — NO adapter calls store_receipts directly. Receipt cut is centralized in memory_service.py:412. Idempotency dedup path (lines 375-385) confirmed to NOT re-emit receipt (correct).
+- ALL ingestion adapters have failure receipts via IngestionError bubbling through base.ingest → HTTPException. BUT: the route layer (_dispatch) converts IngestionError to HTTPException without cutting a *_failed receipt. This means ingest failures (bad signature, scope fail, envelope build fail) are SILENT — no failure receipt in the receipts table.
+- twilio_provisioning.py: purchase_number cuts phone_number_purchase_failed receipt on rollback (line 318) and phone_number_purchase on success (line 335). release_number cuts phone_number_release on success only — no failure receipt if Twilio DELETE or EL detach fails.
+- sms_io.py: send_sms cuts sms_outbound receipt (line 238). update_sms_status cuts sms_status_update only on terminal states (correct per Law #2). No failure receipt if Twilio POST fails in send_sms.
+- routes/sarah.py: personalization_denied cut on invalid signature (line 183), personalization_unknown_number on 404 (line 223), personalization_resolve on success (line 315). No receipt on JSON parse error (lines 200-205) or generic DB error paths.
+- routes/front_desk.py: all 5 write operations (patch_config, test_call, create_contact, update_contact, delete_contact) cut receipts. No failure receipts for DB errors in patch_config/create_contact/update_contact.
+- CRITICAL SCHEMA GAP — All telephony/sms/sarah/front_desk receipts missing: trace_id, correlation_id, actor_id, capability_token_id, idempotency_key. These are orphaned (not linkable to requesting operation).
+- PII RISK: sms_io.py line 260 logs from_number, to_number, message body (first 80 chars) at INFO. Phone numbers are PII (Law #9).
+- SECRET RISK: routes/ingestion.py twilio_sms_status route (line 188) references `settings` but never imports it — NameError at runtime on status callbacks.
+- calendar_ingestion.py GoogleCalendarIngestionAdapter: `access_token` read from provider_connections row at line 611. If the row has `credentials` JSONB, the nested access_token is not logged (correct). But if row.get("access_token") returns the token directly, it is logged at warning level (line 616 — only a warning that it's missing, not the value itself). Confirmed safe.

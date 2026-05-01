@@ -122,6 +122,63 @@ async def send_sms(
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    # ── A2P 10DLC gate (Pass 19 Law #3: fail closed) ──────────────────────
+    # Gate checks tenant_a2p_registrations by scope.tenant_id (never from
+    # payload — that would allow a cross-tenant tenant_id injection).
+    a2p_rows = await supabase_select(
+        "tenant_a2p_registrations",
+        f"tenant_id=eq.{tenant_id}",
+        limit=1,
+    )
+    # Verify that the returned row belongs to THIS tenant (defence-in-depth against
+    # cross-tenant RLS bypass). RLS should enforce this at DB layer; we double-check
+    # here at the service layer (Law #6).
+    if a2p_rows:
+        row_tenant = str(a2p_rows[0].get("tenant_id") or "")
+        if row_tenant != tenant_id:
+            logger.error(
+                "sms_io a2p_row_tenant_mismatch scope_tenant=%s row_tenant=%s — denying",
+                tenant_id,
+                row_tenant,
+            )
+            a2p_rows = []  # Treat as no row — blocked
+    a2p_status = (a2p_rows[0].get("status") if a2p_rows else None) or "unregistered"
+    if a2p_status != "registered":
+        # Block SMS — cut receipt then raise (Law #2 + Law #3)
+        to_prefix_early = ""  # from_number not yet resolved; omit from receipt
+        receipt_store.store_receipts([{
+            "id": receipt_id,
+            "receipt_type": "sms_send_blocked_a2p",
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "tenant_id": tenant_id,
+            "outcome": "denied",
+            "action_type": "sms_send",
+            "tool_used": "sms_io",
+            "risk_tier": "yellow",
+            "reason_code": "a2p_not_registered",
+            "redacted_inputs": {
+                "thread_memory_id": thread_memory_id,
+                "body_length": len(body),
+                "a2p_status": a2p_status,
+            },
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
+            "capability_token_id": capability_token_id or None,
+            "created_at": now,
+        }])
+        logger.warning(
+            "sms_send blocked tenant=%s a2p_status=%s",
+            tenant_id,
+            a2p_status,
+        )
+        raise SmsIoError(
+            "A2P_NOT_REGISTERED",
+            f"Outbound SMS blocked: tenant A2P registration status is '{a2p_status}'. "
+            "Complete A2P 10DLC registration to enable SMS.",
+            403,
+        )
+
     # ── Resolve from_number ───────────────────────────────────────────────
     from_rows = await supabase_select(
         "tenant_phone_numbers",

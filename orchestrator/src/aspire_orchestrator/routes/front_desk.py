@@ -246,6 +246,20 @@ async def patch_config(
 
     inserted = await supabase_insert("front_desk_configs", new_row)
 
+    # Pass 19 §3.5.5 — invalidate LKG personalization cache for this office.
+    # Without this, calls within the next 10min would get stale routing phones
+    # from the in-process LKG cache.
+    try:
+        from aspire_orchestrator.routes.sarah import invalidate_personalization_cache_for_office
+        invalidate_personalization_cache_for_office(office_id)
+    except Exception as cache_exc:
+        # Non-fatal: log and continue. Cache will expire on its own TTL.
+        logger.warning(
+            "patch_config cache_invalidation_failed office_id=%s: %s",
+            office_id,
+            cache_exc,
+        )
+
     receipt_store.store_receipts([{
         "id": receipt_id,
         "receipt_type": "front_desk_config_save",
@@ -532,3 +546,130 @@ async def delete_routing_contact(
     }])
 
     return {"success": True, "contact_id": contact_id, "receipt_id": receipt_id}
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/front-desk/forwarding-instructions (Pass 19 Lane B §3.1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/forwarding-instructions")
+async def get_forwarding_instructions(
+    phone: str,
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-Id"),
+    x_suite_id: str | None = Header(None, alias="X-Suite-Id"),
+    x_office_id: str | None = Header(None, alias="X-Office-Id"),
+    x_capability_token: str | None = Header(None, alias="X-Aspire-Capability-Token"),
+) -> dict[str, Any]:
+    """Resolve carrier-specific conditional-forwarding instructions for a phone number.
+
+    Used by FORWARD_EXISTING mode on the Front Desk Setup page. The frontend
+    calls this after the owner enters their existing number. We resolve the
+    carrier via Twilio Lookup v2 and return the appropriate forwarding codes.
+
+    Capability scope: front_desk:read (GREEN tier — read-only).
+    Law #9: phone number prefix only logged; full number never in logs/receipts.
+    """
+    import re as _re
+    from aspire_orchestrator.services.forwarding_instructions import resolve_forwarding_instructions
+    from aspire_orchestrator.services.twilio_provisioning import (
+        TwilioProvisioningError,
+        lookup_carrier,
+    )
+
+    scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
+
+    # Capability token (parse from header string if provided)
+    cap_token_dict: dict[str, Any] | None = None
+    if x_capability_token:
+        try:
+            import json as _json
+            cap_token_dict = _json.loads(x_capability_token)
+        except Exception:
+            cap_token_dict = None
+    _validate_cap_token(cap_token_dict, scope, "front_desk:read")
+
+    suite_id = str(scope.suite_id)
+    office_id = str(scope.office_id)
+    tenant_id = str(scope.tenant_id)
+    receipt_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Validate E.164 format
+    if not isinstance(phone, str) or not _re.match(r"^\+\d{7,15}$", phone):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "INVALID_PHONE_FORMAT", "message": "phone must be E.164 format"},
+        )
+
+    phone_prefix = phone[:6] + "..."  # Law #9
+
+    # Resolve carrier via Twilio Lookup v2
+    carrier_name = ""
+    carrier_type = ""
+    try:
+        carrier_info = await lookup_carrier(phone)
+        if carrier_info:
+            carrier_name = carrier_info.carrier_name or ""
+            carrier_type = carrier_info.type or ""
+    except TwilioProvisioningError as exc:
+        logger.warning(
+            "forwarding_instructions carrier_lookup_failed phone_prefix=%s err=%s",
+            phone_prefix,
+            exc,
+        )
+        # Fail open — return generic instructions even if lookup fails
+        carrier_name = ""
+
+    # Resolve forwarding codes
+    # aspire_forward_target: tenant's Aspire forward-target number from tenant_phone_numbers
+    fwd_rows = await supabase_select(
+        "tenant_phone_numbers",
+        f"office_id=eq.{office_id}&status=eq.active",
+        limit=1,
+    )
+    aspire_forward_target = fwd_rows[0]["phone_number"] if fwd_rows else ""
+
+    instructions = resolve_forwarding_instructions(carrier_name, aspire_forward_target)
+
+    # Cut receipt (Law #2 — green tier read)
+    receipt_store.store_receipts([{
+        "id": receipt_id,
+        "receipt_type": "forwarding_instructions_resolve",
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "tenant_id": tenant_id,
+        "outcome": "success",
+        "action_type": "forwarding_instructions_resolve",
+        "tool_used": "front_desk_forwarding",
+        "risk_tier": "green",
+        "redacted_inputs": {
+            "phone_prefix": phone_prefix,
+            "carrier_name": carrier_name,
+        },
+        "redacted_outputs": {
+            "instruction_count": len(instructions),
+            "aspire_forward_target_prefix": (aspire_forward_target[:6] + "...") if aspire_forward_target else "",
+        },
+        "trace_id": get_trace_id(),
+        "correlation_id": get_correlation_id(),
+        "capability_token_id": _cap_token_id(cap_token_dict) or None,
+        "created_at": now,
+    }])
+
+    logger.info(
+        "forwarding_instructions phone_prefix=%s carrier=%s instructions=%d",
+        phone_prefix,
+        carrier_name or "unknown",
+        len(instructions),
+    )
+
+    return {
+        "success": True,
+        "phone_prefix": phone_prefix,
+        "carrier_name": carrier_name,
+        "carrier_type": carrier_type,
+        "instructions": instructions,
+        "aspire_forward_target": aspire_forward_target,
+        "receipt_id": receipt_id,
+    }

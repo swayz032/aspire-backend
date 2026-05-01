@@ -89,6 +89,33 @@ def _cache_put(called_number: str, dyn_vars: dict[str, Any], scope: dict[str, An
         _lkg_cache.popitem(last=False)
 
 
+def invalidate_personalization_cache_for_office(office_id: str) -> int:
+    """Invalidate all LKG cache entries that belong to a given office_id.
+
+    Called by the front_desk PATCH handler (§3.5.5 — cache invalidation on
+    Front Desk config save) so the next inbound call to Sarah gets the updated
+    config rather than a stale cached response.
+
+    Returns the number of entries removed.
+
+    Pass 19 §3.5.5: in-process LKG cache only. When Redis is added, this
+    function should also call `redis.delete(f"personalization:office:{office_id}")`.
+    """
+    keys_to_remove = [
+        k for k, v in _lkg_cache.items()
+        if v[2].get("office_id") == office_id
+    ]
+    for k in keys_to_remove:
+        _lkg_cache.pop(k, None)
+    if keys_to_remove:
+        logger.info(
+            "personalization_cache_invalidated office_id=%s entries=%d",
+            office_id,
+            len(keys_to_remove),
+        )
+    return len(keys_to_remove)
+
+
 def _cache_get(
     called_number: str,
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -119,6 +146,8 @@ _ROLE_TO_DYN_VAR: dict[str, str] = {
 
 # Default dynamic vars — ALL custom vars Sarah expects must be present
 # to avoid breaking the agent (EL requirement).
+# Pass 19 §3.5: extended with is_after_hours, tenant_id, office_id,
+# voicemail_email, caller_history_summary.
 _DEFAULT_DYN_VARS: dict[str, Any] = {
     "business_name": "your business",
     "first_name": "",
@@ -126,9 +155,10 @@ _DEFAULT_DYN_VARS: dict[str, Any] = {
     "industry": "professional_services",
     "time_of_day": "morning",
     "is_open_now": True,
+    "is_after_hours": False,                        # Pass 19: inverse of is_open_now
     "after_hours_mode": "take_message",
     "busy_mode": "take_message",
-    "public_number_mode": "ASPIRE_NUMBER",
+    "public_number_mode": "ASPIRE_NEW_NUMBER",      # Pass 19: updated to new enum value
     "catch_mode": "APP_AND_PHONE_SIMUL_RING",
     "greeting_name_override": "",
     "pronunciation_override": "",
@@ -138,6 +168,10 @@ _DEFAULT_DYN_VARS: dict[str, Any] = {
     "routing_support_phone": "",
     "routing_billing_phone": "",
     "routing_scheduling_phone": "",
+    "tenant_id": "",                                 # Pass 19: scope identifiers for EL runtime
+    "office_id": "",
+    "voicemail_email": "",                           # Pass 19: from office_profiles
+    "caller_history_summary": "",                   # Pass 19: V1 = empty string; V2 = prior call digest
 }
 
 
@@ -205,6 +239,15 @@ def _build_first_message(
     )
 
 
+def _is_production_origin() -> bool:
+    """Return True when running in production environment.
+
+    Used to hard-block the dev HMAC bypass flag in production.
+    Pass 19 Lane B — Law #3: HMAC must never be skippable in production.
+    """
+    return settings.aspire_env.lower() == "prod"
+
+
 @router.post("/personalization")
 async def personalization(request: Request) -> dict[str, Any]:
     """EL personalization webhook — fires at inbound call start.
@@ -213,6 +256,10 @@ async def personalization(request: Request) -> dict[str, Any]:
     builds dynamic_variables for Sarah, cuts receipt, returns EL response shape.
 
     <800ms response budget enforced via timeout handling.
+
+    Pass 19 §3.5: returns full 25-field dynamic_variables payload.
+    Pass 19 HMAC bypass: ASPIRE_DISABLE_PERSONALIZATION_HMAC=true skips signature
+      check in dev only. Hard-blocked in prod via _is_production_origin().
     """
     body = await request.body()
     sig_header = request.headers.get("ElevenLabs-Signature", "")
@@ -229,8 +276,18 @@ async def personalization(request: Request) -> dict[str, Any]:
     # silently bypassed verification when the secret env var was unset, which
     # would let any unauthenticated POST through in dev/staging where the
     # secret might not be configured.
+    #
+    # Pass 19 dev bypass: when ASPIRE_DISABLE_PERSONALIZATION_HMAC=true AND
+    # aspire_env != 'prod', skip the signature check. This allows local dev
+    # to hit the endpoint without setting up the EL webhook secret.
+    # In production this bypass is ALWAYS blocked.
+    hmac_bypass_enabled = (
+        settings.disable_personalization_hmac
+        and not _is_production_origin()
+    )
+
     el_secret = settings.elevenlabs_webhook_secret
-    if not el_secret:
+    if not el_secret and not hmac_bypass_enabled:
         logger.error(
             "sarah_personalization missing_webhook_secret — refusing to verify"
         )
@@ -250,7 +307,7 @@ async def personalization(request: Request) -> dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "MISCONFIGURED", "message": "EL webhook secret not set"},
         )
-    if not verify_elevenlabs(body, sig_header, el_secret):
+    if not hmac_bypass_enabled and not verify_elevenlabs(body, sig_header, el_secret):
         logger.warning("sarah_personalization invalid_signature")
         receipt_store.store_receipts([{
             "id": receipt_id,
@@ -553,7 +610,7 @@ async def _resolve_personalization(
         f"office_id=eq.{office_id}",
     )
 
-    biz_name, first_name, last_name, industry, tz_name = await _fetch_profile(
+    biz_name, first_name, last_name, industry, tz_name, voicemail_email = await _fetch_profile(
         suite_id=suite_id,
         office_id=office_id,
         tenant_id=tenant_id,
@@ -589,13 +646,18 @@ async def _resolve_personalization(
         "industry": industry,
         "time_of_day": time_of_day,
         "is_open_now": is_open,
+        "is_after_hours": not is_open,              # Pass 19 §3.5
         "after_hours_mode": config.get("after_hours_mode", "take_message"),
         "busy_mode": config.get("busy_mode", "take_message"),
-        "public_number_mode": config.get("public_number_mode", "ASPIRE_NUMBER"),
+        "public_number_mode": config.get("public_number_mode", "ASPIRE_NEW_NUMBER"),
         "catch_mode": config.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
         "greeting_name_override": config.get("greeting_name_override") or "",
         "pronunciation_override": config.get("pronunciation_override") or "",
         "routing_contacts_summary": routing_contacts_summary,
+        "tenant_id": tenant_id,                     # Pass 19 §3.5
+        "office_id": office_id,                     # Pass 19 §3.5
+        "voicemail_email": voicemail_email,          # Pass 19 §3.5
+        "caller_history_summary": "",               # Pass 19 §3.5: V1 empty; V2 = prior call digest
         **routing_dyn,
     }
 
@@ -650,14 +712,16 @@ async def _fetch_profile(
     suite_id: str,
     office_id: str,
     tenant_id: str,
-) -> tuple[str, str, str, str, str]:
-    """Fetch business name, first/last name, industry, timezone from profile tables.
+) -> tuple[str, str, str, str, str, str]:
+    """Fetch business name, first/last name, industry, timezone, voicemail_email.
 
-    Returns (business_name, first_name, last_name, industry, timezone).
+    Returns (business_name, first_name, last_name, industry, timezone, voicemail_email).
+
+    Pass 19 §3.5: now also fetches voicemail_email from office_profiles.
 
     Table assumptions:
       - tenant_profiles: tenant_id (FK), business_name, industry
-      - office_profiles: office_id (FK), first_name, last_name, timezone
+      - office_profiles: office_id (FK), first_name, last_name, timezone, voicemail_email
     Falls back to safe defaults if tables missing or empty row.
     """
     biz_name = "your business"
@@ -665,6 +729,7 @@ async def _fetch_profile(
     last_name = ""
     industry = "professional_services"
     tz_name = "America/New_York"
+    voicemail_email = ""
 
     tenant_rows = await _safe_select(
         "tenant_profiles",
@@ -686,5 +751,6 @@ async def _fetch_profile(
         first_name = row.get("first_name") or first_name
         last_name = row.get("last_name") or last_name
         tz_name = row.get("timezone") or tz_name
+        voicemail_email = row.get("voicemail_email") or voicemail_email
 
-    return biz_name, first_name, last_name, industry, tz_name
+    return biz_name, first_name, last_name, industry, tz_name, voicemail_email

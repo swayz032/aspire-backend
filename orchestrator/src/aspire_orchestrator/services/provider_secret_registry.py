@@ -65,3 +65,28 @@ def is_registry_provider_configured(meta: dict[str, Any], env: dict[str, str] | 
         return all(any(str(env.get(name, "")).strip() for name in group) for group in requirements)
     env_vars = meta.get("env_vars", ())
     return any(str(env.get(name, "")).strip() for name in env_vars)
+
+
+def get_secret_id_for_env(meta: dict[str, Any], aspire_env: str = "dev") -> str:
+    """Return the AWS Secrets Manager secret_id appropriate for the given environment.
+
+    Pass 19 Lane B (§1.6 item 5): the registry now includes a `secret_id_by_env`
+    map with keys 'dev', 'staging', 'prod'. This function resolves the correct
+    path so that production services read `aspire/prod/*` and dev reads `aspire/dev/*`.
+
+    Falls back to the top-level `secret_id` field for backward compatibility with
+    registry entries that don't yet have `secret_id_by_env`.
+
+    Args:
+        meta: a registry entry dict from get_provider_secret_registry().
+        aspire_env: current environment name (reads ASPIRE_ENV env var if not provided).
+
+    Returns:
+        The AWS SM secret path string, e.g. 'aspire/prod/twilio'.
+    """
+    env_key = aspire_env.lower().strip()
+    by_env: dict[str, str] = meta.get("secret_id_by_env") or {}
+    if env_key in by_env:
+        return str(by_env[env_key])
+    # Fallback: top-level secret_id (backward compat)
+    return str(meta.get("secret_id") or "")

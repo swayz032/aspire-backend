@@ -37,6 +37,7 @@ import { receiptsRouter } from './routes/receipts.js';
 import { policyRouter } from './routes/policy.js';
 import { registryRouter } from './routes/registry.js';
 import { a2aRouter } from './routes/a2a.js';
+import { messagesRouter } from './routes/messages.js';
 import { elevenlabsToolsRouter } from './routes/elevenlabs-tools.js';
 import { elevenlabsWebhooksRouter } from './routes/elevenlabs-webhooks.js';
 import { elevenlabsToolAuthMiddleware } from './middleware/elevenlabs-auth.js';
@@ -199,6 +200,10 @@ app.use('/v1/registry', elevatedRateLimiter, registryRouter);
 // POST /v1/a2a/* — Agent-to-agent task routing
 // Standard rate limit (100/min — state-changing operations)
 app.use('/v1/a2a', standardRateLimiter, a2aRouter);
+
+// GET/PATCH /api/messages/* — Messages API (Pass 19 Lane E1)
+// Standard rate limit (read-heavy: threads, messages, search, templates, suggestions)
+app.use('/api/messages', standardRateLimiter, messagesRouter);
 
 // =============================================================================
 // 404 handler for unknown routes

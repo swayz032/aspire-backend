@@ -216,7 +216,13 @@ def load_secrets() -> None:
             return
 
         client = _get_client()
-        env = "prod" if is_production else "dev"
+        # Pass 19 Lane B §1.6 item 5: ASPIRE_ENV now supports 'dev' | 'staging' | 'prod'.
+        # Both 'production' (legacy) and 'prod' (new canonical) map to aspire/prod/*.
+        # 'staging' also reads aspire/prod/* secrets (same prod-grade credentials).
+        if aspire_env in ("production", "prod", "staging"):
+            env = "prod"
+        else:
+            env = "dev"
 
         groups = [
             ("stripe", f"aspire/{env}/stripe"),
@@ -225,6 +231,11 @@ def load_secrets() -> None:
             ("twilio", f"aspire/{env}/twilio"),
             ("internal", f"aspire/{env}/internal"),
             ("providers", f"aspire/{env}/providers"),
+            # Pass 19: new granular prod secrets for providers that previously
+            # shared aspire/dev/providers. These are populated during preflight
+            # §1.6 owner ops (items 4-5). On dev they are optional (fallback
+            # to aspire/dev/providers).
+            ("elevenlabs", f"aspire/{env}/elevenlabs"),
         ]
 
         loaded_count = 0

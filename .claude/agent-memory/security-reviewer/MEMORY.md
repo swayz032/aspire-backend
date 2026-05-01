@@ -43,6 +43,14 @@
 - All 3 must be true — strong protection against accidental production bypass
 - But env-var-only: no code-level assertion that it can never reach Railway
 
+### Pass 18 — Ingestion + Telephony Routes (Pass 13-17)
+- `/v1/ingest/document` and `/v1/ingest/aspire-calendar` LACK auth dependency in server.py (comment claims it exists — it does not). Both are publicly writable. CRITICAL.
+- `routes/sarah.py:215` — `called_number` string interpolated into PostgREST filter without E.164 validation (HIGH injection surface post-HMAC). Signature IS first check — but no format guard after parsing.
+- `services/twilio_provisioning.py:release_number()` — queries by `id` only, no scope binding. Tenant can release another tenant's number (HIGH).
+- DLP not invoked on any of the 13 ingestion adapter paths — inbound SMS body, transcripts, contracts go into memory_objects without PII scan.
+- All 4 new tables (migration 102): FORCE ROW LEVEL SECURITY confirmed, policy uses `request.jwt.claim.tenant_id`. Migration 103 adds constraints only (no new tables).
+- Capability tokens: server-minted only (Express proxy in routes.ts:7938 uses TOKEN_SIGNING_SECRET). Frontend never holds signing key. TTL=45s. 6-check validation confirmed.
+
 ### Anam Session Store
 - In-memory Map, 30-minute TTL, 5-minute cleanup interval
 - Session key = Anam session token (opaque string from Anam API)

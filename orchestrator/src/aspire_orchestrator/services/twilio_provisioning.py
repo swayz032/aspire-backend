@@ -1,7 +1,8 @@
-"""Twilio phone-number provisioning service (Pass 16 — §16.B; Pass 18+ Lane 2).
+"""Twilio phone-number provisioning service (Pass 16 — §16.B; Pass 18+ Lane 2; Pass 19 Lane B).
 
 Provides:
-  - search_available_numbers: search available US local numbers via Twilio REST API.
+  - search_available_numbers: search available US local OR toll-free numbers.
+  - lookup_carrier: Twilio Lookup v2 → carrier name, type, line_type_intelligence.
   - purchase_number: atomic Yellow-tier purchase -> EL import -> EL attach -> receipt.
   - release_number: EL detach -> Twilio release -> mark released_at.
 
@@ -24,6 +25,11 @@ Pass 18+ Lane 2 changes:
     (migration 104) replaces the in-memory `_idem_store` dict. Survives restarts.
   - Prometheus metrics: aspire_telephony_purchase_total{outcome=...},
     aspire_telephony_release_total{outcome=...}.
+
+Pass 19 Lane B additions:
+  - search_available_numbers gains number_type param ('Local' | 'TollFree').
+    TollFree hits /US/TollFree.json, skips AreaCode, reports $2.00/mo cost.
+  - lookup_carrier wraps Twilio Lookup v2 → returns CarrierInfo.
 """
 
 from __future__ import annotations
@@ -86,6 +92,17 @@ class AvailableNumber(BaseModel):
     region: str
     monthly_cost_cents: int
     capabilities: PhoneCapabilities
+
+
+class CarrierInfo(BaseModel):
+    """Twilio Lookup v2 line_type_intelligence result.
+
+    Law #9: carrier_name and type are non-PII telecom metadata.
+    The raw phone number is never stored in this model.
+    """
+    carrier_name: str | None = None
+    type: str | None = None  # e.g. 'mobile', 'landline', 'voip', 'fixed-voip'
+    line_type_intelligence: dict[str, Any] | None = None
 
 
 class PurchasedNumber(BaseModel):
@@ -164,7 +181,7 @@ async def _twilio_get_available_numbers(
     auth_token: str,
     params: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Single attempt of the search call. Wrapped by resilient_call below."""
+    """Single attempt of the Local number search. Wrapped by resilient_call below."""
     url = f"{_TWILIO_BASE}/Accounts/{account_sid}/AvailablePhoneNumbers/US/Local.json"
     async with httpx.AsyncClient(
         auth=(account_sid, auth_token),
@@ -183,31 +200,85 @@ async def _twilio_get_available_numbers(
     return resp.json().get("available_phone_numbers", []) or []
 
 
+async def _twilio_get_tollfree_numbers(
+    *,
+    account_sid: str,
+    auth_token: str,
+    params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Single attempt of the TollFree number search. Wrapped by resilient_call below.
+
+    Pass 19 Lane B: toll-free uses /US/TollFree.json. AreaCode must NOT be
+    included in params — toll-free numbers are non-geographic.
+    """
+    url = f"{_TWILIO_BASE}/Accounts/{account_sid}/AvailablePhoneNumbers/US/TollFree.json"
+    async with httpx.AsyncClient(
+        auth=(account_sid, auth_token),
+        timeout=_TIMEOUT_SECONDS,
+    ) as client:
+        resp = await client.get(url, params=params)
+
+    if resp.status_code >= 400:
+        if _is_retryable_twilio_status(resp.status_code):
+            raise RetryableError(
+                "TWILIO_TRANSIENT",
+                f"Twilio toll-free search transient {resp.status_code}",
+            )
+        _raise_twilio_error("search_available_numbers_tollfree", resp)
+
+    return resp.json().get("available_phone_numbers", []) or []
+
+
 async def search_available_numbers(
-    area_code: str,
+    area_code: str = "",
     contains: str | None = None,
     limit: int = 20,
+    *,
+    number_type: str = "Local",
 ) -> list[AvailableNumber]:
-    """Search available US Local phone numbers via Twilio REST API.
+    """Search available US phone numbers via Twilio REST API.
 
-    GET /AvailablePhoneNumbers/US/Local.json?AreaCode={n}&Contains={c}
+    Pass 19 Lane B extension:
+      number_type='Local' (default): hits /US/Local.json with AreaCode param.
+      number_type='TollFree': hits /US/TollFree.json, skips AreaCode (non-geographic),
+        reports monthly_cost_cents=200 ($2.00/mo standard toll-free rate).
+
     Returns sanitized list — Twilio account SID never included in response.
 
     Idempotent (GET) — wrapped with circuit breaker + retry on transient failures.
     Law #9: account_sid used only in auth, never returned.
     """
     account_sid, auth_token = _twilio_auth()
-    params: dict[str, Any] = {
-        "AreaCode": area_code,
-        "PageSize": min(limit, 50),
-        "VoiceEnabled": "true",
-    }
+
+    is_tollfree = number_type.lower() in ("tollfree", "toll-free", "toll_free")
+
+    if is_tollfree:
+        # TollFree: non-geographic, no AreaCode
+        params: dict[str, Any] = {
+            "PageSize": min(limit, 50),
+            "VoiceEnabled": "true",
+            "SmsEnabled": "true",
+        }
+        fn = _twilio_get_tollfree_numbers
+        monthly_cost_cents = 200  # $2.00/mo standard toll-free
+        log_area = "toll-free"
+    else:
+        # Local: AreaCode required for targeting
+        params = {
+            "AreaCode": area_code,
+            "PageSize": min(limit, 50),
+            "VoiceEnabled": "true",
+        }
+        fn = _twilio_get_available_numbers
+        monthly_cost_cents = 100  # $1.00/mo standard local
+        log_area = area_code
+
     if contains:
         params["Contains"] = contains
 
     try:
         raw_numbers = await resilient_call(
-            _twilio_get_available_numbers,
+            fn,
             account_sid=account_sid,
             auth_token=auth_token,
             params=params,
@@ -216,7 +287,7 @@ async def search_available_numbers(
             idempotent=True,
         )
     except CircuitOpenError:
-        logger.warning("twilio_search circuit_open area_code=%s", area_code)
+        logger.warning("twilio_search circuit_open area_code=%s type=%s", log_area, number_type)
         raise TwilioProvisioningError(
             "TWILIO_CIRCUIT_OPEN",
             "Twilio is degraded — search temporarily unavailable",
@@ -235,18 +306,113 @@ async def search_available_numbers(
             AvailableNumber(
                 phone_number=raw.get("phone_number", ""),
                 region=raw.get("region", ""),
-                monthly_cost_cents=100,  # Twilio US Local = $1.00/mo standard
+                monthly_cost_cents=monthly_cost_cents,
                 capabilities=caps,
             )
         )
 
     logger.info(
-        "twilio_search area_code=%s contains=%s results=%d",
-        area_code,
+        "twilio_search area_code=%s type=%s contains=%s results=%d",
+        log_area,
+        number_type,
         contains or "",
         len(numbers),
     )
     return numbers
+
+
+# ---------------------------------------------------------------------------
+# Lookup v2 — carrier resolution (Pass 19 Lane B)
+# ---------------------------------------------------------------------------
+
+_TWILIO_LOOKUPS_BASE = "https://lookups.twilio.com/v2"
+
+
+async def _twilio_lookup_v2(
+    *,
+    account_sid: str,
+    auth_token: str,
+    phone_number: str,
+) -> dict[str, Any]:
+    """Single attempt of Twilio Lookup v2. Wrapped by resilient_call below.
+
+    GET /v2/PhoneNumbers/{phone}?Fields=line_type_intelligence
+    Law #9: account_sid used only in auth header, never in response.
+    """
+    # URL-encode + sign are handled by httpx auth tuple
+    url = f"{_TWILIO_LOOKUPS_BASE}/PhoneNumbers/{phone_number}"
+    async with httpx.AsyncClient(
+        auth=(account_sid, auth_token),
+        timeout=_TIMEOUT_SECONDS,
+    ) as client:
+        resp = await client.get(url, params={"Fields": "line_type_intelligence"})
+
+    if resp.status_code == 404:
+        # Number not found — return empty dict (not an error)
+        return {}
+    if resp.status_code >= 400:
+        if _is_retryable_twilio_status(resp.status_code):
+            raise RetryableError(
+                "TWILIO_TRANSIENT",
+                f"Twilio Lookup v2 transient {resp.status_code}",
+            )
+        _raise_twilio_error("lookup_carrier", resp)
+
+    return resp.json()
+
+
+async def lookup_carrier(phone_number: str) -> CarrierInfo | None:
+    """Resolve carrier information for a phone number via Twilio Lookup v2.
+
+    Used by FORWARD_EXISTING mode to return carrier-specific conditional-forwarding
+    instructions to the frontend.
+
+    Returns CarrierInfo with carrier_name, type, line_type_intelligence, or
+    None if the number is not found.
+
+    Idempotent (GET) — wrapped with circuit breaker + retry on transient failures.
+    Law #9: phone_number not logged at INFO; account_sid never returned.
+    """
+    account_sid, auth_token = _twilio_auth()
+
+    try:
+        data = await resilient_call(
+            _twilio_lookup_v2,
+            account_sid=account_sid,
+            auth_token=auth_token,
+            phone_number=phone_number,
+            breaker=twilio_breaker(),
+            policy=TWILIO_RETRY,
+            idempotent=True,
+        )
+    except CircuitOpenError as ce:
+        logger.warning("twilio_lookup_carrier circuit_open")
+        raise TwilioProvisioningError(
+            "TWILIO_CIRCUIT_OPEN",
+            f"Twilio is degraded — carrier lookup unavailable ({ce})",
+            503,
+        ) from ce
+
+    if not data:
+        # 404 path — number not found
+        return None
+
+    lti = data.get("line_type_intelligence") or {}
+    carrier_name = lti.get("carrier_name") or ""
+    carrier_type = lti.get("type") or ""
+
+    logger.info(
+        "twilio_lookup_carrier phone_prefix=%s carrier=%s type=%s",
+        (phone_number or "")[:6] + "...",  # Law #9: prefix only
+        carrier_name or "unknown",
+        carrier_type or "unknown",
+    )
+
+    return CarrierInfo(
+        carrier_name=carrier_name,
+        type=carrier_type,
+        line_type_intelligence=lti if lti else None,
+    )
 
 
 async def _twilio_purchase_post(
@@ -731,9 +897,11 @@ async def release_number(
 
 __all__ = [
     "AvailableNumber",
+    "CarrierInfo",
     "PhoneCapabilities",
     "PurchasedNumber",
     "TwilioProvisioningError",
+    "lookup_carrier",
     "search_available_numbers",
     "purchase_number",
     "release_number",

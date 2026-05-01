@@ -159,6 +159,17 @@ class Settings(BaseSettings):
     # new path is misbehaving in production.
     memory_dual_read_enabled: bool = True
 
+    # --- Environment identification (Pass 19 Lane B) ---
+    # Controls which AWS Secrets Manager prefix is used and governs
+    # production-hardening gates (e.g. HMAC bypass is blocked in prod).
+    aspire_env: str = "dev"  # dev | staging | prod
+
+    # Development safety bypass for EL personalization HMAC (Law #3 note):
+    # Setting ASPIRE_DISABLE_PERSONALIZATION_HMAC=true disables HMAC check in
+    # dev environments ONLY. This flag is BLOCKED in production via
+    # _is_production_origin() check in routes/sarah.py.
+    disable_personalization_hmac: bool = False
+
     model_config = {"env_prefix": "ASPIRE_", "extra": "ignore"}
 
     def model_post_init(self, __context: object) -> None:

@@ -1,0 +1,7 @@
+# MCP Toolsmith Memory Index
+
+- [Ingestion Adapter Patterns](ingestion-adapter-patterns.md) — BaseIngestionAdapter hook contract, supabase_select signature, PII/Law compliance patterns for Pass 14+18 adapters. Includes DLP scrubbing (THREAT-016) and receipt trace_id/correlation_id propagation (GAP-SCHEMA-1)
+- [Pass 16 Telephony Patterns](pass16-telephony-patterns.md) — EL phone API contract, Twilio provisioning, SMS IO, Front Desk versioning, personalization webhook shape, migration 102 table assumptions
+- [Pass 19 Messages Route Patterns](pass19-messages-patterns.md) — FastAPI dict Query param workaround (use str + json.loads), supabase_select filter syntax for PostgREST, proactive_candidates action column = recommended_action, memory_objects IS the sms_thread projection (no separate table), gateway PATCH proxy requires direct fetch (proxyToOrchestrator only accepts GET/POST/PUT/DELETE)
+- [Pass 19 Lane B Telephony Patterns](pass19-lane-b-telephony-patterns.md) — TollFree search, Lookup v2, forwarding instructions, A2P gate, Sarah §3.5 payload, caller-ID lookup, migration 106 RLS pattern, provider_secret_registry env-branching
+- [Pass 19 Lane C EL Sync Patterns](pass19-lane-c-el-sync-patterns.md) — EL webhook shape (object not string), data_collection dict format, workflow node types ("override_agent"), post-call webhook EL API limitation, Windows process.exit(0) UV assertion bug
