@@ -15,6 +15,10 @@ import os
 import re
 from typing import Any
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
 logger = logging.getLogger(__name__)
 _initialized = False
 
@@ -65,6 +69,24 @@ _HEALTH_PATHS: frozenset[str] = frozenset(
     }
 )
 
+_SAFE_CONTEXT_HEADERS: frozenset[str] = frozenset(
+    {
+        "x-correlation-id",
+        "x-trace-id",
+        "x-span-id",
+        "x-suite-id",
+        "x-office-id",
+        "x-actor-id",
+        "x-client-surface",
+        "user-agent",
+    }
+)
+
+_TRACEPARENT_RE = re.compile(
+    r"^[\da-f]{2}-([\da-f]{32})-([\da-f]{16})-[\da-f]{2}$",
+    re.IGNORECASE,
+)
+
 
 def _is_pii_field(field_name: str) -> bool:
     lower = field_name.lower()
@@ -99,6 +121,158 @@ def _scrub_dict(data: dict[str, Any]) -> dict[str, Any]:
         else:
             result[key] = value
     return result
+
+
+def _clean_context_value(value: str | None, *, max_len: int = 160) -> str:
+    """Return a header/tag-safe value without control chars or obvious PII."""
+    if not value:
+        return ""
+    cleaned = value.replace("\r", "").replace("\n", "").strip()
+    if not cleaned:
+        return ""
+    return _scrub_value(cleaned)[:max_len]
+
+
+def _trace_id_from_traceparent(header_value: str | None) -> str:
+    if not header_value:
+        return ""
+    match = _TRACEPARENT_RE.match(header_value.strip())
+    return match.group(1) if match else ""
+
+
+def _build_request_context(request: Request) -> dict[str, Any]:
+    """Build low-cardinality request context for Sentry tags and event context."""
+    from aspire_orchestrator.middleware.correlation import (
+        get_correlation_id,
+        get_span_id,
+        get_trace_id,
+    )
+
+    headers = request.headers
+    correlation_id = _clean_context_value(
+        get_correlation_id() or headers.get("x-correlation-id")
+    )
+    trace_id = _clean_context_value(
+        get_trace_id()
+        or headers.get("x-trace-id")
+        or _trace_id_from_traceparent(headers.get("traceparent")),
+        max_len=64,
+    )
+    span_id = _clean_context_value(
+        get_span_id() or headers.get("x-span-id"),
+        max_len=32,
+    )
+    suite_id = _clean_context_value(headers.get("x-suite-id"), max_len=96)
+    office_id = _clean_context_value(headers.get("x-office-id"), max_len=96)
+    actor_id = _clean_context_value(headers.get("x-actor-id"), max_len=128)
+    path = str(request.url.path)
+
+    safe_headers = {
+        key: _clean_context_value(value)
+        for key, value in headers.items()
+        if key.lower() in _SAFE_CONTEXT_HEADERS
+    }
+
+    return {
+        "surface": "backend",
+        "service": "aspire-orchestrator",
+        "method": request.method,
+        "path": path,
+        "route_family": "admin" if path.startswith("/admin") else path.split("/")[1] if path.startswith("/") and len(path.split("/")) > 1 else "root",
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "actor_id": actor_id,
+        "correlation_id": correlation_id,
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "headers": safe_headers,
+    }
+
+
+def _apply_scope_context(scope: Any, context: dict[str, Any]) -> None:
+    tags = {
+        "service": "aspire-orchestrator",
+        "surface": "backend",
+        "route_family": context.get("route_family") or "root",
+        "http.method": context.get("method") or "",
+        "correlation_id": context.get("correlation_id") or "",
+        "trace_id": context.get("trace_id") or "",
+        "suite_id": context.get("suite_id") or "unscoped",
+        "office_id": context.get("office_id") or "unscoped",
+    }
+
+    for key, value in tags.items():
+        if value:
+            scope.set_tag(key, str(value)[:200])
+
+    if context.get("actor_id"):
+        scope.set_user({"id": context["actor_id"]})
+
+    scope.set_context("aspire_request", _scrub_dict(context))
+
+
+class SentryRequestContextMiddleware(BaseHTTPMiddleware):
+    """Attach Aspire trace, route, suite, and actor context to each Sentry event."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if not _initialized:
+            return await call_next(request)
+
+        context = _build_request_context(request)
+        request.state.sentry_context = context
+
+        try:
+            import sentry_sdk
+
+            scope = sentry_sdk.get_current_scope()
+            _apply_scope_context(scope, context)
+            sentry_sdk.add_breadcrumb(
+                category="http.request",
+                message=f"{request.method} {request.url.path}",
+                level="info",
+                data={
+                    "correlation_id": context.get("correlation_id"),
+                    "trace_id": context.get("trace_id"),
+                    "suite_id": context.get("suite_id") or "unscoped",
+                    "office_id": context.get("office_id") or "unscoped",
+                },
+            )
+        except Exception as exc:
+            logger.debug("Sentry request context attach failed: %s", exc)
+
+        return await call_next(request)
+
+
+def capture_backend_exception(
+    exc: BaseException,
+    *,
+    request: Request | None = None,
+    tags: dict[str, str] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Capture an exception that was handled before Sentry could see it."""
+    if not _initialized:
+        return
+
+    try:
+        import sentry_sdk
+
+        scope = sentry_sdk.get_current_scope()
+        if request is not None:
+            context = getattr(request.state, "sentry_context", None)
+            if not isinstance(context, dict):
+                context = _build_request_context(request)
+            _apply_scope_context(scope, context)
+
+        for key, value in (tags or {}).items():
+            scope.set_tag(key, _clean_context_value(value))
+
+        if extra:
+            scope.set_context("aspire_exception", _scrub_dict(extra))
+
+        sentry_sdk.capture_exception(exc)
+    except Exception as capture_err:
+        logger.debug("Sentry handled-exception capture failed: %s", capture_err)
 
 
 def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:

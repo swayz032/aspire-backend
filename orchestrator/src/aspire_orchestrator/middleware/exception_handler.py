@@ -46,8 +46,15 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
         """Create incident, store receipt, return safe error response."""
         # Use correlation ID from contextvar (set by CorrelationIdMiddleware)
         # Fall back to header/uuid if middleware hasn't run yet
-        from aspire_orchestrator.middleware.correlation import get_correlation_id
+        from aspire_orchestrator.middleware.correlation import (
+            get_correlation_id,
+            get_span_id,
+            get_trace_id,
+        )
+        from aspire_orchestrator.middleware.sentry_middleware import capture_backend_exception
         correlation_id = get_correlation_id() or request.headers.get("x-correlation-id") or str(uuid.uuid4())
+        trace_id = get_trace_id() or request.headers.get("x-trace-id") or ""
+        span_id = get_span_id() or request.headers.get("x-span-id") or ""
         # ALWAYS use "system" for exception receipts — never trust x-suite-id
         # in the exception path (THREAT-002: prevents cross-tenant incident poisoning)
         suite_id = "system"
@@ -74,6 +81,29 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
             exc,
         )
 
+        capture_backend_exception(
+            exc,
+            request=request,
+            tags={
+                "handled_by": "GlobalExceptionMiddleware",
+                "status_code": str(status_code),
+                "incident_id": incident_id,
+                "correlation_id": correlation_id,
+                "trace_id": trace_id,
+            },
+            extra={
+                "incident_id": incident_id,
+                "safe_message": safe_message,
+                "exception_type": type(exc).__name__,
+                "path": str(request.url.path),
+                "method": request.method,
+                "status_code": status_code,
+                "correlation_id": correlation_id,
+                "trace_id": trace_id,
+                "span_id": span_id,
+            },
+        )
+
         # Build incident record (per incident_packet.schema.json)
         incident = {
             "incident_id": incident_id,
@@ -82,6 +112,7 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
             "severity": "high",
             "title": f"Unhandled exception on {request.method} {request.url.path}",
             "correlation_id": correlation_id,
+            "trace_id": trace_id,
             "first_seen": now,
             "last_seen": now,
             "timeline": [
@@ -96,6 +127,8 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
                 "method": request.method,
                 "exception_type": type(exc).__name__,
                 "error_code": _INTERNAL_ERROR_CODE,
+                "trace_id": trace_id,
+                "span_id": span_id,
             },
         }
 
@@ -112,6 +145,8 @@ class GlobalExceptionMiddleware(BaseHTTPMiddleware):
         receipt = {
             "id": str(uuid.uuid4()),
             "correlation_id": correlation_id,
+            "trace_id": trace_id,
+            "span_id": span_id,
             "suite_id": suite_id,
             "office_id": "system",
             "actor_type": "system",
