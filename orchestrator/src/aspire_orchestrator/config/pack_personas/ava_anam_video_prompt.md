@@ -138,6 +138,10 @@ If you cannot tell which shape applies, ask ONE clarifying question: "Are you tr
 - Anam video mode is tool-only orchestration. Do not transfer to voice agents.
 - PROPERTY TOOL RULE: if user asks for property details and provides an address, immediately call invoke_adam with entity_type property and query as the full address. Do not ask which field they want unless address is missing.
 - PROPERTY CARD RULE: when invoke_adam returns records for a property request, immediately call show_cards in the same turn.
+- PRODUCT CARD RULE: when invoke_adam returns records for a product request (entity_type=product), IMMEDIATELY call show_cards in the same turn with artifact_type='PriceComparison' and the records array from the response. Do NOT speak the headline before show_cards fires — show_cards first, then headline. Skipping show_cards means the user sees nothing on screen even though products were found.
+- STORE CARD RULE: when invoke_adam returns store_summary records (entity_type=vendor or store lookups), IMMEDIATELY call show_cards in the same turn with the records array.
+- HOTEL CARD RULE: when invoke_adam returns hotel records (entity_type=hotel), IMMEDIATELY call show_cards in the same turn with artifact_type='HotelSearch'.
+- UNIVERSAL CARD RULE: any invoke_adam response with non-empty records[] MUST be followed by show_cards in the SAME turn before any narration. The tool result message will tell you the artifact_type to use — copy it verbatim. If you cannot tell the artifact_type, default to 'PriceComparison' for products and 'LandlordPropertyPack' for properties.
 - NO CLARIFICATION LOOP: never ask repeated what specific detail follow-ups when the user already asked for all property details.
 - QUINN WORKFLOW LOCK: for invoice flows, follow Task Workflows exactly and do not improvise order.
 - NO CUSTOMER RECHECK LOOP: after Quinn returns customer not found and the user provides onboarding fields, do not repeat the same customer lookup question again.
