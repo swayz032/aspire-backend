@@ -208,10 +208,13 @@ async def caller_id_lookup(
     formatted = _format_phone(phone)
 
     # ── Priority 1: routing_contacts exact match ──────────────────────────
+    # Live schema has no is_active column on front_desk_routing_contacts
+    # (verified against information_schema). Soft-delete is handled by hard
+    # DELETE in delete_routing_contact, so an exact phone match is enough.
     try:
         routing_rows = await supabase_select(
             "front_desk_routing_contacts",
-            f"office_id=eq.{office_id}&phone=eq.{phone}&is_active=eq.true",
+            f"office_id=eq.{office_id}&phone=eq.{phone}",
             limit=1,
         )
     except SupabaseClientError as exc:
@@ -277,7 +280,14 @@ async def caller_id_lookup(
             return result
 
     # ── Priority 3: call memory entities (last 90 days) ───────────────────
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=_CALL_LOOKBACK_DAYS)).isoformat()
+    # PostgREST decodes `+` in query string as a space, so the `+00:00` tz
+    # offset on isoformat() output gets corrupted to `" 00:00"` and the
+    # server returns 22007 invalid_input_syntax. Use the trailing `Z` shorthand
+    # for UTC instead — round-trip safe through PostgREST URL parsing.
+    cutoff = (
+        (datetime.now(timezone.utc) - timedelta(days=_CALL_LOOKBACK_DAYS))
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     try:
         call_rows = await supabase_select(
             "memory_objects",
