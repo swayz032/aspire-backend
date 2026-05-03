@@ -172,6 +172,10 @@ class FrontDeskConfigPatch(BaseModel):
     # IANA timezone string (e.g. "America/Los_Angeles"). Drives is_open_now
     # evaluation against business_hours at the office's wall-clock time.
     timezone: str | None = None
+    # Tenant-level voicemail destination. Lives on suite_profiles (one inbox
+    # per business, not versioned per front_desk_configs row). PATCH handler
+    # relays this through to suite_profiles when present.
+    voicemail_email: str | None = None
     capability_token: dict[str, Any] | None = None
 
 
@@ -222,10 +226,30 @@ async def get_config(
         f"office_id=eq.{oid}&is_active=eq.true",
     )
 
+    # Tenant-level voicemail email (migration 108). Lives on suite_profiles
+    # because it's one inbox per business, not per versioned config row.
+    suite_id_str = str(scope.suite_id)
+    voicemail_email = ""
+    try:
+        suite_rows = await supabase_select(
+            "suite_profiles",
+            f"suite_id=eq.{suite_id_str}",
+            limit=1,
+        )
+        if suite_rows:
+            voicemail_email = suite_rows[0].get("voicemail_email") or ""
+    except Exception as vm_exc:  # noqa: BLE001
+        logger.warning(
+            "voicemail_email_fetch_failed suite_id=%s: %s",
+            suite_id_str,
+            vm_exc,
+        )
+
     return {
         "success": True,
         "config": config,
         "routing_contacts": routing_rows,
+        "voicemail_email": voicemail_email,
     }
 
 
@@ -284,6 +308,25 @@ async def patch_config(
     }
 
     inserted = await supabase_insert("front_desk_configs", new_row)
+
+    # Tenant-level fields persisted on suite_profiles (not on the versioned
+    # config row). voicemail_email is the dedicated inbox added in
+    # migration 108 — falls back to suite_profiles.email in
+    # _fetch_profile when not set. Done as a best-effort sibling write so
+    # it doesn't fail the whole save if RLS/permission blocks.
+    if req.voicemail_email is not None:
+        try:
+            await supabase_update(
+                "suite_profiles",
+                f"suite_id=eq.{suite_id}",
+                {"voicemail_email": req.voicemail_email or None},
+            )
+        except Exception as vm_exc:  # noqa: BLE001
+            logger.warning(
+                "voicemail_email_update_failed suite_id=%s: %s",
+                suite_id,
+                vm_exc,
+            )
 
     # Pass 19 §3.5.5 — invalidate LKG personalization cache for this office.
     # Without this, calls within the next 10min would get stale routing phones

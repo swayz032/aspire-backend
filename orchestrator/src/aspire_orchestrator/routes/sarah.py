@@ -782,7 +782,14 @@ async def _fetch_profile(
         biz_name = row.get("business_name") or biz_name
         industry = row.get("industry") or industry
         tz_name = row.get("timezone") or tz_name
-        voicemail_email = row.get("email") or voicemail_email
+        # Prefer the dedicated voicemail_email column (migration 108) when set;
+        # fall back to the owner's signup email otherwise so existing tenants
+        # without a configured voicemail address still get routed somewhere.
+        voicemail_email = (
+            row.get("voicemail_email")
+            or row.get("email")
+            or voicemail_email
+        )
 
         owner_name = (row.get("owner_name") or "").strip()
         if owner_name:
