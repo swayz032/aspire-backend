@@ -95,6 +95,18 @@ def _build_config_row(version_no: int = 3) -> dict:
         "catch_mode": "APP_AND_PHONE_SIMUL_RING",
         "greeting_name_override": "",
         "pronunciation_override": "",
+        # Pass 19+: business_hours moved from a phantom table to the config
+        # JSONB column (live schema verified 2026-05-03).
+        "business_hours": {
+            "mon": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+            "tue": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+            "wed": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+            "thu": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+            "fri": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+            "sat": {"open": False},
+            "sun": {"open": False},
+        },
+        "timezone": "America/New_York",
     }
 
 
@@ -120,20 +132,16 @@ def _build_personalization_select(owner_phone: str, version_no: int = 4) -> Any:
             return [_build_config_row(version_no)]
         if table == "front_desk_routing_contacts":
             return _routing_with_new_phone(owner_phone)
-        if table == "tenant_profiles":
-            return [{"business_name": "Test Biz", "industry": "services"}]
-        if table == "office_profiles":
+        if table == "suite_profiles":
             return [{
-                "first_name": "Tonio",
-                "last_name": "S",
+                "business_name": "Test Biz",
+                "industry": "services",
+                "owner_name": "Tonio S",
                 "timezone": "America/New_York",
-                "voicemail_email": "t@biz.com",
+                "email": "t@biz.com",
             }]
-        if table == "business_hours":
-            return [
-                {"day_of_week": i, "open_time": "08:00:00", "close_time": "18:00:00"}
-                for i in range(5)
-            ]
+        # tenant_profiles / office_profiles / business_hours no longer exist —
+        # any read against them in the live schema returns []. Mirror that.
         return []
     return _select
 
@@ -398,3 +406,103 @@ class TestFrontDeskSyncChain:
         assert r.get("receipt_type") == "personalization_resolve"
         assert r.get("suite_id") == SUITE_ID
         assert r.get("office_id") == OFFICE_ID
+
+
+class TestRoutingContactCacheInvalidation:
+    """Routing CRUD must invalidate the LKG cache so the next call to Sarah
+    sees fresh routing_*_phone dyn vars instead of stale cached ones."""
+
+    def setup_method(self) -> None:
+        _lkg_cache.clear()
+
+    def teardown_method(self) -> None:
+        _lkg_cache.clear()
+
+    def _seed_cache(self, phone: str) -> None:
+        from aspire_orchestrator.routes.sarah import _cache_put
+
+        _cache_put(
+            CALLED_NUMBER,
+            {"routing_owner_phone": phone},
+            {"office_id": OFFICE_ID, "tenant_id": TENANT_ID},
+        )
+        assert CALLED_NUMBER in _lkg_cache, "pre-condition: cache seeded"
+
+    def test_create_routing_contact_invalidates_cache(self) -> None:
+        self._seed_cache(OLD_OWNER_PHONE)
+        token = _mint_front_desk_token(scope="front_desk:routing_write")
+
+        with (
+            patch("aspire_orchestrator.routes.front_desk.supabase_insert",
+                  new=AsyncMock(return_value={"id": str(uuid.uuid4()), "role": "owner"})),
+            patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"),
+        ):
+            resp = _client.post(
+                "/v1/front-desk/routing-contacts",
+                json={
+                    "role": "owner",
+                    "label": "Tonio",
+                    "phone": NEW_OWNER_PHONE,
+                    "capability_token": token,
+                },
+                headers={
+                    "X-Tenant-Id": TENANT_ID,
+                    "X-Suite-Id": SUITE_ID,
+                    "X-Office-Id": OFFICE_ID,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert CALLED_NUMBER not in _lkg_cache, (
+            "Routing CRUD did not invalidate cache — Sarah would serve "
+            "stale routing_owner_phone for up to 10 minutes."
+        )
+
+    def test_update_routing_contact_invalidates_cache(self) -> None:
+        self._seed_cache(OLD_OWNER_PHONE)
+        token = _mint_front_desk_token(scope="front_desk:routing_write")
+        contact_id = str(uuid.uuid4())
+
+        with (
+            patch("aspire_orchestrator.routes.front_desk.supabase_update",
+                  new=AsyncMock(return_value={"id": contact_id})),
+            patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"),
+        ):
+            resp = _client.patch(
+                f"/v1/front-desk/routing-contacts/{contact_id}",
+                json={"phone": NEW_OWNER_PHONE, "capability_token": token},
+                headers={
+                    "X-Tenant-Id": TENANT_ID,
+                    "X-Suite-Id": SUITE_ID,
+                    "X-Office-Id": OFFICE_ID,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert CALLED_NUMBER not in _lkg_cache
+
+    def test_delete_routing_contact_invalidates_cache(self) -> None:
+        self._seed_cache(OLD_OWNER_PHONE)
+        token = _mint_front_desk_token(scope="front_desk:routing_write")
+        contact_id = str(uuid.uuid4())
+
+        with (
+            patch("aspire_orchestrator.routes.front_desk.supabase_update",
+                  new=AsyncMock(return_value={"id": contact_id, "is_active": False})),
+            patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"),
+        ):
+            # DELETE handler takes capability_token as a bare dict body
+            # (no Pydantic wrapper), so the body root IS the token.
+            resp = _client.request(
+                "DELETE",
+                f"/v1/front-desk/routing-contacts/{contact_id}",
+                json=token,
+                headers={
+                    "X-Tenant-Id": TENANT_ID,
+                    "X-Suite-Id": SUITE_ID,
+                    "X-Office-Id": OFFICE_ID,
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert CALLED_NUMBER not in _lkg_cache

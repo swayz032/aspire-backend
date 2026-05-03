@@ -134,24 +134,32 @@ def _full_tenant_select_side_effect(table: str, filters: str = "", **kwargs) -> 
             "catch_mode": "APP_AND_PHONE_SIMUL_RING",
             "greeting_name_override": "",
             "pronunciation_override": "",
+            # Hours moved from a phantom `business_hours` table to this JSONB
+            # column (Pass 19 schema reality — verified live 2026-05-03).
+            "business_hours": {
+                "mon": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+                "tue": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+                "wed": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+                "thu": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+                "fri": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+                "sat": {"open": False},
+                "sun": {"open": False},
+            },
+            "timezone": "America/New_York",
         }]
     if table == "front_desk_routing_contacts":
         return _ROUTING_CONTACTS
-    if table == "tenant_profiles":
-        return [{"business_name": "Acme Plumbing Co", "industry": "plumbing"}]
-    if table == "office_profiles":
+    if table == "suite_profiles":
+        # _fetch_profile reads exclusively from suite_profiles now —
+        # tenant_profiles + office_profiles do not exist in the live schema.
         return [{
-            "first_name": "Tonio",
-            "last_name": "Swayzee",
+            "suite_id": SUITE_ID,
+            "business_name": "Acme Plumbing Co",
+            "industry": "plumbing",
+            "owner_name": "Tonio Swayzee",
             "timezone": "America/New_York",
-            "voicemail_email": "tonio@acmeplumbing.com",
+            "email": "tonio@acmeplumbing.com",
         }]
-    if table == "business_hours":
-        # Open Mon–Fri 8am–6pm ET
-        return [
-            {"day_of_week": i, "open_time": "08:00:00", "close_time": "18:00:00"}
-            for i in range(5)
-        ]
     return []
 
 
@@ -222,30 +230,31 @@ class TestFullPayloadShape:
         assert dyn["routing_billing_phone"] == "+14045550004"
         assert dyn["routing_scheduling_phone"] == "+14045550005"
 
-    def test_business_name_from_tenant_profile(self) -> None:
-        """business_name populated from tenant_profiles table."""
+    def test_business_name_from_suite_profile(self) -> None:
+        """business_name populated from suite_profiles (tenant_profiles does not exist)."""
         resp = _post_personalization_with_hmac()
         assert resp.status_code == 200
         dyn = resp.json()["dynamic_variables"]
         assert dyn["business_name"] == "Acme Plumbing Co"
 
-    def test_industry_from_tenant_profile(self) -> None:
-        """industry populated from tenant_profiles.industry."""
+    def test_industry_from_suite_profile(self) -> None:
+        """industry populated from suite_profiles.industry."""
         resp = _post_personalization_with_hmac()
         assert resp.status_code == 200
         dyn = resp.json()["dynamic_variables"]
         assert dyn["industry"] == "plumbing"
 
-    def test_first_last_name_from_office_profile(self) -> None:
-        """first_name/last_name populated from office_profiles."""
+    def test_first_last_name_split_from_owner_name(self) -> None:
+        """suite_profiles.owner_name splits into first/last on first whitespace."""
         resp = _post_personalization_with_hmac()
         assert resp.status_code == 200
         dyn = resp.json()["dynamic_variables"]
         assert dyn["first_name"] == "Tonio"
         assert dyn["last_name"] == "Swayzee"
 
-    def test_voicemail_email_from_office_profile(self) -> None:
-        """voicemail_email populated from office_profiles.voicemail_email."""
+    def test_voicemail_email_falls_back_to_owner_email(self) -> None:
+        """voicemail_email falls back to suite_profiles.email — there is no
+        dedicated voicemail field in the live schema."""
         resp = _post_personalization_with_hmac()
         assert resp.status_code == 200
         dyn = resp.json()["dynamic_variables"]

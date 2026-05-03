@@ -81,6 +81,17 @@ def _phone_row(number: str = CALLED_NUMBER) -> list[dict[str, Any]]:
 
 
 def _config_row() -> list[dict[str, Any]]:
+    # Hours JSONB matches the canonical 7-key wire shape written by the Front
+    # Desk Setup page Hours tab. Mon–Fri 8am–6pm; Sat/Sun closed.
+    business_hours = {
+        "mon": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+        "tue": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+        "wed": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+        "thu": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+        "fri": {"open": True, "startTime": "08:00", "endTime": "18:00"},
+        "sat": {"open": False},
+        "sun": {"open": False},
+    }
     return [{
         "id": str(uuid.uuid4()),
         "version_no": 3,
@@ -91,6 +102,8 @@ def _config_row() -> list[dict[str, Any]]:
         "catch_mode": "APP_AND_PHONE_SIMUL_RING",
         "greeting_name_override": "Sarah",
         "pronunciation_override": "",
+        "business_hours": business_hours,
+        "timezone": "America/New_York",
     }]
 
 
@@ -101,25 +114,15 @@ def _routing_rows() -> list[dict[str, Any]]:
     ]
 
 
-def _tenant_profile_row() -> list[dict[str, Any]]:
-    return [{"business_name": "Acme Painting", "industry": "painting"}]
-
-
-def _office_profile_row() -> list[dict[str, Any]]:
+def _suite_profile_row() -> list[dict[str, Any]]:
     return [{
-        "first_name": "Antonio",
-        "last_name": "Swayzee",
+        "suite_id": SUITE_ID,
+        "business_name": "Acme Painting",
+        "industry": "painting",
+        "owner_name": "Antonio Swayzee",
         "timezone": "America/New_York",
-        "voicemail_email": "tonio@acmepainting.com",
+        "email": "tonio@acmepainting.com",
     }]
-
-
-def _business_hours_rows() -> list[dict[str, Any]]:
-    # Mon–Fri 8am–6pm
-    return [
-        {"day_of_week": i, "open_time": "08:00:00", "close_time": "18:00:00"}
-        for i in range(5)
-    ]
 
 
 def _select_side_effect(table: str, filters: str, **kwargs) -> list[dict[str, Any]]:
@@ -129,12 +132,10 @@ def _select_side_effect(table: str, filters: str, **kwargs) -> list[dict[str, An
         return _config_row()
     if table == "front_desk_routing_contacts":
         return _routing_rows()
-    if table == "tenant_profiles":
-        return _tenant_profile_row()
-    if table == "office_profiles":
-        return _office_profile_row()
-    if table == "business_hours":
-        return _business_hours_rows()
+    if table == "suite_profiles":
+        return _suite_profile_row()
+    # tenant_profiles / office_profiles / business_hours no longer exist —
+    # any read against them in production schema returns []. Mirror that.
     return []
 
 
@@ -396,3 +397,168 @@ class TestLatencyBudget:
 
         assert resp.status_code in (200, 404)  # 404 = unknown number (mock may vary)
         assert elapsed < 0.8, f"Handler took {elapsed:.3f}s, budget is 0.8s"
+
+
+# ---------------------------------------------------------------------------
+# Hours JSONB — business_hours stored on front_desk_configs.business_hours
+# (no separate `business_hours` table — verified against live schema 2026-05-03)
+# ---------------------------------------------------------------------------
+
+
+class TestIsOpenNowJsonbShape:
+    """_is_open_now consumes the canonical 7-key JSONB written by the Hours tab."""
+
+    def _hours(self) -> dict[str, dict[str, Any]]:
+        return {
+            "mon": {"open": True, "startTime": "09:00", "endTime": "17:00"},
+            "tue": {"open": True, "startTime": "09:00", "endTime": "17:00"},
+            "wed": {"open": True, "startTime": "09:00", "endTime": "17:00"},
+            "thu": {"open": True, "startTime": "09:00", "endTime": "17:00"},
+            "fri": {"open": True, "startTime": "09:00", "endTime": "17:00"},
+            "sat": {"open": False},
+            "sun": {"open": False},
+        }
+
+    def _patch_now(self, weekday: int, hh: int, mm: int):
+        from aspire_orchestrator.routes import sarah as _sarah
+
+        # Pick a real datetime that matches the weekday + time we want.
+        # 2026-05-04 is Monday (weekday=0); offset to land on the requested day.
+        anchor = datetime(2026, 5, 4, hh, mm, 0, tzinfo=timezone.utc)
+        from datetime import timedelta
+
+        target = anchor + timedelta(days=weekday)
+        assert target.weekday() == weekday
+        return patch.object(
+            _sarah,
+            "datetime",
+            MagicMock(now=MagicMock(return_value=target), wraps=datetime),
+        )
+
+    def test_open_during_weekday_business_hours(self) -> None:
+        from aspire_orchestrator.routes.sarah import _is_open_now
+
+        with self._patch_now(weekday=2, hh=12, mm=0):  # Wed noon
+            assert _is_open_now(self._hours(), "America/New_York") is True
+
+    def test_closed_outside_business_hours(self) -> None:
+        from aspire_orchestrator.routes.sarah import _is_open_now
+
+        with self._patch_now(weekday=2, hh=20, mm=0):  # Wed 8pm
+            assert _is_open_now(self._hours(), "America/New_York") is False
+
+    def test_closed_on_weekends(self) -> None:
+        from aspire_orchestrator.routes.sarah import _is_open_now
+
+        with self._patch_now(weekday=5, hh=12, mm=0):  # Saturday noon
+            assert _is_open_now(self._hours(), "America/New_York") is False
+
+    def test_overnight_window(self) -> None:
+        """Late-night businesses (e.g. 22:00–02:00) treat midnight as open."""
+        from aspire_orchestrator.routes.sarah import _is_open_now
+
+        hours = {
+            "mon": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+            "tue": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+            "wed": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+            "thu": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+            "fri": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+            "sat": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+            "sun": {"open": True, "startTime": "22:00", "endTime": "02:00"},
+        }
+        with self._patch_now(weekday=2, hh=23, mm=0):
+            from aspire_orchestrator.routes.sarah import _is_open_now
+
+            assert _is_open_now(hours, "America/New_York") is True
+
+    def test_empty_or_missing_hours_defaults_open(self) -> None:
+        """Legacy rows with no business_hours JSONB fall through to 'always open'."""
+        from aspire_orchestrator.routes.sarah import _is_open_now
+
+        assert _is_open_now(None, "America/New_York") is True
+        assert _is_open_now({}, "America/New_York") is True
+
+    def test_open_true_with_no_schedule_treats_day_as_24h(self) -> None:
+        """`{open: true}` with no startTime/endTime = open all day for that day."""
+        from aspire_orchestrator.routes.sarah import _is_open_now
+
+        hours = {k: {"open": False} for k in
+                 ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+        hours["wed"] = {"open": True}
+        with self._patch_now(weekday=2, hh=3, mm=0):
+            assert _is_open_now(hours, "America/New_York") is True
+
+
+# ---------------------------------------------------------------------------
+# _fetch_profile reads from suite_profiles only (tenant_profiles +
+# office_profiles do not exist — verified against live schema)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchProfileSuiteProfiles:
+    def test_owner_name_split_into_first_last(self) -> None:
+        import asyncio
+        from aspire_orchestrator.routes import sarah as _sarah
+
+        async def _fake_select(table, *_a, **_kw):
+            if table == "suite_profiles":
+                return [{
+                    "business_name": "Scott Painting Services",
+                    "industry": "painting",
+                    "owner_name": "Tonio Scott",
+                    "timezone": "America/Los_Angeles",
+                    "email": "tonio@example.com",
+                }]
+            return []
+
+        with patch.object(_sarah, "_safe_select", new=AsyncMock(side_effect=_fake_select)):
+            biz, first, last, industry, tz, vm = asyncio.run(
+                _sarah._fetch_profile(
+                    suite_id=SUITE_ID, office_id=OFFICE_ID, tenant_id=TENANT_ID
+                )
+            )
+        assert biz == "Scott Painting Services"
+        assert first == "Tonio"
+        assert last == "Scott"
+        assert industry == "painting"
+        assert tz == "America/Los_Angeles"
+        assert vm == "tonio@example.com"
+
+    def test_owner_name_single_word_no_last(self) -> None:
+        import asyncio
+        from aspire_orchestrator.routes import sarah as _sarah
+
+        async def _fake_select(table, *_a, **_kw):
+            if table == "suite_profiles":
+                return [{
+                    "business_name": "Solo Co",
+                    "owner_name": "Cher",
+                    "email": "cher@example.com",
+                }]
+            return []
+
+        with patch.object(_sarah, "_safe_select", new=AsyncMock(side_effect=_fake_select)):
+            _, first, last, *_ = asyncio.run(
+                _sarah._fetch_profile(
+                    suite_id=SUITE_ID, office_id=OFFICE_ID, tenant_id=TENANT_ID
+                )
+            )
+        assert first == "Cher"
+        assert last == ""
+
+    def test_missing_suite_profile_returns_safe_defaults(self) -> None:
+        import asyncio
+        from aspire_orchestrator.routes import sarah as _sarah
+
+        with patch.object(_sarah, "_safe_select", new=AsyncMock(return_value=[])):
+            biz, first, last, industry, tz, vm = asyncio.run(
+                _sarah._fetch_profile(
+                    suite_id=SUITE_ID, office_id=OFFICE_ID, tenant_id=TENANT_ID
+                )
+            )
+        assert biz == "your business"
+        assert first == ""
+        assert last == ""
+        assert industry == "professional_services"
+        assert tz == "America/New_York"
+        assert vm == ""

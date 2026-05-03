@@ -190,32 +190,65 @@ def _compute_time_of_day(tz_name: str) -> str:
     return "evening"
 
 
-def _is_open_now(business_hours_rows: list[dict[str, Any]], tz_name: str) -> bool:
-    """Check if business is currently open based on hours rows."""
+_DAY_KEYS_BY_WEEKDAY = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _is_open_now(
+    business_hours: dict[str, Any] | None,
+    tz_name: str,
+) -> bool:
+    """Check whether the business is currently open.
+
+    `business_hours` is the canonical 7-key JSONB stored on
+    `front_desk_configs.business_hours` and written by the Front Desk Setup
+    page Hours tab. Shape::
+
+        {
+          "mon": {"open": true, "startTime": "09:00", "endTime": "17:00"},
+          "tue": {"open": true, "startTime": "09:00", "endTime": "17:00"},
+          ...
+          "sun": {"open": false}
+        }
+
+    Days marked `open: false` (or missing entirely) are treated as closed.
+    Empty/missing dict (legacy rows that pre-date the Hours tab being wired)
+    is treated as "always open" so the receptionist greets calls instead of
+    permanently routing to after-hours.
+    """
+    if not business_hours:
+        return True
+
     try:
         tz = ZoneInfo(tz_name)
     except (ZoneInfoNotFoundError, KeyError):
         tz = timezone.utc
     local_now = datetime.now(tz)
-    # weekday(): Mon=0 ... Sun=6
-    day_of_week = local_now.weekday()
+    day_key = _DAY_KEYS_BY_WEEKDAY[local_now.weekday()]
     current_time = local_now.time()
 
-    for row in business_hours_rows:
-        if row.get("day_of_week") == day_of_week:
-            open_time_str = row.get("open_time") or ""
-            close_time_str = row.get("close_time") or ""
-            if not open_time_str or not close_time_str:
-                continue
-            try:
-                from datetime import time as dt_time
-                open_t = dt_time.fromisoformat(open_time_str[:8])
-                close_t = dt_time.fromisoformat(close_time_str[:8])
-                if open_t <= current_time <= close_t:
-                    return True
-            except (ValueError, TypeError):
-                pass
-    return False
+    day_cfg = business_hours.get(day_key)
+    if not isinstance(day_cfg, dict) or not day_cfg.get("open"):
+        return False
+
+    start_str = day_cfg.get("startTime") or day_cfg.get("start_time") or ""
+    end_str = day_cfg.get("endTime") or day_cfg.get("end_time") or ""
+    if not start_str or not end_str:
+        # Open with no schedule = treat as open all day for that day.
+        return True
+
+    try:
+        from datetime import time as dt_time
+
+        start_t = dt_time.fromisoformat(start_str[:5])
+        end_t = dt_time.fromisoformat(end_str[:5])
+    except (ValueError, TypeError):
+        return True
+
+    if end_t <= start_t:
+        # Overnight window (e.g. 22:00–02:00). Open if current >= start OR
+        # current <= end. Avoids false "closed" for late-night businesses.
+        return current_time >= start_t or current_time <= end_t
+    return start_t <= current_time <= end_t
 
 
 def _build_first_message(
@@ -610,19 +643,25 @@ async def _resolve_personalization(
         f"office_id=eq.{office_id}",
     )
 
-    biz_name, first_name, last_name, industry, tz_name, voicemail_email = await _fetch_profile(
+    biz_name, first_name, last_name, industry, profile_tz, voicemail_email = await _fetch_profile(
         suite_id=suite_id,
         office_id=office_id,
         tenant_id=tenant_id,
     )
 
-    hours_rows = await _safe_select(
-        "business_hours",
-        f"office_id=eq.{office_id}",
-    )
+    # Prefer the timezone saved on the front_desk_configs row (set by the
+    # Hours tab) over the owner's suite-level timezone preference. Falls
+    # through to America/New_York via the profile default.
+    tz_name = config.get("timezone") or profile_tz
+
+    # Hours come from the JSONB column on the config row written by the
+    # Hours tab — there is no separate `business_hours` table.
+    business_hours_dict = config.get("business_hours") or {}
+    if not isinstance(business_hours_dict, dict):
+        business_hours_dict = {}
 
     time_of_day = _compute_time_of_day(tz_name)
-    is_open = _is_open_now(hours_rows, tz_name) if hours_rows else True
+    is_open = _is_open_now(business_hours_dict, tz_name)
 
     routing_dyn: dict[str, str] = {v: "" for v in _ROLE_TO_DYN_VAR.values()}
     routing_summary_parts: list[str] = []
@@ -717,12 +756,14 @@ async def _fetch_profile(
 
     Returns (business_name, first_name, last_name, industry, timezone, voicemail_email).
 
-    Pass 19 §3.5: now also fetches voicemail_email from office_profiles.
+    Aspire's data model is currently 1:1 suite-to-office; both `tenant_profiles`
+    and `office_profiles` tables do NOT exist (verified against live schema).
+    All identity attributes live on `suite_profiles`. We split `owner_name`
+    into first/last on first whitespace; voicemail email falls back to the
+    owner's signup email when no dedicated field exists.
 
-    Table assumptions:
-      - tenant_profiles: tenant_id (FK), business_name, industry
-      - office_profiles: office_id (FK), first_name, last_name, timezone, voicemail_email
-    Falls back to safe defaults if tables missing or empty row.
+    Args `office_id` and `tenant_id` are kept for forward-compat / logging —
+    the lookup itself is keyed by `suite_id`.
     """
     biz_name = "your business"
     first_name = ""
@@ -731,26 +772,22 @@ async def _fetch_profile(
     tz_name = "America/New_York"
     voicemail_email = ""
 
-    tenant_rows = await _safe_select(
-        "tenant_profiles",
-        f"tenant_id=eq.{tenant_id}",
+    suite_rows = await _safe_select(
+        "suite_profiles",
+        f"suite_id=eq.{suite_id}",
         limit=1,
     )
-    if tenant_rows:
-        row = tenant_rows[0]
+    if suite_rows:
+        row = suite_rows[0]
         biz_name = row.get("business_name") or biz_name
         industry = row.get("industry") or industry
-
-    office_rows = await _safe_select(
-        "office_profiles",
-        f"office_id=eq.{office_id}",
-        limit=1,
-    )
-    if office_rows:
-        row = office_rows[0]
-        first_name = row.get("first_name") or first_name
-        last_name = row.get("last_name") or last_name
         tz_name = row.get("timezone") or tz_name
-        voicemail_email = row.get("voicemail_email") or voicemail_email
+        voicemail_email = row.get("email") or voicemail_email
+
+        owner_name = (row.get("owner_name") or "").strip()
+        if owner_name:
+            parts = owner_name.split(None, 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
 
     return biz_name, first_name, last_name, industry, tz_name, voicemail_email

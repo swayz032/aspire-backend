@@ -114,6 +114,31 @@ def _validate_cap_token(
         )
 
 
+def _invalidate_personalization_cache_safe(office_id: str) -> None:
+    """Best-effort LKG cache invalidation for the given office.
+
+    Called after every Front Desk write that affects what the personalization
+    webhook would return (config save + routing-contact CRUD). Without this,
+    Sarah keeps serving the prior cached dyn_vars for up to 10 minutes.
+
+    Lazy-imported to avoid a circular import (sarah.py also imports this
+    module). Failures are logged but never bubble — cache will expire on its
+    own TTL if invalidation fails.
+    """
+    try:
+        from aspire_orchestrator.routes.sarah import (
+            invalidate_personalization_cache_for_office,
+        )
+
+        invalidate_personalization_cache_for_office(office_id)
+    except Exception as cache_exc:  # noqa: BLE001 — best-effort
+        logger.warning(
+            "personalization_cache_invalidation_failed office_id=%s: %s",
+            office_id,
+            cache_exc,
+        )
+
+
 def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
     """Extract deterministic capability_token_id for receipt tracing."""
     if not cap_token:
@@ -263,16 +288,7 @@ async def patch_config(
     # Pass 19 §3.5.5 — invalidate LKG personalization cache for this office.
     # Without this, calls within the next 10min would get stale routing phones
     # from the in-process LKG cache.
-    try:
-        from aspire_orchestrator.routes.sarah import invalidate_personalization_cache_for_office
-        invalidate_personalization_cache_for_office(office_id)
-    except Exception as cache_exc:
-        # Non-fatal: log and continue. Cache will expire on its own TTL.
-        logger.warning(
-            "patch_config cache_invalidation_failed office_id=%s: %s",
-            office_id,
-            cache_exc,
-        )
+    _invalidate_personalization_cache_safe(office_id)
 
     receipt_store.store_receipts([{
         "id": receipt_id,
@@ -441,6 +457,11 @@ async def create_routing_contact(
     }
     inserted = await supabase_insert("front_desk_routing_contacts", row)
 
+    # Sarah's transfer-to-number rules dereference {{ routing_*_phone }}
+    # from the personalization webhook. The LKG cache holds the prior dyn_vars
+    # for up to 10 min — invalidate so the next call sees the new contact.
+    _invalidate_personalization_cache_safe(office_id)
+
     receipt_store.store_receipts([{
         "id": receipt_id,
         "receipt_type": "routing_contact_create",
@@ -497,6 +518,10 @@ async def update_routing_contact(
         update_data,
     )
 
+    # Sarah's cached dyn_vars for this office still hold the old phone/label.
+    # Drop them so the next call rebuilds from the just-written row.
+    _invalidate_personalization_cache_safe(office_id)
+
     receipt_store.store_receipts([{
         "id": receipt_id,
         "receipt_type": "routing_contact_update",
@@ -541,6 +566,10 @@ async def delete_routing_contact(
         f"id=eq.{contact_id}&office_id=eq.{office_id}",
         {"is_active": False, "updated_at": now},
     )
+
+    # Drop the personalization cache so Sarah stops dereferencing the
+    # deleted contact's phone via routing_*_phone dyn vars.
+    _invalidate_personalization_cache_safe(office_id)
 
     receipt_store.store_receipts([{
         "id": receipt_id,
