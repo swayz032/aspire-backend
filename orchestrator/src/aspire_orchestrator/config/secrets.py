@@ -65,6 +65,10 @@ GROUP_KEY_MAP: dict[str, dict[str, str]] = {
         "api_key": "TWILIO_API_KEY",
         "api_secret": "TWILIO_API_SECRET",
         "auth_token": "TWILIO_AUTH_TOKEN",
+        # Voice SDK pair (Call Room production wiring).
+        "voice_api_key_sid": "TWILIO_VOICE_API_KEY_SID",
+        "voice_api_key_secret": "TWILIO_VOICE_API_KEY_SECRET",
+        "twiml_app_sid": "TWILIO_TWIML_APP_SID",
     },
 }
 
@@ -77,6 +81,9 @@ _SETTINGS_PREFIX_MAP: dict[str, str] = {
     # Twilio
     "ASPIRE_TWILIO_ACCOUNT_SID": "TWILIO_ACCOUNT_SID",
     "ASPIRE_TWILIO_AUTH_TOKEN": "TWILIO_AUTH_TOKEN",
+    "ASPIRE_TWILIO_VOICE_API_KEY_SID": "TWILIO_VOICE_API_KEY_SID",
+    "ASPIRE_TWILIO_VOICE_API_KEY_SECRET": "TWILIO_VOICE_API_KEY_SECRET",
+    "ASPIRE_TWILIO_TWIML_APP_SID": "TWILIO_TWIML_APP_SID",
     # ElevenLabs
     "ASPIRE_ELEVENLABS_API_KEY": "ELEVENLABS_API_KEY",
     # Deepgram

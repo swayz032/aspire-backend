@@ -48,6 +48,7 @@ dependencies = [
     "python-dotenv>=1.2.2",  # CVE fix
     "simpleeval>=1.0.5",  # CVE fix
     "tenacity>=9.1.0,<10.0",  # Pass 18+ Lane 2 — retry primitives (already transitive via langgraph)
+    "twilio>=9.4.0,<10.0",  # Voice JWT minting + RequestValidator for webhook HMAC
 ]
 
 [project.optional-dependencies]

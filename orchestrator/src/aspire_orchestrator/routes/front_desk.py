@@ -115,6 +115,20 @@ def _validate_cap_token(
         )
 
 
+def _format_e164_us(e164: str) -> str:
+    """Format a US E.164 number ('+14155550198') as '+1 (415) 555-0198'.
+
+    Non-US numbers and invalid inputs are returned unchanged so the FE can
+    still render something. Callers should treat this as best-effort UI text.
+    """
+    if not e164 or not isinstance(e164, str):
+        return e164 or ""
+    s = e164.strip()
+    if s.startswith("+1") and len(s) == 12 and s[2:].isdigit():
+        return f"+1 ({s[2:5]}) {s[5:8]}-{s[8:]}"
+    return s
+
+
 def _invalidate_personalization_cache_safe(office_id: str) -> None:
     """Best-effort LKG cache invalidation for the given office.
 
@@ -266,11 +280,59 @@ async def get_config(
             vm_exc,
         )
 
+    # Aspire phone number (joined from tenant_phone_numbers).
+    # This is the single source of truth for "what's the office's purchased
+    # number" — surfaced on the Return Call page header, the Front Desk Setup
+    # Sarah Status Rail, and the Call Room caller-id field. We resolve in this
+    # order:
+    #   1. front_desk_configs.phone_number_id  -> tenant_phone_numbers.id
+    #   2. fall back to any active tenant_phone_numbers row for this office
+    # so the badge appears even if the config row hasn't yet been re-saved
+    # since the purchase landed.
+    aspire_number: dict[str, Any] | None = None
+    try:
+        phone_row: dict[str, Any] | None = None
+        config_phone_id = config.get("phone_number_id")
+        if config_phone_id:
+            rows = await supabase_select(
+                "tenant_phone_numbers",
+                f"id=eq.{config_phone_id}",
+                limit=1,
+            )
+            if rows:
+                phone_row = rows[0]
+        if not phone_row:
+            rows = await supabase_select(
+                "tenant_phone_numbers",
+                f"office_id=eq.{oid}&status=eq.active",
+                order_by="purchased_at.desc",
+                limit=1,
+            )
+            if rows:
+                phone_row = rows[0]
+
+        if phone_row:
+            e164 = phone_row.get("phone_number") or ""
+            aspire_number = {
+                "e164": e164,
+                "formatted": _format_e164_us(e164),
+                "capabilities": phone_row.get("capabilities") or {},
+                "status": phone_row.get("status") or "active",
+                "purchased_at": phone_row.get("purchased_at"),
+            }
+    except Exception as ap_exc:  # noqa: BLE001
+        logger.warning(
+            "aspire_number_fetch_failed office_id=%s: %s",
+            oid,
+            ap_exc,
+        )
+
     return {
         "success": True,
         "config": config,
         "routing_contacts": routing_rows,
         "voicemail_email": voicemail_email,
+        "aspire_number": aspire_number,
     }
 
 

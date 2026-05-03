@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     zoom_api_secret: str = ""
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
+    # Voice SDK fields (Pass 19+ Call Room production wiring).
+    # Live values are minted by Twilio when the API Key + TwiML App were
+    # provisioned (auto-script wrote them to AWS SM aspire/prod/twilio).
+    # The voice_api_key pair is SEPARATE from the rotation-pipeline
+    # api_key/api_secret slot — keep them split so key-rotation can run
+    # without touching the live SDK token-mint pipeline.
+    twilio_voice_api_key_sid: str = ""
+    twilio_voice_api_key_secret: str = ""
+    twilio_twiml_app_sid: str = ""
     pandadoc_api_key: str = ""
     pandadoc_webhook_secret: str = ""
     stripe_webhook_secret: str = ""

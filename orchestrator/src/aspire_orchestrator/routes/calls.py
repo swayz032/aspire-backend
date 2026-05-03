@@ -94,9 +94,15 @@ def _phone_prefix(phone: str) -> str:
 @router.get("/caller-id-lookup")
 async def caller_id_lookup(
     phone: str,
-    x_tenant_id: str | None = Header(None, alias="X-Aspire-Tenant-Id"),
-    x_suite_id: str | None = Header(None, alias="X-Aspire-Suite-Id"),
-    x_office_id: str | None = Header(None, alias="X-Aspire-Office-Id"),
+    capability_token: str | None = None,  # query param fallback for proxyForward
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-Id"),
+    x_suite_id: str | None = Header(None, alias="X-Suite-Id"),
+    x_office_id: str | None = Header(None, alias="X-Office-Id"),
+    # Legacy aliases — keep for backward compat with any direct callers
+    # that still use the X-Aspire-* prefix.
+    x_aspire_tenant_id: str | None = Header(None, alias="X-Aspire-Tenant-Id"),
+    x_aspire_suite_id: str | None = Header(None, alias="X-Aspire-Suite-Id"),
+    x_aspire_office_id: str | None = Header(None, alias="X-Aspire-Office-Id"),
     x_capability_token: str | None = Header(None, alias="X-Aspire-Capability-Token"),
 ) -> dict[str, Any]:
     """Resolve caller identity for an E.164 phone number.
@@ -119,14 +125,23 @@ async def caller_id_lookup(
     correlation_id = get_correlation_id()
 
     # ── Scope resolution ──────────────────────────────────────────────────
-    scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
+    # Accept both the canonical X-Tenant-Id... and the legacy X-Aspire-Tenant-Id...
+    # header families so the standard proxyForward works without special-casing.
+    resolved_tenant = x_tenant_id or x_aspire_tenant_id
+    resolved_suite = x_suite_id or x_aspire_suite_id
+    resolved_office = x_office_id or x_aspire_office_id
+    scope = _resolve_scope(resolved_tenant, resolved_suite, resolved_office)
     suite_id = str(scope.suite_id)
     office_id = str(scope.office_id)
     tenant_id = str(scope.tenant_id)
 
     # ── Capability token validation (Law #3 + Law #5) ─────────────────────
+    # Token comes from one of:
+    #   1. X-Aspire-Capability-Token header (legacy direct callers)
+    #   2. capability_token query param (proxyForward GET pattern)
+    raw_cap_token = x_capability_token or capability_token
     cap_token_dict: dict[str, Any] | None = None
-    if not x_capability_token:
+    if not raw_cap_token:
         # Fail closed — no token = deny
         receipt_store.store_receipts([{
             "id": receipt_id,
@@ -149,7 +164,7 @@ async def caller_id_lookup(
         )
 
     try:
-        cap_token_dict = json.loads(x_capability_token)
+        cap_token_dict = json.loads(raw_cap_token)
         if not isinstance(cap_token_dict, dict):
             cap_token_dict = {}
     except Exception:

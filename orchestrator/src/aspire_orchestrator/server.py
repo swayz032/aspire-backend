@@ -117,6 +117,7 @@ from aspire_orchestrator.routes.ingestion import router as ingestion_router
 from aspire_orchestrator.routes.telephony import router as telephony_router
 from aspire_orchestrator.routes.sarah import router as sarah_router
 from aspire_orchestrator.routes.sarah_tools import router as sarah_tools_router
+from aspire_orchestrator.routes.twilio_voice import router as twilio_voice_router
 from aspire_orchestrator.routes.front_desk import router as front_desk_router
 from aspire_orchestrator.routes.sms import router as sms_router
 from aspire_orchestrator.routes.messages import router as messages_router
@@ -287,6 +288,7 @@ app.include_router(ingestion_router)
 app.include_router(telephony_router)    # /v1/twilio/...
 app.include_router(sarah_router)        # /v1/sarah/personalization
 app.include_router(sarah_tools_router)  # /v1/tools/sarah/*  — EL webhook tools
+app.include_router(twilio_voice_router) # /v1/twilio/voice-token, /v1/twilio/voice/twiml
 app.include_router(front_desk_router)   # /v1/front-desk/...
 app.include_router(sms_router)          # /v1/sms/send
 app.include_router(messages_router)     # /v1/messages/*  — Pass 19 Lane E1
