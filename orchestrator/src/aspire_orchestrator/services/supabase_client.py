@@ -325,6 +325,27 @@ async def supabase_update(table: str, match_filters: str, data: dict[str, Any]) 
         raise SupabaseClientError(f"update/{table}", detail=str(e))
 
 
+async def supabase_delete(table: str, match_filters: str) -> None:
+    """DELETE rows from a Supabase table matching filters.
+
+    PostgREST returns 204 No Content on success. Caller is responsible for
+    cutting any required receipts since this is a destructive operation.
+    """
+    url = f"{_base_url()}/{table}?{match_filters}"
+    try:
+        client = _get_async_pool()
+        resp = await client.delete(url, headers=_headers())
+        _handle_response(resp, f"delete/{table}")
+    except SupabaseClientError:
+        raise
+    except httpx.TimeoutException:
+        raise SupabaseClientError(f"delete/{table}", detail="Request timed out")
+    except httpx.ConnectError:
+        raise SupabaseClientError(f"delete/{table}", detail="Connection failed")
+    except Exception as e:
+        raise SupabaseClientError(f"delete/{table}", detail=str(e))
+
+
 async def supabase_upsert(
     table: str, data: dict[str, Any], on_conflict: str = ""
 ) -> dict[str, Any]:

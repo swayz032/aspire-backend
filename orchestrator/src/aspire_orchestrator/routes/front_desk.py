@@ -45,6 +45,7 @@ from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
 from aspire_orchestrator.services import receipt_store
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
+    supabase_delete,
     supabase_insert,
     supabase_select,
     supabase_update,
@@ -181,20 +182,38 @@ class FrontDeskConfigPatch(BaseModel):
 
 class RoutingContactCreate(BaseModel):
     role: str = Field(..., description="owner|sales|support|billing|scheduling|custom")
-    label: str = Field(..., min_length=1, max_length=100)
+    # Display label for the contact. Live DB column is `name`; we accept
+    # either `name` (canonical) or `label` (legacy alias) from the wire so
+    # existing clients keep working while the schema is honest.
+    name: str | None = None
+    label: str | None = Field(default=None, min_length=1, max_length=100)
     phone: str | None = Field(None, pattern=r"^\+\d{7,15}$")
     sip_uri: str | None = None
     email: str | None = None
     capability_token: dict[str, Any] | None = None
 
+    @property
+    def display_name(self) -> str:
+        return (self.name or self.label or "").strip()
+
 
 class RoutingContactPatch(BaseModel):
+    # Same `name`/`label` duality as RoutingContactCreate.
+    name: str | None = None
     label: str | None = None
     phone: str | None = Field(None, pattern=r"^\+\d{7,15}$")
     sip_uri: str | None = None
     email: str | None = None
-    is_active: bool | None = None
     capability_token: dict[str, Any] | None = None
+
+    @property
+    def display_name(self) -> str | None:
+        # None means "no change". Empty string means "explicitly clear".
+        if self.name is not None:
+            return self.name
+        if self.label is not None:
+            return self.label
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +240,11 @@ async def get_config(
     )
     config = config_rows[0] if config_rows else {}
 
+    # Note: live schema has no is_active column. Reads return all rows for
+    # the office; deletion is handled by hard DELETE in delete_routing_contact.
     routing_rows = await supabase_select(
         "front_desk_routing_contacts",
-        f"office_id=eq.{oid}&is_active=eq.true",
+        f"office_id=eq.{oid}",
     )
 
     # Tenant-level voicemail email (migration 108). Lives on suite_profiles
@@ -491,11 +512,16 @@ async def create_routing_contact(
         "suite_id": suite_id,
         "office_id": office_id,
         "role": req.role,
-        "label": req.label,
+        "name": req.display_name,  # live DB column is `name`, not `label`
         "phone": req.phone or "",
         "sip_uri": req.sip_uri or "",
         "email": req.email or "",
-        "is_active": True,
+        # Sensible defaults for the columns the UI doesn't yet expose —
+        # transfer_allowed=true so the LLM can transfer immediately,
+        # fallback_mode kept consistent with frontend RoutingFallbackMode.
+        "transfer_allowed": True,
+        "fallback_mode": "TRANSFER_ALLOWED",
+        "sort_order": 0,
         "created_at": now,
     }
     inserted = await supabase_insert("front_desk_routing_contacts", row)
@@ -544,16 +570,15 @@ async def update_routing_contact(
     now = datetime.now(timezone.utc).isoformat()
 
     update_data: dict[str, Any] = {"updated_at": now}
-    if req.label is not None:
-        update_data["label"] = req.label
+    new_name = req.display_name
+    if new_name is not None:
+        update_data["name"] = new_name  # live DB column is `name`
     if req.phone is not None:
         update_data["phone"] = req.phone
     if req.sip_uri is not None:
         update_data["sip_uri"] = req.sip_uri
     if req.email is not None:
         update_data["email"] = req.email
-    if req.is_active is not None:
-        update_data["is_active"] = req.is_active
 
     updated = await supabase_update(
         "front_desk_routing_contacts",
@@ -593,7 +618,14 @@ async def delete_routing_contact(
     x_suite_id: str | None = Header(None, alias="X-Suite-Id"),
     x_office_id: str | None = Header(None, alias="X-Office-Id"),
 ) -> dict[str, Any]:
-    """Soft-delete a routing contact (set is_active=false, Yellow tier)."""
+    """Delete a routing contact (Yellow tier).
+
+    The live front_desk_routing_contacts schema has no soft-delete column,
+    so this performs a hard DELETE. The action is captured in an immutable
+    receipt (`routing_contact_delete`) which preserves the audit trail per
+    Law #2 — receipts are append-only, the config table holds tenant state
+    and is mutable by design.
+    """
     scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
     _validate_cap_token(capability_token, scope, "front_desk:routing_write")
 
@@ -603,11 +635,9 @@ async def delete_routing_contact(
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
-    # Soft-delete: set is_active=false (Law #2 — no hard DELETE)
-    await supabase_update(
+    await supabase_delete(
         "front_desk_routing_contacts",
         f"id=eq.{contact_id}&office_id=eq.{office_id}",
-        {"is_active": False, "updated_at": now},
     )
 
     # Drop the personalization cache so Sarah stops dereferencing the

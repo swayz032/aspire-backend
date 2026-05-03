@@ -487,8 +487,10 @@ class TestRoutingContactCacheInvalidation:
         contact_id = str(uuid.uuid4())
 
         with (
-            patch("aspire_orchestrator.routes.front_desk.supabase_update",
-                  new=AsyncMock(return_value={"id": contact_id, "is_active": False})),
+            # Live schema has no soft-delete column; handler does a hard
+            # DELETE via supabase_delete and cuts an immutable receipt.
+            patch("aspire_orchestrator.routes.front_desk.supabase_delete",
+                  new=AsyncMock(return_value=None)),
             patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"),
         ):
             # DELETE handler takes capability_token as a bare dict body

@@ -222,13 +222,14 @@ def test_routing_contacts_patch_cuts_receipt():
 
 
 def test_routing_contacts_delete_cuts_receipt():
-    """DELETE /routing-contacts/{id} -> soft-delete + cuts receipt.
-    The route accepts capability_token as a JSON body (FastAPI body param)."""
+    """DELETE /routing-contacts/{id} -> hard delete + cuts receipt.
+    The route accepts capability_token as a JSON body (FastAPI body param).
+    Live schema has no soft-delete column; receipt preserves audit trail."""
     cap_token = _mint_valid_token("front_desk:routing_write")
     contact_id = str(uuid.uuid4())
 
-    with patch("aspire_orchestrator.routes.front_desk.supabase_update",
-               new=AsyncMock(return_value={})), \
+    with patch("aspire_orchestrator.routes.front_desk.supabase_delete",
+               new=AsyncMock(return_value=None)), \
          patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts") as mock_receipt:
 
         # FastAPI treats capability_token as a body param on DELETE --
