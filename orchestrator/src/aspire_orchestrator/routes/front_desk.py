@@ -139,6 +139,14 @@ class FrontDeskConfigPatch(BaseModel):
     busy_mode: str | None = None
     greeting_name_override: str | None = None
     pronunciation_override: str | None = None
+    # Hours tab — JSONB column on front_desk_configs. The frontend sends a
+    # canonical 7-day shape: { mon: {open:bool, startTime:'HH:MM',
+    # endTime:'HH:MM'}, ... sun: {...} }. Server stores as-is and the
+    # personalization webhook reads it to compute is_open_now / is_after_hours.
+    business_hours: dict[str, Any] | None = None
+    # IANA timezone string (e.g. "America/Los_Angeles"). Drives is_open_now
+    # evaluation against business_hours at the office's wall-clock time.
+    timezone: str | None = None
     capability_token: dict[str, Any] | None = None
 
 
@@ -241,6 +249,12 @@ async def patch_config(
         "pronunciation_override": req.pronunciation_override
             if req.pronunciation_override is not None
             else current.get("pronunciation_override") or "",
+        "business_hours": req.business_hours
+            if req.business_hours is not None
+            else current.get("business_hours"),
+        "timezone": req.timezone
+            if req.timezone is not None
+            else current.get("timezone"),
         "created_at": now,
     }
 
