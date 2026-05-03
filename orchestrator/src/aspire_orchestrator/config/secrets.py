@@ -231,11 +231,13 @@ def load_secrets() -> None:
             ("twilio", f"aspire/{env}/twilio"),
             ("internal", f"aspire/{env}/internal"),
             ("providers", f"aspire/{env}/providers"),
-            # Pass 19: new granular prod secrets for providers that previously
-            # shared aspire/dev/providers. These are populated during preflight
-            # §1.6 owner ops (items 4-5). On dev they are optional (fallback
-            # to aspire/dev/providers).
-            ("elevenlabs", f"aspire/{env}/elevenlabs"),
+            # Note: ElevenLabs / Deepgram / Anam / LiveKit credentials all
+            # live INSIDE `aspire/{env}/providers` (loaded above) under the
+            # keys elevenlabs_key, deepgram_key, anam_key, livekit_key,
+            # livekit_secret. Pass 19 §1.6 once planned a separate
+            # `aspire/prod/elevenlabs` secret; that path was never created.
+            # Loading it as a separate group caused fail-closed boot loops
+            # in production. The providers group has everything we need.
         ]
 
         loaded_count = 0
