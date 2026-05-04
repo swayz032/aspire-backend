@@ -113,6 +113,43 @@ def _provider_args(ctx: PlaybookContext) -> dict[str, Any]:
     }
 
 
+def _extract_location_label(query: str) -> str:
+    """Pull a human location string out of an investment-scan query for
+    the Exa web search prompt. Examples:
+      "auctions in Forest Park GA" → "Forest Park GA"
+      "Atlanta ga foreclosures"   → "Atlanta GA"
+      "houses for sale 30297"     → "30297"
+
+    Used when no literal 5-digit ZIP is in the query — the ATTOM postalcode-
+    bound calls get skipped, but the Exa Auction.com + county-site search
+    still fires with the user's location signal so they get auction listings.
+    """
+    import re as _re_loc
+    raw = (query or "").strip()
+    if not raw:
+        return ""
+
+    # Prefer literal ZIP if present.
+    zip_m = _re_loc.search(r"\b(\d{5})\b", raw)
+    if zip_m:
+        return zip_m.group(1)
+
+    # Capture "<City> <ST>" or "<City>, <ST>" anywhere in the query.
+    # Allow lowercased state codes ("ga", "fl") because users dictate.
+    city_state = _re_loc.search(
+        r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s*,?\s+([A-Za-z]{2})\b",
+        raw,
+    )
+    if city_state:
+        city = city_state.group(1).strip()
+        state = city_state.group(2).strip().upper()
+        return f"{city} {state}"
+
+    # Last resort: return the whole query trimmed to ~60 chars so the Exa
+    # search has SOMETHING to anchor on.
+    return raw[:60]
+
+
 def _source(provider: str) -> SourceAttribution:
     return SourceAttribution(provider=provider, retrieved_at=_NOW())
 
@@ -1399,25 +1436,49 @@ async def execute_investment_opportunity_scan(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = ["attom"]
 
-    # Extract ZIP from query (look for 5-digit ZIP code)
-    import re
-    zip_match = re.search(r'\b(\d{5})\b', query)
-    if not zip_match:
+    # Location handling: ATTOM v1 property endpoints REQUIRE a 5-digit
+    # postalcode (verified live 2026-05-04: city+state params return 400
+    # INVALID PARAMETERS on /property/snapshot, /allevents/detail, etc.).
+    # When the user gives a city-only query ("auctions in Forest Park GA",
+    # "Atlanta GA"), we cannot run the ATTOM scan — but we CAN still run
+    # the Exa web search with the city+state location signal so the user
+    # gets Auction.com + county-site listings instead of an empty card.
+    # May 4 user report: "Adam said couldn't find any" was the playbook
+    # bailing out before Exa could fire.
+    import re as _re_zip
+    zip_match = _re_zip.search(r"\b(\d{5})\b", query)
+    zip_code = zip_match.group(1) if zip_match else ""
+    location_label = _extract_location_label(query)
+
+    # If we have neither a zip nor any usable location signal, ask the user.
+    if not zip_code and not location_label:
         return ResearchResponse(
             artifact_type="InvestmentOpportunityPack",
-            summary="No ZIP code found in query. Please include a 5-digit ZIP code.",
+            summary=(
+                "I need a location for the auction scan — "
+                "give me a city + state or a 5-digit ZIP."
+            ),
             records=[],
             sources=[],
-            freshness={"mode": "live", "provider": "attom"},
-            confidence={"status": "unverified", "score": 0},
-            missing_fields=["zip_code"],
-            next_queries=["Try: 'investment opportunities in 30297'"],
+            freshness={"mode": "live"},
+            confidence={"status": "needs_input", "score": 0},
+            missing_fields=["zip_code", "city_state"],
+            next_queries=[
+                "Try: 'auctions in 30297'",
+                "Try: 'auctions in Forest Park GA'",
+            ],
             segment="landlord",
             intent="investment_opportunity_scan",
             playbook="landlord.investment_opportunity_scan",
             providers_called=[],
+            extra={"raw_query": query[:120]},
         )
-    zip_code = zip_match.group(1)
+
+    has_attom_scope = bool(zip_code)
+    logger.info(
+        "investment_scan: zip=%r location_label=%r attom_scope=%s",
+        zip_code, location_label, has_attom_scope,
+    )
 
     from aspire_orchestrator.providers.attom_client import (
         execute_attom_sales_expanded_history,
@@ -1430,58 +1491,87 @@ async def execute_investment_opportunity_scan(
     from datetime import datetime, timedelta
     cutoff_date = (datetime.now() - timedelta(days=540)).strftime("%Y/%m/%d")
 
-    _raw_inv = await asyncio.gather(
-        _attom_request(
-            path="/property/snapshot",
-            query_params={
-                "postalcode": zip_code, "propertytype": "SFR",
-                "absenteeowner": "absentee", "pagesize": "50",
-            },
-            tool_id="attom.investment_absentee",
-            correlation_id=context.correlation_id,
-            suite_id=context.suite_id,
-            office_id=context.office_id,
+    # Build the parallel call list. ATTOM scope only when we have a
+    # postalcode; Exa always runs (with whatever location signal we have).
+    # Exa search query uses zip when available, else "<City> <ST>" — Exa
+    # finds Auction.com listings, county sheriff sale schedules, and
+    # AuctionZip results just fine on either.
+    exa_location = zip_code or location_label
+    exa_payload = {
+        "query": (
+            f"foreclosure auction listings {exa_location} 2026 "
+            f"upcoming auction date property sale "
+            f"site:auction.com OR site:auctionzip.com OR site:hubzu.com"
         ),
-        _attom_request(
-            path="/allevents/detail",
-            query_params={
-                "postalcode": zip_code, "propertytype": "SFR", "pagesize": "50",
-            },
-            tool_id="attom.investment_events",
-            correlation_id=context.correlation_id,
-            suite_id=context.suite_id,
-            office_id=context.office_id,
-        ),
-        # Recent activity scan — catches properties with new FC filings
-        _attom_request(
-            path="/allevents/detail",
-            query_params={
-                "postalcode": zip_code, "propertytype": "SFR",
-                "startsalesearchdate": cutoff_date,
-                "pagesize": "50",
-                "orderby": "salesearchdate desc",
-            },
-            tool_id="attom.investment_recent",
-            correlation_id=context.correlation_id,
-            suite_id=context.suite_id,
-            office_id=context.office_id,
-        ),
-        execute_attom_sales_trends(
-            payload={"postalcode": zip_code},
-            **args,
-        ),
-        # Exa: Live auction listings from Auction.com + county sites
-        execute_exa_search(
-            payload={"query": f"foreclosure auction listings {zip_code} 2026 upcoming auction date property sale"},
-            **args,
-        ),
-        return_exceptions=True,
-    )
-    absentee_result = _safe_result(_raw_inv[0])
-    fc_events_result = _safe_result(_raw_inv[1])
-    recent_events_result = _safe_result(_raw_inv[2])
-    trends_result = _safe_result(_raw_inv[3])
-    exa_result = _safe_result(_raw_inv[4])
+    }
+
+    if has_attom_scope:
+        _raw_inv = await asyncio.gather(
+            _attom_request(
+                path="/property/snapshot",
+                query_params={
+                    "postalcode": zip_code, "propertytype": "SFR",
+                    "absenteeowner": "absentee", "pagesize": "50",
+                },
+                tool_id="attom.investment_absentee",
+                correlation_id=context.correlation_id,
+                suite_id=context.suite_id,
+                office_id=context.office_id,
+            ),
+            _attom_request(
+                path="/allevents/detail",
+                query_params={
+                    "postalcode": zip_code, "propertytype": "SFR", "pagesize": "50",
+                },
+                tool_id="attom.investment_events",
+                correlation_id=context.correlation_id,
+                suite_id=context.suite_id,
+                office_id=context.office_id,
+            ),
+            # Recent activity scan — catches properties with new FC filings
+            _attom_request(
+                path="/allevents/detail",
+                query_params={
+                    "postalcode": zip_code, "propertytype": "SFR",
+                    "startsalesearchdate": cutoff_date,
+                    "pagesize": "50",
+                    "orderby": "salesearchdate desc",
+                },
+                tool_id="attom.investment_recent",
+                correlation_id=context.correlation_id,
+                suite_id=context.suite_id,
+                office_id=context.office_id,
+            ),
+            execute_attom_sales_trends(
+                payload={"postalcode": zip_code},
+                **args,
+            ),
+            # Exa: Live auction listings from Auction.com + county sites
+            execute_exa_search(payload=exa_payload, **args),
+            return_exceptions=True,
+        )
+        absentee_result = _safe_result(_raw_inv[0])
+        fc_events_result = _safe_result(_raw_inv[1])
+        recent_events_result = _safe_result(_raw_inv[2])
+        trends_result = _safe_result(_raw_inv[3])
+        exa_result = _safe_result(_raw_inv[4])
+    else:
+        # City-only path: ATTOM v1 property endpoints REJECT city+state
+        # params, so we run the Exa auction search alone and surface the
+        # web listings as the primary results. Users still get a useful
+        # answer; if they want absentee owners + FC pipeline data, they
+        # can repeat with a specific ZIP.
+        logger.info(
+            "investment_scan: city-only path (no ATTOM scan) — Exa-only for %r",
+            location_label,
+        )
+        exa_only = await execute_exa_search(payload=exa_payload, **args)
+        absentee_result = None
+        fc_events_result = None
+        recent_events_result = None
+        trends_result = None
+        exa_result = _safe_result(exa_only)
+        providers_called.remove("attom") if "attom" in providers_called else None
     providers_called.append("exa")
 
     # Parse absentee owners
@@ -1614,9 +1704,9 @@ async def execute_investment_opportunity_scan(
         except Exception as exc:
             logger.warning("landlord.investment: parallel extract failed: %s", exc)
 
-    # Parse market trends
+    # Parse market trends (ATTOM scope only — city-only path has no trends)
     trends_summary = ""
-    if trends_result and trends_result.outcome == Outcome.SUCCESS and trends_result.data:
+    if zip_code and trends_result and trends_result.outcome == Outcome.SUCCESS and trends_result.data:
         trends_props = trends_result.data.get("salesTrends", trends_result.data.get("property", []))
         if isinstance(trends_props, list) and trends_props:
             trends_summary = f"ZIP {zip_code} market trends available"
@@ -1694,6 +1784,8 @@ async def execute_investment_opportunity_scan(
     # Build summary record
     summary_record = {
         "zip_code": zip_code,
+        "location_label": location_label,
+        "scope": "zip" if has_attom_scope else "city",
         "total_absentee_owners": absentee_count,
         "foreclosure_flagged_properties": len(fc_flagged),
         "deep_dive_count": len(deep_opportunities),
@@ -1715,24 +1807,46 @@ async def execute_investment_opportunity_scan(
         ],
     }
     records.append(summary_record)
-    sources.append(_source("attom"))
+    if has_attom_scope:
+        sources.append(_source("attom"))
 
+    # required_fields tuned to the scope: zip-mode requires zip_code,
+    # city-mode requires at least one auction listing (otherwise the user
+    # truly got nothing useful and should know).
+    required = ["zip_code"] if has_attom_scope else ["live_auction_listings"]
     report = verify_records(
         records=records,
         sources=sources,
-        required_fields=["zip_code"],
+        required_fields=required,
     )
 
-    return ResearchResponse(
-        artifact_type="InvestmentOpportunityPack",
-        summary=(
+    if has_attom_scope:
+        summary_text = (
             f"Investment scan for ZIP {zip_code}: "
             f"{absentee_count} absentee owners, "
             f"{len(fc_flagged)} foreclosure-flagged properties, "
             f"{len(deep_opportunities)} with deep dive data"
             f"{f', {len(live_auction_listings)} live auction listings from web' if live_auction_listings else ''}. "
             f"Verification: {report.status}."
-        ),
+        )
+    else:
+        # City-only path: lead with the auction count from web search.
+        if live_auction_listings:
+            summary_text = (
+                f"Found {len(live_auction_listings)} auction listings near "
+                f"{location_label} via Auction.com and county sites. "
+                f"For absentee-owner and foreclosure-pipeline data, give me a "
+                f"specific ZIP in {location_label}."
+            )
+        else:
+            summary_text = (
+                f"No live auction listings turned up for {location_label}. "
+                f"Try a specific ZIP in that area for the full ATTOM scan."
+            )
+
+    return ResearchResponse(
+        artifact_type="InvestmentOpportunityPack",
+        summary=summary_text,
         records=records,
         sources=sources,
         freshness={"mode": "live", "provider": "attom"},
