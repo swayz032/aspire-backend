@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kyb_collected",
+  "description": "KYB (Know Your Business) data successfully captured and encrypted for a tenant. Cut by POST /v1/trust-hub/kyb route. EIN, DOB, SSN have been written to Supabase Vault; this receipt records the audit event ONLY. PII fields (EIN/DOB/SSN/email/phone/full_name) MUST NEVER appear in inputs_redacted or outputs.",
+  "allOf": [
+    { "$ref": "./receipt.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "receipt_type": { "const": "kyb_collected" },
+        "office_id": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "action_type": { "const": "kyb_collected" },
+        "tool_used": { "const": "twilio_trust_hub" },
+        "risk_tier": { "const": "yellow" },
+
+        "inputs_redacted": {
+          "type": "object",
+          "description": "Safe identifiers only. PII keys are rejected at the trust_receipts.py write boundary (Law #9, R-006). This schema enforces the same allowlist for downstream replay/validation.",
+          "additionalProperties": false,
+          "properties": {
+            "trust_profile_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "ID of the tenant_trust_profiles row."
+            },
+            "step_name": {
+              "type": "string",
+              "description": "Human-readable label for the step (e.g., 'kyb_form_submit')."
+            },
+            "rep_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2,
+              "description": "How many authorized representatives were captured (1 or 2 per Twilio policy)."
+            },
+            "business_type": {
+              "type": "string",
+              "enum": [
+                "sole_proprietor","partnership","llc","corporation","nonprofit","government","other"
+              ]
+            },
+            "address_state": {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$",
+              "description": "2-letter US state code. NOT considered PII (public business directory information)."
+            },
+            "vault_secret_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many vault.secrets entries were created during this KYB (1 EIN + N DOB + N SSN_last4 = up to 5)."
+            }
+          }
+        },
+
+        "outputs": {
+          "type": "object",
+          "description": "Twilio SIDs and operational metrics only. NO PII.",
+          "additionalProperties": false,
+          "properties": {
+            "trust_profile_id": { "type": "string", "format": "uuid" },
+            "vault_secret_count": { "type": "integer", "minimum": 0 },
+            "latency_seconds": { "type": "number", "minimum": 0 },
+            "encryption_algorithm": { "type": "string", "enum": ["pgsodium-vault"] }
+          }
+        }
+      },
+      "required": ["receipt_type", "office_id", "trace_id", "action_type", "tool_used", "risk_tier"],
+      "$comment": "PII rejection: any field NOT explicitly in the allowlist above is rejected by additionalProperties: false. Forbidden keys (defined in trust_receipts._FORBIDDEN_PII_KEYS): email, phone_e164, phone_number, first_name, last_name, full_name, dob, date_of_birth, ssn, ssn_last4, ein, tax_id, address_street, raw_business_name, owner_name."
+    }
+  ]
+}
