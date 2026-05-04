@@ -158,7 +158,45 @@ async def _attom_request(
         response=response,
     )
 
-    if response.success:
+    # Parse the ATTOM custom status code from the response body. ATTOM
+    # uses HTTP 400 even for some success-with-empty cases — the
+    # authoritative signal is the "code" / "msg" on the body.status block
+    # (different envelope shape per API surface).
+    body = response.body or {}
+    custom_code: int | None = None
+    custom_msg = ""
+    if isinstance(body, dict):
+        # Property API v1: body.status
+        # Area API v4: body.response.result.status
+        # Transaction V3 (preforeclosure): body.status (same as v1)
+        status_obj = (
+            body.get("status")
+            or (body.get("response", {}) if isinstance(body.get("response"), dict) else {}).get("status")
+            or (body.get("Response", {}) if isinstance(body.get("Response"), dict) else {}).get("status")
+            or {}
+        )
+        if isinstance(status_obj, dict):
+            try:
+                custom_code = int(status_obj.get("code")) if status_obj.get("code") is not None else None
+            except (TypeError, ValueError):
+                custom_code = None
+            custom_msg = str(status_obj.get("msg") or "")
+
+    # Per ATTOM docs:
+    #   code  0  SuccessWithResult       → success
+    #   code  1  SuccessWithoutResult    → success-with-empty (not error!)
+    #   code -4  Invalid Parameter Combination
+    #   code -5  Invalid Parameter
+    #   code -6  Missing Required Parameter
+    #   code -8  Either GeoID or GeoIDV4 Value Required (mutually exclusive)
+    #   code 10  Invalid Date Format    (must be YYYY/MM/DD)
+    #   code 11  Invalid Date Range
+    #   code 12  Sort Value Exceeded
+    #   code 13  Invalid Sort Value
+    #   code 15  Invalid AVM Value Range
+    SUCCESS_EMPTY_MSGS = {"SuccessWithoutResult", "Success", ""}
+
+    if response.success and (custom_code in (None, 0) or custom_code == 0):
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id=tool_id,
@@ -166,27 +204,57 @@ async def _attom_request(
             receipt_data=receipt,
         )
 
-    # ATTOM returns HTTP 400 with "SuccessWithoutResult" when address is valid
-    # but no data exists — treat as empty success, not error
-    body = response.body or {}
-    status_msg = ""
-    if isinstance(body, dict):
-        status_obj = body.get("status", {})
-        if isinstance(status_obj, dict):
-            status_msg = status_obj.get("msg", "")
-    if status_msg == "SuccessWithoutResult":
-        logger.info("ATTOM %s: address valid but no results (SuccessWithoutResult)", tool_id)
+    # SuccessWithoutResult shows up across several envelope shapes — treat
+    # as success-with-empty so downstream code can branch on `total=0`
+    # rather than `outcome=FAILED`.
+    if custom_code == 1 or custom_msg == "SuccessWithoutResult":
+        logger.info(
+            "ATTOM %s: SuccessWithoutResult (no records for inputs)",
+            tool_id,
+        )
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id=tool_id,
-            data={"property": []},  # Empty but valid
+            data=response.body if isinstance(response.body, dict) else {"property": []},
             receipt_data=receipt,
+        )
+
+    # Map the ATTOM custom error codes to a clear log line so debugging
+    # production failures is no longer guesswork.
+    code_to_label = {
+        -4: "INVALID_PARAM_COMBINATION",
+        -5: "INVALID_PARAM",
+        -6: "MISSING_REQUIRED_PARAM",
+        -8: "GEOID_GEOIDV4_CONFLICT",
+        10: "INVALID_DATE_FORMAT_YYYY_SLASH_MM_SLASH_DD",
+        11: "INVALID_DATE_RANGE",
+        12: "SORT_VALUE_EXCEEDED",
+        13: "INVALID_SORT_VALUE",
+        15: "INVALID_AVM_VALUE_RANGE",
+    }
+    error_label = code_to_label.get(custom_code or 0, "")
+    error_detail = ""
+    if custom_msg:
+        error_detail = custom_msg
+    if error_label:
+        logger.warning(
+            "ATTOM %s failed: code=%s label=%s msg=%r http=%s",
+            tool_id, custom_code, error_label, custom_msg, response.status_code,
+        )
+    elif custom_msg or response.status_code >= 400:
+        logger.warning(
+            "ATTOM %s failed: code=%s msg=%r http=%s",
+            tool_id, custom_code, custom_msg, response.status_code,
         )
 
     return ToolExecutionResult(
         outcome=Outcome.FAILED,
         tool_id=tool_id,
-        error=response.error_message or f"ATTOM API error: HTTP {response.status_code}",
+        error=(
+            response.error_message
+            or error_detail
+            or f"ATTOM API error: HTTP {response.status_code} (code={custom_code})"
+        ),
         receipt_data=receipt,
     )
 
@@ -428,6 +496,9 @@ async def execute_attom_property_detail_with_schools(
     if isinstance(result, ToolExecutionResult):
         return result
 
+    # /property/detailwithschools is School API V4 — base path /propertyapi/v4
+    # (verified live 2026-05-04). Calling it at v1 base returned silent
+    # SuccessWithoutResult on schools.
     return await _attom_request(
         path="/property/detailwithschools",
         query_params=result,
@@ -437,6 +508,7 @@ async def execute_attom_property_detail_with_schools(
         office_id=office_id,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+        api_root="/propertyapi/v4",
     )
 
 
@@ -718,12 +790,29 @@ async def execute_attom_sales_trends(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Sales trend snapshot — macro geo trends by geography."""
+    """Sales trend — macro geo trends by geography (Transaction V4).
+
+    Per ATTOM docs: lives at /v4/transaction/salestrend (NOT
+    /salestrend/snapshot). Required params: GeoIdV4 (NOT legacy geoid),
+    Interval (yearly/quarterly/monthly), StartYear, EndYear.
+
+    Old wrapper called /salestrend/snapshot at v1 root → 404. Verified
+    live 2026-05-04 at /v4/transaction/salestrend.
+
+    Backwards-compat shim: callers passing `postalcode` get a
+    ProviderError pointing to the new shape since postalcode is no
+    longer supported (Transaction V4 only accepts GeoIdV4).
+    """
     tool_id = "attom.sales_trends"
 
-    geoid = payload.get("geoid", "")
-    geo_type = payload.get("geo_type", "ZI")  # ZI=ZIP, CO=county, ST=state
-    if not geoid:
+    geo_id_v4 = str(
+        payload.get("geoIdV4")
+        or payload.get("geo_id_v4")
+        or payload.get("geoid")
+        or ""
+    ).strip()
+
+    if not geo_id_v4:
         client = _get_client()
         receipt = _build_receipt(
             client, tool_id, correlation_id, suite_id, office_id,
@@ -731,22 +820,53 @@ async def execute_attom_sales_trends(
             capability_token_id=capability_token_id,
             capability_token_hash=capability_token_hash,
         )
+        msg = (
+            "Missing required parameter: geoIdV4. "
+            "If you have a ZIP, resolve to geoIdV4 first via "
+            "execute_attom_location_lookup(name=ZIP, geography_type='ZI') "
+            "or pass an existing geoIdV4 from a prior /property/* call."
+        )
         return ToolExecutionResult(
-            outcome=Outcome.FAILED,
-            tool_id=tool_id,
-            error="Missing required parameter: geoid (ZIP/county/state code)",
+            outcome=Outcome.FAILED, tool_id=tool_id, error=msg,
             receipt_data=receipt,
         )
 
+    interval = str(payload.get("interval") or "yearly").strip().lower()
+    if interval not in {"yearly", "quarterly", "monthly"}:
+        interval = "yearly"
+
+    # Default to a 3-year window so callers without explicit dates still
+    # get useful data. ATTOM REQUIRES StartYear+EndYear or returns -6.
+    from datetime import datetime as _dt
+    current_year = _dt.utcnow().year
+    start_year = str(payload.get("StartYear") or payload.get("start_year") or (current_year - 3))
+    end_year = str(payload.get("EndYear") or payload.get("end_year") or current_year)
+
+    params: dict[str, str] = {
+        "GeoIdV4": geo_id_v4,
+        "Interval": interval,
+        "StartYear": start_year,
+        "EndYear": end_year,
+    }
+    # Optional quarterly/monthly bounds.
+    if interval == "quarterly":
+        if payload.get("StartQuarter"): params["StartQuarter"] = str(payload["StartQuarter"])
+        if payload.get("EndQuarter"): params["EndQuarter"] = str(payload["EndQuarter"])
+    elif interval == "monthly":
+        if payload.get("StartMonth"): params["StartMonth"] = str(payload["StartMonth"])
+        if payload.get("EndMonth"): params["EndMonth"] = str(payload["EndMonth"])
+    if payload.get("PropertyType"): params["PropertyType"] = str(payload["PropertyType"])
+
     return await _attom_request(
-        path="/salestrend/snapshot",
-        query_params={"geoid": f"{geo_type}{geoid}", "interval": payload.get("interval", "monthly")},
+        path="/transaction/salestrend",
+        query_params=params,
         tool_id=tool_id,
         correlation_id=correlation_id,
         suite_id=suite_id,
         office_id=office_id,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+        api_root="/v4",
     )
 
 
@@ -771,8 +891,12 @@ async def execute_attom_valuation_avm(
     if isinstance(result, ToolExecutionResult):
         return result
 
+    # Per ATTOM docs: AVM lives at /attomavm/detail, NOT /valuation/homeequity.
+    # The previous wrapper was returning home equity data and labelling it as
+    # AVM — silently broken since 2025. /valuation/homeequity is for LTV/equity
+    # only; /attomavm/detail returns the cascaded AVM value + confidence score.
     return await _attom_request(
-        path="/valuation/homeequity",
+        path="/attomavm/detail",
         query_params=result,
         tool_id=tool_id,
         correlation_id=correlation_id,
@@ -804,8 +928,11 @@ async def execute_attom_rental_avm(
     if isinstance(result, ToolExecutionResult):
         return result
 
+    # Per ATTOM docs: rental AVM is at /valuation/rentalavm (NOT /rental).
+    # Old path returned 404 silently — every rental valuation lookup since
+    # Jan 2025 has been failing. Verified live 2026-05-04.
     return await _attom_request(
-        path="/valuation/rental",
+        path="/valuation/rentalavm",
         query_params=result,
         tool_id=tool_id,
         correlation_id=correlation_id,
@@ -826,25 +953,62 @@ async def execute_attom_sales_comparables(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Sales comparables — nearby comparable property sales."""
+    """Sales comparables — nearby comparable property sales.
+
+    Per ATTOM docs: lives at /property/v2 (not v1). Three URL forms:
+      - /salescomparables/propid/{propId}      — by ATTOM ID (preferred)
+      - /salescomparables/apn/{apn}/{county}/{state}
+      - /salescomparables/address/{street}/{city}/{county}/{state}/{zip}
+
+    Old wrapper called /salescomparables/detail at v1 root → 404 silently.
+    Every comp lookup since launch has been failing. Verified live
+    2026-05-04: /property/v2/salescomparables/propid/<id> returns full
+    comp data in a different envelope (RESPONSE_GROUP top-level).
+    """
     tool_id = "attom.sales_comparables"
     client = _get_client()
 
-    result = _validate_address(
-        payload, client, tool_id, correlation_id, suite_id, office_id,
-        capability_token_id, capability_token_hash,
-    )
-    if isinstance(result, ToolExecutionResult):
-        return result
+    # Prefer attomid (propid) when available — cleanest URL, no parsing.
+    propid = str(payload.get("attomid") or payload.get("propid") or "").strip()
+    apn = str(payload.get("apn") or "").strip()
+    county = str(payload.get("county") or "").strip()
+    state_code = str(payload.get("state") or "").strip()
 
-    params = dict(result)
-    if payload.get("searchtype"):
-        params["searchtype"] = payload["searchtype"]
+    if propid:
+        path = f"/salescomparables/propid/{propid}"
+        params: dict[str, str] = {}
+    elif apn and county and state_code:
+        path = f"/salescomparables/apn/{apn}/{county}/{state_code}"
+        params = {}
+    else:
+        # Address-form requires street/city/county/state/zip in path.
+        # We don't always have county; fail fast with a clear message
+        # so the playbook can resolve attomid first via /property/detail.
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=(
+                "salescomparables requires attomid (propid) or apn+county+state. "
+                "Resolve attomid via /property/detail first, then re-call comps."
+            ),
+            receipt_data=receipt,
+        )
+
     if payload.get("miles"):
         params["miles"] = str(payload["miles"])
+    if payload.get("minComps"):
+        params["minComps"] = str(payload["minComps"])
+    if payload.get("maxComps"):
+        params["maxComps"] = str(payload["maxComps"])
 
     return await _attom_request(
-        path="/salescomparables/detail",
+        path=path,
         query_params=params,
         tool_id=tool_id,
         correlation_id=correlation_id,
@@ -852,6 +1016,7 @@ async def execute_attom_sales_comparables(
         office_id=office_id,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+        api_root="/property/v2",
     )
 
 
@@ -925,6 +1090,10 @@ async def execute_attom_school_search(
     if payload.get("radius"):
         params["radius"] = str(payload["radius"])
 
+    # Per ATTOM docs: School V4 lives at /v4/school/search — NOT
+    # /school/search at v1 root. Old wrapper silently 404'd. Verified live
+    # 2026-05-04: /v4/school/search returns 200 with schools array.
+    # Note: /v4/school/search accepts geoIdV4 OR latitude+longitude+radius.
     return await _attom_request(
         path="/school/search",
         query_params=params,
@@ -934,6 +1103,7 @@ async def execute_attom_school_search(
         office_id=office_id,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+        api_root="/v4",
     )
 
 
@@ -947,12 +1117,27 @@ async def execute_attom_boundary_lookup(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Boundary/geography lookup — parcel geometry and hyperlocal context."""
-    tool_id = "attom.boundary_lookup"
+    """Boundary detail — parcel/place geometry for map rendering.
 
-    geoid = payload.get("geoid", "")
-    geo_type = payload.get("geo_type", "ZI")
-    if not geoid:
+    Per ATTOM docs: Area API V4 lives at /v4/area, the boundary endpoint is
+    /boundary/detail (not /boundary/lookup). Accepts geoIdV4 OR legacy
+    AreaId, plus optional format=geojson|wkt. Old wrapper hit
+    /boundary/lookup at v1 root → 404 silently.
+    """
+    tool_id = "attom.boundary_detail"
+
+    geo_id_v4 = str(
+        payload.get("geoIdV4")
+        or payload.get("geo_id_v4")
+        or ""
+    ).strip()
+    legacy_area_id = str(payload.get("AreaId") or payload.get("area_id") or "").strip()
+    # Backwards-compat: callers passing geoid + geo_type get the legacy
+    # combined form.
+    if not geo_id_v4 and not legacy_area_id and payload.get("geoid"):
+        legacy_area_id = f"{payload.get('geo_type', 'ZI')}{payload['geoid']}"
+
+    if not geo_id_v4 and not legacy_area_id:
         client = _get_client()
         receipt = _build_receipt(
             client, tool_id, correlation_id, suite_id, office_id,
@@ -963,19 +1148,27 @@ async def execute_attom_boundary_lookup(
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id=tool_id,
-            error="Missing required parameter: geoid",
+            error="Missing required parameter: geoIdV4 or AreaId",
             receipt_data=receipt,
         )
 
+    params: dict[str, str] = {}
+    if geo_id_v4:
+        params["geoIdV4"] = geo_id_v4
+    else:
+        params["AreaId"] = legacy_area_id
+    params["format"] = str(payload.get("format") or "geojson").lower()
+
     return await _attom_request(
-        path="/boundary/lookup",
-        query_params={"geoid": f"{geo_type}{geoid}"},
+        path="/boundary/detail",
+        query_params=params,
         tool_id=tool_id,
         correlation_id=correlation_id,
         suite_id=suite_id,
         office_id=office_id,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+        api_root="/v4/area",
     )
 
 
@@ -1179,4 +1372,382 @@ async def execute_attom_sale_snapshot_geoid(
         office_id=office_id,
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
+    )
+
+
+# ─── Additional high-value ATTOM endpoints (May 4 audit) ──────────────────
+# Community demographics, POI, Area lookups, AllEvents snapshot, basic
+# property profile + detail-owner, AVM history. All verified live
+# 2026-05-04 against the user's account.
+
+async def execute_attom_basic_profile(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Basic property profile — lightweight summary (faster than /detail).
+
+    Use when you only need address, beds, baths, sqft, year built — not
+    the full mortgage/owner/transaction stack. Verified 200 live.
+    """
+    tool_id = "attom.basic_profile"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/property/basicprofile",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_detail_owner(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Property detail + current owner (no mortgage). Lighter than
+    detailmortgageowner when only owner identity is needed."""
+    tool_id = "attom.detail_owner"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/property/detailowner",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_allevents_snapshot(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Lighter sibling to /allevents/detail — summary of events for a
+    property. Use when you don't need the full event payload."""
+    tool_id = "attom.allevents_snapshot"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/allevents/snapshot",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_avm_history(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """AVM history — historical AVM values for a property over time."""
+    tool_id = "attom.avm_history"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/avmhistory/detail",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_assessment_history(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Historical tax assessments for a property."""
+    tool_id = "attom.assessment_history"
+    client = _get_client()
+    result = _validate_address(
+        payload, client, tool_id, correlation_id, suite_id, office_id,
+        capability_token_id, capability_token_hash,
+    )
+    if isinstance(result, ToolExecutionResult):
+        return result
+    return await _attom_request(
+        path="/assessmenthistory/detail",
+        query_params=result,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+async def execute_attom_community_profile(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Community profile — demographics, crime, weather, air quality, income.
+
+    Per ATTOM Community API V4: 600+ attributes per geography (state,
+    county, place, county-subdivision, ZCTA, neighborhood). Required:
+    geoIdV4. Returns nested community.demographics + community.crime +
+    community.weather etc.
+    """
+    tool_id = "attom.community_profile"
+    geo_id_v4 = str(
+        payload.get("geoIdV4")
+        or payload.get("geo_id_v4")
+        or ""
+    ).strip()
+    if not geo_id_v4:
+        client = _get_client()
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: geoIdV4",
+            receipt_data=receipt,
+        )
+    return await _attom_request(
+        path="/neighborhood/community",
+        query_params={"geoIdV4": geo_id_v4},
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        api_root="/v4",
+    )
+
+
+async def execute_attom_poi_search(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Points of Interest near an address or geography.
+
+    Per ATTOM POI API V4: address OR latitude+longitude OR point WKT.
+    Optional category/lineOfBusiness/industry filters. ~15M
+    establishments. Useful for "what's near this property" enrichment.
+    """
+    tool_id = "attom.poi_search"
+    client = _get_client()
+    params: dict[str, str] = {}
+
+    address = (payload.get("address") or "").strip()
+    lat = payload.get("latitude")
+    lng = payload.get("longitude")
+    point = (payload.get("point") or "").strip()
+    if address:
+        params["address"] = address
+    elif point:
+        params["point"] = point
+    elif lat is not None and lng is not None:
+        params["point"] = f"POINT({lng},{lat})"
+    else:
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: address, point, or latitude+longitude",
+            receipt_data=receipt,
+        )
+
+    if payload.get("radius"):
+        params["radius"] = str(payload["radius"])
+    if payload.get("categoryName"):
+        params["categoryName"] = str(payload["categoryName"])
+    if payload.get("lineOfBusinessName"):
+        params["LineOfBusinessName"] = str(payload["lineOfBusinessName"])
+    if payload.get("industryName"):
+        params["IndustryName"] = str(payload["industryName"])
+    if payload.get("recordLimit"):
+        params["recordLimit"] = str(payload["recordLimit"])
+
+    return await _attom_request(
+        path="/neighborhood/poi",
+        query_params=params,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        api_root="/v4",
+    )
+
+
+async def execute_attom_area_county_lookup(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Area API V4: list of counties within a state."""
+    tool_id = "attom.area_county_lookup"
+    state_id = str(payload.get("StateId") or payload.get("state_id") or "").strip()
+    if not state_id:
+        client = _get_client()
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: StateId (e.g. ST12 for Florida)",
+            receipt_data=receipt,
+        )
+    return await _attom_request(
+        path="/county/lookup",
+        query_params={"StateId": state_id},
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        api_root="/v4/area",
+    )
+
+
+async def execute_attom_area_hierarchy_lookup(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Area API V4: all geographic boundaries a point falls within.
+
+    Required: WKTString (POINT(lng lat)) or latitude+longitude.
+    Returns county, place, ZIP, neighborhood, school district, etc.
+    that the point belongs to.
+    """
+    tool_id = "attom.area_hierarchy"
+    client = _get_client()
+    params: dict[str, str] = {}
+    wkt = (payload.get("WKTString") or payload.get("wkt") or "").strip()
+    lat = payload.get("latitude")
+    lng = payload.get("longitude")
+    if wkt:
+        params["WKTString"] = wkt
+    elif lat is not None and lng is not None:
+        params["WKTString"] = f"POINT({lng} {lat})"
+    else:
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: WKTString or latitude+longitude",
+            receipt_data=receipt,
+        )
+    if payload.get("geoType"):
+        params["geoType"] = str(payload["geoType"])
+    return await _attom_request(
+        path="/hierarchy/lookup",
+        query_params=params,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        api_root="/v4/area",
     )
