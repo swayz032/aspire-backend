@@ -51,6 +51,12 @@ class ProductRecord:
     rating: float | None = None
     reviews: int | None = None
 
+    # SerpAPI HD Search fields (Wave 2.0): pricing unit, social proof, lazy-enrich URL.
+    unit: str = ""             # "case", "package", "piece", "" (default = each)
+    favorite: int | None = None  # SerpAPI HD favorite count (social proof)
+    collection: str = ""       # Collection page URL (e.g., DEWALT Garage Collection)
+    serpapi_link: str = ""     # Direct lazy-enrich URL — preferred over rebuilt path
+
     # ─ Populated only after /v1/tools/enrich_product call ────────────────────
     # Basic search may seed some of these (e.g., a short description), but the
     # full gallery, bay/aisle, and rich specs only arrive from the

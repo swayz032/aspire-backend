@@ -217,9 +217,39 @@ async def execute_serpapi_homedepot_search(
     if response.success:
         raw_products = response.body.get("products", [])
         search_info = response.body.get("search_information", {})
+        search_params = response.body.get("search_parameters", {})
+
+        # Bangor default-fallback detection (Wave 2.0).
+        # SerpAPI silently injects its account-default store when the caller
+        # passes neither `store_id` nor `delivery_zip`. The default for our key
+        # is store_id=2414 / delivery_zip=04401 (Bangor, ME). When this happens,
+        # `pickup.store_name` on every product reads "Bangor" / "South Loop"
+        # regardless of where the user actually is — a poisoning bug that
+        # masquerades as a real local result.
+        #
+        # We mark the response with `default_store_fallback=true` so the
+        # playbook can refuse it and ask Ava to clarify the user's location
+        # instead of shipping cards anchored to a Maine store.
+        requested_store_id = str(payload.get("store_id") or "").strip()
+        requested_delivery_zip = str(payload.get("delivery_zip") or "").strip()
+        returned_store_id = str(search_info.get("store_id") or "").strip()
+        returned_store_name = str(search_info.get("store_name") or "").strip()
+        # The 2414/04401 pair is *our* SerpAPI account default. If the caller
+        # didn't request them but they're echoed back in search_parameters,
+        # the response is a default-fallback (poisoned) result.
+        echo_store_id = str(search_params.get("store_id") or "").strip()
+        echo_delivery_zip = str(search_params.get("delivery_zip") or "").strip()
+        default_store_fallback = (
+            (not requested_store_id and not requested_delivery_zip)
+            and (echo_store_id == "2414" or echo_delivery_zip == "04401")
+        )
+
         store_info = {
-            "store_id": search_info.get("store_id", ""),
-            "store_name": search_info.get("store_name", ""),
+            "store_id": returned_store_id,
+            "store_name": returned_store_name,
+            "requested_store_id": requested_store_id,
+            "requested_delivery_zip": requested_delivery_zip,
+            "default_store_fallback": default_store_fallback,
         }
         def _pick_image(product: dict[str, Any]) -> str:
             def _extract(value: Any) -> str:
@@ -262,12 +292,31 @@ async def execute_serpapi_homedepot_search(
                         "price_was": p.get("price_was"),
                         "price_saving": p.get("price_saving"),
                         "percentage_off": p.get("percentage_off"),
+                        # CA-specific: SerpAPI returns "33%" string here.
+                        "percent_off": p.get("percent_off"),
+                        # SerpAPI HD price highlight chip ("Special-Buy", "New-Lower-Price").
+                        "price_badge": p.get("price_badge"),
+                        # Currency: explicit when SerpAPI returns it (CA = "CAD"),
+                        # else inferred downstream by the normalizer from URL host.
+                        "currency": p.get("currency"),
+                        # Pricing unit ("case", "package", "piece") — surfaced as
+                        # "$99.97 / case" on the card price line when present.
+                        "unit": p.get("unit") or "",
                         "rating": p.get("rating"),
                         "reviews": p.get("reviews"),
+                        # Social proof — favorite count from HD ("10,293 saved").
+                        "favorite": p.get("favorite"),
+                        # Collection page URL (e.g. DEWALT 20V Collection).
+                        "collection": p.get("collection") or "",
+                        # CA-only stock dict (general_stock, store_stock_status).
+                        "stock_information": p.get("stock_information") or {},
                         # Forward the raw nested pickup object (per-product local store).
                         "pickup": p.get("pickup") or {},
                         "delivery": p.get("delivery"),
                         "link": p.get("link"),
+                        # Direct lazy-enrich URL — preferred over rebuilt path
+                        # because it carries any tier-specific routing flags.
+                        "serpapi_link": p.get("serpapi_link") or "",
                         "thumbnail": _pick_image(p),
                         "thumbnails": p.get("thumbnails") or [],
                         "badges": p.get("badges", []),
@@ -284,6 +333,16 @@ async def execute_serpapi_homedepot_search(
                 "query": query,
                 "result_count": len(raw_products),
                 "store": store_info,
+                # Search-level metadata for refinable sessions and breadcrumbs.
+                # taxonomy = category trail ("Tools > Power Tools > Drills").
+                # filters = facets with hd_filter_tokens for "show only Milwaukee
+                # under $200" follow-ups. related_products = query suggestions.
+                "taxonomy": response.body.get("taxonomy") or [],
+                "filters": response.body.get("filters") or [],
+                "related_products": response.body.get("related_products")
+                    or response.body.get("related") or [],
+                "pagination": response.body.get("serpapi_pagination")
+                    or response.body.get("pagination") or {},
             },
             receipt_data=receipt,
         )
