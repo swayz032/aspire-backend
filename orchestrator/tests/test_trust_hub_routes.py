@@ -233,7 +233,7 @@ class _PatchCtx:
             "aspire_orchestrator.routes.trust_hub.cut_trust_receipt": AsyncMock(
                 return_value="trust_kyb_collected_abc123"
             ),
-            "aspire_orchestrator.routes.trust_hub._enqueue_advance_trust_state": AsyncMock(return_value=None),
+            "aspire_orchestrator.routes.trust_hub._enqueue_advance_trust_state": AsyncMock(return_value=True),
             "aspire_orchestrator.routes.trust_hub.verify_twilio_signature": MagicMock(return_value=True),
         }
         defaults.update(self._overrides)
@@ -364,6 +364,33 @@ class TestKYBSubmitHappyPath:
             assert resp.status_code == 201
             enqueue = mocks["_enqueue_advance_trust_state"]
             assert enqueue.called
+        finally:
+            ctx.stop()
+
+    def test_kyb_submit_returns_503_when_arq_enqueue_fails(self) -> None:
+        """release-sre Risk 1 / C1: silent ARQ drop is a Law #3 violation.
+
+        The W9 cron only reconciles tenants stuck in *_submitted states; it
+        does NOT cover `kyb_collected`. So if Redis is unreachable when the
+        KYB submit handler tries to enqueue, the tenant must see 503 and
+        retry — not a 201 success that strands them in `kyb_collected`
+        forever. Pre-fix: the route swallowed the failure and returned 201.
+        """
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub._enqueue_advance_trust_state":
+                AsyncMock(return_value=False),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/kyb",
+                json=VALID_KYB_BODY,
+                headers=SCOPE_HEADERS,
+            )
+            assert resp.status_code == 503
+            body = resp.json()
+            assert body["detail"]["error"] == "QUEUE_UNAVAILABLE"
+            assert body["detail"]["reason_code"] == "QUEUE_UNAVAILABLE"
         finally:
             ctx.stop()
 

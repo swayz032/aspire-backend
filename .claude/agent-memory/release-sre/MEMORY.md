@@ -80,3 +80,22 @@
 
 ### 24h Soak Test
 - Not run (as expected per PRR spec). Must be gated condition before calling Pass 18 closed.
+
+## Per-Tenant Trust Hub + CNAM PRR (W1–W11, 2026-05-04)
+
+- See `trust-hub-prr-findings.md` for detailed findings.
+- Result: SHIP-WITH-CONDITIONS (6 conditions — C1 ASPIRE_REDIS_URL is the critical silent-failure blocker)
+- Verdict artifact: `docs/proof-artifacts/per-tenant-trust-hub-SHIP-VERDICT.md`
+
+### Trust Hub Key Patterns
+
+- Migrations 109–120 span W1–W9. Migration 113 is security hardening (critical). Migration 114 is immutability trigger.
+- `twilio_trust_hub.py` correctly wraps ALL Twilio calls with `resilient_call` + `TWILIO_RETRY` + `twilio_breaker()`. This is the RIGHT pattern. Contrast with Pass 18 (twilio_provisioning.py had zero circuit breakers).
+- `trust_receipts.py` enforces PII guardrails via `_FORBIDDEN_PII_KEYS` frozenset — raises TrustReceiptError if any forbidden key appears.
+- `test_trust_evil.py` is ABSENT — repeated gap across both Pass 18 and Trust Hub PRR.
+- Trust-specific Prometheus metrics (`aspire_trust_onboarding_state_transitions_total`, 6 others) are ABSENT from `metrics.py` despite being in the plan.
+- `_enqueue_advance_trust_state` in cron_jobs.py catches Redis connection failures silently (logger.warning, returns False). If ASPIRE_REDIS_URL is not configured, every KYB submit silently drops the ARQ job.
+- Circuit breaker `_TWILIO_BREAKER` is per-process singleton — correct for single pod, becomes inconsistent state at multi-pod.
+- RLS on trust tables uses `FOR SELECT` for authenticated (migration 113 hardening); all writes are service_role only.
+- W7 A2P state machine does NOT forward capability_token_id to receipts — Law #5 audit gap.
+- Runbooks for trust hub: 3 required files absent (`trust-hub-onboarding.md`, `number-swap.md`, `kyb-rejection-handling.md`).

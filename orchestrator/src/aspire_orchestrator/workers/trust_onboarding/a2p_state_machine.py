@@ -277,6 +277,8 @@ async def _fail_brand(
             to_state="rejected",
             reason_code=reason_code,
             worker_job_id=worker_job_id,
+            # release-sre P0-3: cap_token_id read from brand row → audit chain
+            capability_token_id=brand.get("capability_token_id"),
             redacted_inputs={"brand_id": brand_id, "step_name": from_state},
             redacted_outputs={},
         )
@@ -415,6 +417,8 @@ async def _transition_draft(
         twilio_resource_sid=brand_reg_sid or "",
         twilio_status="pending",
         worker_job_id=worker_job_id,
+        # release-sre P0-3: cap_token_id read from brand row → audit chain
+        capability_token_id=brand.get("capability_token_id"),
         redacted_inputs={"brand_id": brand_id, "step_name": from_state},
         redacted_outputs={
             "twilio_resource_sid": brand_reg_sid or "",
@@ -512,6 +516,8 @@ async def _transition_otp_confirmed(
         twilio_resource_sid=vetting_sid or "",
         twilio_status="pending",
         worker_job_id=worker_job_id,
+        # release-sre P0-3: cap_token_id read from brand row → audit chain
+        capability_token_id=brand.get("capability_token_id"),
         redacted_inputs={"brand_id": brand_id, "step_name": "sole_prop_vetting"},
         redacted_outputs={
             "twilio_resource_sid": vetting_sid or "",
@@ -678,6 +684,8 @@ async def _transition_brand_approved(
         twilio_resource_sid=campaign_sid or "",
         twilio_status="pending",
         worker_job_id=worker_job_id,
+        # release-sre P0-3: cap_token_id read from brand row → audit chain
+        capability_token_id=brand.get("capability_token_id"),
         redacted_inputs={
             "brand_id": brand_id,
             "campaign_id": campaign_id,

@@ -445,7 +445,7 @@ class TestKYBToCNAMEndToEnd:
                  patch("aspire_orchestrator.routes.trust_hub.cut_trust_receipt",
                        side_effect=receipts.cut), \
                  patch("aspire_orchestrator.routes.trust_hub._enqueue_advance_trust_state",
-                       AsyncMock(side_effect=lambda pid: enqueue_calls.append(f"kyb:{pid}"))):
+                       AsyncMock(side_effect=lambda pid: enqueue_calls.append(f"kyb:{pid}") or True)):
 
                 kyb_resp = client.post(
                     "/v1/trust-hub/kyb",
@@ -743,7 +743,7 @@ class TestKYBToCNAMEndToEnd:
                  patch("aspire_orchestrator.routes.trust_hub.cut_trust_receipt",
                        side_effect=receipts.cut), \
                  patch("aspire_orchestrator.routes.trust_hub._enqueue_advance_trust_state",
-                       AsyncMock(side_effect=lambda pid: enqueue_calls.append(f"kyb:{pid}"))):
+                       AsyncMock(side_effect=lambda pid: enqueue_calls.append(f"kyb:{pid}") or True)):
 
                 kyb_resp = client.post(
                     "/v1/trust-hub/kyb",

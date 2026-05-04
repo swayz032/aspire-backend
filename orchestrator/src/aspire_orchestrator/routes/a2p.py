@@ -300,6 +300,10 @@ async def a2p_start(
         )
 
     # --- 5. Create brand row in draft ---
+    # release-sre P0-3: persist capability_token_id on the brand row so
+    # every downstream A2P state-machine transition can read it back and
+    # thread it into cut_trust_receipt() — closes the Law #5 audit gap
+    # where A2P receipts had null capability_token_id.
     brand_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     brand_row: dict[str, Any] = {
@@ -308,6 +312,7 @@ async def a2p_start(
         "suite_id": suite_id,
         "brand_type": body.brand_type,
         "brand_status": "draft",
+        "capability_token_id": cap_token_id,
         "created_at": now_iso,
         "updated_at": now_iso,
     }

@@ -319,15 +319,23 @@ async def _vault_delete_secret(secret_id: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _enqueue_advance_trust_state(trust_profile_id: str) -> None:
+async def _enqueue_advance_trust_state(trust_profile_id: str) -> bool:
     """Push an advance_trust_state job onto the ARQ queue (0s delay).
 
     Deduplication key: trust:{trust_profile_id}:{current_state} ensures ARQ
     won't re-enqueue a job that's already in flight for this tenant+state.
 
-    Fails gracefully: if Redis is unreachable we log but do NOT fail the HTTP
-    response — the trust profile is already written and the cron job (W9) will
-    recover. The job_id format must match what the worker expects.
+    Returns True on enqueue success, False on Redis failure. Callers must
+    inspect the return value:
+      - KYB initial submit: kyb_collected is NOT in the W9 cron's
+        stuck-state list (which only covers *_submitted), so a failed
+        enqueue means the tenant is permanently stuck. The KYB route
+        must surface 503 to the tenant so they can retry.
+      - Dispute / status_callback paths: the row is in a stable state
+        (`*_submitted` or post-rejection); the W9 cron WILL eventually
+        reconcile. Best-effort logging is acceptable here.
+
+    The job_id format must match what the worker expects.
     """
     try:
         from arq.connections import RedisSettings, create_pool  # type: ignore[import-not-found]
@@ -346,11 +354,13 @@ async def _enqueue_advance_trust_state(trust_profile_id: str) -> None:
             )
         finally:
             await pool.aclose()
-    except Exception as exc:  # noqa: BLE001 — best-effort; W9 cron recovers
+        return True
+    except Exception as exc:  # noqa: BLE001 — caller decides fail-closed vs best-effort
         logger.warning(
             "trust_hub arq_enqueue_failed trust_profile_id=%s err=%s",
             trust_profile_id, exc,
         )
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -565,8 +575,33 @@ async def kyb_submit(
             detail={"error": "RECEIPT_FAILED", "reason_code": exc.code},
         ) from exc
 
-    # --- 9. Enqueue ARQ job (best-effort; W9 cron recovers if Redis down) ---
-    await _enqueue_advance_trust_state(trust_profile_id)
+    # --- 9. Enqueue ARQ job (Law #3 — fail closed; release-sre Risk 1 / C1) ---
+    #
+    # The W9 cron reconciler ONLY covers tenants stuck in *_submitted states
+    # (see workers/trust_onboarding/cron_jobs.py:_STUCK_STATES). It does NOT
+    # cover `kyb_collected`. So if Redis is unreachable here, the tenant
+    # would silently be stuck forever — Law #3 violation. Surface 503 so
+    # the tenant retries; the trust profile + receipts are idempotent
+    # (suite_id UNIQUE constraint on tenant_trust_profiles handles the
+    # duplicate insert via the 409 path above).
+    enqueued = await _enqueue_advance_trust_state(trust_profile_id)
+    if not enqueued:
+        logger.error(
+            "trust_hub kyb_submit arq_enqueue_failed_fail_closed "
+            "trust_profile_id=%s — returning 503 so tenant retries",
+            trust_profile_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "QUEUE_UNAVAILABLE",
+                "reason_code": "QUEUE_UNAVAILABLE",
+                "message": (
+                    "Verification queue temporarily unavailable. "
+                    "Please try submitting again in a moment."
+                ),
+            },
+        )
 
     return {
         "trust_profile_id": trust_profile_id,
