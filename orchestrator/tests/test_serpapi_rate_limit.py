@@ -76,9 +76,9 @@ async def test_rate_limited_voice_path_makes_one_hd_call():
         await execute_tool_material_price_check(
             query="sheetrock",
             ctx=_ctx(),
-            zip_code="32308",  # Bangor guardrail (Wave 2.0): location must be set
-                                # for SerpAPI to be called at all. Without it the
-                                # playbook short-circuits to STORE_UNRESOLVED.
+            store_id="0206",   # Bangor guardrail (Wave 2.0): location required
+                                # for SerpAPI call. Use store_id so we skip the
+                                # Google Places resolver (not mocked here).
             voice_path=True,
         )
 
@@ -112,7 +112,7 @@ async def test_rate_limited_returns_error_artifact():
         response = await execute_tool_material_price_check(
             query="sheetrock",
             ctx=_ctx(),
-            zip_code="32308",  # Bangor guardrail: location required.
+            store_id="0206",   # Bangor guardrail: location required (skip resolver).
             voice_path=True,
         )
 
