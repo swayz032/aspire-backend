@@ -29,12 +29,15 @@ Author: Aspire — Wave 3 (per docs/plans/per-tenant-trust-hub-cnam.md §III W3)
 from __future__ import annotations
 
 import logging
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date as date_cls, datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
@@ -60,6 +63,85 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/trust-hub", tags=["trust-hub"])
 
+
+# ---------------------------------------------------------------------------
+# Helpers used at module load time (security-reviewer R-002, R-003, R-006)
+# ---------------------------------------------------------------------------
+
+
+def _build_twilio_sid_re() -> re.Pattern[str]:
+    """Compile once at module load. Twilio SIDs are 34 chars: 2-letter prefix + 32 hex.
+
+    Used by /status-callback to validate `ResourceSid` BEFORE interpolating
+    into the PostgREST filter. Without this, a Twilio webhook with a crafted
+    `ResourceSid` containing `&` could break out and inject additional filter
+    clauses against `tenant_trust_profiles` — leading to cross-tenant reads.
+    """
+    return re.compile(r"^[A-Z]{2}[0-9a-fA-F]{32}$")
+
+
+# Field names whose values must NEVER appear in 422 validation error
+# responses (security-reviewer R-003). FastAPI's default RequestValidationError
+# handler echoes the offending input back to the client, which puts raw
+# EIN/DOB/SSN values into HTTP response bodies — captured by SIEM, proxies,
+# CloudFlare logs, etc. We replace `input` with "<REDACTED>" for these fields.
+_PII_FIELD_NAMES: frozenset[str] = frozenset({
+    "ein",
+    "dob",
+    "date_of_birth",
+    "ssn_last4",
+    "ssn",
+    "phone_e164",
+    "phone_number",
+    "email",
+    "first_name",
+    "last_name",
+})
+
+
+def _redact_pii_from_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip the `input` field from any validation error whose location names a PII field."""
+    redacted: list[dict[str, Any]] = []
+    for err in errors:
+        new_err = dict(err)
+        loc = err.get("loc", ())
+        if any(isinstance(part, str) and part in _PII_FIELD_NAMES for part in loc):
+            if "input" in new_err:
+                new_err["input"] = "<REDACTED>"
+            if "ctx" in new_err and isinstance(new_err["ctx"], dict):
+                # Pydantic sometimes includes the value in ctx too (e.g., enum/regex contexts)
+                ctx = dict(new_err["ctx"])
+                for k in list(ctx.keys()):
+                    if isinstance(ctx[k], str) and len(ctx[k]) > 0:
+                        ctx[k] = "<REDACTED>"
+                new_err["ctx"] = ctx
+        redacted.append(new_err)
+    return redacted
+
+
+def register_trust_hub_validation_handler(app: Any) -> None:
+    """Mount a router-scoped 422 handler that redacts PII from Pydantic errors.
+
+    The orchestrator's server.py calls this immediately after include_router
+    so the handler is scoped to /v1/trust-hub paths only. Other routers keep
+    FastAPI's default 422 echo behavior (no PII fields in those routes).
+    """
+    @app.exception_handler(RequestValidationError)
+    async def trust_hub_validation_handler(  # type: ignore[misc]
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        # Only redact for /v1/trust-hub/* paths; pass through otherwise.
+        if request.url.path.startswith("/v1/trust-hub/"):
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={"detail": _redact_pii_from_validation_errors(list(exc.errors()))},
+            )
+        # Default behavior for all other routes
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": list(exc.errors())},
+        )
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -81,6 +163,31 @@ class AuthorizedRepInput(BaseModel):
     phone_e164: str = Field(..., pattern=r"^\+1\d{10}$")
     dob: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")     # YYYY-MM-DD — encrypted immediately
     ssn_last4: str = Field(..., pattern=r"^\d{4}$")            # encrypted immediately
+
+    @field_validator("dob")
+    @classmethod
+    def _validate_dob_semantics(cls, v: str) -> str:
+        """Reject pattern-valid but semantically-invalid dates.
+
+        Security-reviewer R-006: pattern `^\\d{4}-\\d{2}-\\d{2}$` accepts
+        "9999-99-99", "0000-00-00", "2000-13-45", etc. These pass regex
+        but are not real dates. They'd encrypt into Vault, get rejected by
+        Twilio at customer_profile_submitted, and consume one of the
+        tenant's 5 disputes on a form-validation issue we should have
+        caught at intake.
+        """
+        try:
+            d = date_cls.fromisoformat(v)
+        except ValueError as exc:
+            raise ValueError(f"dob is not a real calendar date: {exc}") from exc
+        # Reasonable bounds: DOB must be 18-120 years ago. Twilio's KYB also
+        # implicitly requires the rep to be an adult.
+        today = date_cls.today()
+        if d.year < today.year - 120:
+            raise ValueError("dob is too far in the past (>120 years)")
+        if d > today.replace(year=today.year - 18):
+            raise ValueError("authorized representative must be at least 18 years old")
+        return v
 
 
 class KYBSubmitRequest(BaseModel):
@@ -281,28 +388,48 @@ async def kyb_submit(
         ) from exc
 
     # --- 5. Encrypt DOB + SSN-last4 for each rep ---
+    # Policy-gate W3 finding F-P1: if EIN encryption succeeded but rep
+    # encryption fails, we MUST clean up the orphaned EIN vault secret
+    # before raising 503. Otherwise a client retry creates a SECOND EIN
+    # vault entry under the same name and the first leaks forever.
+    # Track all vault IDs created so we can roll them back as a unit.
     rep_vault_ids: list[dict[str, str]] = []
-    for idx, rep in enumerate(body.authorized_reps):
-        try:
+    created_vault_ids: list[str] = [ein_vault_id]
+    try:
+        for idx, rep in enumerate(body.authorized_reps):
             dob_vault_id = await _vault_create_secret(
                 rep.dob,
                 name=f"{tenant_id}:rep_{idx}_dob",
                 description=f"DOB for tenant {tenant_id} rep index {idx}",
             )
+            created_vault_ids.append(dob_vault_id)
             ssn_vault_id = await _vault_create_secret(
                 rep.ssn_last4,
                 name=f"{tenant_id}:rep_{idx}_ssn_last4",
                 description=f"SSN-last4 for tenant {tenant_id} rep index {idx}",
             )
-        except SupabaseClientError as exc:
-            logger.error(
-                "trust_hub kyb_submit vault_rep_encrypt_failed idx=%d err=%s", idx, exc
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": "VAULT_UNAVAILABLE", "reason_code": "VAULT_UNAVAILABLE"},
-            ) from exc
-        rep_vault_ids.append({"dob_vault_id": dob_vault_id, "ssn_vault_id": ssn_vault_id})
+            created_vault_ids.append(ssn_vault_id)
+            rep_vault_ids.append({"dob_vault_id": dob_vault_id, "ssn_vault_id": ssn_vault_id})
+    except SupabaseClientError as exc:
+        logger.error(
+            "trust_hub kyb_submit vault_rep_encrypt_failed err=%s — rolling back %d vault secrets",
+            exc, len(created_vault_ids),
+        )
+        # Best-effort cleanup of every vault secret we created so far.
+        # _vault_delete_secret already swallows its own errors, so a
+        # second-round failure here can't mask the original 503.
+        for vid in created_vault_ids:
+            try:
+                await _vault_delete_secret(vid)
+            except Exception as cleanup_exc:  # noqa: BLE001 — log + continue
+                logger.warning(
+                    "trust_hub kyb_submit vault_cleanup_partial_failure vid=%s err=%s",
+                    vid, cleanup_exc,
+                )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "VAULT_UNAVAILABLE", "reason_code": "VAULT_UNAVAILABLE"},
+        ) from exc
 
     # --- 6. Insert tenant_trust_profiles ---
     trust_profile_id = str(uuid.uuid4())
@@ -795,14 +922,26 @@ async def status_callback(
     resource_sid: str = str(form.get("ResourceSid", ""))
     twilio_status: str = str(form.get("Status", ""))
 
+    # Security-reviewer R-002: even after HMAC passes, validate the
+    # `ResourceSid` format BEFORE interpolating into the PostgREST filter.
+    # Twilio SIDs are exactly `[A-Z]{2}[0-9a-f]{32}`. A value containing
+    # `&` or PostgREST operator suffixes would inject extra filter clauses
+    # against `tenant_trust_profiles` (e.g., `BUaaa...&suite_id=neq.null`
+    # would return rows from OTHER tenants). HMAC authenticates Twilio's
+    # signing key; it does NOT vouch for SID format.
+    _TWILIO_SID_RE = _build_twilio_sid_re()
+    sid_valid = bool(resource_sid) and bool(_TWILIO_SID_RE.match(resource_sid))
+
     logger.info(
-        "trust_hub status_callback received ResourceSid=%s Status=%s",
-        resource_sid, twilio_status,
+        "trust_hub status_callback received ResourceSid=%s Status=%s sid_valid=%s",
+        resource_sid[:34] if resource_sid else "<empty>",
+        twilio_status, sid_valid,
     )
 
-    # Look up trust profile by matching any bundle SID column
+    # Look up trust profile by matching any bundle SID column —
+    # ONLY when SID format is valid (R-002).
     trust_profile: dict[str, Any] | None = None
-    if resource_sid:
+    if sid_valid:
         for sid_column in (
             "twilio_secondary_profile_sid",
             "twilio_shaken_bundle_sid",
@@ -819,6 +958,14 @@ async def status_callback(
                     break
             except SupabaseClientError:
                 pass  # continue searching other columns
+    elif resource_sid:
+        # SID was present but malformed — log + skip lookup. Still return
+        # 200 to Twilio so it doesn't retry; the receipt will reflect the
+        # validation skip.
+        logger.warning(
+            "trust_hub status_callback malformed_sid sid_prefix=%s — skipping DB lookup",
+            resource_sid[:6] if resource_sid else "<empty>",
+        )
 
     # W3 skeleton: cut webhook_received receipt and return 200.
     # W5 will add full dispatch (advance state machine based on twilio_status).

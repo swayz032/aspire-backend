@@ -122,7 +122,10 @@ from aspire_orchestrator.routes.front_desk import router as front_desk_router
 from aspire_orchestrator.routes.sms import router as sms_router
 from aspire_orchestrator.routes.messages import router as messages_router
 from aspire_orchestrator.routes.calls import router as calls_router
-from aspire_orchestrator.routes.trust_hub import router as trust_hub_router
+from aspire_orchestrator.routes.trust_hub import (
+    register_trust_hub_validation_handler,
+    router as trust_hub_router,
+)
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -295,6 +298,11 @@ app.include_router(sms_router)          # /v1/sms/send
 app.include_router(messages_router)     # /v1/messages/*  — Pass 19 Lane E1
 app.include_router(calls_router)        # /v1/calls/*     — Pass 19 Lane B
 app.include_router(trust_hub_router)    # /v1/trust-hub/* — Wave 3 KYB intake
+# Wave 3: redact PII (EIN/DOB/SSN/email/phone) from 422 validation errors on
+# /v1/trust-hub/* paths (security-reviewer R-003). FastAPI's default 422
+# response echoes the offending input back to the client; for PII fields
+# we replace it with "<REDACTED>" to prevent SIEM/proxy/log capture.
+register_trust_hub_validation_handler(app)
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ

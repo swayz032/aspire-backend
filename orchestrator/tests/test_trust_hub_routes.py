@@ -1049,7 +1049,7 @@ class TestDispute:
 
 
 TWILIO_FORM_VALID = {
-    "ResourceSid": "BU-profile-0001",
+    "ResourceSid": "BU0123456789abcdef0123456789abcdef",
     "Status": "twilio-approved",
     "AccountSid": "ACtest123",
 }
@@ -1101,7 +1101,7 @@ class TestStatusCallback:
             "tenant_id": TENANT_ID,
             "office_id": OFFICE_ID,
             "trust_state": "profile_submitted",
-            "twilio_secondary_profile_sid": "BU-profile-0001",
+            "twilio_secondary_profile_sid": "BU0123456789abcdef0123456789abcdef",
             "twilio_shaken_bundle_sid": None,
             "twilio_cnam_bundle_sid": None,
         }
@@ -1517,7 +1517,7 @@ class TestVaultHelperInternals:
             "tenant_id": TENANT_ID,
             "office_id": OFFICE_ID,
             "trust_state": "profile_submitted",
-            "twilio_secondary_profile_sid": "BU-profile-0001",
+            "twilio_secondary_profile_sid": "BU0123456789abcdef0123456789abcdef",
             "twilio_shaken_bundle_sid": None,
             "twilio_cnam_bundle_sid": None,
         }
@@ -1539,7 +1539,7 @@ class TestVaultHelperInternals:
         try:
             resp = self.client.post(
                 "/v1/trust-hub/status-callback",
-                data={"ResourceSid": "BU-profile-0001", "Status": "twilio-approved"},
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-approved"},
                 headers={"X-Twilio-Signature": "valid-sig"},
             )
             assert resp.status_code == 200

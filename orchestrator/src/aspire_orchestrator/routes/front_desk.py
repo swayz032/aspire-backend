@@ -94,6 +94,18 @@ def _validate_cap_token(
     scope: ScopedIdentity,
     required_scope: str,
 ) -> None:
+    """Validate a capability token against expected scope + suite + office.
+
+    HTTP status semantics (RFC 7235, OWASP) per policy-gate F3:
+      - 401 Unauthorized: token absent, malformed, expired, revoked, or
+        signature invalid. The caller is unauthenticated.
+      - 403 Forbidden: token is authentic but lacks the required scope
+        OR is bound to a different suite/office than the request claims.
+        The caller is authenticated but not permitted.
+
+    Without this distinction, observability tools can't tell apart
+    "user lost their session" from "user tried to escalate privilege".
+    """
     if cap_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -106,8 +118,21 @@ def _validate_cap_token(
         required_scope=required_scope,
     )
     if not result.valid:
+        # Authorization failures (proper token, wrong permission) → 403.
+        # Authentication failures (absent / tampered / expired) → 401.
+        from aspire_orchestrator.services.token_service import TokenValidationError
+        authorization_failures = {
+            TokenValidationError.SCOPE_MISMATCH,
+            TokenValidationError.SUITE_MISMATCH,
+            TokenValidationError.OFFICE_MISMATCH,
+        }
+        http_status = (
+            status.HTTP_403_FORBIDDEN
+            if result.error in authorization_failures
+            else status.HTTP_401_UNAUTHORIZED
+        )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=http_status,
             detail={
                 "error": result.error.value if result.error else "INVALID_TOKEN",
                 "message": result.error_message or "",
@@ -155,10 +180,24 @@ def _invalidate_personalization_cache_safe(office_id: str) -> None:
 
 
 def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
-    """Extract deterministic capability_token_id for receipt tracing."""
+    """Extract deterministic capability_token_id for receipt tracing.
+
+    Receipt audit chain: this UUID/hash links the receipt back to the
+    specific capability token that authorized the action.
+
+    Token field name is `token_id` per `services/token_service.py:mint_token`.
+    Earlier code read `id` (a different field that no minted token ever
+    carries), causing every receipt to fall through to the SHA256-hash
+    fallback — a 16-char opaque string that can't be joined back to the
+    canonical UUID. Fixed by reading `token_id` FIRST, then `id` for any
+    legacy callers, and only falling back to the signature hash if neither
+    is present (never happens for tokens minted by mint_token).
+    """
     if not cap_token:
         return ""
-    if cap_token.get("id"):
+    if cap_token.get("token_id"):
+        return str(cap_token["token_id"])
+    if cap_token.get("id"):  # legacy/external tokens
         return str(cap_token["id"])
     sig = cap_token.get("signature") or cap_token.get("token") or ""
     if sig:
