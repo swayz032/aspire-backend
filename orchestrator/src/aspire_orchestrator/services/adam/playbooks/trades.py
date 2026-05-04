@@ -557,16 +557,34 @@ async def execute_tool_material_price_check(
         # voice-path detection.
         query_zip_match = _ZIP_IN_QUERY_RE.search(query)
         query_has_zip = bool(query_zip_match)
+        # Tightened from `\bin\s+([A-Za-z]+...)` which false-positived on
+        # phrases like "in stock", "in store", "in house". A real city
+        # reference must be followed by a 2-letter US state code (e.g.
+        # "in Tallahassee, FL") or an explicit state name. Without that
+        # discriminator, "show paint in stock at Home Depot" was flipping
+        # voice_path to False, which re-enabled Google Shopping merging
+        # — surfacing IMAGE-UNAVAILABLE Google Shopping cards alongside
+        # real Home Depot inventory (May 4 user report).
         query_has_city = bool(
-            _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\b", query)
+            _re.search(
+                r"\bin\s+[A-Za-z][A-Za-z\s]+,\s*[A-Za-z]{2}\b",
+                query,
+            )
         )
-        voice_path = (
-            not zip_code
-            and not store_id
-            and not city
-            and not query_has_zip
-            and not query_has_city
-        )
+        # user_address by itself is voice-friendly (Anam's dynamic variable)
+        # and must NOT flip voice_path off. Even when user_address embeds a
+        # zip we treat the request as voice path because the entry signal is
+        # a single-line address from a voice session.
+        if user_address and user_address.strip():
+            voice_path = True
+        else:
+            voice_path = (
+                not zip_code
+                and not store_id
+                and not city
+                and not query_has_zip
+                and not query_has_city
+            )
 
     # Round 4 — PRIMARY path: nearest HD by user_address. When this resolves
     # successfully we pin delivery_zip from the resolved store's postal_code
@@ -1012,6 +1030,24 @@ async def execute_tool_material_price_check(
         )
 
         if complete_products and not store_missing:
+            # Propagate the resolved closest-store identity into each product
+            # so the UI shows "In stock at Capital Circle Northeast" instead
+            # of "In stock at Tallahassee" (the SerpApi pickup.store_name
+            # default was the city, not the actual store name — May 4 user
+            # report). Only override when we have a real resolved name.
+            resolved_store_name = (
+                store_summary.get("name")
+                or store_summary.get("store_name")
+                or ""
+            )
+            resolved_store_id = store_summary.get("store_id") or ""
+            if resolved_store_name:
+                for product in complete_products:
+                    if product.get("retailer") == "Home Depot":
+                        product["store_name"] = resolved_store_name
+                        if resolved_store_id and not product.get("store_id"):
+                            product["store_id"] = resolved_store_id
+
             # Card pack is Home Depot-anchored. When include_other_stores=True,
             # also include non-HD complete products from display_products so the
             # carousel mixes retailers; when False, HD-only.
