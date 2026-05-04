@@ -20,6 +20,7 @@ dependencies = [
     "pydantic>=2.10.0,<3.0",
     "pydantic-settings>=2.7.0,<3.0",
     "fastapi>=0.121.0,<0.122",
+    "python-multipart>=0.0.20,<1.0",  # Required by FastAPI request.form() — Twilio webhooks send form-encoded bodies (voice/twiml, status-callback, A2P OTP). Without this dep the form parser raises and our route returns 500 → Twilio sends HANGUP → SDK error 31005.
     "uvicorn[standard]>=0.34.0,<0.35",
     "pyyaml>=6.0,<7.0",
     "prometheus-client>=0.21.0,<1.0",
