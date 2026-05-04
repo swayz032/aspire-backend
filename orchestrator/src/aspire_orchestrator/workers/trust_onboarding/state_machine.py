@@ -762,8 +762,13 @@ async def _transition_shaken_created(
         )
 
     latency = time.monotonic() - t_start
+    # Submission step uses a dedicated receipt type (audit-clarity per
+    # policy-gate W2 review — Finding 1). The earlier `shaken_created`
+    # transition cut `shaken_trust_product_created`; this submission cuts
+    # `shaken_trust_product_submitted` so receipt-ledger queries can
+    # distinguish bundle creation from bundle submission unambiguously.
     receipt_id = await cut_trust_receipt(
-        receipt_type="shaken_trust_product_created",
+        receipt_type="shaken_trust_product_submitted",
         trust_profile=trust_profile,
         outcome="success",
         from_state=from_state,
@@ -1135,8 +1140,13 @@ async def _transition_cnam_created(
         )
 
     latency = time.monotonic() - t_start
+    # Submission step uses a dedicated receipt type (audit-clarity per
+    # policy-gate W2 review — Finding 1). The earlier `cnam_created`
+    # transition cut `cnam_trust_product_created`; this submission cuts
+    # `cnam_trust_product_submitted` so the audit ledger separates
+    # bundle creation from bundle submission cleanly.
     receipt_id = await cut_trust_receipt(
-        receipt_type="cnam_trust_product_created",
+        receipt_type="cnam_trust_product_submitted",
         trust_profile=trust_profile,
         outcome="success",
         from_state=from_state,

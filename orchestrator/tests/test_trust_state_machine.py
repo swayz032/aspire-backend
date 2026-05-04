@@ -701,7 +701,9 @@ class TestShakenCreated:
         assert result["outcome"] == "success"
         assert result["to_state"] == "shaken_submitted"
         call_kwargs = cut_receipt_mock.call_args.kwargs
-        assert call_kwargs["receipt_type"] == "shaken_trust_product_created"
+        # Submission step uses dedicated receipt type per W2 policy-gate
+        # finding 1 (audit clarity vs `_created`).
+        assert call_kwargs["receipt_type"] == "shaken_trust_product_submitted"
         _assert_no_pii_in_receipt(call_kwargs)
 
     @pytest.mark.asyncio
@@ -977,7 +979,9 @@ class TestCnamCreated:
         assert result["outcome"] == "success"
         assert result["to_state"] == "cnam_submitted"
         call_kwargs = cut_receipt_mock.call_args.kwargs
-        assert call_kwargs["receipt_type"] == "cnam_trust_product_created"
+        # Submission step uses dedicated receipt type per W2 policy-gate
+        # finding 1 (audit clarity vs `_created`).
+        assert call_kwargs["receipt_type"] == "cnam_trust_product_submitted"
         _assert_no_pii_in_receipt(call_kwargs)
 
     @pytest.mark.asyncio
