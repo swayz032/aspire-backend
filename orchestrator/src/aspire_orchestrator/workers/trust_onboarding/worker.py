@@ -102,6 +102,51 @@ async def advance_trust_state(ctx: dict[str, Any], trust_profile_id: str) -> dic
         raise
 
 
+async def advance_a2p_registration(ctx: dict[str, Any], suite_id: str) -> dict[str, Any]:
+    """Advance one tenant's A2P registration by exactly ONE state machine transition.
+
+    Args:
+        ctx: ARQ context dict — contains 'job_id', 'job_try', 'redis', etc.
+        suite_id: UUID of the tenant's suite (drives tenant_a2p_brands lookup).
+
+    Returns:
+        {
+            "suite_id": "...",
+            "brand_id": "...",
+            "from_state": "draft",
+            "to_state": "pending",
+            "outcome": "success" | "halted" | "failed",
+            "receipt_id": "..." | None,
+        }
+
+    Errors are logged but NOT raised — state machine fails-closed.
+    """
+    from aspire_orchestrator.workers.trust_onboarding.a2p_state_machine import (
+        advance_a2p_registration as advance_impl,
+    )
+
+    job_id = ctx.get("job_id", "<unknown>")
+    job_try = ctx.get("job_try", 1)
+    logger.info(
+        "a2p_advance start suite_id=%s job_id=%s try=%d",
+        suite_id, job_id, job_try,
+    )
+    try:
+        result = await advance_impl(suite_id=suite_id, worker_job_id=job_id)
+        logger.info(
+            "a2p_advance done suite_id=%s from=%s to=%s outcome=%s",
+            suite_id, result.get("from_state"), result.get("to_state"), result.get("outcome"),
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001 — last-resort logging
+        logger.error(
+            "a2p_advance unhandled suite_id=%s job_id=%s err=%s",
+            suite_id, job_id, exc,
+            exc_info=True,
+        )
+        raise
+
+
 async def poll_trust_status_for_tenants(ctx: dict[str, Any]) -> dict[str, Any]:
     """Cron job (W9) — every 6h, poll Twilio for tenants stuck in *_submitted.
 
@@ -151,6 +196,7 @@ class WorkerSettings:
     # Functions registered with the worker.
     functions = [
         advance_trust_state,
+        advance_a2p_registration,
     ]
 
     # Cron jobs (W9 — these become active when cron_jobs.py ships).
@@ -207,6 +253,7 @@ class WorkerSettings:
 
 __all__ = [
     "advance_trust_state",
+    "advance_a2p_registration",
     "poll_trust_status_for_tenants",
     "retry_failed_trust_onboardings",
     "WorkerSettings",

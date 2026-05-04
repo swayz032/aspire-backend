@@ -1185,6 +1185,95 @@ async def add_phone_to_messaging_service(
     return result
 
 
+async def create_sole_proprietor_vetting(
+    *,
+    brand_registration_sid: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Submit a Sole Proprietor Vetting request for an A2P brand.
+
+    POST /v1/a2p/BrandRegistrations/{Sid}/SoleProprietorVettings
+
+    This endpoint is called after the OTP is confirmed by the tenant (W8).
+    It formally triggers Twilio's free Sole Prop vetting flow.
+
+    Law #9: no PII in parameters — brand_registration_sid is a Twilio SID.
+    """
+    account_sid, auth_token = _twilio_auth()
+    url = (
+        f"{_TWILIO_MESSAGING_BASE}/a2p/BrandRegistrations"
+        f"/{brand_registration_sid}/SoleProprietorVettings"
+    )
+
+    logger.info(
+        "trust_hub create_sole_proprietor_vetting brand_reg_sid=%s",
+        brand_registration_sid,
+    )
+
+    try:
+        result = await _resilient_post(
+            account_sid, auth_token, url, {}, idempotency_key,
+        )
+    except CircuitOpenError as ce:
+        raise TrustHubError(
+            "TWILIO_CIRCUIT_OPEN",
+            f"Twilio is degraded — create_sole_proprietor_vetting rejected ({ce})",
+            503,
+        ) from ce
+
+    logger.info(
+        "trust_hub create_sole_proprietor_vetting sid=%s status=%s",
+        result.get("sid", ""),
+        result.get("status", ""),
+    )
+    return result
+
+
+async def submit_a2p_otp(
+    *,
+    brand_registration_sid: str,
+    otp_code: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Submit an OTP code to verify a Sole Proprietor A2P brand registration.
+
+    POST /v1/a2p/BrandRegistrations/{Sid}/OtpVerifications
+
+    Twilio sends an OTP SMS to the authorized rep's phone after BrandRegistrations
+    POST. The tenant enters the code in the W8 UI; this endpoint submits it.
+
+    Law #9: otp_code is NOT logged (it's a 6-digit ephemeral credential).
+    """
+    account_sid, auth_token = _twilio_auth()
+    url = (
+        f"{_TWILIO_MESSAGING_BASE}/a2p/BrandRegistrations"
+        f"/{brand_registration_sid}/OtpVerifications"
+    )
+
+    # otp_code is the only PII-adjacent field — log only the SID, never the code.
+    logger.info(
+        "trust_hub submit_a2p_otp brand_reg_sid=%s",
+        brand_registration_sid,
+    )
+
+    try:
+        result = await _resilient_post(
+            account_sid,
+            auth_token,
+            url,
+            {"Otp": otp_code},  # Law #9: otp_code used here and discarded; never logged
+            idempotency_key,
+        )
+    except CircuitOpenError as ce:
+        raise TrustHubError(
+            "TWILIO_CIRCUIT_OPEN",
+            f"Twilio is degraded — submit_a2p_otp rejected ({ce})",
+            503,
+        ) from ce
+
+    return result
+
+
 async def create_a2p_campaign(
     *,
     messaging_service_sid: str,
@@ -1265,8 +1354,10 @@ __all__ = [
     "enable_caller_id_lookup",
     "disable_caller_id_lookup",
     "update_phone_number_friendly_name",
-    # A2P 10DLC stubs
+    # A2P 10DLC
     "create_a2p_brand_registration",
+    "create_sole_proprietor_vetting",
+    "submit_a2p_otp",
     "create_messaging_service",
     "add_phone_to_messaging_service",
     "create_a2p_campaign",
