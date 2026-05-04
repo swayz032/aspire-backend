@@ -122,6 +122,7 @@ from aspire_orchestrator.routes.front_desk import router as front_desk_router
 from aspire_orchestrator.routes.sms import router as sms_router
 from aspire_orchestrator.routes.messages import router as messages_router
 from aspire_orchestrator.routes.calls import router as calls_router
+from aspire_orchestrator.routes.trust_hub import router as trust_hub_router
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -293,6 +294,7 @@ app.include_router(front_desk_router)   # /v1/front-desk/...
 app.include_router(sms_router)          # /v1/sms/send
 app.include_router(messages_router)     # /v1/messages/*  — Pass 19 Lane E1
 app.include_router(calls_router)        # /v1/calls/*     — Pass 19 Lane B
+app.include_router(trust_hub_router)    # /v1/trust-hub/* — Wave 3 KYB intake
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ

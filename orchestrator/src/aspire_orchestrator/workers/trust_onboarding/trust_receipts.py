@@ -123,6 +123,8 @@ RECEIPT_TYPES: Final[frozenset[str]] = frozenset({
     "front_desk_phone_switched",
     "phone_number_released",
     "number_swap_complete",
+    # Webhook ingestion (Wave 3 skeleton + Wave 5 dispatch)
+    "webhook_received",
 })
 
 
