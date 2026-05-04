@@ -196,11 +196,23 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     bay = str(pickup.get("bay") or "").strip()
     pickup_store_address = str(pickup.get("store_address") or "").strip()
 
+    # Delivery state -> human label. SerpAPI ships one of four flag shapes
+    # in the `delivery` dict. Stringifying the dict produces ugly UI like
+    # "{'schedule_delivery': True}", so we map each flag explicitly. Order
+    # matters: free wins over scheduled wins over out-of-stock/unavailable.
     delivery_str = ""
     if isinstance(delivery, dict):
-        delivery_str = "Free delivery" if delivery.get("free") else str(delivery)
-    elif delivery:
-        delivery_str = str(delivery)
+        if delivery.get("free"):
+            delivery_str = "Free delivery"
+        elif delivery.get("schedule_delivery"):
+            delivery_str = "Schedule delivery"
+        elif delivery.get("not_available_for_delivery"):
+            delivery_str = "Delivery unavailable"
+        elif delivery.get("out_of_stock"):
+            delivery_str = "Delivery out of stock"
+    elif isinstance(delivery, str) and delivery.strip():
+        # Legacy string shape (older SerpAPI variant).
+        delivery_str = delivery.strip()
 
     # Keep the full pickup + delivery dicts as fulfillment_* — UI renders
     # rich pickup/delivery options when populated. SerpAPI ships these as
@@ -257,6 +269,44 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     upc = str(data.get("upc") or "").strip()
     product_id = str(data.get("product_id") or "").strip()
 
+    # Wave 2.0 fields — pricing unit, social proof, lazy-enrich URL.
+    unit = str(data.get("unit") or "").strip()
+    favorite_raw = data.get("favorite")
+    favorite_count: int | None = None
+    if isinstance(favorite_raw, (int, float)) and favorite_raw >= 0:
+        favorite_count = int(favorite_raw)
+    collection_url = str(data.get("collection") or "").strip()
+    serpapi_link = str(data.get("serpapi_link") or "").strip()
+
+    # Currency — explicit when SerpAPI returns it (CA = "CAD"), inferred
+    # from URL host otherwise. Default USD for backward compat.
+    currency = str(data.get("currency") or "").strip().upper()
+    if not currency:
+        link = str(data.get("link") or "")
+        currency = "CAD" if ".homedepot.ca" in link else "USD"
+
+    # CA fallback: SerpAPI Canada uses string "33%" for percent_off and a
+    # `stock_information` dict with general_stock + store_stock_status.
+    percentage_off = data.get("percentage_off")
+    if percentage_off is None:
+        percent_off_raw = data.get("percent_off")
+        if isinstance(percent_off_raw, str) and percent_off_raw.strip():
+            try:
+                percentage_off = float(percent_off_raw.strip().rstrip("%"))
+            except ValueError:
+                percentage_off = None
+        elif isinstance(percent_off_raw, (int, float)):
+            percentage_off = float(percent_off_raw)
+
+    # CA stock_information — surfaces general_stock + store_stock_status when
+    # pickup.quantity is unavailable. We promote store_stock_status into
+    # availability_text downstream.
+    stock_info = data.get("stock_information") if isinstance(data.get("stock_information"), dict) else {}
+    if stock is None and isinstance(stock_info, dict):
+        ca_general = stock_info.get("general_stock")
+        if isinstance(ca_general, (int, float)) and ca_general > 0:
+            stock = int(ca_general)
+
     # Surface a one-line description for the card UI (description_short).
     # SerpAPI Home Depot search ships either `description` (string) or
     # `highlights` (list/string). The full product detail comes from the
@@ -276,8 +326,12 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
         price=data.get("price"),
         price_was=data.get("price_was"),
         price_saving=data.get("price_saving"),
-        percentage_off=data.get("percentage_off"),
-        currency="USD",
+        percentage_off=percentage_off,
+        currency=currency,
+        unit=unit,
+        favorite=favorite_count,
+        collection=collection_url,
+        serpapi_link=serpapi_link,
         availability="in_stock" if stock and stock > 0 else "check_store",
         in_store_stock=stock,
         store_id=str(store_id or ""),
@@ -305,7 +359,11 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
             "thumbnail": image_url,
             "delivery": delivery_str,
             "badges": badges if isinstance(badges, list) else [],
-            "availability_text": "In stock" if stock and stock > 0 else "Check store",
+            "availability_text": (
+                # CA: SerpAPI ships "In Stock" / "Out Of Stock" / "No Longer Available".
+                str(stock_info.get("store_stock_status") or "").strip()
+                or ("In stock" if stock and stock > 0 else "Check store")
+            ),
             # Pickup store address surfaced for "Available at: <store name>
             # — <address>" rendering on cards when store_summary is missing.
             "pickup_store_address": pickup_store_address,

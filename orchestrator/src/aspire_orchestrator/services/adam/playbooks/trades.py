@@ -712,6 +712,12 @@ async def execute_tool_material_price_check(
     final_records: list[dict[str, Any]] = []
     final_sources: list[SourceAttribution] = []
     final_store_summary: dict[str, Any] = {}
+    # Search-level metadata captured from SerpAPI for refinable carousels —
+    # surface taxonomy breadcrumbs, filter tokens, and related queries.
+    final_taxonomy: list[dict[str, Any]] = []
+    final_filters: list[dict[str, Any]] = []
+    final_related_products: list[Any] = []
+    final_pagination: dict[str, Any] = {}
 
     # Track Round-4 provider call for cost attribution. The helper itself does
     # not emit a receipt — the playbook wrapper at server.py records the call
@@ -800,6 +806,21 @@ async def execute_tool_material_price_check(
                     resolved_store_id = str(store_match.get("store_id", "")).strip()
                     hd_store_info = dict(store_match)
 
+            # Hard guardrail: refuse to call SerpAPI blind. Without store_id
+            # OR delivery_zip, SerpAPI silently injects its account-default
+            # (store_id=2414, zip=04401, Bangor ME) and ships poisoned results.
+            # We return a synthetic FAILED outcome so the loop falls through to
+            # the STORE_UNRESOLVED decision flag — Ava asks the user to clarify.
+            if not resolved_store_id and not zip_code:
+                logger.warning(
+                    "TOOL_MATERIAL_PRICE_CHECK: refusing blind SerpAPI call — "
+                    "no store_id and no delivery_zip resolved (query=%r). "
+                    "Returning STORE_UNRESOLVED.",
+                    attempt_query[:80],
+                )
+                providers_called.append("store_unresolved")
+                return None
+
             hd_payload: dict[str, Any] = {"query": attempt_query, "hd_sort": "best_match"}
             if resolved_store_id:
                 hd_payload["store_id"] = resolved_store_id
@@ -882,6 +903,14 @@ async def execute_tool_material_price_check(
                 attempt_idx, hd_result,
             )
 
+        # Bangor guardrail short-circuit (Wave 2.0). The resolver returned
+        # None when neither store_id nor delivery_zip could be resolved — we
+        # must NOT call SerpAPI blind. Break out so the response surfaces
+        # `reason_code=store_unresolved` and Ava asks the user to clarify
+        # location instead of shipping Bangor-poisoned results.
+        if hd_result is None:
+            break
+
         # F-HIGH-7: SerpApi 429 — retrying just burns budget AND quota. Break
         # immediately and surface a structured rate-limit response. Reason
         # comes back from the underlying SerpApi client (response.error_code).
@@ -903,6 +932,26 @@ async def execute_tool_material_price_check(
 
         if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
             serpapi_store = hd_result.data.get("store", {})
+
+            # Bangor guardrail (Wave 2.0).
+            # SerpAPI silently injects its account-default store_id=2414 +
+            # delivery_zip=04401 (Bangor, ME) when the caller supplies neither.
+            # Every product in the response then reads pickup.store_name="Bangor"
+            # (or "South Loop" depending on SerpAPI's whim) regardless of where
+            # the user actually is. We REFUSE these results — Ava asks the user
+            # to clarify location instead of shipping cards anchored to Maine.
+            if serpapi_store.get("default_store_fallback"):
+                logger.warning(
+                    "TOOL_MATERIAL_PRICE_CHECK: SerpAPI default-fallback (Bangor) "
+                    "detected on attempt=%s — refusing results, query=%r will be "
+                    "retried with a STORE_UNRESOLVED decision flag",
+                    attempt_idx, attempt_query[:80],
+                )
+                providers_called.append("serpapi_home_depot_default_fallback")
+                # Treat as if the call failed — let the loop break out to the
+                # store_unresolved decision flag below.
+                continue
+
             if serpapi_store.get("store_name"):
                 hd_store_info["store_name"] = serpapi_store["store_name"]
             if not hd_store_info.get("store_id") and serpapi_store.get("store_id"):
@@ -1054,6 +1103,15 @@ async def execute_tool_material_price_check(
             final_records = [store_summary, *complete_products]
             final_sources = sources
             final_store_summary = store_summary
+            # Capture search-level metadata for refinable session UI. Cap
+            # filters at top-12 facets to keep payload bounded; the prompt
+            # reads this for "show only Milwaukee under $200" follow-ups.
+            if not isinstance(hd_result, Exception) and hd_result.data:
+                hd_data = hd_result.data
+                final_taxonomy = list(hd_data.get("taxonomy") or [])[:6]
+                final_filters = list(hd_data.get("filters") or [])[:12]
+                final_related_products = list(hd_data.get("related_products") or [])[:8]
+                final_pagination = hd_data.get("pagination") or {}
             break
 
     # Round 7 A.2 — decision flags computed for EVERY response (error or success).
@@ -1098,6 +1156,15 @@ async def execute_tool_material_price_check(
         # (when SerpApi short-circuited) from generic no-match.
         if "serpapi_home_depot_rate_limited" in providers_called:
             reason_code = "shopping_429"
+        elif (
+            "store_unresolved" in providers_called
+            or "serpapi_home_depot_default_fallback" in providers_called
+        ):
+            # Bangor guardrail fired — no usable store identity, refused to
+            # ship poisoned results. Surface this so the prompt asks the user
+            # for their zip / city / job-site address.
+            reason_code = "store_unresolved"
+            decision_flags["store_unresolved"] = True
         elif hd_too_far:
             reason_code = "hd_too_far"
         elif not hd_has_stock and hd_products:
@@ -1189,6 +1256,14 @@ async def execute_tool_material_price_check(
         extra={
             "store_summary": final_store_summary,
             "cards_version": "v1",
+            # Search-level metadata for refinable carousel sessions.
+            # taxonomy = breadcrumbs ("Tools > Power Tools > Drills")
+            # filters  = facets w/ hd_filter_tokens for "narrow to Milwaukee"
+            # related_products = query suggestions ("ryobi cordless drill")
+            "taxonomy": final_taxonomy,
+            "filters": final_filters,
+            "related_products": final_related_products,
+            "pagination": final_pagination,
             **decision_flags,
         },
     )
