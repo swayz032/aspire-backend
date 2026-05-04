@@ -32,7 +32,7 @@ import logging
 import re
 import uuid
 from datetime import date as date_cls, datetime, timezone
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -78,6 +78,46 @@ def _build_twilio_sid_re() -> re.Pattern[str]:
     clauses against `tenant_trust_profiles` — leading to cross-tenant reads.
     """
     return re.compile(r"^[A-Z]{2}[0-9a-fA-F]{32}$")
+
+
+# Module-level compiled regex (security-reviewer R-W5-006). Compiling on every
+# webhook hit is pure waste under high volume; this constant is referenced by
+# the status-callback handler instead of recompiling per request.
+_TWILIO_SID_RE: Final[re.Pattern[str]] = _build_twilio_sid_re()
+
+
+# Allowlist of Twilio Trust Hub status values we are prepared to dispatch on
+# (security-reviewer R-W5-001). Any other status (e.g., `twilio-pending`,
+# `twilio-under-review`) is logged + receipt-written, but does NOT advance
+# state. Without this allowlist, intermediate statuses fall through to
+# `is_approved=False` and write `profile_rejected`/`failed` to DB —
+# locking tenants out for what should be benign Twilio progress events.
+_KNOWN_TWILIO_STATUSES: Final[frozenset[str]] = frozenset({
+    "twilio-approved",
+    "twilio-rejected",
+})
+
+
+# Sanitization for Twilio's `FailureReason` text (security-reviewer R-W5-002).
+# Twilio rejection reasons may include rep names or other tenant-submitted
+# document strings. Storing them raw and serving them back in GET /status
+# leaks PII. We strip to a safe character class and truncate.
+_FAILURE_REASON_SAFE_CHARS: Final[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9 .,;:!?\-]")
+_FAILURE_REASON_MAX_LEN: Final[int] = 256
+
+
+def _sanitize_failure_reason(raw: str | None) -> str | None:
+    """Strip non-safe chars + truncate FailureReason for safe DB / API echo.
+
+    The raw text is preserved separately on the receipt
+    (`twilio_rejection_reason`) so the audit ledger is complete (Law #2),
+    but the DB column + GET /status response carry only the sanitized form.
+    """
+    if not raw:
+        return None
+    cleaned = _FAILURE_REASON_SAFE_CHARS.sub(" ", raw)
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:_FAILURE_REASON_MAX_LEN] if cleaned else None
 
 
 # Field names whose values must NEVER appear in 422 validation error
@@ -590,10 +630,18 @@ async def kyb_status(
 
     trust_state = profile.get("trust_state") or ""
 
+    # F-11: `shaken_approved_at` column does not exist in migration 109.
+    # We derive the shaken_approved milestone from `trust_state` itself —
+    # any state at or past `shaken_approved` (rank 6) means SHAKEN is live.
+    _SHAKEN_APPROVED_STATES: frozenset[str] = frozenset({
+        "shaken_approved", "cnam_created", "cnam_submitted",
+        "cnam_approved", "number_attached", "branded_calling_pending",
+    })
+
     milestones: dict[str, bool] = {
         "kyb_collected": bool(profile.get("kyb_collected_at")),
         "profile_approved": bool(profile.get("profile_approved_at")),
-        "shaken_approved": bool(profile.get("shaken_approved_at")),
+        "shaken_approved": trust_state in _SHAKEN_APPROVED_STATES,
         "cnam_approved": bool(profile.get("cnam_approved_at")),
         "branded_calling_live": bool(profile.get("branded_calling_enabled")),
         "a2p_approved": a2p_approved,
@@ -929,7 +977,8 @@ async def status_callback(
     # against `tenant_trust_profiles` (e.g., `BUaaa...&suite_id=neq.null`
     # would return rows from OTHER tenants). HMAC authenticates Twilio's
     # signing key; it does NOT vouch for SID format.
-    _TWILIO_SID_RE = _build_twilio_sid_re()
+    # R-W5-006: regex compiled at module load (`_TWILIO_SID_RE`) — no
+    # per-request recompilation in the hot path.
     sid_valid = bool(resource_sid) and bool(_TWILIO_SID_RE.match(resource_sid))
 
     logger.info(
@@ -993,17 +1042,33 @@ async def status_callback(
     }
     bundle_type: str = _COLUMN_TO_BUNDLE.get(matched_sid_column or "", "unknown")
 
-    # Step 5: Determine new trust_state based on bundle + Twilio status
-    is_approved: bool = twilio_status == "twilio-approved"
-    _STATE_MAP: dict[tuple[str, bool], str] = {
-        ("profile", True): "profile_approved",
-        ("profile", False): "profile_rejected",
-        ("shaken", True): "shaken_approved",
-        ("shaken", False): "failed",   # SHAKEN rejection is rare and terminal
-        ("cnam", True): "cnam_approved",
-        ("cnam", False): "failed",     # CNAM display-name rejection; tenant can dispute
-    }
-    new_state: str | None = _STATE_MAP.get((bundle_type, is_approved))
+    # Step 5: Determine new trust_state based on bundle + Twilio status.
+    #
+    # security-reviewer R-W5-001 (IMMEDIATE) — only dispatch on KNOWN Twilio
+    # statuses. Twilio sends intermediate statuses (e.g., `twilio-pending`,
+    # `twilio-under-review`) that previously fell through to `is_approved=False`
+    # and wrote `profile_rejected` / `failed` to DB — corrupting tenant state
+    # for benign progress events. Unknown statuses now route to the
+    # `new_state is None` path (cut webhook_received receipt + return 200).
+    new_state: str | None = None
+    is_approved: bool = False
+    if twilio_status in _KNOWN_TWILIO_STATUSES:
+        is_approved = twilio_status == "twilio-approved"
+        _STATE_MAP: dict[tuple[str, bool], str] = {
+            ("profile", True): "profile_approved",
+            ("profile", False): "profile_rejected",
+            ("shaken", True): "shaken_approved",
+            ("shaken", False): "failed",   # SHAKEN rejection is rare and terminal
+            ("cnam", True): "cnam_approved",
+            ("cnam", False): "failed",     # CNAM display-name rejection; tenant can dispute
+        }
+        new_state = _STATE_MAP.get((bundle_type, is_approved))
+    else:
+        # Truncate for log safety in case Twilio adds long status strings
+        logger.warning(
+            "trust_hub status_callback unknown_status status=%s bundle=%s — no DB write",
+            twilio_status[:64], bundle_type,
+        )
 
     if new_state is None:
         # Unknown bundle type or unrecognised status — cut inbound marker and return
@@ -1038,6 +1103,13 @@ async def status_callback(
     # If we're already AT or PAST the target state, this is a duplicate callback.
     _STATE_RANK: dict[str, int] = {
         "kyb_collected": 0,
+        # R-W5-004: kyb_disputed is a real `from_state` (set by the dispute
+        # endpoint when a tenant resubmits). Without this entry, .get(...)
+        # returns the -1 default and the idempotency guard
+        # (`current_rank >= target_rank`) is bypassed for any disputing
+        # tenant — letting a stale Twilio retry advance them straight to
+        # `profile_approved` without the resubmit completing.
+        "kyb_disputed": 0,
         "profile_drafted": 1,
         "profile_submitted": 2,
         "profile_approved": 3,
@@ -1081,14 +1153,23 @@ async def status_callback(
     }
     receipt_type: str = _RECEIPT_MAP[(bundle_type, is_approved)]
 
-    # Step 8: Extract rejection reason from Twilio payload (rejection events only)
-    # FailureReason text might mention business details — stored in a service-role-only
-    # column (NOT in redacted_inputs which could appear in wider audit views).
-    failure_reason: str | None = None
+    # Step 8: Extract rejection reason from Twilio payload (rejection events only).
+    #
+    # security-reviewer R-W5-002 — `FailureReason` may include rep names or
+    # other tenant document strings. We sanitize before storing in
+    # `tenant_trust_profiles.rejection_reason` (which is served back via
+    # GET /status). The RAW value still flows to the receipt's
+    # `twilio_rejection_reason` field for audit completeness (see R-W5-003);
+    # that field lives in `trust_state_transitions` which is service-role-only.
+    failure_reason_raw: str | None = None
+    failure_reason_sanitized: str | None = None
     error_code: str | None = None
     if not is_approved:
-        failure_reason = str(form.get("FailureReason", "")) or None
-        error_code = str(form.get("ErrorCode", "")) or None
+        failure_reason_raw = str(form.get("FailureReason", "")) or None
+        failure_reason_sanitized = _sanitize_failure_reason(failure_reason_raw)
+        error_code_raw = str(form.get("ErrorCode", "")) or None
+        # Error codes are short alphanumeric Twilio codes (e.g., "30450"); cap to 32 chars.
+        error_code = error_code_raw[:32] if error_code_raw else None
 
     try:
         # Step 9: Update trust_state + timestamps in DB
@@ -1097,8 +1178,11 @@ async def status_callback(
             update_payload["profile_approved_at"] = datetime.now(timezone.utc).isoformat()
         elif is_approved and bundle_type == "cnam":
             update_payload["cnam_approved_at"] = datetime.now(timezone.utc).isoformat()
-        if not is_approved and failure_reason is not None:
-            update_payload["rejection_reason"] = failure_reason
+        # F-11: `shaken_approved_at` column does not exist in migration 109.
+        # The shaken_approved milestone is derived from `trust_state` rank
+        # in GET /status; do NOT attempt to write it here.
+        if not is_approved and failure_reason_sanitized is not None:
+            update_payload["rejection_reason"] = failure_reason_sanitized
         if not is_approved and error_code is not None:
             update_payload["rejection_code"] = error_code
 
@@ -1108,7 +1192,13 @@ async def status_callback(
             update_payload,
         )
 
-        # Step 10: Cut the matching receipt
+        # Step 10: Cut the matching receipt.
+        # R-W5-003 — forward the RAW `FailureReason` and `ErrorCode` to the
+        # receipt for audit completeness (Law #2). `cut_trust_receipt`
+        # writes them to `trust_state_transitions.twilio_rejection_*`,
+        # which is service-role-only. They are NOT written to
+        # `redacted_inputs` / `redacted_outputs` — those are served back
+        # in wider audit views and must remain PII-clean.
         await cut_trust_receipt(
             receipt_type=receipt_type,
             trust_profile=trust_profile_for_receipt,
@@ -1126,6 +1216,8 @@ async def status_callback(
             },
             twilio_resource_sid=resource_sid,
             twilio_status=twilio_status,
+            twilio_rejection_code=error_code,
+            twilio_rejection_reason=failure_reason_raw,
         )
 
         # Step 11: Approval → enqueue; rejection → do NOT enqueue (tenant must dispute)

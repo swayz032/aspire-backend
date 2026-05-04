@@ -60,5 +60,28 @@
 - Read the placeholder file first before Edit (tool requirement)
 - Cannot use heredoc for complex Python content in WSL bash -c (quote escaping breaks)
 
+## Wave 2 Trust Hub Idempotency Tests (2026-05-03)
+- New file: `orchestrator/tests/test_trust_state_machine_idempotency.py` — 12 passed, 1 skipped
+- Source files must be extracted from `feat/per-tenant-trust-hub-w1-schema` branch to disk before pytest can import them (`.pyc`-only dirs are not discoverable by Python)
+- Extract pattern: `git show feat/per-tenant-trust-hub-w1-schema:<path> > <disk_path>`
+- Files extracted for test execution (not committed to wrong branch, remain untracked):
+  `workers/trust_onboarding/state_machine.py`, `trust_receipts.py`, `cnam_sanitizer.py`, `__init__.py`, `worker.py`, `providers/twilio_trust_hub.py`, `workers/__init__.py`, `tests/test_trust_state_machine.py`
+- `TrustReceiptError` constructor: `TrustReceiptError(code: str, message: str)` — two required args
+- State machine idempotency guards: SID-column check in DB row BEFORE every Twilio create call
+- 409 TrustHubError on assign_entity_to_profile/trust_product treated as idempotent success (not a failure)
+- `_PatchContext` pattern from test_trust_state_machine.py is reusable but direct `patch()` context managers are cleaner for targeted idempotency tests
+- skip reason: worker.py `advance_trust_state_task` import may fail if worker not on disk — guard with `pytest.skip`
+
+## Wave 4+5 E2E Integration Test (2026-05-03)
+- New file: `orchestrator/tests/test_trust_hub_e2e.py` — 2 passed
+- `_DBSimulator` pattern: shared in-memory dict keyed by `(table, id)` lets route + state machine + callback share state without real DB
+- `_ReceiptCapture.cut()`: wraps real `cut_trust_receipt` signature; captures receipt types + asserts PII guardrails inline
+- Critical patching lesson: `state_machine.py` uses `from aspire_orchestrator.services.supabase_client import supabase_insert` INSIDE `_transition_shaken_approved()` function body — NOT at module level. Must patch `"aspire_orchestrator.services.supabase_client.supabase_insert"` NOT `patch.object(sm, "supabase_insert")` — the latter raises AttributeError.
+- `mock_thub.create_end_user` side_effect: dispatch on `end_user_type` kwarg to return EU_SID_REP1 vs EU_SID_CNAM
+- `mock_thub.create_trust_product` side_effect: dispatch on `policy_sid` kwarg to return SHAKEN_SID vs CNAM_SID
+- `_seed_rep_with_eu_sid()`: after kyb_collected advance stores the rep row without eu_sid; must set it before profile_drafted advance or that handler returns `outcome="failed"` with MISSING_END_USER_SID
+- `importlib.reload(sys.modules[sm_mod_name])` needed before each test to reset module-level policy SID cache (_POLICY_CACHE dict)
+- TestClient with `raise_server_exceptions=False` required for webhook tests (status-callback returns 200 even on errors)
+
 ## Links
 - See `cycle5-bugs.md` for full detailed bug list

@@ -57,3 +57,27 @@ type: project
 - `include_other_stores` boolean not cross-tenant — scoped to the PlaybookContext which carries suite_id from session
 
 ### Round 7 Verdict: CONDITIONAL PASS — 2 blocking (R-001, R-002 one-line each), 3 advisory
+
+## Wave 5 (2026-05-03) — Status-Callback Dispatch (Trust Hub)
+
+### NEW Findings
+
+- THREAT-W5-001: `FailureReason` from Twilio form written verbatim to `tenant_trust_profiles.rejection_reason` (DB column) AND echoed in GET /status response body without length cap or sanitization. Twilio may include rep names/business details. (MEDIUM — Law #9 concern, no client-response truncation)
+- THREAT-W5-002: `failure_reason` is NOT passed as `twilio_rejection_reason` to `cut_trust_receipt` in the status_callback handler (routes/trust_hub.py:1112-1129). The dedicated `twilio_rejection_reason` param of `cut_trust_receipt` is never populated from the callback path — inconsistent with state_machine.py which does pass it. Audit trail is incomplete for rejection events. (MEDIUM — audit gap, Law #2)
+- THREAT-W5-003: `_TWILIO_SID_RE` compiled on every request (line 932 inside hot path) rather than at module load. No security impact; minor performance waste. (LOW)
+- THREAT-W5-004: `uvicorn proxy_headers=True` with no `forwarded_allow_ips` restriction means any caller can spoof `X-Forwarded-Host` / `X-Forwarded-Proto` headers, potentially causing `str(request.url)` to reflect the attacker-controlled host/scheme. Twilio HMAC covers the URL string — if the URL used for validation differs from what Twilio signed (e.g., `https://attacker.com/v1/trust-hub/status-callback`), HMAC would fail. But if a forged X-Forwarded-Host matches a trusted Twilio URL already registered elsewhere, the HMAC passes against the wrong URL. (MEDIUM — defense-in-depth gap)
+- THREAT-W5-005: `_STATE_RANK` is missing `kyb_disputed` state (referenced in dispute receipt's `from_state`). If DB ever writes `trust_state=kyb_disputed` and a stale callback arrives for that profile, `current_rank = _STATE_RANK.get("kyb_disputed", -1)` returns -1, and any target state will have rank >= -1, so the callback WILL advance state. Idempotency guard is bypassed for any profile in kyb_disputed state. (MEDIUM — correctness + idempotency gap)
+- THREAT-W5-006: T2 dispatch-table — `is_approved` is a strict equality check (`twilio_status == "twilio-approved"`). Any other status value (empty, `twilio-pending`, unknown) maps `is_approved=False`. `_STATE_MAP.get((bundle_type, False))` then maps to `profile_rejected`/`failed`. This means an unknown status like `twilio-pending` sent with a valid HMAC on a profile-type SID would set `trust_state=profile_rejected`. This is a state-corruption vector. (HIGH)
+
+### Wave 5 Verdict: CONDITIONAL PASS — 1 blocking (W5-006), 3 medium advisory, 1 low
+
+### Wave 5 Safe Patterns Confirmed
+- HMAC is first check before ALL DB ops — correct
+- SID validated against `^[A-Z]{2}[0-9a-fA-F]{32}$` before PostgREST interpolation — correct
+- No form body logged at INFO level before HMAC validation — correct
+- `failure_reason` NOT in `redacted_inputs` or `redacted_outputs` — passes `_assert_no_pii`
+- `rejection_reason` column write is correct (service-role only per comment)
+- Idempotency guard covers the primary happy-path states correctly
+- `failed`/`suspended` as terminal (rank=99) prevent re-advancement from terminal state
+- ARQ not enqueued on rejection — correct
+- `webhook_processing_failed` receipt cut on any exception inside try block — correct

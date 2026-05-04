@@ -56,3 +56,28 @@
 - Session key = Anam session token (opaque string from Anam API)
 - `/api/ava/chat-stream` is a PUBLIC PATH (no JWT) — relies entirely on session store lookup
 - If session_id can be predicted/guessed, attacker could impersonate another user's suite context
+
+### Wave 5 Trust Hub Status-Callback Dispatch — Reviewed 2026-05-03
+- BLOCKING: unknown Twilio status values (not `twilio-approved`, not `twilio-rejected`) sent with valid HMAC map `is_approved=False` and advance state to `profile_rejected`/`failed` — state corruption. Fix: explicit allowlist check before dispatch.
+- `_STATE_RANK` missing `kyb_disputed` — returns -1, bypasses idempotency guard for profiles in that state.
+- `failure_reason` (FailureReason from form) NOT forwarded as `twilio_rejection_reason` to `cut_trust_receipt` — audit trail gap for rejection events.
+- `uvicorn proxy_headers=True` without `forwarded_allow_ips` allows X-Forwarded-Host spoofing affecting HMAC URL verification.
+- `_TWILIO_SID_RE` recompiled on every request (hot path inefficiency, no security impact).
+- Test coverage gaps: no test for unknown status (e.g., `twilio-pending`), no test for profile in `kyb_disputed` state, no test that `twilio_rejection_reason` is passed through. See findings_log.md Wave 5 section.
+
+### Wave 3 Trust Hub KYB (routes/trust_hub.py) — Reviewed 2026-05-03
+- PII guardrail `_assert_no_pii` in trust_receipts.py is CORRECT and fail-closed. Blocks email, phone_e164, first_name, last_name, dob, ssn_last4, ein, address_street, raw_business_name.
+- `address_state` and `address_zip` are NOT in _FORBIDDEN_PII_KEYS — intentional (state/zip are not PII). `address_street` IS blocked.
+- Vault names use `{tenant_id}:ein` / `{tenant_id}:rep_{idx}_dob` / `{tenant_id}:rep_{idx}_ssn_last4` — correct namespace per W1 R-004.
+- CRITICAL GAP: `validate_token` does NOT verify `tenant_id` claim. Checks suite_id + office_id only (6 checks). A token minted for suite_id=X under tenant_id=A can be replayed by tenant_id=B if they share suite_id (design gap — same scope used in `_resolve_scope` but token doesn't carry tenant claim).
+- MEDIUM: `resource_sid` from Twilio callback form is interpolated directly into PostgREST filter `f"{sid_column}=eq.{resource_sid}"` without UUID/SID format validation after HMAC pass. Injection surface post-HMAC.
+- MEDIUM: `trust_profile_id` from DB (str(profile["id"])) is interpolated into PostgREST update filter without UUID re-validation. Low risk since source is DB, but not explicit.
+- MEDIUM: Race condition on dispute_count: read-then-increment not atomic. Concurrent calls could see same count and both succeed.
+- MEDIUM: `address_street` stored plaintext in `tenant_trust_profiles` DB column. Not in vault. Per CLAUDE.md Law #9, addresses are PII. By design (needed for Twilio submission) but worth flagging.
+- LOW: `dob` regex `^\d{4}-\d{2}-\d{2}$` does not parse as real date — allows "9999-99-99". No semantic date validation.
+- LOW: `_vault_delete_secret` is best-effort (logs warning, does NOT raise on failure). Crash after delete but before re-encrypt leaves column pointing at deleted vault entry — Law #3 concern.
+- LOW: `legal_business_name` has no Unicode normalization/control-char filtering (min_length=2, max_length=120 only).
+- Token wildcard scope `trust_hub.*` accepted by validate_token — overly broad if minted. Check that mint path never issues wildcard scopes.
+- Status endpoint is correctly Green (no cap token) per plan — intentional design, not oversight.
+- HMAC validation on status-callback is FIRST check before any DB operation — correct order.
+- 409 race on duplicate KYB submit: pre-check then insert — TOCTOU window exists but handled by DB unique constraint → clean 409.

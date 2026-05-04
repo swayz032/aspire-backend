@@ -54,7 +54,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Final
 
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.providers import twilio_trust_hub as thub
@@ -1194,6 +1194,14 @@ async def _transition_cnam_approved(
     profile_sid = trust_profile.get("twilio_secondary_profile_sid", "")
     t_start = time.monotonic()
 
+    # F-2: this transition advances `cnam_approved → number_attached`.
+    # The default `_fail()` receipt_type is `customer_profile_rejected`,
+    # which is semantically wrong for failures during number attachment.
+    # All four call sites in this transition pass the correct
+    # `number_attached_to_profile` receipt type with outcome="failed",
+    # preserving Law #2 audit fidelity.
+    _CNAM_APPROVED_FAIL_RECEIPT: Final[str] = "number_attached_to_profile"
+
     phone_row = await _load_phone_number(suite_id)
     if not phone_row:
         return await _fail(
@@ -1201,6 +1209,7 @@ async def _transition_cnam_approved(
             reason_code="NO_ACTIVE_PHONE_NUMBER",
             reason_message="No active phone number found for suite; cannot attach to Customer Profile",
             worker_job_id=worker_job_id,
+            receipt_type=_CNAM_APPROVED_FAIL_RECEIPT,
         )
 
     number_sid = phone_row.get("twilio_sid") or phone_row.get("phone_sid", "")
@@ -1219,6 +1228,7 @@ async def _transition_cnam_approved(
                     trust_profile, from_state=from_state,
                     reason_code="ASSIGN_NUMBER_FAILED", reason_message=str(exc),
                     worker_job_id=worker_job_id,
+                    receipt_type=_CNAM_APPROVED_FAIL_RECEIPT,
                 )
 
     # Enable VoiceCallerIdLookup.
@@ -1233,6 +1243,7 @@ async def _transition_cnam_approved(
                 trust_profile, from_state=from_state,
                 reason_code="ENABLE_CALLER_ID_LOOKUP_FAILED", reason_message=str(exc),
                 worker_job_id=worker_job_id,
+                receipt_type=_CNAM_APPROVED_FAIL_RECEIPT,
             )
 
     try:
@@ -1245,6 +1256,7 @@ async def _transition_cnam_approved(
             trust_profile, from_state=from_state,
             reason_code="DB_UPDATE_FAILED", reason_message=str(exc),
             worker_job_id=worker_job_id,
+            receipt_type=_CNAM_APPROVED_FAIL_RECEIPT,
         )
 
     latency = time.monotonic() - t_start
