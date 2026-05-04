@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     twilio_voice_integrity_policy_sid: str = ""     # ASPIRE_TWILIO_VOICE_INTEGRITY_POLICY_SID
     # URL Twilio posts trust status callbacks to (set via Railway: ASPIRE_TRUST_HUB_STATUS_CALLBACK_URL)
     trust_hub_status_callback_url: str = ""         # ASPIRE_TRUST_HUB_STATUS_CALLBACK_URL
+    # Redis URL for the ARQ trust-onboarding worker (W2-A). Same Redis as FastAPI app.
+    # Railway env: ASPIRE_REDIS_URL=redis://ava-redis:6379 (P5 preflight, already populated).
+    redis_url: str = "redis://localhost:6379"       # ASPIRE_REDIS_URL
+    # Branded Calling feature flag (W6 — gated on Twilio private-beta access). Default OFF.
+    branded_calling_enabled: bool = False           # ASPIRE_BRANDED_CALLING_ENABLED
     pandadoc_api_key: str = ""
     pandadoc_webhook_secret: str = ""
     stripe_webhook_secret: str = ""
