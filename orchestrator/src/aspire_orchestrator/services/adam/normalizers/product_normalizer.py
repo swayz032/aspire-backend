@@ -188,12 +188,26 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     # Read the per-product local store name strictly from pickup.store_name.
     store_name = pickup.get("store_name", "") or ""
     store_id = pickup.get("store_id", "") or data.get("store_id", "") or ""
+    # Map remaining SerpAPI pickup fields. SerpAPI Home Depot returns
+    # aisle + bay when store_id + delivery_zip are passed. Keep these as
+    # top-level fields the UI can render directly (they're already in
+    # ProductRecord schema).
+    aisle = str(pickup.get("aisle") or "").strip()
+    bay = str(pickup.get("bay") or "").strip()
+    pickup_store_address = str(pickup.get("store_address") or "").strip()
 
     delivery_str = ""
     if isinstance(delivery, dict):
         delivery_str = "Free delivery" if delivery.get("free") else str(delivery)
     elif delivery:
         delivery_str = str(delivery)
+
+    # Keep the full pickup + delivery dicts as fulfillment_* — UI renders
+    # rich pickup/delivery options when populated. SerpAPI ships these as
+    # nested objects; preserving them lets the card show "Pickup at <store>",
+    # "Delivery <date>", "Free delivery threshold", etc.
+    fulfillment_pickup = pickup if isinstance(pickup, dict) else {}
+    fulfillment_delivery = delivery if isinstance(delivery, dict) else {}
 
     badges = data.get("badges", [])
     raw_thumbnail = _safe_thumbnail(data.get("thumbnail"))
@@ -243,6 +257,14 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     upc = str(data.get("upc") or "").strip()
     product_id = str(data.get("product_id") or "").strip()
 
+    # Surface a one-line description for the card UI (description_short).
+    # SerpAPI Home Depot search ships either `description` (string) or
+    # `highlights` (list/string). The full product detail comes from the
+    # home_depot_product enrich endpoint; the search response carries a
+    # short blurb at best, so we cap at 200 chars to fit the card layout.
+    description_short = description[:200] if description else ""
+    description_full = description if description and len(description) > 200 else ""
+
     return ProductRecord(
         product_name=data.get("title", ""),
         brand=data.get("brand", ""),
@@ -267,6 +289,12 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
         rating=data.get("rating"),
         reviews=data.get("reviews"),
         description=description,
+        description_short=description_short,
+        description_full=description_full,
+        bay=bay,
+        aisle=aisle,
+        fulfillment_pickup=fulfillment_pickup,
+        fulfillment_delivery=fulfillment_delivery,
         specifications=specifications,
         dimensions=dimensions,
         weight=str(data.get("weight") or ""),
@@ -278,5 +306,8 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
             "delivery": delivery_str,
             "badges": badges if isinstance(badges, list) else [],
             "availability_text": "In stock" if stock and stock > 0 else "Check store",
+            # Pickup store address surfaced for "Available at: <store name>
+            # — <address>" rendering on cards when store_summary is missing.
+            "pickup_store_address": pickup_store_address,
         },
     )
