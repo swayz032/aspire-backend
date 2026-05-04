@@ -941,6 +941,7 @@ async def status_callback(
     # Look up trust profile by matching any bundle SID column —
     # ONLY when SID format is valid (R-002).
     trust_profile: dict[str, Any] | None = None
+    matched_sid_column: str | None = None
     if sid_valid:
         for sid_column in (
             "twilio_secondary_profile_sid",
@@ -955,6 +956,7 @@ async def status_callback(
                 )
                 if rows:
                     trust_profile = rows[0]
+                    matched_sid_column = sid_column
                     break
             except SupabaseClientError:
                 pass  # continue searching other columns
@@ -967,23 +969,48 @@ async def status_callback(
             resource_sid[:6] if resource_sid else "<empty>",
         )
 
-    # W3 skeleton: cut webhook_received receipt and return 200.
-    # W5 will add full dispatch (advance state machine based on twilio_status).
-    #
-    # `webhook_received` is an inbound-event marker, NOT a state transition.
-    # We pair it with from_state="<webhook>" → to_state=current_state so the
-    # trust_state_transitions append-only ledger has a row, but the existing
-    # `tst_no_self_loop CHECK (from_state != to_state)` constraint is satisfied
-    # because "<webhook>" is a sentinel that no real state ever takes.
-    if trust_profile:
-        trust_profile_for_receipt: dict[str, Any] = {
-            "id": str(trust_profile.get("id", "")),
-            "suite_id": str(trust_profile.get("suite_id", "")),
-            "tenant_id": str(trust_profile.get("tenant_id", "")),
-            "office_id": str(trust_profile.get("office_id", "")),
-        }
-        current_state = str(trust_profile.get("trust_state", "unknown"))
+    if not trust_profile:
+        logger.warning(
+            "trust_hub status_callback no_profile_found ResourceSid=%s", resource_sid
+        )
+        return {"status": "received"}
 
+    # --- W5: Full dispatch logic ---
+    trust_profile_id: str = str(trust_profile.get("id", ""))
+    trust_profile_for_receipt: dict[str, Any] = {
+        "id": trust_profile_id,
+        "suite_id": str(trust_profile.get("suite_id", "")),
+        "tenant_id": str(trust_profile.get("tenant_id", "")),
+        "office_id": str(trust_profile.get("office_id", "")),
+    }
+    current_state: str = str(trust_profile.get("trust_state", "unknown"))
+
+    # Step 4: Determine bundle type from matched column
+    _COLUMN_TO_BUNDLE: dict[str, str] = {
+        "twilio_secondary_profile_sid": "profile",
+        "twilio_shaken_bundle_sid": "shaken",
+        "twilio_cnam_bundle_sid": "cnam",
+    }
+    bundle_type: str = _COLUMN_TO_BUNDLE.get(matched_sid_column or "", "unknown")
+
+    # Step 5: Determine new trust_state based on bundle + Twilio status
+    is_approved: bool = twilio_status == "twilio-approved"
+    _STATE_MAP: dict[tuple[str, bool], str] = {
+        ("profile", True): "profile_approved",
+        ("profile", False): "profile_rejected",
+        ("shaken", True): "shaken_approved",
+        ("shaken", False): "failed",   # SHAKEN rejection is rare and terminal
+        ("cnam", True): "cnam_approved",
+        ("cnam", False): "failed",     # CNAM display-name rejection; tenant can dispute
+    }
+    new_state: str | None = _STATE_MAP.get((bundle_type, is_approved))
+
+    if new_state is None:
+        # Unknown bundle type or unrecognised status — cut inbound marker and return
+        logger.warning(
+            "trust_hub status_callback unrecognised_bundle_or_status bundle=%s status=%s",
+            bundle_type, twilio_status,
+        )
         try:
             await cut_trust_receipt(
                 receipt_type="webhook_received",
@@ -992,8 +1019,8 @@ async def status_callback(
                 from_state="<webhook>",
                 to_state=current_state,
                 redacted_inputs={
-                    "trust_profile_id": str(trust_profile.get("id", "")),
-                    "step_name": "status_callback_received",
+                    "trust_profile_id": trust_profile_id,
+                    "step_name": "status_callback_unrecognised",
                     "twilio_resource_sid": resource_sid,
                 },
                 redacted_outputs={
@@ -1004,17 +1031,138 @@ async def status_callback(
                 twilio_status=twilio_status,
             )
         except TrustReceiptError as exc:
-            # W3: do not let receipt failure block the 200 return to Twilio
-            logger.error(
-                "trust_hub status_callback cut_receipt_failed err=%s", exc
-            )
-    else:
-        logger.warning(
-            "trust_hub status_callback no_profile_found ResourceSid=%s", resource_sid
+            logger.error("trust_hub status_callback cut_receipt_failed err=%s", exc)
+        return {"status": "received"}
+
+    # Step 6: Idempotency check — state ordering table for forward-progress guard
+    # If we're already AT or PAST the target state, this is a duplicate callback.
+    _STATE_RANK: dict[str, int] = {
+        "kyb_collected": 0,
+        "profile_drafted": 1,
+        "profile_submitted": 2,
+        "profile_approved": 3,
+        "profile_rejected": 3,
+        "shaken_created": 4,
+        "shaken_submitted": 5,
+        "shaken_approved": 6,
+        "cnam_created": 7,
+        "cnam_submitted": 8,
+        "cnam_approved": 9,
+        "number_attached": 10,
+        "branded_calling_pending": 11,
+        "failed": 99,
+        "suspended": 99,
+    }
+    current_rank = _STATE_RANK.get(current_state, -1)
+    target_rank = _STATE_RANK.get(new_state, -1)
+    if current_rank >= target_rank and new_state != "failed":
+        # Already at or past this state — silent no-op to handle Twilio retries
+        logger.info(
+            "trust_hub status_callback idempotent_skip profile=%s current=%s target=%s",
+            trust_profile_id, current_state, new_state,
+        )
+        return {"status": "received"}
+
+    # Special case: if already in a terminal failure state, don't overwrite
+    if current_state in ("failed", "suspended") and new_state == "failed":
+        logger.info(
+            "trust_hub status_callback already_failed profile=%s", trust_profile_id
+        )
+        return {"status": "received"}
+
+    # Step 7: Determine receipt type
+    _RECEIPT_MAP: dict[tuple[str, bool], str] = {
+        ("profile", True): "customer_profile_approved",
+        ("profile", False): "customer_profile_rejected",
+        ("shaken", True): "shaken_trust_product_approved",
+        ("shaken", False): "shaken_trust_product_rejected",
+        ("cnam", True): "cnam_trust_product_approved",
+        ("cnam", False): "cnam_trust_product_rejected",
+    }
+    receipt_type: str = _RECEIPT_MAP[(bundle_type, is_approved)]
+
+    # Step 8: Extract rejection reason from Twilio payload (rejection events only)
+    # FailureReason text might mention business details — stored in a service-role-only
+    # column (NOT in redacted_inputs which could appear in wider audit views).
+    failure_reason: str | None = None
+    error_code: str | None = None
+    if not is_approved:
+        failure_reason = str(form.get("FailureReason", "")) or None
+        error_code = str(form.get("ErrorCode", "")) or None
+
+    try:
+        # Step 9: Update trust_state + timestamps in DB
+        update_payload: dict[str, Any] = {"trust_state": new_state}
+        if is_approved and bundle_type == "profile":
+            update_payload["profile_approved_at"] = datetime.now(timezone.utc).isoformat()
+        elif is_approved and bundle_type == "cnam":
+            update_payload["cnam_approved_at"] = datetime.now(timezone.utc).isoformat()
+        if not is_approved and failure_reason is not None:
+            update_payload["rejection_reason"] = failure_reason
+        if not is_approved and error_code is not None:
+            update_payload["rejection_code"] = error_code
+
+        await supabase_update(
+            "tenant_trust_profiles",
+            f"id=eq.{trust_profile_id}",
+            update_payload,
         )
 
-    # TODO (W5): dispatch advance_trust_state based on twilio_status
-    # W5 implements full dispatch — currently logs only
+        # Step 10: Cut the matching receipt
+        await cut_trust_receipt(
+            receipt_type=receipt_type,
+            trust_profile=trust_profile_for_receipt,
+            outcome="success" if is_approved else "denied",
+            from_state=current_state,
+            to_state=new_state,
+            redacted_inputs={
+                "trust_profile_id": trust_profile_id,
+                "step_name": f"twilio_{receipt_type}",
+                "twilio_resource_sid": resource_sid,
+            },
+            redacted_outputs={
+                "twilio_resource_sid": resource_sid,
+                "twilio_status": twilio_status,
+            },
+            twilio_resource_sid=resource_sid,
+            twilio_status=twilio_status,
+        )
+
+        # Step 11: Approval → enqueue; rejection → do NOT enqueue (tenant must dispute)
+        if is_approved:
+            await _enqueue_advance_trust_state(trust_profile_id)
+
+    except (SupabaseClientError, TrustReceiptError, Exception) as exc:  # noqa: BLE001
+        # Always return 200 to Twilio; internal errors get a processing_failed receipt
+        logger.error(
+            "trust_hub status_callback processing_error profile=%s err=%s",
+            trust_profile_id, exc,
+        )
+        try:
+            await cut_trust_receipt(
+                receipt_type="webhook_processing_failed",
+                trust_profile=trust_profile_for_receipt,
+                outcome="failed",
+                from_state=current_state,
+                to_state=current_state,
+                redacted_inputs={
+                    "trust_profile_id": trust_profile_id,
+                    "step_name": "status_callback_processing_failed",
+                    "twilio_resource_sid": resource_sid,
+                },
+                redacted_outputs={
+                    "twilio_resource_sid": resource_sid,
+                    "twilio_status": twilio_status,
+                    "error": type(exc).__name__,
+                },
+                twilio_resource_sid=resource_sid,
+                twilio_status=twilio_status,
+            )
+        except TrustReceiptError as receipt_exc:
+            logger.error(
+                "trust_hub status_callback processing_failed_receipt_also_failed err=%s",
+                receipt_exc,
+            )
 
     return {"status": "received"}
 

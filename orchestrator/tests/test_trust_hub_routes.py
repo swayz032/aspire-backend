@@ -1162,6 +1162,293 @@ class TestStatusCallback:
         finally:
             ctx.stop()
 
+    # ------------------------------------------------------------------ W5 tests
+
+    def _make_profile(self, trust_state: str, sid_col: str) -> dict[str, Any]:
+        """Helper: build a trust profile row with the given state and SID column set."""
+        profile: dict[str, Any] = {
+            "id": TRUST_PROFILE_ID,
+            "suite_id": SUITE_ID,
+            "tenant_id": TENANT_ID,
+            "office_id": OFFICE_ID,
+            "trust_state": trust_state,
+            "twilio_secondary_profile_sid": None,
+            "twilio_shaken_bundle_sid": None,
+            "twilio_cnam_bundle_sid": None,
+        }
+        profile[sid_col] = "BU0123456789abcdef0123456789abcdef"
+        return profile
+
+    def _make_select_side(
+        self, profile: dict[str, Any], match_col: str
+    ) -> Any:
+        """Return an async side-effect that returns the profile when match_col is queried."""
+        async def _side(table: str, filters: str, **kwargs: Any) -> list[dict[str, Any]]:
+            if match_col in filters:
+                return [profile]
+            return []
+        return _side
+
+    def test_profile_approved_advances_state_and_cuts_receipt(self) -> None:
+        """Twilio approves Customer Profile → trust_state becomes profile_approved,
+        correct receipt is cut, ARQ job is enqueued."""
+        profile = self._make_profile("profile_submitted", "twilio_secondary_profile_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_secondary_profile_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-approved"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            # DB was updated to profile_approved
+            update = mocks["supabase_update"]
+            assert update.called
+            call_kwargs = update.call_args
+            updated_payload = call_kwargs[0][2] if call_kwargs[0] else call_kwargs[1].get("data", {})
+            # Accept either positional or keyword call
+            args, kwargs = update.call_args
+            update_data = args[2] if len(args) >= 3 else kwargs.get("data", {})
+            assert update_data.get("trust_state") == "profile_approved"
+            # Receipt was cut
+            cut = mocks["cut_trust_receipt"]
+            assert cut.called
+            receipt_call_kwargs = cut.call_args[1]
+            assert receipt_call_kwargs["receipt_type"] == "customer_profile_approved"
+            assert receipt_call_kwargs["to_state"] == "profile_approved"
+            assert receipt_call_kwargs["outcome"] == "success"
+            # ARQ job was enqueued
+            assert mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_profile_rejected_sets_rejection_reason(self) -> None:
+        """Twilio rejects Customer Profile → trust_state = profile_rejected,
+        rejection_reason populated, NO ARQ job enqueued."""
+        profile = self._make_profile("profile_submitted", "twilio_secondary_profile_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_secondary_profile_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={
+                    "ResourceSid": "BU0123456789abcdef0123456789abcdef",
+                    "Status": "twilio-rejected",
+                    "FailureReason": "Business name mismatch",
+                    "ErrorCode": "30101",
+                },
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            update = mocks["supabase_update"]
+            assert update.called
+            args, _ = update.call_args
+            update_data = args[2]
+            assert update_data.get("trust_state") == "profile_rejected"
+            assert update_data.get("rejection_reason") == "Business name mismatch"
+            assert update_data.get("rejection_code") == "30101"
+            # Receipt type
+            cut = mocks["cut_trust_receipt"]
+            receipt_kwargs = cut.call_args[1]
+            assert receipt_kwargs["receipt_type"] == "customer_profile_rejected"
+            assert receipt_kwargs["outcome"] == "denied"
+            # NO ARQ job on rejection
+            assert not mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_shaken_approved_advances_state(self) -> None:
+        """Twilio approves SHAKEN bundle → trust_state = shaken_approved, ARQ enqueued."""
+        profile = self._make_profile("shaken_submitted", "twilio_shaken_bundle_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_shaken_bundle_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-approved"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            args, _ = mocks["supabase_update"].call_args
+            assert args[2].get("trust_state") == "shaken_approved"
+            receipt_kwargs = mocks["cut_trust_receipt"].call_args[1]
+            assert receipt_kwargs["receipt_type"] == "shaken_trust_product_approved"
+            assert mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_shaken_rejected_terminal_failure(self) -> None:
+        """SHAKEN rejection → trust_state = failed (terminal), correct receipt cut."""
+        profile = self._make_profile("shaken_submitted", "twilio_shaken_bundle_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_shaken_bundle_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-rejected"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            args, _ = mocks["supabase_update"].call_args
+            assert args[2].get("trust_state") == "failed"
+            receipt_kwargs = mocks["cut_trust_receipt"].call_args[1]
+            assert receipt_kwargs["receipt_type"] == "shaken_trust_product_rejected"
+            assert not mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_cnam_approved_enables_caller_id_lookup(self) -> None:
+        """CNAM approved → trust_state = cnam_approved, receipt cut, ARQ enqueued."""
+        profile = self._make_profile("cnam_submitted", "twilio_cnam_bundle_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_cnam_bundle_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-approved"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            args, _ = mocks["supabase_update"].call_args
+            assert args[2].get("trust_state") == "cnam_approved"
+            assert "cnam_approved_at" in args[2]
+            receipt_kwargs = mocks["cut_trust_receipt"].call_args[1]
+            assert receipt_kwargs["receipt_type"] == "cnam_trust_product_approved"
+            assert mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_cnam_rejected_terminal_failure(self) -> None:
+        """CNAM rejection → trust_state = failed, no ARQ job."""
+        profile = self._make_profile("cnam_submitted", "twilio_cnam_bundle_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_cnam_bundle_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-rejected"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            args, _ = mocks["supabase_update"].call_args
+            assert args[2].get("trust_state") == "failed"
+            receipt_kwargs = mocks["cut_trust_receipt"].call_args[1]
+            assert receipt_kwargs["receipt_type"] == "cnam_trust_product_rejected"
+            assert not mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_duplicate_callback_idempotent(self) -> None:
+        """Two identical Twilio retries: second is a silent no-op — no duplicate DB write or receipt."""
+        # Profile already at profile_approved (the target state)
+        profile = self._make_profile("profile_approved", "twilio_secondary_profile_sid")
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=self._make_select_side(profile, "twilio_secondary_profile_sid")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-approved"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            # Idempotency: no DB write, no receipt, no ARQ enqueue
+            assert not mocks["supabase_update"].called
+            assert not mocks["cut_trust_receipt"].called
+            assert not mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_callback_for_unknown_sid_returns_200_no_advance(self) -> None:
+        """SID not found in any tenant → returns 200, no DB write, no receipt."""
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(return_value=[]),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU9999999999abcdef9999999999abcdef", "Status": "twilio-approved"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            assert not mocks["supabase_update"].called
+            assert not mocks["cut_trust_receipt"].called
+            assert not mocks["_enqueue_advance_trust_state"].called
+        finally:
+            ctx.stop()
+
+    def test_internal_error_during_advancement_returns_200(self) -> None:
+        """DB update fails → cuts webhook_processing_failed receipt, still returns 200."""
+        from aspire_orchestrator.services.supabase_client import SupabaseClientError
+
+        profile = self._make_profile("profile_submitted", "twilio_secondary_profile_sid")
+
+        async def _select_side(table: str, filters: str, **kwargs: Any) -> list[dict[str, Any]]:
+            if "twilio_secondary_profile_sid" in filters:
+                return [profile]
+            return []
+
+        ctx = _PatchCtx(overrides={
+            "aspire_orchestrator.routes.trust_hub.supabase_select": AsyncMock(
+                side_effect=_select_side
+            ),
+            "aspire_orchestrator.routes.trust_hub.supabase_update": AsyncMock(
+                side_effect=SupabaseClientError("DB_DOWN")
+            ),
+        })
+        mocks = ctx.start()
+        try:
+            resp = self.client.post(
+                "/v1/trust-hub/status-callback",
+                data={"ResourceSid": "BU0123456789abcdef0123456789abcdef", "Status": "twilio-approved"},
+                headers={"X-Twilio-Signature": "valid-sig"},
+            )
+            assert resp.status_code == 200
+            # Processing-failed receipt should have been cut
+            cut = mocks["cut_trust_receipt"]
+            assert cut.called
+            receipt_kwargs = cut.call_args[1]
+            assert receipt_kwargs["receipt_type"] == "webhook_processing_failed"
+            assert receipt_kwargs["outcome"] == "failed"
+        finally:
+            ctx.stop()
+
 
 # ---------------------------------------------------------------------------
 # ============================================================================
