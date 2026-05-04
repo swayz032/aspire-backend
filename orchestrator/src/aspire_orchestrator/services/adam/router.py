@@ -394,6 +394,25 @@ def route_to_playbook(
             best.name,
         )
 
+    # Guardrail: investment_scan / territory_scan queries must never fall
+    # through to the empty needs_more_input branch. The intent keywords
+    # ("auction", "foreclosure", "investment", etc.) are unambiguously
+    # real-estate; when the user's tenant_segment is general_smb (default)
+    # the segment filter would normally skip the landlord playbook, but
+    # the user clearly wants real estate data.
+    # May 4 user report: "houses for auction in Atlanta GA" returned
+    # needs_more_input because the segment didn't match landlord. Force
+    # LANDLORD_INVESTMENT_OPPORTUNITY_SCAN whenever no playbook matched
+    # and the intent says auction/foreclosure/investment.
+    if best is None and classification.intent in ("investment_scan", "territory_scan"):
+        best = LANDLORD_INVESTMENT_OPPORTUNITY_SCAN
+        best_score = 1
+        classification.segment = LANDLORD_INVESTMENT_OPPORTUNITY_SCAN.segment
+        logger.info(
+            "Routing guardrail applied: %s forced to %s (segment override)",
+            classification.intent, best.name,
+        )
+
     if best:
         classification.playbook = best.name
         logger.info(
