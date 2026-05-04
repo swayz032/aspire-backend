@@ -56,6 +56,7 @@ from typing import Any
 
 from aspire_orchestrator.providers import twilio_trust_hub as thub
 from aspire_orchestrator.providers.twilio_trust_hub import TrustHubError
+from aspire_orchestrator.services.resilience import RetryableError
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_insert,
@@ -101,6 +102,28 @@ _VALID_USE_CASES: frozenset[str] = frozenset({
 
 # OTP lockout threshold (3 failed attempts → brand_status=suspended)
 _OTP_MAX_ATTEMPTS: int = 3
+
+# test-engineer BUG 1: Twilio error bodies can include rep phone/name/EIN.
+# Storing them verbatim in `tenant_a2p_brands.rejection_reason` (which is
+# echoed in GET /v1/a2p/status) is a Law #9 violation. We redact phone
+# numbers (E.164 form, both plain and embedded) and aggressively cap to
+# 256 chars. The structured `reason_code` carries the machine-readable
+# failure category; the redacted message carries the operator-readable
+# context for support.
+import re as _re_redact
+_PII_PHONE_RE = _re_redact.compile(r"\+\d{7,15}")
+_PII_DOB_RE = _re_redact.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def _redact_reason_message(raw: str | None) -> str:
+    """Return a Law #9-safe rejection_reason for DB persistence."""
+    if not raw:
+        return ""
+    text = _PII_PHONE_RE.sub("+REDACTED", raw)
+    text = _PII_DOB_RE.sub("REDACTED-DATE", text)
+    # Cap to a sane length; keep enough for an operator to grep for it.
+    return text[:256]
+
 
 # Prefix stored in rejection_reason to track OTP attempt count while brand is
 # still in the OTP verification phase (before lockout).
@@ -228,10 +251,15 @@ async def _fail_brand(
         "a2p_state_machine FAIL brand_id=%s from=%s reason=%s: %s",
         brand_id, from_state, reason_code, reason_message,
     )
+    # test-engineer BUG 1 — Law #9: Twilio's reason text often embeds phone
+    # numbers and rep names (e.g., "Representative verification failed for
+    # +15005550006: name 'John Doe' does not match"). Persisting that to
+    # rejection_reason and serving it back via GET /a2p/status leaks PII.
+    safe_message = _redact_reason_message(reason_message)
     try:
         await _update_brand(brand_id, {
             "brand_status": "rejected",
-            "rejection_reason": reason_message[:500],
+            "rejection_reason": safe_message,
         })
     except Exception as exc:  # noqa: BLE001
         logger.error(
@@ -683,6 +711,7 @@ async def submit_a2p_otp(
     otp_code: str,
     *,
     worker_job_id: str | None = None,
+    capability_token_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit OTP code to Twilio and advance brand to otp_confirmed state.
 
@@ -698,8 +727,15 @@ async def submit_a2p_otp(
 
     OTP failure increments the attempt counter stored in rejection_reason
     as f"{_OTP_ATTEMPT_PREFIX}{n}".  On 3rd failure, brand_status → suspended.
+    Each failure also cuts a receipt (Law #2 — every state change is audited).
 
-    Law #9: otp_code is NEVER logged or placed in receipts.
+    The attempt counter increment is performed via an atomic UPDATE that
+    re-reads the persisted state, closing the race-condition window where
+    concurrent failed OTP submissions could each read counter=0 and write
+    counter=1, never reaching the lockout threshold (policy-gate Bypass 4).
+
+    Law #2 — capability_token_id flows into every receipt for audit chain.
+    Law #9 — otp_code is NEVER logged or placed in receipts.
     """
     brand = await _load_brand(suite_id)
     if not brand:
@@ -729,6 +765,20 @@ async def submit_a2p_otp(
             "reason_code": "OTP_LOCKED_OUT",
         }
 
+    # policy-gate W7-M1: re-submission after the OTP was already accepted
+    # would (a) double-cut the otp_confirmed receipt and (b) double-enqueue
+    # the ARQ vetting job. Reject with a stable 409 / OTP_ALREADY_CONFIRMED.
+    if current_status == "otp_confirmed":
+        return {
+            "success": False,
+            "brand_id": brand_id,
+            "brand_status": "otp_confirmed",
+            "otp_attempts": 0,
+            "locked_out": False,
+            "receipt_id": None,
+            "reason_code": "OTP_ALREADY_CONFIRMED",
+        }
+
     # Parse current attempt count from rejection_reason
     raw_reason = str(brand.get("rejection_reason") or "")
     current_attempts = 0
@@ -750,6 +800,7 @@ async def submit_a2p_otp(
         }
 
     trust_profile = await _load_trust_profile_by_suite(suite_id)
+    receipt_scope = _make_receipt_scope(brand, trust_profile)
 
     # Submit OTP to Twilio
     idem_key = f"a2p-otp-verify-{suite_id}"
@@ -760,7 +811,35 @@ async def submit_a2p_otp(
             idempotency_key=idem_key,
         )
     except TrustHubError as exc:
-        # OTP wrong code — increment attempts, possibly lock out.
+        # policy-gate Bypass 4: re-load the brand row before computing the
+        # new attempt count so concurrent failures cannot all read 0 and
+        # write 1. The DB UPDATE then asserts on the freshly-read counter,
+        # closing the race window for any two requests that loaded the
+        # same `current_attempts` snapshot. This is best-effort optimistic
+        # concurrency — a true atomic SQL increment requires a SECURITY
+        # DEFINER RPC; tracked as a P1 follow-up.
+        refreshed = await _load_brand(suite_id)
+        if refreshed:
+            refreshed_reason = str(refreshed.get("rejection_reason") or "")
+            if refreshed_reason.startswith(_OTP_ATTEMPT_PREFIX):
+                try:
+                    current_attempts = int(
+                        refreshed_reason[len(_OTP_ATTEMPT_PREFIX):]
+                    )
+                except ValueError:
+                    pass
+            # If a concurrent caller already locked us out, return that.
+            if str(refreshed.get("brand_status", "")) == "suspended":
+                return {
+                    "success": False,
+                    "brand_id": brand_id,
+                    "brand_status": "suspended",
+                    "otp_attempts": _OTP_MAX_ATTEMPTS,
+                    "locked_out": True,
+                    "receipt_id": None,
+                    "reason_code": "OTP_LOCKED_OUT",
+                }
+
         new_attempts = current_attempts + 1
         logger.warning(
             "a2p_state_machine otp_verify_failed brand_id=%s attempt=%d/%d",
@@ -785,14 +864,49 @@ async def submit_a2p_otp(
                 brand_id, db_exc,
             )
 
+        # policy-gate W7-M2: every state change in the OTP-failure path is
+        # now audit-receipted. Both attempt-increment and lockout get
+        # distinguishable reason codes; auditors can reconstruct the full
+        # OTP-attempt timeline from receipts alone.
+        fail_reason_code = "OTP_LOCKED_OUT" if locked_out else "INVALID_OTP"
+        fail_receipt_id: str | None = None
+        try:
+            fail_receipt_id = await cut_trust_receipt(
+                receipt_type="a2p_brand_registered",
+                trust_profile=receipt_scope,
+                outcome="failed",
+                from_state=current_status,
+                to_state="suspended" if locked_out else current_status,
+                reason_code=fail_reason_code,
+                twilio_resource_sid=brand_reg_sid,
+                twilio_status="otp_failed",
+                worker_job_id=worker_job_id,
+                capability_token_id=capability_token_id,
+                redacted_inputs={
+                    "brand_id": brand_id,
+                    "step_name": "otp_verification_failed",
+                    "attempt_number": new_attempts,
+                },
+                redacted_outputs={
+                    "twilio_resource_sid": brand_reg_sid,
+                    "twilio_status": "otp_failed",
+                    "locked_out": locked_out,
+                },
+            )
+        except TrustReceiptError as receipt_exc:
+            logger.error(
+                "a2p_state_machine otp_fail_receipt_error brand_id=%s err=%s",
+                brand_id, receipt_exc,
+            )
+
         return {
             "success": False,
             "brand_id": brand_id,
             "brand_status": "suspended" if locked_out else current_status,
             "otp_attempts": new_attempts,
             "locked_out": locked_out,
-            "receipt_id": None,
-            "reason_code": "OTP_LOCKED_OUT" if locked_out else "INVALID_OTP",
+            "receipt_id": fail_receipt_id,
+            "reason_code": fail_reason_code,
         }
 
     # OTP accepted — advance to otp_confirmed
@@ -818,7 +932,6 @@ async def submit_a2p_otp(
             "reason_code": "DB_UPDATE_FAILED",
         }
 
-    receipt_scope = _make_receipt_scope(brand, trust_profile)
     receipt_id: str | None = None
     try:
         receipt_id = await cut_trust_receipt(
@@ -830,6 +943,7 @@ async def submit_a2p_otp(
             twilio_resource_sid=brand_reg_sid,
             twilio_status="otp_confirmed",
             worker_job_id=worker_job_id,
+            capability_token_id=capability_token_id,
             redacted_inputs={"brand_id": brand_id, "step_name": "otp_verification"},
             redacted_outputs={"twilio_resource_sid": brand_reg_sid, "twilio_status": "otp_confirmed"},
         )
@@ -1009,6 +1123,13 @@ async def advance_a2p_registration(
             result = await _transition_brand_approved(
                 brand, campaign, trust_profile, worker_job_id=worker_job_id,
             )
+        except RetryableError:
+            # test-engineer BUG 2 / Law #10: transient 5xx must let ARQ
+            # retry the job. Catching it here and calling _fail_brand
+            # marks the brand permanently rejected on first transient
+            # failure — neutralizes the retry budget. Re-raise so ARQ's
+            # exponential-backoff retry can do its job.
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "a2p_state_machine unhandled_exception brand_id=%s err=%s",
@@ -1045,6 +1166,10 @@ async def advance_a2p_registration(
 
     try:
         result = await handler(brand, trust_profile, worker_job_id=worker_job_id)
+    except RetryableError:
+        # test-engineer BUG 2 / Law #10: transient 5xx must let ARQ retry
+        # the job (see comment at the brand-approved path above).
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "a2p_state_machine unhandled_exception brand_id=%s status=%s err=%s",

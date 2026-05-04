@@ -30,7 +30,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 
 from aspire_orchestrator.config.settings import settings
@@ -52,6 +52,39 @@ from aspire_orchestrator.workers.trust_onboarding.trust_receipts import TrustRec
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/a2p", tags=["a2p"])
+
+
+# ---------------------------------------------------------------------------
+# Defense-in-depth: Bearer-token presence guard for read endpoints.
+#
+# policy-gate W7-H1 — without this, GET /v1/a2p/status only validates the
+# X-Suite-Id header and returns brand status / OTP attempt counts / rejection
+# reasons to anyone who can guess a tenant's UUID. The orchestrator runs
+# behind a desktop-server proxy that validates the JWT and forwards X-headers,
+# but defense-in-depth requires the orchestrator itself to also reject
+# anonymous reads.
+#
+# This is a presence check only — full JWT verification lives in the proxy.
+# Any caller without `Authorization: Bearer ...` gets a 401 immediately,
+# before any DB lookup or PostgREST filter that might leak existence info.
+# ---------------------------------------------------------------------------
+
+
+def _require_bearer_token(request: Request) -> None:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer ") or len(auth) <= len("Bearer "):
+        logger.warning(
+            "a2p_routes unauthenticated_read path=%s remote=%s",
+            request.url.path,
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "UNAUTHENTICATED",
+                "reason_code": "MISSING_BEARER_TOKEN",
+            },
+        )
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -364,14 +397,17 @@ async def a2p_verify_otp(
     # --- 1. Scope + token ---
     scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
     _validate_cap_token(body.capability_token, scope, "a2p:register")
+    cap_token_id = _cap_token_id(body.capability_token)
 
     suite_id = str(scope.suite_id)
 
     # --- 2. Delegate to state machine OTP helper (Law #1 — no logic in route) ---
     # Law #9: body.otp_code never logged here; state machine also never logs it.
+    # policy-gate W7-H2: cap_token_id flows into receipts for audit chain.
     result = await submit_a2p_otp(
         suite_id=suite_id,
         otp_code=body.otp_code,
+        capability_token_id=cap_token_id,
     )
 
     reason_code = result.get("reason_code", "")
@@ -402,6 +438,19 @@ async def a2p_verify_otp(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"error": "NO_BRAND_RECORD", "reason_code": "NO_BRAND_RECORD"},
             )
+        # policy-gate W7-M1: re-submitting OTP after success returns a stable
+        # 409 instead of falling through to the generic 500 path. This
+        # prevents duplicate ARQ jobs / duplicate vetting POSTs.
+        if reason_code == "OTP_ALREADY_CONFIRMED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "OTP_ALREADY_CONFIRMED",
+                    "reason_code": "OTP_ALREADY_CONFIRMED",
+                    "brand_id": result.get("brand_id", ""),
+                    "brand_status": result.get("brand_status", "otp_confirmed"),
+                },
+            )
         # Fallback
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -427,15 +476,21 @@ async def a2p_verify_otp(
 
 @router.get("/status", status_code=status.HTTP_200_OK)
 async def a2p_status(
+    request: Request,
     x_tenant_id: str | None = Header(None),
     x_suite_id: str | None = Header(None),
     x_office_id: str | None = Header(None),
 ) -> dict[str, Any]:
     """Return current A2P brand + campaign status for the tenant.
 
-    Green tier — no capability token required (read-only).
+    Green tier — no capability token required (read-only). However, a
+    Bearer token IS required: without it, anyone who guesses a tenant's
+    suite UUID could read brand status, OTP-attempt counters, and
+    rejection reasons (policy-gate W7-H1).
+
     Returns 404 if A2P has not been started yet.
     """
+    _require_bearer_token(request)
     scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
     suite_id = str(scope.suite_id)
 

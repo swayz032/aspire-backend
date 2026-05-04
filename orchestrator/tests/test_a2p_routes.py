@@ -424,7 +424,7 @@ async def test_a2p_status_returns_correct_shape():
             ],
         ),
     ):
-        resp = client.get("/v1/a2p/status")
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -464,7 +464,7 @@ async def test_a2p_status_approved_brand_otp_not_required():
             ],
         ),
     ):
-        resp = client.get("/v1/a2p/status")
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -484,7 +484,7 @@ async def test_a2p_status_no_brand_returns_404():
             return_value=[],
         ),
     ):
-        resp = client.get("/v1/a2p/status")
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
 
     assert resp.status_code == 404
     assert resp.json()["detail"]["error"] == "NO_A2P_REGISTRATION"
@@ -514,7 +514,7 @@ async def test_a2p_status_rejected_exposes_rejection_reason():
             side_effect=[[brand_row], []],
         ),
     ):
-        resp = client.get("/v1/a2p/status")
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -545,7 +545,7 @@ async def test_a2p_status_non_rejected_hides_rejection_reason():
             side_effect=[[brand_row], []],
         ),
     ):
-        resp = client.get("/v1/a2p/status")
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -587,3 +587,380 @@ async def test_a2p_start_uses_scope_from_headers_not_body():
         resp = client.post("/v1/a2p/start", json=body)
 
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Additional tenant isolation tests (adversarial additions)
+# ---------------------------------------------------------------------------
+
+
+def _make_scope_for_tenant(suite_id: str, tenant_id: str, office_id: str) -> Any:
+    """Build a mock scope for an explicit tenant triple."""
+    scope = type("Scope", (), {
+        "suite_id": uuid.UUID(suite_id),
+        "tenant_id": uuid.UUID(tenant_id),
+        "office_id": uuid.UUID(office_id),
+    })()
+    return scope
+
+
+TENANT_B_SUITE_ID = str(uuid.uuid4())
+TENANT_B_TENANT_ID = str(uuid.uuid4())
+TENANT_B_OFFICE_ID = str(uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_uses_scope_from_headers_not_body():
+    """Evil: cap token for Tenant A + suite_id in body from Tenant B.
+
+    verify-otp must use the scope resolved from X- headers (Tenant A),
+    NOT any suite_id that might be injected into the request body.
+    Tenant B's brand must never receive an OTP confirmation intended for A.
+    """
+    client = TestClient(app, raise_server_exceptions=True)
+
+    # Body does NOT contain suite_id — only otp_code and cap token
+    body = _valid_otp_body("654321")
+    assert "suite_id" not in body
+
+    otp_result = {
+        "success": True,
+        "brand_id": BRAND_ID,
+        "brand_status": "otp_confirmed",
+        "otp_attempts": 0,
+        "locked_out": False,
+        "receipt_id": "trust_a2p_brand_registered_test",
+    }
+
+    scope_suite_ids_seen: list[str] = []
+
+    async def capture_otp(suite_id: str, otp_code: str, **_: Any) -> dict[str, Any]:
+        scope_suite_ids_seen.append(suite_id)
+        return otp_result
+
+    with (
+        _patch_scope(),  # Tenant A's scope from headers
+        _patch_cap_token_valid(),
+        _patch_enqueue(),
+        patch(
+            "aspire_orchestrator.routes.a2p.submit_a2p_otp",
+            side_effect=capture_otp,
+        ),
+    ):
+        resp = client.post("/v1/a2p/verify-otp", json=body)
+
+    assert resp.status_code == 200
+    # The suite_id passed to submit_a2p_otp must be Tenant A's (from scope/headers)
+    assert len(scope_suite_ids_seen) == 1
+    assert scope_suite_ids_seen[0] == SUITE_ID, (
+        f"OTP submitted for wrong suite_id: expected {SUITE_ID!r}, "
+        f"got {scope_suite_ids_seen[0]!r} — tenant isolation violated"
+    )
+
+
+@pytest.mark.asyncio
+async def test_status_uses_scope_from_headers_not_body():
+    """Evil: GET /v1/a2p/status scope must come from X- headers only.
+
+    A cross-tenant read attempt where the attacker supplies a different
+    suite_id in the path or query string must be blocked — the handler
+    uses _resolve_scope from headers, so the supabase_select must be
+    filtered by the header-derived suite_id only.
+    """
+    client = TestClient(app, raise_server_exceptions=True)
+
+    # Tenant A's scope is returned by _resolve_scope (from headers)
+    # We verify the select filter uses Tenant A's suite_id
+    select_filters_seen: list[str] = []
+
+    async def capturing_select(table: str, filter_str: str, **_: Any) -> list[Any]:
+        if table == "tenant_a2p_brands":
+            select_filters_seen.append(filter_str)
+            return [{
+                "id": BRAND_ID,
+                "suite_id": SUITE_ID,
+                "brand_status": "pending",
+                "brand_type": "sole_proprietor",
+                "otp_verified_at": None,
+                "submitted_at": None,
+                "approved_at": None,
+                "rejection_reason": None,
+            }]
+        if table == "tenant_a2p_campaigns":
+            return []
+        return []
+
+    with (
+        _patch_scope(),  # Tenant A
+        patch(
+            "aspire_orchestrator.routes.a2p.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=capturing_select,
+        ),
+    ):
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
+
+    assert resp.status_code == 200
+
+    # Every brand select must filter by Tenant A's suite_id
+    for filter_str in select_filters_seen:
+        assert SUITE_ID in filter_str, (
+            f"supabase_select filter {filter_str!r} does not scope to "
+            f"Tenant A's suite_id {SUITE_ID!r} — potential cross-tenant read"
+        )
+        assert TENANT_B_SUITE_ID not in filter_str, (
+            f"Tenant B's suite_id appeared in select filter: {filter_str!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_brand_row_written_with_header_suite_id_not_injected():
+    """Evil: verify brand row is created with the header-derived suite_id.
+
+    Even if an attacker could inject a different suite_id into the request
+    body, the route must use scope.suite_id (from headers) for all DB writes.
+    """
+    client = TestClient(app, raise_server_exceptions=True)
+
+    inserted_rows: list[tuple[str, dict[str, Any]]] = []
+
+    async def capturing_insert(table: str, row: dict[str, Any]) -> dict[str, Any]:
+        inserted_rows.append((table, dict(row)))
+        return {"id": row.get("id", str(uuid.uuid4()))}
+
+    with (
+        _patch_scope(),  # Tenant A
+        _patch_cap_token_valid(),
+        _patch_cap_token_id(),
+        _patch_enqueue(),
+        patch(
+            "aspire_orchestrator.routes.a2p.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=[[_profile_row()], []],
+        ),
+        patch(
+            "aspire_orchestrator.routes.a2p.supabase_insert",
+            new_callable=AsyncMock,
+            side_effect=capturing_insert,
+        ),
+    ):
+        resp = client.post("/v1/a2p/start", json=_valid_start_body())
+
+    assert resp.status_code == 200
+
+    brand_inserts = [(t, r) for t, r in inserted_rows if t == "tenant_a2p_brands"]
+    assert len(brand_inserts) == 1, "Exactly one brand row must be inserted"
+    brand_row = brand_inserts[0][1]
+
+    assert brand_row["suite_id"] == SUITE_ID, (
+        f"Brand row suite_id={brand_row['suite_id']!r} does not match "
+        f"header-derived suite_id={SUITE_ID!r}"
+    )
+    assert brand_row["tenant_id"] == TENANT_ID, (
+        f"Brand row tenant_id={brand_row['tenant_id']!r} does not match "
+        f"header-derived tenant_id={TENANT_ID!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_status_read_returns_404_for_wrong_tenant():
+    """Evil: Tenant B requests status using Tenant A's X-Suite-ID header → 404.
+
+    If Tenant B's headers are used but there is no A2P registration for
+    Tenant B's suite, the handler must return 404 (not leak Tenant A's data).
+    This tests that the scope filter prevents cross-tenant data leakage.
+    """
+    client = TestClient(app, raise_server_exceptions=True)
+
+    # Scope resolves to Tenant B (different suite_id)
+    tenant_b_scope = _make_scope_for_tenant(
+        TENANT_B_SUITE_ID, TENANT_B_TENANT_ID, TENANT_B_OFFICE_ID,
+    )
+
+    with (
+        patch(
+            "aspire_orchestrator.routes.a2p._resolve_scope",
+            return_value=tenant_b_scope,
+        ),
+        patch(
+            "aspire_orchestrator.routes.a2p.supabase_select",
+            new_callable=AsyncMock,
+            return_value=[],  # no brand for Tenant B
+        ) as mock_select,
+    ):
+        resp = client.get("/v1/a2p/status", headers={"Authorization": "Bearer test-jwt"})
+
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert detail["error"] == "NO_A2P_REGISTRATION"
+
+    # Verify the select was filtered by Tenant B's suite_id (not Tenant A's)
+    calls = mock_select.call_args_list
+    assert len(calls) >= 1
+    brand_call_filter = calls[0].args[1] if len(calls[0].args) >= 2 else calls[0].kwargs.get("filter_str", "")
+    assert TENANT_B_SUITE_ID in brand_call_filter, (
+        f"Select filter {brand_call_filter!r} does not contain Tenant B's suite_id"
+    )
+    assert SUITE_ID not in brand_call_filter, (
+        f"Tenant A's suite_id leaked into Tenant B's select filter: {brand_call_filter!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_no_capability_token_denied():
+    """Evil: verify-otp without capability token → 401/403/422/500 (denied).
+
+    Law #5: Yellow-tier routes must reject missing or invalid cap tokens.
+    """
+    client = TestClient(app, raise_server_exceptions=False)
+
+    body = {**_valid_otp_body(), "capability_token": None}
+
+    with (
+        _patch_scope(),
+        patch(
+            "aspire_orchestrator.routes.a2p._validate_cap_token",
+            side_effect=Exception("Missing capability token for a2p:register"),
+        ),
+    ):
+        resp = client.post("/v1/a2p/verify-otp", json=body)
+
+    assert resp.status_code in (401, 403, 422, 500), (
+        f"Expected denied status, got {resp.status_code}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_campaign_insert_uses_header_suite_id():
+    """Verify campaign row is created with header-derived suite_id and brand_id.
+
+    Both tenant_id and suite_id on the campaign row must match the header
+    scope, not any value that could theoretically be injected into the body.
+    """
+    client = TestClient(app, raise_server_exceptions=True)
+
+    inserted_rows: list[tuple[str, dict[str, Any]]] = []
+    insert_call_count = [0]
+
+    async def capturing_insert(table: str, row: dict[str, Any]) -> dict[str, Any]:
+        inserted_rows.append((table, dict(row)))
+        insert_call_count[0] += 1
+        if table == "tenant_a2p_brands":
+            return {"id": BRAND_ID}
+        if table == "tenant_a2p_campaigns":
+            return {"id": CAMPAIGN_ID}
+        return row
+
+    with (
+        _patch_scope(),
+        _patch_cap_token_valid(),
+        _patch_cap_token_id(),
+        _patch_enqueue(),
+        patch(
+            "aspire_orchestrator.routes.a2p.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=[[_profile_row()], []],
+        ),
+        patch(
+            "aspire_orchestrator.routes.a2p.supabase_insert",
+            new_callable=AsyncMock,
+            side_effect=capturing_insert,
+        ),
+    ):
+        resp = client.post("/v1/a2p/start", json=_valid_start_body())
+
+    assert resp.status_code == 200
+
+    campaign_inserts = [(t, r) for t, r in inserted_rows if t == "tenant_a2p_campaigns"]
+    assert len(campaign_inserts) == 1, "Exactly one campaign row must be inserted"
+    campaign_row = campaign_inserts[0][1]
+
+    assert campaign_row["suite_id"] == SUITE_ID
+    assert campaign_row["tenant_id"] == TENANT_ID
+    # campaign brand_id must reference the just-created brand row
+    assert campaign_row["brand_id"] is not None
+
+
+# ============================================================================
+# W7 hardening regression — policy-gate W7-H1, W7-M1, W7-L1
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_a2p_status_without_bearer_returns_401():
+    """policy-gate W7-H1: GET /v1/a2p/status without Bearer must 401.
+
+    Without this guard, anyone who can guess a tenant's suite UUID can read
+    brand status, OTP attempt counts, and rejection reasons. The check is
+    presence-only at the orchestrator layer (full JWT verification lives
+    in the desktop-server proxy upstream), but rejecting anonymous reads
+    here is the defense-in-depth requirement.
+    """
+    client = TestClient(app, raise_server_exceptions=False)
+    with _patch_scope():
+        resp = client.get("/v1/a2p/status")
+
+    assert resp.status_code == 401
+    body = resp.json()
+    assert body["detail"]["error"] == "UNAUTHENTICATED"
+    assert body["detail"]["reason_code"] == "MISSING_BEARER_TOKEN"
+
+
+@pytest.mark.asyncio
+async def test_a2p_status_with_malformed_bearer_returns_401():
+    """policy-gate W7-H1: empty / non-Bearer Authorization headers also 401."""
+    client = TestClient(app, raise_server_exceptions=False)
+    with _patch_scope():
+        resp_basic = client.get(
+            "/v1/a2p/status", headers={"Authorization": "Basic dXNlcjpwYXNz"}
+        )
+        resp_empty = client.get("/v1/a2p/status", headers={"Authorization": "Bearer "})
+
+    assert resp_basic.status_code == 401
+    assert resp_empty.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_a2p_verify_otp_already_confirmed_returns_409():
+    """policy-gate W7-M1: re-submitting OTP after success must return 409.
+
+    Without this guard, a duplicate /verify-otp call would (a) double-cut
+    the otp_confirmed receipt and (b) double-enqueue the ARQ vetting job,
+    creating a second SoleProprietorVettings POST.
+    """
+    client = TestClient(app, raise_server_exceptions=False)
+    with (
+        _patch_scope(),
+        _patch_cap_token_valid(),
+        _patch_cap_token_id(),
+        patch(
+            "aspire_orchestrator.routes.a2p.submit_a2p_otp",
+            new_callable=AsyncMock,
+            return_value={
+                "success": False,
+                "brand_id": BRAND_ID,
+                "brand_status": "otp_confirmed",
+                "otp_attempts": 0,
+                "locked_out": False,
+                "receipt_id": None,
+                "reason_code": "OTP_ALREADY_CONFIRMED",
+            },
+        ),
+    ):
+        resp = client.post(
+            "/v1/a2p/verify-otp",
+            json={
+                "otp_code": "123456",
+                "capability_token": {
+                    "token": "tok-xyz",
+                    "scope": ["a2p:register"],
+                    "expires_at": "2099-01-01T00:00:00Z",
+                },
+            },
+        )
+
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["detail"]["error"] == "OTP_ALREADY_CONFIRMED"
+    assert body["detail"]["reason_code"] == "OTP_ALREADY_CONFIRMED"
+    assert body["detail"]["brand_status"] == "otp_confirmed"

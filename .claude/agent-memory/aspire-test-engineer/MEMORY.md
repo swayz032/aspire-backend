@@ -83,5 +83,15 @@
 - `importlib.reload(sys.modules[sm_mod_name])` needed before each test to reset module-level policy SID cache (_POLICY_CACHE dict)
 - TestClient with `raise_server_exceptions=False` required for webhook tests (status-callback returns 200 even on errors)
 
+## Wave 7 A2P 10DLC Adversarial Tests (2026-05-04)
+- 3 files: `test_a2p_state_machine_idempotency.py` (12), `test_a2p_state_machine.py` (+13 new = 44 total), `test_a2p_routes.py` (+6 new = 23 total). 79/79 pass.
+- KEY FINDING: `_fail_brand` stores raw `str(exc)[:500]` as `rejection_reason` in DB. If Twilio error body contains a phone number (real scenario: rep verification error), it persists to DB. Receipt redacted_inputs/outputs are clean (PII check passes), but `rejection_reason` column is NOT checked by PII guard. REPORT — do not fix.
+- `RetryableError` (from `aspire_orchestrator.services.resilience`) is NOT a `TrustHubError`. The state machine BLE001 guard catches it as UNHANDLED_EXCEPTION. ARQ retries the job (correct); but the brand row gets set to `rejected` on first failure. On retry the state is terminal. Bug: RetryableErrors should NOT mark brand as rejected — they should let ARQ retry without writing DB state. REPORT.
+- PII audit: `_assert_no_pii` only checks `redacted_inputs` and `redacted_outputs` keys. It does NOT check `reason_message` or DB fields. The `rejection_reason` column is a PII leakage vector for Twilio error echoing.
+- OTP replay: `submit_a2p_otp` does NOT guard on `brand_status == "otp_confirmed"`. A second OTP call when brand is already confirmed will call Twilio again (with same idempotency_key). Twilio deduplicates — not a security issue, but wastes a Twilio call.
+- Use `_make_scope_for_tenant(suite_id, tenant_id, office_id)` pattern for cross-tenant isolation tests in routes.
+- Receipt hash chain test requires patching `trust_receipts.supabase_select` AND `trust_receipts.supabase_insert` separately from the state machine patches (different module import paths).
+- Campaign description `max_length=500` is enforced by Pydantic `Field(..., max_length=500)`.
+
 ## Links
 - See `cycle5-bugs.md` for full detailed bug list
