@@ -309,5 +309,8 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
             # Pickup store address surfaced for "Available at: <store name>
             # — <address>" rendering on cards when store_summary is missing.
             "pickup_store_address": pickup_store_address,
+            # SerpAPI HD price_badge ("Special-Buy", "New-Lower-Price") — UI
+            # renders this as an amber chip next to the savings line.
+            "price_badge": str(data.get("price_badge") or ""),
         },
     )
