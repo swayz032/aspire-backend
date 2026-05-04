@@ -1068,6 +1068,41 @@ async def update_phone_number_friendly_name(
     return result
 
 
+async def release_phone_number(number_sid: str) -> None:
+    """Release a phone number back to Twilio (W11 number swap).
+
+    DELETE /2010-04-01/Accounts/{AccountSid}/IncomingPhoneNumbers/{Sid}.json
+
+    After a swap completes, the old number is no longer attached to any
+    Trust Hub bundle and `VoiceCallerIdLookup` has been disabled. This
+    final DELETE removes it from the Twilio account so the tenant stops
+    paying for it. 404 is treated as success (idempotent — already
+    released by an earlier retry).
+
+    Law #9: number_sid is non-PII (Twilio SID, not E.164).
+    """
+    account_sid, auth_token = _twilio_auth()
+    url = f"{_TWILIO_BASE}/Accounts/{account_sid}/IncomingPhoneNumbers/{number_sid}.json"
+
+    logger.info("trust_hub release_phone_number number_sid=%s", number_sid)
+
+    try:
+        status = await _resilient_delete(account_sid, auth_token, url)
+    except CircuitOpenError as ce:
+        raise TrustHubError(
+            "TWILIO_CIRCUIT_OPEN",
+            f"Twilio is degraded — release_phone_number rejected ({ce})",
+            503,
+        ) from ce
+
+    if status not in (200, 204, 404):
+        raise TrustHubError(
+            "TRUST_HUB_DELETE_FAILED",
+            f"IncomingPhoneNumber DELETE returned unexpected status {status}",
+            status,
+        )
+
+
 # ---------------------------------------------------------------------------
 # A2P 10DLC  (W7 minimal stubs — W7 author extends)
 # ---------------------------------------------------------------------------
@@ -1354,6 +1389,7 @@ __all__ = [
     "enable_caller_id_lookup",
     "disable_caller_id_lookup",
     "update_phone_number_friendly_name",
+    "release_phone_number",
     # A2P 10DLC
     "create_a2p_brand_registration",
     "create_sole_proprietor_vetting",
