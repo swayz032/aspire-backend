@@ -1799,7 +1799,25 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             forced_playbook_name = ENTITY_PLAYBOOK_FORCE.get(
                 str(body.get("entity_type") or "").lower()
             )
-            if forced_playbook_name:
+            # entity_type force is a coarse hint from Anam Ava (always
+            # "property" for any property-ish query). Don't let it override
+            # an unambiguous intent classification — auctions, foreclosure,
+            # and investment_scan queries arrive with entity_type=property
+            # and would get force-routed to PROPERTY_FACTS (which expects a
+            # full street address) instead of INVESTMENT_OPPORTUNITY_SCAN
+            # (which scans by city/zip). May 4 user report: "houses for
+            # auction in Atlanta GA" was being force-routed to PROPERTY_FACTS
+            # → empty needs_more_input despite the router correctly picking
+            # the investment playbook.
+            INTENT_OVERRIDES_FORCE = {
+                "investment_scan", "territory_scan", "compliance_lookup",
+                "compare", "verify",
+            }
+            skip_force = (
+                forced_playbook_name == "PROPERTY_FACTS"
+                and classification.intent in INTENT_OVERRIDES_FORCE
+            )
+            if forced_playbook_name and not skip_force:
                 forced_playbook = get_playbook(forced_playbook_name)
                 if forced_playbook is not None:
                     playbook = forced_playbook
@@ -1812,6 +1830,12 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         "Adam Ultra: entity_type=%s mapped to %s but playbook not registered",
                         body.get("entity_type"), forced_playbook_name,
                     )
+            elif skip_force:
+                logger.info(
+                    "Adam Ultra: skipping entity_type=%s force (intent=%s wins, playbook=%s)",
+                    body.get("entity_type"), classification.intent,
+                    playbook.name if playbook else "NONE",
+                )
 
             logger.info(
                 "Adam Ultra: segment=%s intent=%s playbook=%s confidence=%.2f for: %s",
