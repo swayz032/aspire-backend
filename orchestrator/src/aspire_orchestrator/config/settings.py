@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     twilio_voice_api_key_sid: str = ""
     twilio_voice_api_key_secret: str = ""
     twilio_twiml_app_sid: str = ""
+    # Trust Hub (Wave 2-C) — per-tenant CNAM/SHAKEN onboarding
+    # Policy SIDs fetched at startup via GET /v1/TrustHub/Policies; cached module-level.
+    # Setting these env vars avoids the live API lookup entirely (faster startup).
+    twilio_secondary_profile_policy_sid: str = ""   # ASPIRE_TWILIO_SECONDARY_PROFILE_POLICY_SID
+    twilio_shaken_policy_sid: str = ""              # ASPIRE_TWILIO_SHAKEN_POLICY_SID
+    twilio_cnam_policy_sid: str = ""                # ASPIRE_TWILIO_CNAM_POLICY_SID (known: RNf3db3cd1fe25fcfd3c3ded065c8fea53)
+    twilio_voice_integrity_policy_sid: str = ""     # ASPIRE_TWILIO_VOICE_INTEGRITY_POLICY_SID
+    # URL Twilio posts trust status callbacks to (set via Railway: ASPIRE_TRUST_HUB_STATUS_CALLBACK_URL)
+    trust_hub_status_callback_url: str = ""         # ASPIRE_TRUST_HUB_STATUS_CALLBACK_URL
     pandadoc_api_key: str = ""
     pandadoc_webhook_secret: str = ""
     stripe_webhook_secret: str = ""
