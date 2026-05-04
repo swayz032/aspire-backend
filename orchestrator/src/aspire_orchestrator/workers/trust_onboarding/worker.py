@@ -147,6 +147,56 @@ async def advance_a2p_registration(ctx: dict[str, Any], suite_id: str) -> dict[s
         raise
 
 
+async def advance_number_swap(ctx: dict[str, Any], swap_job_id: str) -> dict[str, Any]:
+    """Execute the number-swap state machine for one tenant (W11).
+
+    Args:
+        ctx: ARQ context dict — contains 'job_id', 'job_try', 'redis', etc.
+        swap_job_id: UUID of the tenant_phone_swaps row to process.
+
+    Returns:
+        {
+            "swap_job_id": "...",
+            "outcome": "success" | "rolled_back" | "failed",
+            "old_number_e164": "...",
+            "new_number_e164": "...",
+            "receipt_ids": [...],
+        }
+
+    Failure handling (Law #10):
+        RetryableError is re-raised so ARQ retries with exponential backoff.
+        SwapAbortError (non-retryable, e.g. purchase failed) is re-raised
+        as a plain Exception so ARQ marks the job failed without unlimited retry.
+        SwapRollbackError (step-7 failure, clean rollback done) is re-raised.
+    """
+    from aspire_orchestrator.workers.trust_onboarding.swap_state_machine import (
+        SwapAbortError,
+        SwapRollbackError,
+        run_number_swap,
+    )
+
+    job_id = ctx.get("job_id", "<unknown>")
+    job_try = ctx.get("job_try", 1)
+    logger.info(
+        "swap_advance start swap_job_id=%s job_id=%s try=%d",
+        swap_job_id, job_id, job_try,
+    )
+    try:
+        result = await run_number_swap(swap_job_id, worker_job_id=job_id)
+        logger.info(
+            "swap_advance done swap_job_id=%s outcome=%s",
+            swap_job_id, result.get("outcome"),
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001 — last-resort logging
+        logger.error(
+            "swap_advance failed swap_job_id=%s job_id=%s err=%s",
+            swap_job_id, job_id, exc,
+            exc_info=True,
+        )
+        raise
+
+
 async def poll_trust_status_for_tenants(ctx: dict[str, Any]) -> dict[str, Any]:
     """Cron job (W9) — every 6h, poll Twilio for tenants stuck in *_submitted.
 
@@ -197,6 +247,7 @@ class WorkerSettings:
     functions = [
         advance_trust_state,
         advance_a2p_registration,
+        advance_number_swap,  # W11 — number swap
     ]
 
     # Cron jobs (W9 — these become active when cron_jobs.py ships).

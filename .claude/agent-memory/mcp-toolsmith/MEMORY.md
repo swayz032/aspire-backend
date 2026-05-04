@@ -7,3 +7,4 @@
 - [Pass 19 Lane C EL Sync Patterns](pass19-lane-c-el-sync-patterns.md) — EL webhook shape (object not string), data_collection dict format, workflow node types ("override_agent"), post-call webhook EL API limitation, Windows process.exit(0) UV assertion bug
 - [Wave 3 Trust Hub Patterns](wave3-trust-hub-patterns.md) — KYB route, vault RPC convention, ARQ enqueue from FastAPI, status-callback skeleton, shallow-copy test isolation bug, dispute cap, PII receipt keys
 - [Wave 7 A2P Patterns](wave7-a2p-patterns.md) — OTP retry counter in rejection_reason, otp_confirmed synthetic state, Twilio Messaging API URLs, receipt scope bridge (A2P→trust_profile), ARQ job registration, 409=already-added idempotency
+- [Wave 11 Swap Patterns](wave11-swap-patterns.md) — Lazy-import breaks patch(), ExitStack for dynamic patch lists, progress JSONB key names, PurchasedNumber has no UUID, 12 receipts full/8 on resume, rollback rule (step 7 only)
