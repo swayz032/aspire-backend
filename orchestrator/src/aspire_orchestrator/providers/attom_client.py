@@ -41,7 +41,11 @@ class AttomClient(BaseProviderClient):
     """ATTOM Property Data API client."""
 
     provider_id = "attom"
-    base_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0"
+    # Gateway root only — the api_root prefix (defaulting to /propertyapi/v1.0.0)
+    # is prepended in _attom_request so we can reach Property API v1, Transaction
+    # API V3, Area API V4, Community/Location V4, and any other ATTOM surface
+    # from the same client instance.
+    base_url = "https://api.gateway.attomdata.com"
     timeout_seconds = 8.0
     max_retries = 1
     idempotency_support = False
@@ -117,14 +121,23 @@ async def _attom_request(
     office_id: str,
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
+    api_root: str = "/propertyapi/v1.0.0",
 ) -> ToolExecutionResult:
-    """Shared ATTOM request handler for all endpoint families."""
+    """Shared ATTOM request handler for all endpoint families.
+
+    api_root selects which ATTOM API surface the request hits. Defaults to
+    the Property API v1 (the bulk of our existing wrappers use this). Pass
+    "/property/v3" for Transaction V3 endpoints (preforeclosuredetails),
+    "/v4" for Area / Community / Location lookup endpoints, "" for absolute
+    paths. Final URL is `https://api.gateway.attomdata.com{api_root}{path}`.
+    """
     client = _get_client()
+    full_path = f"{api_root}{path}"
 
     response = await client._request(
         ProviderRequest(
             method="GET",
-            path=path,
+            path=full_path,
             query_params=query_params,
             correlation_id=correlation_id,
             suite_id=suite_id,
@@ -957,6 +970,209 @@ async def execute_attom_boundary_lookup(
     return await _attom_request(
         path="/boundary/lookup",
         query_params={"geoid": f"{geo_type}{geoid}"},
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+    )
+
+
+# ─── New wrappers — Transaction V3 + Area/Location V4 (May 4 user audit) ──
+# These hit ATTOM API surfaces beyond the Property API v1 we historically
+# called. Verified live against the user's account 2026-05-04.
+#
+#   /property/v3/preforeclosuredetails — Foreclosure / pre-foreclosure
+#       returns Default[] (filings, lender, judgment, opening bid) +
+#       Auction[] (auctionDate, auctionTime, auctionAddress, courthouse).
+#       This is the ATTOM endpoint with ACTUAL auction details.
+#
+#   /v4/location/lookup — Resolve city/place name to geoIdV4 (the modern
+#       geographic identifier ATTOM uses for city-scoped searches).
+#       Required: name + geographyTypeAbbreviation (PL=Place, ZI=Zip, etc.)
+#
+#   /propertyapi/v1.0.0/sale/snapshot?geoIdV4=... — Properties sold in
+#       a city/place geography during a date range. The wrapper is
+#       distinct from the existing execute_attom_sale_snapshot_zip which
+#       takes postalcode.
+
+async def execute_attom_preforeclosure_details(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Foreclosure / pre-foreclosure details for a property.
+
+    Surfaces auction data (auctionDate, auctionTime, opening bid),
+    foreclosure filings (lender, trustee, judgment amount, default amount),
+    and recording dates. This is the ATTOM Transaction V3 endpoint at
+    /property/v3/preforeclosuredetails — separate API root from the v1
+    Property endpoints.
+
+    Accepts (in order of precedence):
+      1. attomid — direct ATTOM ID lookup
+      2. apn + county + state — parcel ID lookup
+      3. combined_address — single comma-separated address string
+      4. address1 + address2 — pre-parsed pair (assembled into combinedAddress)
+    """
+    tool_id = "attom.preforeclosure_details"
+
+    params: dict[str, str] = {}
+    if payload.get("attomid"):
+        params["AttomID"] = str(payload["attomid"])
+    elif payload.get("apn") and payload.get("county") and payload.get("state"):
+        params["apn"] = str(payload["apn"])
+        params["county"] = str(payload["county"])
+        params["state"] = str(payload["state"])
+    else:
+        combined = (payload.get("combined_address") or "").strip()
+        if not combined:
+            address1 = (payload.get("address1") or "").strip()
+            address2 = (payload.get("address2") or "").strip()
+            if address1 and address2:
+                combined = f"{address1}, {address2}"
+            elif payload.get("address"):
+                combined = str(payload["address"]).strip()
+        if not combined:
+            client = _get_client()
+            receipt = _build_receipt(
+                client, tool_id, correlation_id, suite_id, office_id,
+                Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id=tool_id,
+                error="Missing required parameter: combined_address, address1+address2, or attomid",
+                receipt_data=receipt,
+            )
+        params["combinedAddress"] = combined
+
+    return await _attom_request(
+        path="/preforeclosuredetails",
+        query_params=params,
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        api_root="/property/v3",
+    )
+
+
+async def execute_attom_location_lookup(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Resolve a city/place name to ATTOM's geoIdV4 identifier.
+
+    Required: name (e.g. "Forest Park") + geography_type (PL for Place /
+    incorporated city, ZI for ZIP, CO for County, ST for State, etc.).
+
+    Returns a `geographies` list. When the name matches multiple
+    locations across states (e.g. "Forest Park" exists in OH, GA, IL),
+    callers must filter the response by state from `geographyName`
+    (which contains the city + county + state, e.g.
+    "Forest Park, Hamilton County, OH").
+    """
+    tool_id = "attom.location_lookup"
+
+    name = (payload.get("name") or "").strip()
+    geography_type = (payload.get("geography_type") or "PL").strip()
+
+    if not name:
+        client = _get_client()
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: name",
+            receipt_data=receipt,
+        )
+
+    return await _attom_request(
+        path="/location/lookup",
+        query_params={"name": name, "geographyTypeAbbreviation": geography_type},
+        tool_id=tool_id,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        capability_token_id=capability_token_id,
+        capability_token_hash=capability_token_hash,
+        api_root="/v4",
+    )
+
+
+async def execute_attom_sale_snapshot_geoid(
+    *,
+    payload: dict[str, Any],
+    correlation_id: str,
+    suite_id: str,
+    office_id: str,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Properties sold within a city/place/zip geography during a date range.
+
+    Required: geoIdV4 (resolved via execute_attom_location_lookup).
+    Optional: start_date / end_date (YYYY/MM/DD), pagesize, orderby.
+
+    This is /propertyapi/v1.0.0/sale/snapshot — the same endpoint as
+    execute_attom_sale_snapshot_zip uses, but parameterized by geoIdV4
+    so we can scan whole cities (or multi-zip places like Atlanta) without
+    knowing the ZIP up front.
+    """
+    tool_id = "attom.sale_snapshot_geoid"
+
+    geo_id_v4 = (payload.get("geoIdV4") or payload.get("geo_id_v4") or "").strip()
+    if not geo_id_v4:
+        client = _get_client()
+        receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "INPUT_MISSING_REQUIRED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="Missing required parameter: geoIdV4",
+            receipt_data=receipt,
+        )
+
+    params: dict[str, str] = {"geoIdV4": geo_id_v4}
+    if payload.get("start_date"):
+        params["startSaleSearchDate"] = str(payload["start_date"])
+    if payload.get("end_date"):
+        params["endSaleSearchDate"] = str(payload["end_date"])
+    pagesize = int(payload.get("pagesize", 50))
+    params["pagesize"] = str(min(max(pagesize, 1), 100))
+    if payload.get("orderby"):
+        params["orderBy"] = str(payload["orderby"])
+
+    return await _attom_request(
+        path="/sale/snapshot",
+        query_params=params,
         tool_id=tool_id,
         correlation_id=correlation_id,
         suite_id=suite_id,

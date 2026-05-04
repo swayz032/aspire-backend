@@ -119,10 +119,6 @@ def _extract_location_label(query: str) -> str:
       "auctions in Forest Park GA" → "Forest Park GA"
       "Atlanta ga foreclosures"   → "Atlanta GA"
       "houses for sale 30297"     → "30297"
-
-    Used when no literal 5-digit ZIP is in the query — the ATTOM postalcode-
-    bound calls get skipped, but the Exa Auction.com + county-site search
-    still fires with the user's location signal so they get auction listings.
     """
     import re as _re_loc
     raw = (query or "").strip()
@@ -148,6 +144,59 @@ def _extract_location_label(query: str) -> str:
     # Last resort: return the whole query trimmed to ~60 chars so the Exa
     # search has SOMETHING to anchor on.
     return raw[:60]
+
+
+def _split_city_state(query: str) -> tuple[str, str]:
+    """Pull (city, state) from a query. Returns ("", "") if not found.
+    Handles "Forest Park GA", "Atlanta, GA", "auctions in Forest Park ga".
+    """
+    import re as _re_cs
+    m = _re_cs.search(
+        r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s*,?\s+([A-Za-z]{2})\b",
+        (query or "").strip(),
+    )
+    if not m:
+        return "", ""
+    return m.group(1).strip(), m.group(2).strip().upper()
+
+
+async def _resolve_city_to_geoid(
+    city: str, state: str, ctx: PlaybookContext,
+) -> str:
+    """Resolve a (city, state) pair to ATTOM's geoIdV4 for the matching
+    incorporated place. ATTOM /v4/location/lookup returns up to 10
+    name-matching geographies; we filter by state from geographyName
+    (which contains "<City>, <County>, <ST>"). Returns "" on no match.
+    """
+    if not city or not state:
+        return ""
+    from aspire_orchestrator.providers.attom_client import (
+        execute_attom_location_lookup,
+    )
+    args = _provider_args(ctx)
+    result = await execute_attom_location_lookup(
+        payload={"name": city, "geography_type": "PL"},
+        **args,
+    )
+    if not result or result.outcome != Outcome.SUCCESS or not result.data:
+        return ""
+    geographies = result.data.get("geographies", []) or []
+    target_state = state.upper()
+    for geo in geographies:
+        geo_name = str(geo.get("geographyName") or "")
+        if f", {target_state}" in geo_name.upper() or geo_name.upper().endswith(f", {target_state}"):
+            geo_id = str(geo.get("geoIdV4") or "").strip()
+            if geo_id:
+                logger.info(
+                    "Resolved city %r/%s to geoIdV4=%s (matched %r)",
+                    city, target_state, geo_id, geo_name,
+                )
+                return geo_id
+    logger.info(
+        "No geoIdV4 match for %r/%s in %d candidates",
+        city, target_state, len(geographies),
+    )
+    return ""
 
 
 def _source(provider: str) -> SourceAttribution:
@@ -1474,10 +1523,28 @@ async def execute_investment_opportunity_scan(
             extra={"raw_query": query[:120]},
         )
 
-    has_attom_scope = bool(zip_code)
+    # If no ZIP, try to resolve city → geoIdV4 so ATTOM can scan by place.
+    # Verified live 2026-05-04: ATTOM /v4/location/lookup + /sale/snapshot
+    # with geoIdV4 work on the user's account for city-level investment
+    # scans. May 4 user request: "houses for auction in Forest Park GA"
+    # and "Atlanta GA" should hit ATTOM directly, not just Exa.
+    geo_id_v4 = ""
+    if not zip_code:
+        city, state = _split_city_state(query)
+        if city and state:
+            try:
+                geo_id_v4 = await _resolve_city_to_geoid(city, state, context)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "investment_scan: location lookup failed for %s/%s: %s",
+                    city, state, exc,
+                )
+                geo_id_v4 = ""
+
+    has_attom_scope = bool(zip_code) or bool(geo_id_v4)
     logger.info(
-        "investment_scan: zip=%r location_label=%r attom_scope=%s",
-        zip_code, location_label, has_attom_scope,
+        "investment_scan: zip=%r geoIdV4=%r location_label=%r attom_scope=%s",
+        zip_code, geo_id_v4, location_label, has_attom_scope,
     )
 
     from aspire_orchestrator.providers.attom_client import (
@@ -1505,7 +1572,9 @@ async def execute_investment_opportunity_scan(
         ),
     }
 
-    if has_attom_scope:
+    if zip_code:
+        # ZIP scope: postalcode-based ATTOM scan (richest signal — absentee
+        # owners + FC events + recent FC filings + trends) plus Exa.
         _raw_inv = await asyncio.gather(
             _attom_request(
                 path="/property/snapshot",
@@ -1555,14 +1624,50 @@ async def execute_investment_opportunity_scan(
         recent_events_result = _safe_result(_raw_inv[2])
         trends_result = _safe_result(_raw_inv[3])
         exa_result = _safe_result(_raw_inv[4])
-    else:
-        # City-only path: ATTOM v1 property endpoints REJECT city+state
-        # params, so we run the Exa auction search alone and surface the
-        # web listings as the primary results. Users still get a useful
-        # answer; if they want absentee owners + FC pipeline data, they
-        # can repeat with a specific ZIP.
+    elif geo_id_v4:
+        # City scope (verified live 2026-05-04): /sale/snapshot accepts
+        # geoIdV4 and returns recent property sales for the whole place
+        # (e.g. Atlanta GA = 1,715 sales in last 4 months). FC-flagged
+        # subset is surfaced via the salestranstype filter on the result.
+        # Absentee/FC events endpoints don't accept geoIdV4 cleanly on this
+        # tier so we skip them on city scope; per-property auction data
+        # is fetched in the deep-dive section via /preforeclosuredetails.
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_sale_snapshot_geoid,
+        )
+        _raw_city = await asyncio.gather(
+            execute_attom_sale_snapshot_geoid(
+                payload={
+                    "geoIdV4": geo_id_v4,
+                    "start_date": cutoff_date,
+                    "pagesize": 50,
+                    "orderby": "salesearchdate desc",
+                },
+                **args,
+            ),
+            execute_exa_search(payload=exa_payload, **args),
+            return_exceptions=True,
+        )
+        sale_result = _safe_result(_raw_city[0])
+        exa_result = _safe_result(_raw_city[1])
+        # Repackage sale results into the same shape the FC parser expects
+        # (sale_result.data.property[]) — code below already handles it
+        # because /sale/snapshot returns the same property[] structure as
+        # /allevents/detail.
+        absentee_result = None
+        fc_events_result = sale_result
+        recent_events_result = sale_result
+        trends_result = None
         logger.info(
-            "investment_scan: city-only path (no ATTOM scan) — Exa-only for %r",
+            "investment_scan: city scope geoIdV4=%s sale_count=%s",
+            geo_id_v4,
+            sale_result.data.get("status", {}).get("total", 0)
+            if sale_result and sale_result.data else 0,
+        )
+    else:
+        # Truly no location signal — Exa only.
+        logger.info(
+            "investment_scan: no zip and no resolvable city — Exa-only for %r",
             location_label,
         )
         exa_only = await execute_exa_search(payload=exa_payload, **args)
@@ -1721,16 +1826,26 @@ async def execute_investment_opportunity_scan(
 
         addr_payload = {"address": f"{a1}, {a2}"}
 
-        # Parallel: expanded history (foreclosure filings) + equity + AVM
+        # Parallel: expanded history (foreclosure filings) + equity + AVM +
+        # Transaction V3 preforeclosure details (auction date, opening bid,
+        # courthouse, lender — the actual auction data the user asked about).
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_preforeclosure_details,
+        )
         _raw_enrich = await asyncio.gather(
             execute_attom_sales_expanded_history(payload=addr_payload, **args),
             execute_attom_home_equity(payload=addr_payload, **args),
             execute_attom_valuation_avm(payload=addr_payload, **args),
+            execute_attom_preforeclosure_details(
+                payload={"combined_address": f"{a1}, {a2}"},
+                **args,
+            ),
             return_exceptions=True,
         )
         fc_result = _safe_result(_raw_enrich[0])
         equity_result = _safe_result(_raw_enrich[1])
         avm_result = _safe_result(_raw_enrich[2])
+        prefc_result = _safe_result(_raw_enrich[3])
 
         opp: dict[str, Any] = {
             "address": prop_info.get("oneLine", f"{a1}, {a2}"),
@@ -1772,6 +1887,50 @@ async def execute_investment_opportunity_scan(
             avm_data = normalize_from_attom_avm(avm_result.data)
             opp["estimated_value"] = avm_data.get("estimated_value")
             opp["avm_confidence"] = avm_data.get("avm_confidence_score")
+
+        # Merge ATTOM Transaction V3 preforeclosure details — actual
+        # auction data the user expects on auction-search results.
+        # Returns Auction[] (auctionDate, auctionTime, courthouse,
+        # auctionAddress) and Default[] (lender, judgmentAmount,
+        # defaultAmount, recordedAuctionOpeningBid, trustee, servicer).
+        if prefc_result and prefc_result.outcome == Outcome.SUCCESS and prefc_result.data:
+            prefc_payload = prefc_result.data.get("PreforeclosureDetails", {})
+            auctions = prefc_payload.get("Auction") or []
+            defaults = prefc_payload.get("Default") or []
+            if auctions:
+                a0 = auctions[0]
+                opp["auction_date_v3"] = a0.get("auctionDate")
+                opp["auction_time_v3"] = a0.get("auctionTime")
+                opp["auction_courthouse"] = a0.get("courthouse")
+                # Build a one-line auction address from the parts ATTOM ships.
+                addr_parts = [
+                    a0.get("auctionHouseNumber"),
+                    a0.get("auctionDirection"),
+                    a0.get("auctionStreetName"),
+                    a0.get("auctionSuffix"),
+                    a0.get("auctionPostDirection"),
+                    a0.get("auctionUnit"),
+                ]
+                addr_str = " ".join(p for p in addr_parts if p)
+                if addr_str:
+                    city = a0.get("auctionCity")
+                    if city:
+                        addr_str = f"{addr_str}, {city}"
+                    opp["auction_address_v3"] = addr_str
+            if defaults:
+                d0 = defaults[0]
+                opp["foreclosure_id"] = d0.get("foreclosureID")
+                opp["lender_name_v3"] = d0.get("lenderNameFullStandardized")
+                opp["lender_phone_v3"] = d0.get("lenderPhone")
+                opp["judgment_amount"] = d0.get("judgmentAmount")
+                opp["judgment_date"] = d0.get("judgmentDate")
+                opp["default_amount"] = d0.get("defaultAmount")
+                opp["opening_bid_v3"] = d0.get("recordedAuctionOpeningBid")
+                opp["trustee_name"] = d0.get("trusteeName")
+                opp["trustee_phone"] = d0.get("trusteePhone")
+                opp["original_loan_amount"] = d0.get("originalLoanAmount")
+                opp["loan_balance"] = d0.get("loanBalance")
+                opp["foreclosure_record_type"] = d0.get("recordType")
 
         # Calculate investment metrics
         avm_val = opp.get("estimated_value")
