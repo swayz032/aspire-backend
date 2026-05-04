@@ -599,3 +599,139 @@ def test_db_unavailable_on_profile_lookup_returns_503() -> None:
 
     assert resp.status_code == 503
     assert resp.json()["detail"]["error"] == "DB_UNAVAILABLE"
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/twilio/swap-number/{swap_job_id}
+# ---------------------------------------------------------------------------
+
+
+_SWAP_HEADERS_AUTH: dict[str, str] = {
+    **_HEADERS,
+    "Authorization": "Bearer test-jwt",
+}
+
+
+def _swap_row(status_value: str = "in_progress", **overrides: Any) -> dict[str, Any]:
+    base = {
+        "id": SWAP_JOB_ID,
+        "tenant_id": TENANT_ID,
+        "suite_id": SUITE_ID,
+        "office_id": OFFICE_ID,
+        "old_phone_number_id": PHONE_NUMBER_ID,
+        "new_number_e164": "+14155550199",
+        "release_old_number": True,
+        "status": status_value,
+        "reason_code": None,
+        "progress": {
+            "step_1_initiated_receipt": str(uuid.uuid4()),
+            "step_2_new_phone_id": str(uuid.uuid4()),
+            "step_3_cp_attached": True,
+        },
+        "created_at": "2026-05-04T12:00:00Z",
+        "updated_at": "2026-05-04T12:01:00Z",
+        "completed_at": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_get_swap_status_without_bearer_returns_401() -> None:
+    """W7-H1 mirror: read endpoint must reject anonymous access."""
+    client = TestClient(app)
+    resp = client.get(f"/v1/twilio/swap-number/{SWAP_JOB_ID}", headers=_HEADERS)
+    assert resp.status_code == 401
+    assert resp.json()["detail"]["reason_code"] == "MISSING_BEARER_TOKEN"
+
+
+def test_get_swap_status_returns_progress_on_in_flight_swap() -> None:
+    swap = _swap_row(status_value="in_progress")
+    phone_row = {"id": PHONE_NUMBER_ID, "phone_number": "+14482885386"}
+
+    async def _select_side(table: str, filters: str, **_: Any) -> list[dict[str, Any]]:
+        if table == "tenant_phone_swaps":
+            return [swap]
+        if table == "tenant_phone_numbers":
+            return [phone_row]
+        return []
+
+    with _patch_scope(), patch(
+        "aspire_orchestrator.routes.twilio_swap.supabase_select",
+        new_callable=AsyncMock,
+        side_effect=_select_side,
+    ):
+        client = TestClient(app)
+        resp = client.get(
+            f"/v1/twilio/swap-number/{SWAP_JOB_ID}", headers=_SWAP_HEADERS_AUTH
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["swap_job_id"] == SWAP_JOB_ID
+    assert body["status"] == "in_progress"
+    assert body["new_number_e164"] == "+14155550199"
+    assert body["old_number_e164"] == "+14482885386"
+    assert "step_1_initiated_receipt" in body["completed_steps"]
+    # current_step is one past the highest completed step number
+    assert body["current_step"] == "step_4"
+    assert body["completed_at"] is None
+
+
+def test_get_swap_status_returns_404_when_not_owned_by_suite() -> None:
+    """Cross-tenant read: even with a valid swap_job_id, a different
+    suite_id in headers must result in 404 (not 403 — we don't confirm
+    existence of cross-tenant rows)."""
+    async def _select_side(table: str, filters: str, **_: Any) -> list[dict[str, Any]]:
+        # Filter is suite_id-scoped — wrong suite returns no rows.
+        return []
+
+    with _patch_scope(), patch(
+        "aspire_orchestrator.routes.twilio_swap.supabase_select",
+        new_callable=AsyncMock,
+        side_effect=_select_side,
+    ):
+        client = TestClient(app)
+        resp = client.get(
+            f"/v1/twilio/swap-number/{SWAP_JOB_ID}", headers=_SWAP_HEADERS_AUTH
+        )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["reason_code"] == "SWAP_NOT_FOUND"
+
+
+def test_get_swap_status_terminal_succeeded_has_no_current_step() -> None:
+    swap = _swap_row(
+        status_value="succeeded",
+        completed_at="2026-05-04T12:05:00Z",
+        progress={
+            "step_1_initiated_receipt": "r1",
+            "step_2_new_phone_id": "p1",
+            "step_3_cp_attached": True,
+            "step_11_complete": True,
+        },
+    )
+    phone_row = {"id": PHONE_NUMBER_ID, "phone_number": "+14482885386"}
+
+    async def _select_side(table: str, filters: str, **_: Any) -> list[dict[str, Any]]:
+        if table == "tenant_phone_swaps":
+            return [swap]
+        if table == "tenant_phone_numbers":
+            return [phone_row]
+        return []
+
+    with _patch_scope(), patch(
+        "aspire_orchestrator.routes.twilio_swap.supabase_select",
+        new_callable=AsyncMock,
+        side_effect=_select_side,
+    ):
+        client = TestClient(app)
+        resp = client.get(
+            f"/v1/twilio/swap-number/{SWAP_JOB_ID}", headers=_SWAP_HEADERS_AUTH
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "succeeded"
+    # On terminal status, current_step is null even though there are completed steps
+    assert body["current_step"] is None
+    assert body["completed_at"] == "2026-05-04T12:05:00Z"

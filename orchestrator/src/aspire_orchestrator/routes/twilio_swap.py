@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Path, Request, status
 from pydantic import BaseModel, Field, field_validator
 
 from aspire_orchestrator.config.settings import settings
@@ -394,6 +394,149 @@ async def swap_number(
         "old_number_e164": old_number_e164,
         "new_number_e164": new_number_e164,
         "estimated_completion": estimated_completion,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/twilio/swap-number/{swap_job_id} — Green tier, Bearer-required
+#
+# Frontend polls this every 30s while the swap is in flight. We mirror the
+# A2P /status pattern: presence-only Bearer check (full JWT validation lives
+# in the desktop-server proxy) + suite isolation via X-Suite-Id header to
+# defend against UUID enumeration attacks.
+# ---------------------------------------------------------------------------
+
+
+def _require_bearer_token(request: Request) -> None:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer ") or len(auth) <= len("Bearer "):
+        logger.warning(
+            "swap_routes unauthenticated_read path=%s remote=%s",
+            request.url.path,
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "UNAUTHENTICATED",
+                "reason_code": "MISSING_BEARER_TOKEN",
+            },
+        )
+
+
+@router.get("/swap-number/{swap_job_id}", status_code=status.HTTP_200_OK)
+async def get_swap_status(
+    request: Request,
+    swap_job_id: str = Path(..., min_length=8, max_length=64),
+    x_tenant_id: str | None = Header(None),
+    x_suite_id: str | None = Header(None),
+    x_office_id: str | None = Header(None),
+) -> dict[str, Any]:
+    """Return the live status of an in-flight number swap.
+
+    Green tier — no capability token. Bearer presence is required (Law #6
+    defense-in-depth), and the swap row is filtered by `suite_id` resolved
+    from the X-Suite-Id header so a tenant can never read another tenant's
+    swap state by guessing the swap_job_id UUID.
+
+    Response shape:
+      {
+        "swap_job_id": "<uuid>",
+        "status": "pending" | "in_progress" | "succeeded" | "failed"
+                | "partial_success",
+        "current_step": "<step_<n>_<name>>" | null,
+        "completed_steps": ["step_1_initiated", "step_2_purchased", ...],
+        "reason_code": "<machine_code>" | null,
+        "old_number_e164": "+1...",
+        "new_number_e164": "+1...",
+        "created_at": "<iso8601>",
+        "updated_at": "<iso8601>",
+        "completed_at": "<iso8601>" | null
+      }
+
+    404 — swap not found OR not owned by the suite (404 not 403 to avoid
+          confirming existence of cross-tenant swaps).
+    """
+    _require_bearer_token(request)
+    scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
+    suite_id = str(scope.suite_id)
+
+    try:
+        rows = await supabase_select(
+            "tenant_phone_swaps",
+            f"id=eq.{swap_job_id}&suite_id=eq.{suite_id}",
+            limit=1,
+        )
+    except SupabaseClientError as exc:
+        logger.error(
+            "swap_routes status_select_failed swap_job_id=%s err=%s",
+            swap_job_id, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "DB_UNAVAILABLE"},
+        ) from exc
+
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "SWAP_NOT_FOUND",
+                "reason_code": "SWAP_NOT_FOUND",
+            },
+        )
+
+    swap = rows[0]
+    progress: dict[str, Any] = swap.get("progress") or {}
+
+    # Derive completed_steps from the step_<n>_* keys in progress JSONB.
+    # Order matters for the UI's progress chain — sort by step number prefix.
+    completed_steps: list[str] = sorted(
+        (k for k in progress if k.startswith("step_")),
+        key=lambda k: int(k.split("_", 2)[1]) if k.split("_", 2)[1].isdigit() else 99,
+    )
+
+    # The "current step" is the next un-completed step, derived from the
+    # highest-numbered completed step + 1. Returns None on terminal status.
+    current_step: str | None = None
+    swap_status = str(swap.get("status", "pending"))
+    if swap_status in ("pending", "in_progress") and completed_steps:
+        try:
+            last_n = max(
+                int(k.split("_", 2)[1])
+                for k in completed_steps
+                if k.split("_", 2)[1].isdigit()
+            )
+            current_step = f"step_{last_n + 1}"
+        except (ValueError, IndexError):
+            current_step = None
+
+    # Resolve old_number_e164 from the linked tenant_phone_numbers row.
+    old_number_e164: str | None = None
+    old_phone_id = swap.get("old_phone_number_id")
+    if old_phone_id:
+        try:
+            phone_rows = await supabase_select(
+                "tenant_phone_numbers",
+                f"id=eq.{old_phone_id}",
+                limit=1,
+            )
+            if phone_rows:
+                old_number_e164 = phone_rows[0].get("phone_number")
+        except SupabaseClientError:
+            pass  # best-effort; status returns null on failure
+
+    return {
+        "swap_job_id": swap_job_id,
+        "status": swap_status,
+        "current_step": current_step,
+        "completed_steps": completed_steps,
+        "reason_code": swap.get("reason_code"),
+        "old_number_e164": old_number_e164,
+        "new_number_e164": swap.get("new_number_e164"),
+        "created_at": swap.get("created_at"),
+        "updated_at": swap.get("updated_at"),
+        "completed_at": swap.get("completed_at"),
     }
 
 
