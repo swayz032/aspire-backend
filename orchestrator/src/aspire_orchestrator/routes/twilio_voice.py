@@ -49,6 +49,7 @@ from aspire_orchestrator.services.twilio_voice import (
     TwilioVoiceConfigError,
     mint_voice_token,
     parse_identity,
+    twilio_signature_url_candidates,
     verify_twilio_signature,
 )
 
@@ -218,13 +219,25 @@ async def voice_twiml(request: Request) -> Response:
     # full request URL we received (needs to match what's configured on
     # the TwiML App). Fail-closed if missing or invalid.
     signature_header = request.headers.get("X-Twilio-Signature", "")
-    request_url = str(request.url)
-    if not verify_twilio_signature(
-        request_url=request_url,
-        form_params=form_params,
-        signature_header=signature_header,
+    request_urls = twilio_signature_url_candidates(
+        received_url=str(request.url),
+        forwarded_proto=request.headers.get("x-forwarded-proto"),
+        forwarded_host=request.headers.get("x-forwarded-host"),
+        host=request.headers.get("host"),
+    )
+    if not any(
+        verify_twilio_signature(
+            request_url=request_url,
+            form_params=form_params,
+            signature_header=signature_header,
+        )
+        for request_url in request_urls
     ):
-        logger.warning("voice_twiml invalid_signature url=%s", request_url)
+        logger.warning(
+            "voice_twiml invalid_signature candidates=%s received_url=%s",
+            len(request_urls),
+            request_urls[0] if request_urls else "",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "INVALID_SIGNATURE"},

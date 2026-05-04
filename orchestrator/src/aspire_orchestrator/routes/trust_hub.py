@@ -1246,6 +1246,18 @@ async def status_callback(
             update_payload,
         )
 
+        # release-sre P0-1: KYB rejection signal — increment by reason
+        # code so Grafana can compute rate() and alert when >20% per
+        # plan §14. Non-blocking: never fail webhook on metrics error.
+        if not is_approved:
+            try:
+                from aspire_orchestrator.services.metrics import KYB_REJECTION_COUNTER
+                KYB_REJECTION_COUNTER.labels(
+                    reason_code=(error_code or "unknown")[:32],
+                ).inc()
+            except Exception:  # noqa: BLE001 — never fail webhook on metrics
+                pass
+
         # Step 10: Cut the matching receipt.
         # R-W5-003 — forward the RAW `FailureReason` and `ErrorCode` to the
         # receipt for audit completeness (Law #2). `cut_trust_receipt`

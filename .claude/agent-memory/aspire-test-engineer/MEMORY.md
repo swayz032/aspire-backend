@@ -93,5 +93,15 @@
 - Receipt hash chain test requires patching `trust_receipts.supabase_select` AND `trust_receipts.supabase_insert` separately from the state machine patches (different module import paths).
 - Campaign description `max_length=500` is enforced by Pydantic `Field(..., max_length=500)`.
 
+## Wave 8 Trust Evil Tests (2026-05-04)
+- New file: `orchestrator/tests/test_trust_evil.py` — 23 tests total
+  - 9 skipped (live-DB: Class 1 x5 + Class 3 x4), 14 passed (programmatic: Class 2 x8 + Class 4 x3 + Class 5 x3)
+- PII scan pattern: `_cut_with_pii_key(receipt_type, key, in_inputs)` iterates all RECEIPT_TYPES in a single test body — covers all 35 types per forbidden key. Much faster than parametrize.
+- `teardown_method` for live-DB tests with immutable audit tables: DELETE via trust_profile cascade (can't DELETE transitions directly — immutability trigger blocks it). Trust profile DELETE cascades child rows via FK ON DELETE CASCADE.
+- Class 5 (cap token tests): Do NOT patch `_validate_cap_token` — use real function + patch only DB/vault/receipt dependencies. This exercises the actual token_service logic.
+- `asyncio.get_event_loop().run_until_complete(...)` works for sync test methods calling async functions (pytest not in async mode for these).
+- SID injection tests: assert `mock_select.call_args_list` contains no injected string — stronger than just checking status code.
+- Existing 351 trust tests pass unaffected (49 skipped = RLS tests without DB, unchanged).
+
 ## Links
 - See `cycle5-bugs.md` for full detailed bug list

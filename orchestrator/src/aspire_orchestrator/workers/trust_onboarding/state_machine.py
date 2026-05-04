@@ -1477,6 +1477,7 @@ async def advance_trust_state(
     Never raises to caller — all errors are mapped to outcome="failed" with
     a receipt. The ARQ worker logs the result; the orchestrator decides retries.
     """
+    _t_start = time.monotonic()
     logger.info(
         "state_machine advance_trust_state trust_profile_id=%s job_id=%s",
         trust_profile_id, worker_job_id,
@@ -1574,6 +1575,29 @@ async def advance_trust_state(
             reason_code="UNHANDLED_EXCEPTION",
             reason_message=str(exc)[:500],
             worker_job_id=worker_job_id,
+        )
+
+    # release-sre P0-1: trust-onboarding funnel signal. Every transition
+    # (success / failed / halted) increments the counter so Grafana can
+    # plot conversion at each state. Histogram captures per-attempt
+    # latency for SLO monitoring (p50 / p99 / sum).
+    try:
+        from aspire_orchestrator.services.metrics import (
+            TRUST_ONBOARDING_STATE_DURATION,
+            TRUST_ONBOARDING_STATE_TRANSITIONS_COUNTER,
+        )
+        TRUST_ONBOARDING_STATE_TRANSITIONS_COUNTER.labels(
+            from_state=str(result.get("from_state", trust_state)),
+            to_state=str(result.get("to_state", trust_state)),
+            outcome=str(result.get("outcome", "unknown")),
+        ).inc()
+        TRUST_ONBOARDING_STATE_DURATION.labels(
+            state=str(result.get("from_state", trust_state)),
+        ).observe(time.monotonic() - _t_start)
+    except Exception as metrics_exc:  # noqa: BLE001 — never fail the state machine on metrics
+        logger.debug(
+            "state_machine metrics_emit_failed trust_profile_id=%s err=%s",
+            trust_profile_id, metrics_exc,
         )
 
     return result

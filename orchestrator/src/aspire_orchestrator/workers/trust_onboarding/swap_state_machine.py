@@ -859,6 +859,13 @@ async def run_number_swap(
     # Mark swap job as complete
     await _update_swap_status(swap_job_id, "completed")
 
+    # release-sre P0-1: number-swap funnel signal
+    try:
+        from aspire_orchestrator.services.metrics import NUMBER_SWAP_COUNTER
+        NUMBER_SWAP_COUNTER.labels(outcome="succeeded").inc()
+    except Exception:  # noqa: BLE001 — never fail swap on metrics
+        pass
+
     logger.info(
         "swap_sm complete job=%s receipts=%d old_phone_id=%s new_phone_id=%s",
         swap_job_id, len(receipt_ids), old_phone_number_id, new_phone_id,

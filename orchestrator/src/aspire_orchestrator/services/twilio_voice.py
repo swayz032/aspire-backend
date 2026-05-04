@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from aspire_orchestrator.config.settings import settings
 
@@ -38,6 +39,9 @@ _DEFAULT_VOICE_TOKEN_TTL_SECONDS = 3600
 _IDENTITY_PREFIX = "aspire"
 # UUID + alphanumeric only — no slashes / spaces / unicode in Twilio identity.
 _IDENTITY_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+_COMPACT_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}[0-9a-fA-F]{4}[0-9a-fA-F]{4}[0-9a-fA-F]{4}[0-9a-fA-F]{12}$"
+)
 
 
 class TwilioVoiceConfigError(RuntimeError):
@@ -104,7 +108,20 @@ def parse_identity(identity: str) -> dict[str, str | None]:
     parts = identity.split("-", 2)
     if len(parts) != 3:
         return {"suite_id": None, "user_id": None}
-    return {"suite_id": parts[1], "user_id": parts[2]}
+    return {
+        "suite_id": _restore_compact_uuid(parts[1]),
+        "user_id": _restore_compact_uuid(parts[2]),
+    }
+
+
+def _restore_compact_uuid(value: str) -> str:
+    """Restore UUID dashes stripped by build_identity before DB lookup."""
+    if not isinstance(value, str) or not _COMPACT_UUID_RE.match(value):
+        return value
+    return (
+        f"{value[0:8]}-{value[8:12]}-{value[12:16]}-"
+        f"{value[16:20]}-{value[20:32]}"
+    ).lower()
 
 
 def mint_voice_token(
@@ -188,3 +205,28 @@ def verify_twilio_signature(
     except Exception as e:  # noqa: BLE001
         logger.warning("verify_twilio_signature failed: %s", type(e).__name__)
         return False
+
+
+def twilio_signature_url_candidates(
+    *,
+    received_url: str,
+    forwarded_proto: str | None = None,
+    forwarded_host: str | None = None,
+    host: str | None = None,
+) -> list[str]:
+    """Return URL variants Twilio may have signed before our proxy hop."""
+    candidates: list[str] = []
+
+    def add(url: str) -> None:
+        if url and url not in candidates:
+            candidates.append(url)
+
+    add(received_url)
+
+    proto = (forwarded_proto or "").split(",")[0].strip()
+    public_host = (forwarded_host or host or "").split(",")[0].strip()
+    if proto and public_host:
+        parsed = urlsplit(received_url)
+        add(urlunsplit((proto, public_host, parsed.path, parsed.query, "")))
+
+    return candidates

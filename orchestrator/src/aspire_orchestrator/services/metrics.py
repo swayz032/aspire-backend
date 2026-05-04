@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 
-from prometheus_client import Counter, Histogram, Info
+from prometheus_client import Counter, Gauge, Histogram, Info
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,58 @@ INGESTION_COUNTER = Counter(
     ["provider", "outcome"],  # provider in {twilio_sms, twilio_voice, elevenlabs, ...}
 )
 
+# ---------------------------------------------------------------------------
+# Trust Hub + CNAM (Per-Tenant Twilio Trust Hub feature, Waves 1-11)
+# ---------------------------------------------------------------------------
+# release-sre P0-1 follow-up: 7 metrics required by plan §12 Gate 2 for
+# 10k-tenant operability.
+
+TRUST_ONBOARDING_STATE_TRANSITIONS_COUNTER = Counter(
+    "aspire_trust_onboarding_state_transitions_total",
+    "Trust onboarding state transitions by from/to/outcome — funnel signal",
+    ["from_state", "to_state", "outcome"],
+)
+
+TRUST_ONBOARDING_STATE_DURATION = Histogram(
+    "aspire_trust_onboarding_state_duration_seconds",
+    "Time spent in each state machine transition (per-attempt)",
+    ["state"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0),
+)
+
+TWILIO_TRUST_HUB_API_CALLS_COUNTER = Counter(
+    "aspire_twilio_trust_hub_api_calls_total",
+    "Twilio Trust Hub API calls by operation and HTTP outcome class",
+    ["operation", "status"],
+)
+
+TWILIO_TRUST_HUB_API_LATENCY = Histogram(
+    "aspire_twilio_trust_hub_api_latency_seconds",
+    "Twilio Trust Hub API request latency",
+    ["operation"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 4.5, 8.0),
+)
+
+CNAM_APPROVAL_AGE_GAUGE = Gauge(
+    "aspire_cnam_approval_age_hours",
+    "Age in hours of the OLDEST tenant_trust_profiles row currently in "
+    "cnam_submitted state. Set by W9 reputation-polling cron each run. "
+    "Page-worthy when > 168h (7 days)",
+)
+
+KYB_REJECTION_COUNTER = Counter(
+    "aspire_kyb_rejection_rate_total",
+    "KYB rejection events by reason code (cumulative; ratio computed in Grafana)",
+    ["reason_code"],
+)
+
+NUMBER_SWAP_COUNTER = Counter(
+    "aspire_number_swap_total",
+    "Wave 11 number-swap completions by outcome",
+    ["outcome"],
+)
+
+
 # Service info — static labels for service identification
 SERVICE_INFO = Info(
     "aspire_orchestrator",
@@ -193,6 +245,14 @@ class MetricsCollector:
     personalization_latency = PERSONALIZATION_LATENCY
     personalization_cache_fallback_counter = PERSONALIZATION_CACHE_FALLBACK_COUNTER
     ingestion_counter = INGESTION_COUNTER
+    # Trust Hub + CNAM (Per-Tenant Twilio Trust Hub)
+    trust_onboarding_state_transitions = TRUST_ONBOARDING_STATE_TRANSITIONS_COUNTER
+    trust_onboarding_state_duration = TRUST_ONBOARDING_STATE_DURATION
+    twilio_trust_hub_api_calls = TWILIO_TRUST_HUB_API_CALLS_COUNTER
+    twilio_trust_hub_api_latency = TWILIO_TRUST_HUB_API_LATENCY
+    cnam_approval_age = CNAM_APPROVAL_AGE_GAUGE
+    kyb_rejection_counter = KYB_REJECTION_COUNTER
+    number_swap_counter = NUMBER_SWAP_COUNTER
 
     def record_request(
         self,

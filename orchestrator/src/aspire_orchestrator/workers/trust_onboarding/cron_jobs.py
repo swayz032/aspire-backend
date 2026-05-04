@@ -230,6 +230,32 @@ async def poll_trust_status_for_tenants() -> dict[str, Any]:
         }
 
     capped = len(candidates) > _MAX_TENANTS_PER_RUN
+
+    # release-sre P0-1: CNAM approval-age gauge — find the oldest cnam_submitted
+    # tenant and emit its age in hours so Grafana / PagerDuty can alert when
+    # >168h (7 days). Uses the candidates list to avoid an extra query.
+    try:
+        from aspire_orchestrator.services.metrics import CNAM_APPROVAL_AGE_GAUGE
+        oldest_cnam_age_h: float = 0.0
+        now_utc = datetime.now(timezone.utc)
+        for candidate in candidates[:_MAX_TENANTS_PER_RUN]:
+            if candidate.get("trust_state") != "cnam_submitted":
+                continue
+            updated_at_str = candidate.get("updated_at")
+            if not updated_at_str:
+                continue
+            try:
+                updated_at = datetime.fromisoformat(
+                    str(updated_at_str).replace("Z", "+00:00")
+                )
+            except ValueError:
+                continue
+            age_h = (now_utc - updated_at).total_seconds() / 3600.0
+            if age_h > oldest_cnam_age_h:
+                oldest_cnam_age_h = age_h
+        CNAM_APPROVAL_AGE_GAUGE.set(oldest_cnam_age_h)
+    except Exception:  # noqa: BLE001 — never fail cron on metrics
+        pass
     candidates = candidates[:_MAX_TENANTS_PER_RUN]
 
     examined = 0
