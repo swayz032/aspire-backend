@@ -194,11 +194,18 @@ _UNIT_RE = re.compile(
 def _extract_unit_number(address1: str) -> tuple[str, str]:
     """Return (address1_without_unit, unit_token) for APT/UNIT/STE/# suffixes.
 
-    ATTOM's unit-aware endpoints require the unit number to be sent as a
-    SEPARATE `unitnumber` parameter — including it in `address1` returns
-    building-level placeholder data for the master parcel. This helper
-    surgically removes the unit token from address1 so the cleaned street
-    address can be used unmodified in the rest of the request.
+    HISTORY: This helper used to split unit suffixes off address1 into a
+    separate `unitnumber` query parameter on the assumption that ATTOM's
+    unit-aware endpoints required it. Live testing on 2026-05-04 against
+    /property/expandedprofile, /valuation/homeequity, /assessment/detail,
+    /sale/detail, and /saleshistory/expandedhistory showed ATTOM REJECTS
+    `unitnumber` with HTTP 400 "Invalid Parameter(s) in Request -
+    UNITNUMBER". Including the unit IN address1 (e.g. "1575 Paul Russell
+    Rd APT 4802") resolves successfully on every endpoint and returns the
+    correct unit-level record (different attomId from the master parcel).
+    Caller logic that consumes the (cleaned, unit) tuple is preserved for
+    backward compatibility, but production code paths in _validate_address
+    no longer apply the split — they pass address1 unmodified to ATTOM.
     """
     if not isinstance(address1, str) or not address1.strip():
         return address1, ""
@@ -258,15 +265,14 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
     elif pre_address1 and pre_address2:
         params["address1"] = pre_address1.strip()
         params["address2"] = pre_address2.strip()
-        # Unit detection on pre-parsed address1 too — usaddress places APT/UNIT
-        # inside address1 by design, but ATTOM needs unitnumber as a SEPARATE
-        # query parameter for unit-level resolution.
-        cleaned, unit_token = _extract_unit_number(params["address1"])
-        if unit_token:
-            params["address1"] = cleaned
-            params["unitnumber"] = unit_token
-        if payload.get("unitnumber"):
-            params["unitnumber"] = str(payload["unitnumber"])
+        # NOTE: Do NOT split APT/UNIT/STE off into a separate `unitnumber`
+        # query param. Live ATTOM testing (2026-05-04) showed unitnumber
+        # is REJECTED as an invalid parameter on every property endpoint
+        # we use — full address1 including the unit (e.g.
+        # "1575 Paul Russell Rd APT 4802") resolves to the correct
+        # unit-level record. The previous split behavior caused HTTP 400
+        # INPUT_INVALID_FORMAT for every condo/apt/townhouse query —
+        # surfacing as the May 4 user-reported "fallback empty card."
     else:
         # Parse address into ATTOM format: address1=street, address2=City, ST ZIP
         parts = address.split(",")
@@ -299,14 +305,10 @@ def _validate_address(payload: dict[str, Any], client: AttomClient, tool_id: str
                 params["address1"] = address
                 params["address2"] = ""
 
-        # Unit detection: split APT/UNIT/STE/# token out of address1 into the
-        # required `unitnumber` query parameter. Required for ATTOM unit
-        # resolution (condos, apartments, multi-unit buildings).
-        if params.get("address1"):
-            cleaned, unit_token = _extract_unit_number(params["address1"])
-            if unit_token:
-                params["address1"] = cleaned
-                params["unitnumber"] = unit_token
+        # NOTE: legacy free-form path also leaves the unit IN address1.
+        # See pre-parsed branch above for the rationale (ATTOM rejects
+        # unitnumber as an invalid parameter — full address1 including
+        # APT/UNIT/STE token is what resolves to unit-level records).
 
     return params
 

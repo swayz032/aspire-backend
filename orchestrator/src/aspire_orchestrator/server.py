@@ -2050,131 +2050,73 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         },
                     )
 
-            # Step 3: No playbook matched — fall back to legacy web+places search
-            # This handles general SMB queries that don't fit any specialized playbook
-            logger.info("Adam: no playbook match, falling back to legacy search for: %s", full_task[:80])
+            # Step 3: No playbook matched — surface as needs_more_input.
+            # Per the Aspire no-fallback design principle (memory:
+            # feedback_no-fallback-design-principle.md): never architect
+            # around silent fallbacks that produce degraded data. The old
+            # legacy web+places search ran a generic web search when the
+            # router found no match — it returned plausible-looking but
+            # off-domain garbage that the user could not distinguish from
+            # real Adam results. That was the root of the May 4 user
+            # complaint about "fallback empty cards" appearing for valid
+            # property queries (apt suffix tripped legacy → web search →
+            # nothing matched → empty card).
+            #
+            # New contract: when the router has no playbook match, we
+            # explicitly tell the user we need a clearer request and emit
+            # a NO_PLAYBOOK_MATCH receipt. The classifier should always
+            # find SOME playbook for in-scope queries; reaching this branch
+            # means either the query is novel (new playbook needed) or the
+            # classifier mis-routed (bug to fix). Either way: surface, do
+            # not paper over.
+            logger.warning(
+                "Adam: no playbook match for query — returning needs_more_input. "
+                "query=%r segment=%s intent=%s",
+                full_task[:120],
+                getattr(classification, "segment", "unknown"),
+                getattr(classification, "intent", "unknown"),
+            )
 
-            # F-CRIT-4: emit an entry receipt the moment we leave the playbook
-            # path. The legacy chain is itself a state-changing audit event —
-            # without this entry the legacy outcome receipt below has no
-            # paired "started" record.
-            legacy_entry_receipt = _adam_receipt(
-                action_type="adam.legacy_fallback_started",
-                outcome="success",
+            no_match_receipt = _adam_receipt(
+                action_type="adam.no_playbook_match",
+                outcome="failed",
                 reason_code="NO_PLAYBOOK_MATCH",
-                tool_used="adam.legacy_search",
-            )
-            try:
-                store_receipts([legacy_entry_receipt])
-            except Exception as rec_err:  # noqa: BLE001
-                logger.warning("Adam legacy entry receipt persist failed: %s", rec_err)
-
-            # Legacy fallback: simple web + places search for unrecognized queries
-            from aspire_orchestrator.services.search_router import (
-                _web_search_chain, _places_search_chain,
-            )
-            from aspire_orchestrator.models import Outcome
-
-            common_kwargs = dict(
-                correlation_id=ctx.correlation_id,
-                suite_id=safe_suite_id,
-                office_id=safe_office_id,
-                risk_tier="green",
-            )
-
-            # Run web search with first available provider
-            web_results = []
-            for pname, executor_fn in _web_search_chain():
-                try:
-                    result = await _asyncio.wait_for(
-                        executor_fn(payload={"query": full_task}, **common_kwargs),
-                        timeout=10.0,
-                    )
-                    if result.outcome == Outcome.SUCCESS and result.data:
-                        for r in result.data.get("results", [])[:5]:
-                            web_results.append({
-                                "name": r.get("title", r.get("name", "")),
-                                "url": r.get("url", ""),
-                                "snippet": r.get("snippet", r.get("description", "")),
-                                "source": pname,
-                            })
-                    if web_results:
-                        break
-                except Exception:
-                    continue
-
-            # Run places search with first available provider
-            places_results = []
-            for pname, executor_fn in _places_search_chain():
-                if pname == "osm_overpass":
-                    continue
-                try:
-                    result = await _asyncio.wait_for(
-                        executor_fn(payload={"query": full_task}, **common_kwargs),
-                        timeout=10.0,
-                    )
-                    if result.outcome == Outcome.SUCCESS and result.data:
-                        for r in result.data.get("results", [])[:8]:
-                            places_results.append({
-                                "name": r.get("name", ""),
-                                "address": r.get("address", r.get("formatted_address", "")),
-                                "phone": r.get("phone", ""),
-                                "rating": r.get("rating"),
-                                "source": pname,
-                            })
-                    if places_results:
-                        break
-                except Exception:
-                    continue
-
-            total = len(web_results) + len(places_results)
-
-            # Build response text
-            if places_results:
-                top = places_results[0]
-                parts = [f"{top['name']}"]
-                if top.get("phone"):
-                    parts.append(f"phone {top['phone']}")
-                if top.get("address"):
-                    parts.append(f"at {top['address']}")
-                response_text = f"Found {total} results. Top match: {', '.join(parts)}."
-            elif web_results:
-                response_text = f"Found {len(web_results)} web results. Top: {web_results[0].get('name', 'Unknown')}."
-            else:
-                response_text = "I wasn't able to find results for that. Try a more specific query or different location."
-
-            # F-CRIT-4: legacy fallback final receipt. Outcome rolls up to
-            # success when at least one provider returned data; failure
-            # otherwise (chain exhausted or all timed out).
-            legacy_final_receipt = _adam_receipt(
-                action_type="adam.legacy_fallback_complete",
-                outcome="success" if total > 0 else "failed",
-                reason_code="EXECUTED" if total > 0 else "NO_RESULTS",
-                tool_used="adam.legacy_search",
+                tool_used="adam.router",
                 redacted_outputs={
-                    "web_count": len(web_results),
-                    "places_count": len(places_results),
+                    "segment": getattr(classification, "segment", "unknown"),
+                    "intent": getattr(classification, "intent", "unknown"),
+                    "entity_type": getattr(classification, "entity_type", "unknown"),
                 },
             )
             try:
-                store_receipts([legacy_final_receipt])
+                store_receipts([no_match_receipt])
             except Exception as rec_err:  # noqa: BLE001
-                logger.warning("Adam legacy final receipt persist failed: %s", rec_err)
+                logger.warning("Adam no-match receipt persist failed: %s", rec_err)
 
             return JSONResponse(
                 status_code=200,
                 content={
-                    "success": total > 0,
+                    "success": False,
                     "agent": "adam",
-                    "result": response_text,
+                    "result": (
+                        "I'm not sure how to research that — could you give me "
+                        "more detail? For property facts include the full street "
+                        "address; for product pricing include the item name and "
+                        "store."
+                    ),
                     "data": {
-                        "mode": "legacy_fallback",
-                        "web_results": web_results[:10],
-                        "places_results": places_results[:10],
-                        "total": total,
+                        "artifact_type": "needs_more_input",
+                        "records": [],
+                        "summary": "Adam needs a clearer request to route this.",
+                        "missing_fields": ["intent", "entity_type"],
+                        "next_queries": [
+                            "Add the full street address (city + state)",
+                            "Name the store or retailer for product searches",
+                            "Specify whether you want property, product, or vendor research",
+                        ],
                     },
-                    "receipt_id": legacy_final_receipt["id"],
-                    "error": None if total > 0 else "No results found",
+                    "receipt_id": no_match_receipt["id"],
+                    "error": "NO_PLAYBOOK_MATCH",
                 },
             )
 

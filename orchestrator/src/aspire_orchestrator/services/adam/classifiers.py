@@ -189,6 +189,19 @@ def classify_fast(query: str, tenant_segment: str | None = None) -> Classificati
         intent = "property_fact"
         logger.info("Classifier override: price_check → property_fact (street address detected)")
 
+    # 2b-bis. Override: bare street address with no commerce keywords →
+    # property_fact. Anam Ava's invoke_adam tool sends the raw address as
+    # the query when the user says "pull up <address>" — that's clearly a
+    # property request even though no "property" / "year built" / "owner"
+    # keyword appears. Without this override the request lands as
+    # intent=lookup, fails to find a playbook match, and falls through to
+    # legacy Adam which tries 7 ATTOM endpoints with the wrong address
+    # shape and returns 400 INPUT_INVALID_FORMAT — surfacing as the
+    # "fallback empty card" the user reported on May 4.
+    if intent == "lookup" and _has_street_address(q):
+        intent = "property_fact"
+        logger.info("Classifier override: lookup → property_fact (bare street address detected)")
+
     # 2c. Override: retail store name → force price_check
     # "paint sprayers at Home Depot" must route to product search, not vendor search.
     # Retail store names are a definitive signal: the user wants products/prices.
