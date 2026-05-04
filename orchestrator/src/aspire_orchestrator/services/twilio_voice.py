@@ -98,8 +98,18 @@ def parse_identity(identity: str) -> dict[str, str | None]:
     Returns {'suite_id': ..., 'user_id': ...} when the identity matches
     our format, or both keys None for foreign identities (we fail-closed
     in the webhook on those).
+
+    Twilio's voice webhook sends the SDK identity in the `From` field
+    with a `client:` prefix (e.g., `client:aspire-<suite>-<user>`).
+    We strip it before parsing so both the bare identity (used internally
+    when minting the token) and the wrapped form work.
     """
-    if not isinstance(identity, str) or not identity.startswith(_IDENTITY_PREFIX + "-"):
+    if not isinstance(identity, str):
+        return {"suite_id": None, "user_id": None}
+    # Twilio prefixes Voice SDK identities with `client:` in webhook params.
+    if identity.startswith("client:"):
+        identity = identity[len("client:"):]
+    if not identity.startswith(_IDENTITY_PREFIX + "-"):
         return {"suite_id": None, "user_id": None}
     parts = identity.split("-", 2)
     if len(parts) != 3:
