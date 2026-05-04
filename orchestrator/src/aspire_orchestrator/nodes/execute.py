@@ -586,8 +586,14 @@ async def execute_node(state: OrchestratorState) -> dict[str, Any]:
     execution_error_code: str | None = None
     execution_reason_code = "EXECUTED"
 
-    # 5b: Risk-tier based timeouts for tool execution
-    _TOOL_TIMEOUTS = {"green": 15.0, "yellow": 30.0, "red": 60.0}
+    # 5b: Risk-tier based timeouts for tool execution.
+    # GREEN bumped from 15s → 25s (May 4 2026) because Adam research playbooks
+    # legitimately take 8-12s when chaining multiple providers (Google Places
+    # nearest-store + SerpAPI HD + product enrichment, OR ATTOM auction city→
+    # geoIdV4 → 3× preforeclosure_details). 15s caused user-visible timeouts
+    # on long but successful research queries — 25s leaves desktop's 52s
+    # invoke timeout with comfortable margin while keeping read-only ops fast.
+    _TOOL_TIMEOUTS = {"green": 25.0, "yellow": 30.0, "red": 60.0}
     tool_timeout = _TOOL_TIMEOUTS.get(risk_tier_str.lower(), 30.0)
 
     # 5c: Auto-generate search query for n8n scheduled tasks that provide

@@ -244,12 +244,47 @@ async def execute_serpapi_homedepot_search(
             and (echo_store_id == "2414" or echo_delivery_zip == "04401")
         )
 
+        # Stronger detection (Wave 2.1): even when delivery_zip is passed,
+        # SerpAPI sometimes still ships Bangor inventory if store_id wasn't
+        # also pinned (the May-4 1:01PM transcript: zip=32303 FL but every
+        # pickup.store_name = "Bangor"). Detect mismatch when the requested
+        # zip is non-Maine (Maine = 039xx-049xx) but pickup.store_id=2414
+        # OR pickup.store_name="Bangor" appears on the majority of products.
+        product_pickup_poisoning = False
+        if requested_delivery_zip and raw_products:
+            zip_prefix = requested_delivery_zip[:2]
+            is_maine_zip = zip_prefix in ("03", "04")  # Maine ZIP range
+            if not is_maine_zip:
+                bangor_pickup_count = 0
+                checked = 0
+                for p in raw_products[:8]:  # sample top-8 to bound cost
+                    pickup_obj = p.get("pickup") if isinstance(p.get("pickup"), dict) else {}
+                    pickup_store_id = str(pickup_obj.get("store_id") or "").strip()
+                    pickup_store_name = str(pickup_obj.get("store_name") or "").strip()
+                    if pickup_store_id or pickup_store_name:
+                        checked += 1
+                        if pickup_store_id == "2414" or pickup_store_name.lower() == "bangor":
+                            bangor_pickup_count += 1
+                # If majority of pickup-bearing products say Bangor in a non-ME
+                # zip request, SerpAPI ignored our zip and shipped its default.
+                if checked >= 2 and bangor_pickup_count >= max(2, checked // 2):
+                    product_pickup_poisoning = True
+                    logger.warning(
+                        "SerpAPI HD pickup-poisoning detected: requested zip=%s but "
+                        "%d/%d products shipped Bangor pickup data — refusing response",
+                        requested_delivery_zip, bangor_pickup_count, checked,
+                    )
+
+        # Combined poisoning flag — playbook treats either signal as fatal.
+        default_store_fallback = default_store_fallback or product_pickup_poisoning
+
         store_info = {
             "store_id": returned_store_id,
             "store_name": returned_store_name,
             "requested_store_id": requested_store_id,
             "requested_delivery_zip": requested_delivery_zip,
             "default_store_fallback": default_store_fallback,
+            "pickup_poisoning": product_pickup_poisoning,
         }
         def _pick_image(product: dict[str, Any]) -> str:
             def _extract(value: Any) -> str:

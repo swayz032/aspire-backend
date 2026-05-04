@@ -940,7 +940,18 @@ async def execute_tool_material_price_check(
             # (or "South Loop" depending on SerpAPI's whim) regardless of where
             # the user actually is. We REFUSE these results — Ava asks the user
             # to clarify location instead of shipping cards anchored to Maine.
-            if serpapi_store.get("default_store_fallback"):
+            #
+            # Two flavors:
+            #   1. default_store_fallback (no zip + no store_id passed at all)
+            #      = TRUE poisoning, no usable store identity → refuse entirely.
+            #   2. pickup_poisoning (zip was passed but products still ship
+            #      Bangor pickup data) = the products are valid for delivery,
+            #      but in-store inventory data is wrong → strip pickup, keep
+            #      products with "free ship to store" path.
+            true_poisoning = bool(serpapi_store.get("default_store_fallback")) and not bool(serpapi_store.get("pickup_poisoning"))
+            pickup_only_poisoning = bool(serpapi_store.get("pickup_poisoning"))
+
+            if true_poisoning:
                 logger.warning(
                     "TOOL_MATERIAL_PRICE_CHECK: SerpAPI default-fallback (Bangor) "
                     "detected on attempt=%s — refusing results, query=%r will be "
@@ -951,6 +962,27 @@ async def execute_tool_material_price_check(
                 # Treat as if the call failed — let the loop break out to the
                 # store_unresolved decision flag below.
                 continue
+
+            if pickup_only_poisoning:
+                logger.warning(
+                    "TOOL_MATERIAL_PRICE_CHECK: pickup-data poisoning on attempt=%s "
+                    "(zip=%s honored but pickup ships Bangor) — stripping per-product "
+                    "fulfillment_pickup so cards show 'free ship to store' instead of "
+                    "lying about Bangor inventory",
+                    attempt_idx, zip_code,
+                )
+                providers_called.append("serpapi_home_depot_pickup_poisoned")
+                # Strip pickup data from each raw product BEFORE normalization.
+                # Products keep title/price/rating/delivery — just no false
+                # "11 in stock at Bangor" claim.
+                for raw_p in hd_result.data.get("results", []):
+                    pickup_obj = raw_p.get("pickup") if isinstance(raw_p.get("pickup"), dict) else {}
+                    if pickup_obj:
+                        # Preserve free_ship_to_store flag (location-agnostic).
+                        keep = {}
+                        if pickup_obj.get("free_ship_to_store"):
+                            keep["free_ship_to_store"] = True
+                        raw_p["pickup"] = keep
 
             if serpapi_store.get("store_name"):
                 hd_store_info["store_name"] = serpapi_store["store_name"]
