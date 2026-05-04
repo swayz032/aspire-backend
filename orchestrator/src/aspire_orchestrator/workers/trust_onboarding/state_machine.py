@@ -59,6 +59,7 @@ from typing import Any, Final
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.providers import twilio_trust_hub as thub
 from aspire_orchestrator.providers.twilio_trust_hub import TrustHubError
+from aspire_orchestrator.services.resilience import RetryableError
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_rpc,
@@ -1310,10 +1311,23 @@ async def _transition_number_attached(
     *,
     worker_job_id: str | None,
 ) -> dict[str, Any]:
-    """number_attached → branded_calling_pending (flag) OR terminal HALT.
+    """number_attached → branded_calling_pending (W6) OR terminal HALT.
 
-    W6 scope: if BRANDED_CALLING_ENABLED=false (default), log and halt.
-    The W6 author enables this branch; state machine returns outcome="halted".
+    Behavior:
+      - settings.branded_calling_enabled = False (default): terminal halt at
+        `number_attached`. The tenant's CNAM is live; this is the successful
+        end-state until P1 preflight clears Twilio Branded Calling beta.
+      - settings.branded_calling_enabled = True: enroll the Customer Profile
+        in Branded Calling via thub.enroll_branded_calling, persist the
+        enrollment SID, advance to `branded_calling_pending`, cut
+        branded_calling_enrolled receipt. Twilio's status callback
+        eventually fires branded-calling-approved → branded_calling_live
+        OR branded-calling-rejected → failed (W5 status_callback handles
+        both via the W6 dispatch entries).
+
+    Idempotency: if `twilio_branded_calling_sid` is already populated, skip
+    Twilio call (treats this as a worker-restart resume) and just advance
+    state. Same pattern as W11 number-swap step idempotency.
     """
     trust_profile_id = str(trust_profile["id"])
     from_state = "number_attached"
@@ -1324,8 +1338,6 @@ async def _transition_number_attached(
             "BRANDED_CALLING_ENABLED is false; halting at number_attached (W6 scope)",
             trust_profile_id,
         )
-        # This is a normal terminal halt — no failure, no receipt needed.
-        # The tenant's CNAM is live; this is the successful end-state until W6.
         return {
             "trust_profile_id": trust_profile_id,
             "from_state": from_state,
@@ -1334,26 +1346,105 @@ async def _transition_number_attached(
             "receipt_id": None,
         }
 
-    # W6 stub — when flag is enabled, advance to branded_calling_pending.
-    # The actual Branded Calling enrollment API call is W6 scope.
-    logger.info(
-        "state_machine branded_calling_pending trust_profile_id=%s — "
-        "BRANDED_CALLING_ENABLED=true but enrollment is W6 scope (not yet implemented); halting",
-        trust_profile_id,
-    )
+    profile_sid = trust_profile.get("twilio_secondary_profile_sid", "")
+    if not profile_sid:
+        return await _fail(
+            trust_profile, from_state=from_state,
+            reason_code="MISSING_PROFILE_SID",
+            reason_message=(
+                "twilio_secondary_profile_sid is required for Branded Calling enrollment."
+            ),
+            worker_job_id=worker_job_id,
+        )
+
+    existing_enrollment_sid = trust_profile.get("twilio_branded_calling_sid", "")
+
+    if existing_enrollment_sid:
+        # Idempotent resume: enrollment already submitted, just advance state.
+        logger.info(
+            "state_machine branded_calling_idempotent_resume trust_profile_id=%s sid=%s",
+            trust_profile_id, existing_enrollment_sid,
+        )
+        enrollment_sid = str(existing_enrollment_sid)
+    else:
+        idem_key = f"enroll-branded-calling-{trust_profile_id}"
+        try:
+            result = await thub.enroll_branded_calling(
+                customer_profile_sid=profile_sid,
+                brand_logo_url=trust_profile.get("brand_logo_url"),
+                idempotency_key=idem_key,
+            )
+        except TrustHubError as exc:
+            # Law #10: a 5xx / 429 from Twilio is transient — surface as
+            # RetryableError so ARQ retries the job. Permanent 4xx errors
+            # (4xx other than 429) terminate at `failed` with a receipt.
+            if exc.status_code == 429 or 500 <= exc.status_code < 600:
+                raise RetryableError(
+                    "BRANDED_CALLING_TRANSIENT",
+                    f"Branded Calling transient {exc.status_code}: {exc}",
+                ) from exc
+            return await _fail(
+                trust_profile, from_state=from_state,
+                reason_code="BRANDED_CALLING_ENROLL_FAILED",
+                reason_message=str(exc),
+                worker_job_id=worker_job_id,
+            )
+        # RetryableError from inner _resilient_post also propagates — Law #10.
+
+        enrollment_sid = str(result.get("sid", ""))
+        if not enrollment_sid:
+            return await _fail(
+                trust_profile, from_state=from_state,
+                reason_code="BRANDED_CALLING_NO_SID",
+                reason_message="Branded Calling enrollment returned no SID.",
+                worker_job_id=worker_job_id,
+            )
+
     try:
         await _update_trust_profile(trust_profile_id, {
             "trust_state": "branded_calling_pending",
+            "twilio_branded_calling_sid": enrollment_sid,
         })
-    except SupabaseClientError:
-        pass  # Non-fatal — the W6 author will complete this.
+    except SupabaseClientError as exc:
+        return await _fail(
+            trust_profile, from_state=from_state,
+            reason_code="DB_UPDATE_FAILED",
+            reason_message=str(exc),
+            worker_job_id=worker_job_id,
+        )
+
+    receipt_id: str | None = None
+    try:
+        receipt_id = await cut_trust_receipt(
+            receipt_type="branded_calling_enrolled",
+            trust_profile=trust_profile,
+            outcome="success",
+            from_state=from_state,
+            to_state="branded_calling_pending",
+            twilio_resource_sid=enrollment_sid,
+            twilio_status="pending",
+            worker_job_id=worker_job_id,
+            redacted_inputs={
+                "trust_profile_id": trust_profile_id,
+                "step_name": "branded_calling_enrollment",
+            },
+            redacted_outputs={
+                "twilio_resource_sid": enrollment_sid,
+                "twilio_status": "pending",
+            },
+        )
+    except TrustReceiptError as exc:
+        logger.error(
+            "state_machine branded_calling_receipt_cut_failed trust_profile_id=%s err=%s",
+            trust_profile_id, exc,
+        )
 
     return {
         "trust_profile_id": trust_profile_id,
         "from_state": from_state,
         "to_state": "branded_calling_pending",
-        "outcome": "halted",
-        "receipt_id": None,
+        "outcome": "success",
+        "receipt_id": receipt_id,
     }
 
 

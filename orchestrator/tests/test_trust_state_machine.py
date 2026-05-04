@@ -1227,20 +1227,29 @@ class TestNumberAttached:
 
     @pytest.mark.asyncio
     async def test_branded_calling_enabled_advances_to_pending(self) -> None:
+        # W6 ship: enrollment is real (not a stub anymore). Profile must
+        # carry twilio_secondary_profile_sid; thub.enroll_branded_calling
+        # is mocked to return a SID; outcome="success" (no longer "halted").
         profile = _base_profile(trust_state="number_attached")
+        profile["twilio_secondary_profile_sid"] = "BPaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         select_responses = [[profile]]
 
         with patch("aspire_orchestrator.workers.trust_onboarding.state_machine.supabase_select",
                    new=AsyncMock(side_effect=select_responses)), \
              patch("aspire_orchestrator.workers.trust_onboarding.state_machine.supabase_update",
                    new=AsyncMock(return_value={})), \
+             patch("aspire_orchestrator.workers.trust_onboarding.state_machine.thub.enroll_branded_calling",
+                   new=AsyncMock(return_value={"sid": "BCaaaabbbbccccddddeeeeffffabcdef12"})), \
+             patch("aspire_orchestrator.workers.trust_onboarding.state_machine.cut_trust_receipt",
+                   new=AsyncMock(return_value="receipt-bc-001")), \
              patch("aspire_orchestrator.workers.trust_onboarding.state_machine.settings") as s_mock:
             s_mock.branded_calling_enabled = True
             from aspire_orchestrator.workers.trust_onboarding.state_machine import advance_trust_state
             result = await advance_trust_state(TRUST_PROFILE_ID, worker_job_id=WORKER_JOB_ID)
 
-        assert result["outcome"] == "halted"
+        assert result["outcome"] == "success"
         assert result["to_state"] == "branded_calling_pending"
+        assert result["receipt_id"] == "receipt-bc-001"
 
 
 # ============================================================================

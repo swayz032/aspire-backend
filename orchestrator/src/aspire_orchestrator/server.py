@@ -127,6 +127,7 @@ from aspire_orchestrator.routes.trust_hub import (
     router as trust_hub_router,
 )
 from aspire_orchestrator.routes.twilio_swap import router as twilio_swap_router
+from aspire_orchestrator.routes.admin_trust import router as admin_trust_router  # W10
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -300,6 +301,7 @@ app.include_router(messages_router)     # /v1/messages/*  — Pass 19 Lane E1
 app.include_router(calls_router)        # /v1/calls/*     — Pass 19 Lane B
 app.include_router(trust_hub_router)    # /v1/trust-hub/* — Wave 3 KYB intake
 app.include_router(twilio_swap_router) # /v1/twilio/swap-number — Wave 11 number swap
+app.include_router(admin_trust_router) # /v1/admin/trust-hub/* — Wave 10 admin batch backfill
 # Wave 3: redact PII (EIN/DOB/SSN/email/phone) from 422 validation errors on
 # /v1/trust-hub/* paths (security-reviewer R-003). FastAPI's default 422
 # response echoes the offending input back to the client; for PII fields

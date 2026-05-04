@@ -996,6 +996,7 @@ async def status_callback(
             "twilio_secondary_profile_sid",
             "twilio_shaken_bundle_sid",
             "twilio_cnam_bundle_sid",
+            "twilio_branded_calling_sid",  # W6 — Branded Calling enrollment SID
         ):
             try:
                 rows = await supabase_select(
@@ -1039,6 +1040,10 @@ async def status_callback(
         "twilio_secondary_profile_sid": "profile",
         "twilio_shaken_bundle_sid": "shaken",
         "twilio_cnam_bundle_sid": "cnam",
+        # W6 — Branded Calling enrollment SID (only populated when
+        # branded_calling_enabled=True AND state machine reaches the
+        # `_transition_number_attached` enrollment step).
+        "twilio_branded_calling_sid": "branded_calling",
     }
     bundle_type: str = _COLUMN_TO_BUNDLE.get(matched_sid_column or "", "unknown")
 
@@ -1061,6 +1066,11 @@ async def status_callback(
             ("shaken", False): "failed",   # SHAKEN rejection is rare and terminal
             ("cnam", True): "cnam_approved",
             ("cnam", False): "failed",     # CNAM display-name rejection; tenant can dispute
+            # W6 — Branded Calling: approval lights up `branded_calling_live`,
+            # rejection terminates at `failed`. Tenants can re-enroll via the
+            # admin endpoint after Twilio resolves the rejection reason.
+            ("branded_calling", True): "branded_calling_live",
+            ("branded_calling", False): "failed",
         }
         new_state = _STATE_MAP.get((bundle_type, is_approved))
     else:
@@ -1122,6 +1132,7 @@ async def status_callback(
         "cnam_approved": 9,
         "number_attached": 10,
         "branded_calling_pending": 11,
+        "branded_calling_live": 12,  # W6 — terminal happy state when feature flag is on
         "failed": 99,
         "suspended": 99,
     }
@@ -1150,6 +1161,9 @@ async def status_callback(
         ("shaken", False): "shaken_trust_product_rejected",
         ("cnam", True): "cnam_trust_product_approved",
         ("cnam", False): "cnam_trust_product_rejected",
+        # W6 — Branded Calling status callback receipts
+        ("branded_calling", True): "branded_calling_approved",
+        ("branded_calling", False): "branded_calling_rejected",
     }
     receipt_type: str = _RECEIPT_MAP[(bundle_type, is_approved)]
 
@@ -1178,6 +1192,11 @@ async def status_callback(
             update_payload["profile_approved_at"] = datetime.now(timezone.utc).isoformat()
         elif is_approved and bundle_type == "cnam":
             update_payload["cnam_approved_at"] = datetime.now(timezone.utc).isoformat()
+        elif is_approved and bundle_type == "branded_calling":
+            # W6 — flip the feature flag on the trust profile so GET /status
+            # surfaces branded_calling_live=true in the milestones response.
+            # The display name itself was set during enrollment.
+            update_payload["branded_calling_enabled"] = True
         # F-11: `shaken_approved_at` column does not exist in migration 109.
         # The shaken_approved milestone is derived from `trust_state` rank
         # in GET /status; do NOT attempt to write it here.

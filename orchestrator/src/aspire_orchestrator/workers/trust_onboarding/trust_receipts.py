@@ -41,6 +41,15 @@ Receipt types (Yellow tier, hash-chained):
         phone_number_released
         number_swap_complete
 
+    Backfill (W10, 3):
+        number_detached_from_shared_profile
+        backfill_complete
+        manual_state_override
+
+    Wave 9 — reputation + CNAM change (2):
+        carrier_reputation_updated
+        cnam_display_name_change_requested
+
 PII redaction enforcement (Law #9 + W1 verification mandate R-006):
     Allowed in `redacted_inputs`:  suite_id, trust_profile_id, step_name,
                                    phone_number_id, rep_index, brand_id,
@@ -111,6 +120,8 @@ RECEIPT_TYPES: Final[frozenset[str]] = frozenset({
     "cnam_trust_product_approved",
     "cnam_trust_product_rejected",
     "branded_calling_enrolled",
+    "branded_calling_approved",
+    "branded_calling_rejected",
     "number_attached_to_profile",
     "caller_id_lookup_enabled",
     # A2P 10DLC (W7)
@@ -123,6 +134,13 @@ RECEIPT_TYPES: Final[frozenset[str]] = frozenset({
     "front_desk_phone_switched",
     "phone_number_released",
     "number_swap_complete",
+    # Wave 10 — admin backfill (existing-tenant migration to per-tenant bundles)
+    "number_detached_from_shared_profile",
+    "backfill_complete",
+    "manual_state_override",
+    # Wave 9 — reputation polling + CNAM display-name change
+    "carrier_reputation_updated",
+    "cnam_display_name_change_requested",
     # Webhook ingestion (Wave 3 skeleton + Wave 5 dispatch)
     "webhook_received",
     "webhook_processing_failed",

@@ -197,6 +197,64 @@ async def advance_number_swap(ctx: dict[str, Any], swap_job_id: str) -> dict[str
         raise
 
 
+async def advance_backfill(ctx: dict[str, Any], suite_id: str) -> dict[str, Any]:
+    """Advance one tenant's W10 backfill flow by exactly ONE logical tick.
+
+    Args:
+        ctx: ARQ context dict — contains 'job_id', 'job_try', 'redis', etc.
+        suite_id: UUID of the tenant's suite_profiles row.
+
+    Returns:
+        {
+            "suite_id": "...",
+            "trust_profile_id": "..." | None,
+            "from_state": "...",
+            "to_state": "...",
+            "outcome": "success" | "halted" | "failed",
+            "step": "...",
+            "receipt_id": "..." | None,
+        }
+
+    The state machine itself lives in
+    workers.trust_onboarding.backfill_state_machine. This function is
+    just the ARQ-job wrapper.
+
+    Failure handling (Law #10):
+        RetryableError is re-raised so ARQ retries with backoff.
+        Other exceptions are re-raised so ARQ records failure.
+        BackfillAbortError is converted to outcome=failed inside the
+        state machine itself (never propagates here).
+    """
+    from aspire_orchestrator.workers.trust_onboarding.backfill_state_machine import (
+        advance_backfill as advance_impl,
+    )
+
+    job_id = ctx.get("job_id", "<unknown>")
+    job_try = ctx.get("job_try", 1)
+    logger.info(
+        "backfill_advance start suite_id=%s job_id=%s try=%d",
+        suite_id, job_id, job_try,
+    )
+    try:
+        result = await advance_impl(suite_id=suite_id, worker_job_id=job_id)
+        logger.info(
+            "backfill_advance done suite_id=%s from=%s to=%s outcome=%s step=%s",
+            suite_id,
+            result.get("from_state"),
+            result.get("to_state"),
+            result.get("outcome"),
+            result.get("step"),
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001 — last-resort logging
+        logger.error(
+            "backfill_advance unhandled suite_id=%s job_id=%s err=%s",
+            suite_id, job_id, exc,
+            exc_info=True,
+        )
+        raise
+
+
 async def poll_trust_status_for_tenants(ctx: dict[str, Any]) -> dict[str, Any]:
     """Cron job (W9) — every 6h, poll Twilio for tenants stuck in *_submitted.
 
@@ -208,6 +266,83 @@ async def poll_trust_status_for_tenants(ctx: dict[str, Any]) -> dict[str, Any]:
     )
 
     return await poll_impl()
+
+
+async def poll_carrier_reputation(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Cron job (W9) — every 6h, poll Twilio Branded Calling for spam-flagging.
+
+    Feature-gated by ``settings.branded_calling_enabled``. When the flag is
+    off (default) this is a no-op stub; when on it pulls per-carrier
+    reputation scores and cuts a receipt on change.
+    """
+    from aspire_orchestrator.workers.trust_onboarding.cron_jobs import (
+        poll_carrier_reputation as poll_impl,
+    )
+
+    return await poll_impl()
+
+
+async def enqueue_cnam_display_name_changes(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Cron job (W9) — hourly, enqueue ARQ jobs for pending CNAM name changes.
+
+    Validates the 30-day cooldown server-side. Rows that miss the cooldown
+    are flipped to status='cooldown_pending' for the next hour's run.
+    """
+    from aspire_orchestrator.workers.trust_onboarding.cron_jobs import (
+        enqueue_cnam_display_name_changes as enqueue_impl,
+    )
+
+    return await enqueue_impl()
+
+
+async def apply_cnam_display_name_change(
+    ctx: dict[str, Any], request_id: str,
+) -> dict[str, Any]:
+    """ARQ job (W9) — apply a single CNAM display-name change end-to-end.
+
+    Args:
+        ctx: ARQ context dict.
+        request_id: UUID of the tenant_cnam_change_requests row.
+
+    Returns:
+        {
+            "request_id": str,
+            "outcome": "success" | "failed",
+            "reason_code": str | None,
+            "receipt_id": str | None,
+            "sanitized_display_name": str | None,
+        }
+
+    RetryableError is re-raised on Twilio 5xx/429 so ARQ applies its
+    exponential backoff (Law #10). Non-retryable errors mark the
+    tenant_cnam_change_requests row failed and return a structured dict.
+    """
+    from aspire_orchestrator.workers.trust_onboarding.cron_jobs import (
+        apply_cnam_display_name_change as apply_impl,
+    )
+
+    job_id = ctx.get("job_id", "<unknown>")
+    job_try = ctx.get("job_try", 1)
+    logger.info(
+        "apply_cnam_change start request_id=%s job_id=%s try=%d",
+        request_id, job_id, job_try,
+    )
+    try:
+        result = await apply_impl(request_id=request_id)
+        logger.info(
+            "apply_cnam_change done request_id=%s outcome=%s reason=%s",
+            request_id,
+            result.get("outcome"),
+            result.get("reason_code") or "<none>",
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001 — last-resort logging
+        logger.error(
+            "apply_cnam_change unhandled request_id=%s job_id=%s err=%s",
+            request_id, job_id, exc,
+            exc_info=True,
+        )
+        raise
 
 
 async def retry_failed_trust_onboardings(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -247,12 +382,53 @@ class WorkerSettings:
     functions = [
         advance_trust_state,
         advance_a2p_registration,
-        advance_number_swap,  # W11 — number swap
+        advance_number_swap,             # W11 — number swap
+        advance_backfill,                # W10 — admin batch backfill
+        apply_cnam_display_name_change,  # W9  — CNAM display-name change
     ]
 
-    # Cron jobs (W9 — these become active when cron_jobs.py ships).
-    # Registered now so the worker doesn't need a redeploy when W9 lands.
-    cron_jobs: list[Any] = []  # populated dynamically when ARQ is available — see below
+    # Cron jobs (W9). Registered lazily because ARQ's `cron` helper must be
+    # importable at class-evaluation time; the lazy property defers import
+    # until the worker actually starts so unit tests that import this module
+    # don't require ARQ to be installed.
+    @staticmethod
+    def _build_cron_jobs() -> list[Any]:
+        try:
+            from arq import cron  # type: ignore[import-not-found]
+        except ImportError:
+            return []
+        return [
+            # Reconcile stuck *_submitted tenants every 6 hours (00:00, 06:00, 12:00, 18:00 UTC).
+            cron(
+                poll_trust_status_for_tenants,
+                hour={0, 6, 12, 18},
+                minute=5,
+                run_at_startup=False,
+            ),
+            # Carrier reputation polling every 6 hours, offset 15 min from
+            # the trust-status cron so we don't hammer Twilio at the same instant.
+            cron(
+                poll_carrier_reputation,
+                hour={0, 6, 12, 18},
+                minute=20,
+                run_at_startup=False,
+            ),
+            # CNAM display-name change enqueue runs every hour at minute 35.
+            cron(
+                enqueue_cnam_display_name_changes,
+                minute=35,
+                run_at_startup=False,
+            ),
+            # Failed-state retry once per day at 04:45 UTC.
+            cron(
+                retry_failed_trust_onboardings,
+                hour=4,
+                minute=45,
+                run_at_startup=False,
+            ),
+        ]
+
+    cron_jobs: list[Any] = []  # populated by on_startup via _build_cron_jobs
 
     # Redis connection — same Redis as the FastAPI app.
     @staticmethod
@@ -285,8 +461,16 @@ class WorkerSettings:
     # Lifecycle hooks
     @staticmethod
     async def on_startup(ctx: dict[str, Any]) -> None:
-        """Pre-warm the Trust Hub policy SID cache so the first job doesn't pay it."""
+        """Pre-warm the Trust Hub policy SID cache so the first job doesn't pay it.
+
+        Also lazily resolves the W9 cron jobs — class-level resolution would
+        require ARQ at import time, which breaks unit-test imports.
+        """
         from aspire_orchestrator.providers import twilio_trust_hub as thub
+
+        # W9 — populate cron_jobs at startup (class attr is empty placeholder).
+        if not WorkerSettings.cron_jobs:
+            WorkerSettings.cron_jobs = WorkerSettings._build_cron_jobs()
 
         try:
             await thub.fetch_secondary_profile_policy_sid()
@@ -305,7 +489,12 @@ class WorkerSettings:
 __all__ = [
     "advance_trust_state",
     "advance_a2p_registration",
+    "advance_number_swap",
+    "advance_backfill",
+    "apply_cnam_display_name_change",
     "poll_trust_status_for_tenants",
+    "poll_carrier_reputation",
+    "enqueue_cnam_display_name_changes",
     "retry_failed_trust_onboardings",
     "WorkerSettings",
 ]

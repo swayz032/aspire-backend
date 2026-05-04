@@ -100,7 +100,30 @@ class Settings(BaseSettings):
     # Railway env: ASPIRE_REDIS_URL=redis://ava-redis:6379 (P5 preflight, already populated).
     redis_url: str = "redis://localhost:6379"       # ASPIRE_REDIS_URL
     # Branded Calling feature flag (W6 — gated on Twilio private-beta access). Default OFF.
+    # Flip to True only after P1 preflight (Twilio account-manager call to
+    # request beta access) AND populating the two URL/key env vars below.
     branded_calling_enabled: bool = False           # ASPIRE_BRANDED_CALLING_ENABLED
+    # W6 — Branded Calling API URL (private-beta endpoint). Required when
+    # branded_calling_enabled=True; the state machine fail-closes with
+    # BRANDED_CALLING_NOT_CONFIGURED if the flag is on but this is empty.
+    branded_calling_api_url: str | None = None      # ASPIRE_BRANDED_CALLING_API_URL
+    # W6 — Branded Calling API key. Separate from main twilio_auth_token
+    # because Branded Calling lives on a different Twilio API surface with
+    # its own credentialed access during private beta.
+    branded_calling_api_key: str | None = None      # ASPIRE_BRANDED_CALLING_API_KEY
+    # Wave 10 — backfill of existing tenants from the SHARED master SHAKEN
+    # bundle to per-tenant SHAKEN/CNAM. Setting this env var is REQUIRED to
+    # run a backfill — fail-closed if unset (Law #3). The backfill state
+    # machine reads it to discover the channel-endpoint-assignment SID for
+    # the tenant's number on the shared bundle, then DELETEs the assignment
+    # AFTER per-tenant SHAKEN reaches `twilio-approved`.
+    twilio_shared_shaken_bundle_sid: str = ""       # ASPIRE_TWILIO_SHARED_SHAKEN_BUNDLE_SID
+    # Wave 10 — admin API key (Bearer token) for ops-only routes. Single
+    # shared key, constant-time compared. Separate from
+    # ASPIRE_ADMIN_JWT_SECRET (which is used for the longer-lived admin
+    # JWT). Used by W10 admin batch backfill route as a simpler alternative
+    # when JWT mint isn't wired.
+    admin_api_key: str = ""                         # ASPIRE_ADMIN_API_KEY
     pandadoc_api_key: str = ""
     pandadoc_webhook_secret: str = ""
     stripe_webhook_secret: str = ""

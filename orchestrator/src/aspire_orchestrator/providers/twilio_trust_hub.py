@@ -610,6 +610,54 @@ async def create_end_user(
     return result
 
 
+async def update_end_user(
+    end_user_sid: str,
+    *,
+    attributes: dict[str, Any],
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Mutate an EndUser's attributes in Twilio Trust Hub.
+
+    POST /v1/TrustHub/EndUsers/{Sid}
+
+    Used by W9 CNAM display-name change flow: when a tenant renames their
+    business, we update the cnam_information EndUser's `cnam_display_name`
+    attribute and re-submit the CNAM Trust Product. The EndUser SID is
+    persisted on tenant_trust_profiles.cnam_end_user_sid (W4/W5).
+
+    Twilio expects Attributes as a JSON-encoded string in form-encoded
+    body, mirroring create_end_user. Idempotency-Key prevents duplicate
+    work on ARQ retry.
+
+    Law #9: attributes are NOT logged. Only the SID + attribute keys are
+    captured in the structured log line.
+    """
+    account_sid, auth_token = _twilio_auth()
+    url = f"{_TRUST_HUB_BASE}/TrustHub/EndUsers/{end_user_sid}"
+
+    import json as _json
+    payload: dict[str, Any] = {
+        "Attributes": _json.dumps(attributes),
+    }
+
+    logger.info(
+        "trust_hub update_end_user sid=%s attribute_keys=%s",
+        end_user_sid,
+        sorted(attributes.keys()),
+    )
+
+    try:
+        result = await _resilient_post(account_sid, auth_token, url, payload, idempotency_key)
+    except CircuitOpenError as ce:
+        raise TrustHubError(
+            "TWILIO_CIRCUIT_OPEN",
+            f"Twilio is degraded — update_end_user rejected ({ce})",
+            503,
+        ) from ce
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Entity assignments
 # ---------------------------------------------------------------------------
@@ -1356,6 +1404,121 @@ async def create_a2p_campaign(
 
 
 # ---------------------------------------------------------------------------
+# W6 — Branded Calling (private-beta gated)
+# ---------------------------------------------------------------------------
+#
+# Branded Calling is on a separate Twilio API surface from Trust Hub. During
+# private beta the URL + key are issued per-account by the Twilio account
+# manager (P1 preflight). When `settings.branded_calling_enabled=False`
+# (default) these helpers are unreachable. When True but the URL/key are
+# unset, both fail-close with BRANDED_CALLING_NOT_CONFIGURED — Law #3.
+
+
+async def enroll_branded_calling(
+    *,
+    customer_profile_sid: str,
+    brand_logo_url: str | None,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Enroll a tenant's Customer Profile in Twilio Branded Calling.
+
+    POST {settings.branded_calling_api_url}/Enrollments
+
+    Returns the enrollment record (includes the enrollment SID we persist
+    in tenant_trust_profiles.twilio_branded_calling_sid). Twilio's status
+    callback fires `branded-calling-approved` / `branded-calling-rejected`
+    against the same status_callback URL we already wired in W5.
+
+    Law #3: fail-closed when not configured. The state-machine caller is
+    expected to short-circuit on `not settings.branded_calling_enabled`
+    BEFORE invoking this helper; this guard is the defense-in-depth.
+    """
+    if not settings.branded_calling_api_url or not settings.branded_calling_api_key:
+        raise TrustHubError(
+            "BRANDED_CALLING_NOT_CONFIGURED",
+            "Branded Calling private-beta endpoint or API key not set; "
+            "configure ASPIRE_BRANDED_CALLING_API_URL + "
+            "ASPIRE_BRANDED_CALLING_API_KEY before flipping the feature flag.",
+            503,
+        )
+
+    url = f"{settings.branded_calling_api_url.rstrip('/')}/Enrollments"
+    payload: dict[str, Any] = {"CustomerProfileSid": customer_profile_sid}
+    if brand_logo_url:
+        payload["BrandLogoUrl"] = brand_logo_url
+
+    headers: dict[str, str] = {
+        "Idempotency-Key": idempotency_key,
+        "Authorization": f"Bearer {settings.branded_calling_api_key}",
+    }
+
+    logger.info(
+        "trust_hub enroll_branded_calling profile=%s logo_set=%s",
+        customer_profile_sid,
+        bool(brand_logo_url),
+    )
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        try:
+            resp = await client.post(url, data=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            raise RetryableError(
+                "BRANDED_CALLING_TRANSIENT",
+                f"Branded Calling network error: {exc}",
+            ) from exc
+
+    if resp.status_code >= 400:
+        if _is_retryable_twilio_status(resp.status_code):
+            raise RetryableError(
+                "BRANDED_CALLING_TRANSIENT",
+                f"Branded Calling POST transient {resp.status_code}",
+            )
+        _raise_trust_hub_error("enroll_branded_calling", resp)
+
+    return resp.json()
+
+
+async def fetch_branded_calling_status(enrollment_sid: str) -> dict[str, Any]:
+    """Poll Branded Calling enrollment status.
+
+    GET {settings.branded_calling_api_url}/Enrollments/{Sid}
+
+    Used by W9 reputation polling cron to reconcile stuck-state enrollments
+    (same pattern as fetch_customer_profile_status).
+    """
+    if not settings.branded_calling_api_url or not settings.branded_calling_api_key:
+        raise TrustHubError(
+            "BRANDED_CALLING_NOT_CONFIGURED",
+            "Branded Calling endpoint not configured; cannot fetch status.",
+            503,
+        )
+
+    url = f"{settings.branded_calling_api_url.rstrip('/')}/Enrollments/{enrollment_sid}"
+    headers: dict[str, str] = {
+        "Authorization": f"Bearer {settings.branded_calling_api_key}",
+    }
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        try:
+            resp = await client.get(url, headers=headers)
+        except httpx.HTTPError as exc:
+            raise RetryableError(
+                "BRANDED_CALLING_TRANSIENT",
+                f"Branded Calling GET network error: {exc}",
+            ) from exc
+
+    if resp.status_code >= 400:
+        if _is_retryable_twilio_status(resp.status_code):
+            raise RetryableError(
+                "BRANDED_CALLING_TRANSIENT",
+                f"Branded Calling GET transient {resp.status_code}",
+            )
+        _raise_trust_hub_error("fetch_branded_calling_status", resp)
+
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # Public API surface
 # ---------------------------------------------------------------------------
 
@@ -1373,6 +1536,7 @@ __all__ = [
     "fetch_customer_profile_status",
     # End Users
     "create_end_user",
+    "update_end_user",
     # Entity assignments
     "assign_entity_to_profile",
     "assign_entity_to_trust_product",
@@ -1397,6 +1561,9 @@ __all__ = [
     "create_messaging_service",
     "add_phone_to_messaging_service",
     "create_a2p_campaign",
+    # W6 — Branded Calling (private-beta gated)
+    "enroll_branded_calling",
+    "fetch_branded_calling_status",
     # Policy cache (exposed for test injection)
     "_POLICY_CACHE",
     "_CNAM_POLICY_SID_KNOWN",
