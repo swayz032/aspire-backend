@@ -512,17 +512,17 @@ class TestFetchProfileSuiteProfiles:
             return []
 
         with patch.object(_sarah, "_safe_select", new=AsyncMock(side_effect=_fake_select)):
-            biz, first, last, industry, tz, vm = asyncio.run(
+            p = asyncio.run(
                 _sarah._fetch_profile(
                     suite_id=SUITE_ID, office_id=OFFICE_ID, tenant_id=TENANT_ID
                 )
             )
-        assert biz == "Scott Painting Services"
-        assert first == "Tonio"
-        assert last == "Scott"
-        assert industry == "painting"
-        assert tz == "America/Los_Angeles"
-        assert vm == "tonio@example.com"
+        assert p["business_name"] == "Scott Painting Services"
+        assert p["first_name"] == "Tonio"
+        assert p["last_name"] == "Scott"
+        assert p["industry"] == "painting"
+        assert p["timezone"] == "America/Los_Angeles"
+        assert p["voicemail_email"] == "tonio@example.com"
 
     def test_owner_name_single_word_no_last(self) -> None:
         import asyncio
@@ -538,27 +538,27 @@ class TestFetchProfileSuiteProfiles:
             return []
 
         with patch.object(_sarah, "_safe_select", new=AsyncMock(side_effect=_fake_select)):
-            _, first, last, *_ = asyncio.run(
+            p = asyncio.run(
                 _sarah._fetch_profile(
                     suite_id=SUITE_ID, office_id=OFFICE_ID, tenant_id=TENANT_ID
                 )
             )
-        assert first == "Cher"
-        assert last == ""
+        assert p["first_name"] == "Cher"
+        assert p["last_name"] == ""
 
     def test_missing_suite_profile_returns_safe_defaults(self) -> None:
         import asyncio
         from aspire_orchestrator.routes import sarah as _sarah
 
         with patch.object(_sarah, "_safe_select", new=AsyncMock(return_value=[])):
-            biz, first, last, industry, tz, vm = asyncio.run(
+            p = asyncio.run(
                 _sarah._fetch_profile(
                     suite_id=SUITE_ID, office_id=OFFICE_ID, tenant_id=TENANT_ID
                 )
             )
-        assert biz == "your business"
-        assert first == ""
-        assert last == ""
-        assert industry == "professional_services"
-        assert tz == "America/New_York"
-        assert vm == ""
+        assert p["business_name"] == "your business"
+        assert p["first_name"] == ""
+        assert p["last_name"] == ""
+        assert p["industry"] == "professional_services"
+        assert p["timezone"] == "America/New_York"
+        assert p["voicemail_email"] == ""

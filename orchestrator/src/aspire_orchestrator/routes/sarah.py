@@ -153,6 +153,16 @@ _DEFAULT_DYN_VARS: dict[str, Any] = {
     "first_name": "",
     "last_name": "",
     "industry": "professional_services",
+    # Sub-category within `industry`. For "Construction & Trades" this might be
+    # "Painting", "Plumbing", "HVAC", etc. Sourced from
+    # suite_profiles.industry_specialty. Drives Sarah's specialty roleplay so
+    # she sounds like a paint-shop receptionist, not a generic trades dispatcher.
+    "industry_specialty": "",
+    # City + state + owner_title surface so Sarah can say things like
+    # "Yes, we serve the Tallahassee area" or "Scott is the owner".
+    "business_city": "",
+    "business_state": "",
+    "owner_title": "Owner",
     "time_of_day": "morning",
     "is_open_now": True,
     "is_after_hours": False,                        # Pass 19: inverse of is_open_now
@@ -643,11 +653,21 @@ async def _resolve_personalization(
         f"office_id=eq.{office_id}",
     )
 
-    biz_name, first_name, last_name, industry, profile_tz, voicemail_email = await _fetch_profile(
+    profile = await _fetch_profile(
         suite_id=suite_id,
         office_id=office_id,
         tenant_id=tenant_id,
     )
+    biz_name = profile["business_name"]
+    first_name = profile["first_name"]
+    last_name = profile["last_name"]
+    industry = profile["industry"]
+    profile_tz = profile["timezone"]
+    voicemail_email = profile["voicemail_email"]
+    industry_specialty = profile["industry_specialty"]
+    business_city = profile["business_city"]
+    business_state = profile["business_state"]
+    owner_title = profile["owner_title"]
 
     # Prefer the timezone saved on the front_desk_configs row (set by the
     # Hours tab) over the owner's suite-level timezone preference. Falls
@@ -683,6 +703,10 @@ async def _resolve_personalization(
         "first_name": first_name,
         "last_name": last_name,
         "industry": industry,
+        "industry_specialty": industry_specialty,
+        "business_city": business_city,
+        "business_state": business_state,
+        "owner_title": owner_title,
         "time_of_day": time_of_day,
         "is_open_now": is_open,
         "is_after_hours": not is_open,              # Pass 19 §3.5
@@ -751,10 +775,12 @@ async def _fetch_profile(
     suite_id: str,
     office_id: str,
     tenant_id: str,
-) -> tuple[str, str, str, str, str, str]:
-    """Fetch business name, first/last name, industry, timezone, voicemail_email.
+) -> dict[str, str]:
+    """Fetch all identity fields the personalization payload needs.
 
-    Returns (business_name, first_name, last_name, industry, timezone, voicemail_email).
+    Returns a dict with keys: business_name, first_name, last_name, industry,
+    industry_specialty, timezone, voicemail_email, business_city,
+    business_state, owner_title.
 
     Aspire's data model is currently 1:1 suite-to-office; both `tenant_profiles`
     and `office_profiles` tables do NOT exist (verified against live schema).
@@ -765,12 +791,18 @@ async def _fetch_profile(
     Args `office_id` and `tenant_id` are kept for forward-compat / logging —
     the lookup itself is keyed by `suite_id`.
     """
-    biz_name = "your business"
-    first_name = ""
-    last_name = ""
-    industry = "professional_services"
-    tz_name = "America/New_York"
-    voicemail_email = ""
+    out: dict[str, str] = {
+        "business_name": "your business",
+        "first_name": "",
+        "last_name": "",
+        "industry": "professional_services",
+        "industry_specialty": "",
+        "timezone": "America/New_York",
+        "voicemail_email": "",
+        "business_city": "",
+        "business_state": "",
+        "owner_title": "Owner",
+    }
 
     suite_rows = await _safe_select(
         "suite_profiles",
@@ -779,22 +811,26 @@ async def _fetch_profile(
     )
     if suite_rows:
         row = suite_rows[0]
-        biz_name = row.get("business_name") or biz_name
-        industry = row.get("industry") or industry
-        tz_name = row.get("timezone") or tz_name
+        out["business_name"] = row.get("business_name") or out["business_name"]
+        out["industry"] = row.get("industry") or out["industry"]
+        out["industry_specialty"] = row.get("industry_specialty") or ""
+        out["timezone"] = row.get("timezone") or out["timezone"]
+        out["business_city"] = row.get("business_city") or ""
+        out["business_state"] = row.get("business_state") or ""
+        out["owner_title"] = row.get("owner_title") or out["owner_title"]
         # Prefer the dedicated voicemail_email column (migration 108) when set;
         # fall back to the owner's signup email otherwise so existing tenants
         # without a configured voicemail address still get routed somewhere.
-        voicemail_email = (
+        out["voicemail_email"] = (
             row.get("voicemail_email")
             or row.get("email")
-            or voicemail_email
+            or out["voicemail_email"]
         )
 
         owner_name = (row.get("owner_name") or "").strip()
         if owner_name:
             parts = owner_name.split(None, 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else ""
+            out["first_name"] = parts[0]
+            out["last_name"] = parts[1] if len(parts) > 1 else ""
 
-    return biz_name, first_name, last_name, industry, tz_name, voicemail_email
+    return out

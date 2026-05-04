@@ -130,6 +130,13 @@ async def voice_token(
             },
         )
 
+    # Inbound-only enforcement is currently implicit: an office without an
+    # active tenant_phone_numbers row with voice capability gets the 409
+    # above and can't mint a token. When a dedicated
+    # `front_desk_configs.outbound_disabled` flag is added (UI toggle for
+    # "receive calls only"), gate it here with reason_code=OUTBOUND_DISABLED
+    # so the FE can show "This office is in inbound-only mode."
+
     try:
         minted = mint_voice_token(suite_id=suite_id, user_id=user_id)
     except TwilioVoiceConfigError as exc:
