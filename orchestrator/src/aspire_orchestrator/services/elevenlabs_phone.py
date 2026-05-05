@@ -399,7 +399,11 @@ def _raise_el_error(operation: str, resp: httpx.Response) -> None:
                 detail = str(msg)
     except Exception:
         pass
-    logger.error("elevenlabs_phone op=%s status=%d detail=%s", operation, resp.status_code, detail)
+    # %s (not %d) for status_code so a None doesn't crash the logger when an
+    # adapter shim returns a stub Response. Cost is one extra str() call;
+    # benefit is the route returns a clean ElevenLabsPhoneError instead of
+    # 500'ing the entire PATCH /v1/front-desk/config request.
+    logger.error("elevenlabs_phone op=%s status=%s detail=%s", operation, resp.status_code, detail)
     raise ElevenLabsPhoneError(
         f"EL_{operation.upper()}_FAILED",
         f"ElevenLabs {operation} failed: {detail}",

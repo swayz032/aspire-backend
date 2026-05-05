@@ -132,8 +132,8 @@ def _cache_get(
 
 
 # Personalization total wall-clock budget (Pass 16 §16.D: <800ms).
-_PERSONALIZATION_BUDGET_SECONDS = 0.8
-_PER_QUERY_TIMEOUT_SECONDS = 0.2  # 800ms / 4 sequential queries
+_PERSONALIZATION_BUDGET_SECONDS = 1.5  # bumped from 0.8s — Supabase pooler from Railway routinely exceeds 200ms/query under cold-cache, dropping inbound calls
+_PER_QUERY_TIMEOUT_SECONDS = 0.5  # bumped from 200ms — Supabase pooler latency on cold cache regularly exceeded the old budget, returning [] which triggered unknown_number → 404 → EL drops call. 4 sequential queries × 500ms = 2s, fits inside the 1.5s wall-clock with cancellation safety.
 
 # Routing role → dynamic variable name mapping (§16 constant)
 _ROLE_TO_DYN_VAR: dict[str, str] = {
@@ -646,6 +646,33 @@ async def _resolve_personalization(
         f"phone_number=eq.{called_number}&status=eq.active",
         limit=1,
     )
+    # Distinguish a TRUE unknown number (DB returned a clean empty result)
+    # from a transient slow-query timeout. _safe_select returns [] for
+    # both, so we re-probe with a longer budget on the empty path before
+    # declaring "unknown number" and dropping the call.
+    #
+    # Without this re-probe, every cold-cache call drops because the
+    # phone lookup blows the 500ms per-query budget once and the route
+    # 404s EL → "Missing required dynamic variables" → call dropped in
+    # under 1 second. The DB itself answers in 0.075ms; the latency is
+    # the HTTPS round-trip to Supabase PostgREST, which is fundamentally
+    # variable on Railway → us-east-1 cross-region hops.
+    if not phone_rows:
+        try:
+            phone_rows = await asyncio.wait_for(
+                supabase_select(
+                    "tenant_phone_numbers",
+                    f"phone_number=eq.{called_number}&status=eq.active",
+                    limit=1,
+                ),
+                timeout=1.0,  # generous reprobe — falls through on real DNS-style failures
+            )
+        except (asyncio.TimeoutError, SupabaseClientError) as exc:
+            logger.warning(
+                "sarah_personalization phone_reprobe_failed called=%s err=%s",
+                called_number, type(exc).__name__,
+            )
+            phone_rows = []
     if not phone_rows:
         return {"unknown_number": True}
 

@@ -159,7 +159,7 @@ def _raise_twilio_error(operation: str, resp: httpx.Response) -> None:
             detail = f"{code}: {msg}".strip(": ") if code else str(msg) or detail
     except Exception:
         pass
-    logger.error("twilio_provisioning op=%s status=%d detail=%s", operation, resp.status_code, detail)
+    logger.error("twilio_provisioning op=%s status=%s detail=%s", operation, resp.status_code, detail)
     raise TwilioProvisioningError(
         f"TWILIO_{operation.upper()}_FAILED",
         f"Twilio {operation} failed: {detail}",
