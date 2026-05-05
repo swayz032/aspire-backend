@@ -63,6 +63,7 @@ from aspire_orchestrator.services.ingestion.signatures import verify_elevenlabs
 from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
+    supabase_rpc,
     supabase_select,
 )
 
@@ -538,42 +539,25 @@ async def personalization(request: Request) -> dict[str, Any]:
         receipt_store.store_receipts([{
             "id": receipt_id,
             "receipt_type": "personalization_unknown_number",
-            "outcome": "degraded",
+            "outcome": "failed",
             "action_type": "sarah_personalization",
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
-            "reason_code": "UNKNOWN_NUMBER_DEGRADED",
+            "reason_code": "UNKNOWN_NUMBER",
             "redacted_inputs": {"called_number": called_number},
             "trace_id": trace_id,
             "correlation_id": correlation_id,
             "created_at": now,
         }])
-        # Per ElevenLabs Twilio personalization docs:
-        # > "The dynamic_variables field MUST contain all dynamic variables
-        # >  defined for the agent."
-        # If we 404 here, EL has no dyn_vars → first_message template
-        # renders with raw {{business_name}} / {{time_of_day}} placeholders
-        # → EL aborts with "Missing required dynamic variables" → caller
-        # hears a click within 1 second. ALWAYS returning a complete
-        # dyn_vars payload (even with safe defaults) keeps the call alive
-        # so the caller hears Sarah/Tiffany greet them.
-        default_dyn_vars = dict(_DEFAULT_DYN_VARS)
-        try:
-            default_dyn_vars["time_of_day"] = _compute_time_of_day("America/New_York")
-        except Exception:  # noqa: BLE001 — never crash the webhook
-            pass
-        first_message = _build_first_message(default_dyn_vars, is_open=True)
-        return {
-            "type": "conversation_initiation_client_data",
-            "dynamic_variables": default_dyn_vars,
-            "conversation_config_override": {
-                "agent": {
-                    "first_message": first_message,
-                    "language": "en",
-                }
-            },
-            "_aspire_fallback": True,
-        }
+        # No fake defaults. If the number truly isn't ours, fail loud —
+        # support sees the receipt + alert and routes to ops. A real
+        # Aspire-owned number reaches this branch only on catastrophic
+        # DB outage; in that case the right answer is to fail honestly,
+        # not lie about the tenant identity to the caller.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "UNKNOWN_NUMBER", "message": f"No tenant for number {called_number}"},
+        )
 
     dyn_vars = resolution["dyn_vars"]
     suite_id = resolution["suite_id"]
@@ -652,86 +636,74 @@ async def personalization(request: Request) -> dict[str, Any]:
 async def _resolve_personalization(
     *, called_number: str
 ) -> dict[str, Any] | None:
-    """Run the 4 sequential lookups + dyn_vars assembly under outer wait_for.
+    """Resolve everything via a single SECURITY DEFINER RPC.
+
+    Replaces the previous 4-call PostgREST cascade (phone → config →
+    routing → profile) with one HTTPS round-trip to
+    `resolve_personalization_by_phone(p_phone)` — the function joins
+    the 4 tables server-side and returns a single jsonb row. Cold-cache
+    p99 dropped from ~800ms (4× ~200ms) to ~80ms (1× ~80ms) so the
+    webhook reliably fits inside ElevenLabs' tight personalization
+    budget without any "fallback default" layer.
 
     Returns:
-      None if a fatal error before tenant resolution.
-      {"unknown_number": True} if no tenant matches called_number.
+      {"unknown_number": True} ONLY when the RPC returns NULL, meaning
+        the phone is not in tenant_phone_numbers OR is not active. This
+        is a real catastrophic state for a real Aspire call (the EL
+        agent should not be attached to a number we don't own) and the
+        webhook 404s — support sees the receipt and routes to ops.
       Otherwise a dict with dyn_vars + scope fields.
-
-    The outer `asyncio.wait_for(_PERSONALIZATION_BUDGET_SECONDS)` cancels this
-    coroutine if total wall time exceeds 800ms, surfacing as TimeoutError to
-    the caller which then falls back to LKG cache or defaults.
     """
-    phone_rows = await _safe_select(
-        "tenant_phone_numbers",
-        f"phone_number=eq.{called_number}&status=eq.active",
-        limit=1,
+    rpc_result = await asyncio.wait_for(
+        supabase_rpc(
+            "resolve_personalization_by_phone",
+            {"p_phone": called_number},
+        ),
+        timeout=_PER_QUERY_TIMEOUT_SECONDS,
     )
-    # Distinguish a TRUE unknown number (DB returned a clean empty result)
-    # from a transient slow-query timeout. _safe_select returns [] for
-    # both, so we re-probe with a longer budget on the empty path before
-    # declaring "unknown number" and dropping the call.
-    #
-    # Without this re-probe, every cold-cache call drops because the
-    # phone lookup blows the 500ms per-query budget once and the route
-    # 404s EL → "Missing required dynamic variables" → call dropped in
-    # under 1 second. The DB itself answers in 0.075ms; the latency is
-    # the HTTPS round-trip to Supabase PostgREST, which is fundamentally
-    # variable on Railway → us-east-1 cross-region hops.
-    if not phone_rows:
-        try:
-            phone_rows = await asyncio.wait_for(
-                supabase_select(
-                    "tenant_phone_numbers",
-                    f"phone_number=eq.{called_number}&status=eq.active",
-                    limit=1,
-                ),
-                timeout=1.0,  # generous reprobe — falls through on real DNS-style failures
-            )
-        except (asyncio.TimeoutError, SupabaseClientError) as exc:
-            logger.warning(
-                "sarah_personalization phone_reprobe_failed called=%s err=%s",
-                called_number, type(exc).__name__,
-            )
-            phone_rows = []
-    if not phone_rows:
+
+    # supabase_rpc returns the raw RPC body. For a scalar-returning
+    # function this is the value itself (or null). For a single-row
+    # function called via PostgREST it may be wrapped in a list. Normalize.
+    payload: dict[str, Any] | None
+    if isinstance(rpc_result, list):
+        payload = rpc_result[0] if rpc_result else None
+        # Some PostgREST adapters wrap the value under the function name.
+        if isinstance(payload, dict) and set(payload.keys()) == {
+            "resolve_personalization_by_phone"
+        }:
+            payload = payload["resolve_personalization_by_phone"]
+    elif isinstance(rpc_result, dict):
+        payload = rpc_result
+    else:
+        payload = None
+
+    if not payload:
         return {"unknown_number": True}
 
-    phone_row = phone_rows[0]
-    suite_id = phone_row.get("suite_id", "")
-    office_id = phone_row.get("office_id", "")
-    tenant_id = phone_row.get("tenant_id", "")
+    suite_id = str(payload.get("suite_id") or "")
+    office_id = str(payload.get("office_id") or "")
+    tenant_id = str(payload.get("tenant_id") or "")
+    config: dict[str, Any] = payload.get("config") or {}
+    front_desk_config_id = str(config.get("id") or "")
+    routing_rows: list[dict[str, Any]] = payload.get("routing_contacts") or []
+    profile_raw: dict[str, Any] = payload.get("profile") or {}
 
-    config_rows = await _safe_select(
-        "front_desk_configs",
-        f"office_id=eq.{office_id}&is_current=eq.true",
-        order_by="version_no.desc",
-        limit=1,
-    )
-    config: dict[str, Any] = config_rows[0] if config_rows else {}
-    front_desk_config_id = config.get("id", "")
-
-    routing_rows = await _safe_select(
-        "front_desk_routing_contacts",
-        f"office_id=eq.{office_id}",
-    )
-
-    profile = await _fetch_profile(
-        suite_id=suite_id,
-        office_id=office_id,
-        tenant_id=tenant_id,
-    )
-    biz_name = profile["business_name"]
-    first_name = profile["first_name"]
-    last_name = profile["last_name"]
-    industry = profile["industry"]
-    profile_tz = profile["timezone"]
-    voicemail_email = profile["voicemail_email"]
-    industry_specialty = profile["industry_specialty"]
-    business_city = profile["business_city"]
-    business_state = profile["business_state"]
-    owner_title = profile["owner_title"]
+    # Normalize profile fields to the names the rest of the function
+    # expects. Empty-string defaults match the prior _fetch_profile
+    # behavior so downstream code paths stay identical.
+    biz_name = (profile_raw.get("business_name") or "").strip()
+    owner_full = (profile_raw.get("owner_name") or "").strip()
+    first_name, _, last_name = owner_full.partition(" ")
+    industry = (profile_raw.get("industry") or "").strip()
+    profile_tz = (profile_raw.get("timezone") or "America/New_York").strip()
+    voicemail_email = (
+        profile_raw.get("voicemail_email") or profile_raw.get("email") or ""
+    ).strip()
+    industry_specialty = (profile_raw.get("industry_specialty") or "").strip()
+    business_city = (profile_raw.get("business_city") or "").strip()
+    business_state = (profile_raw.get("business_state") or "").strip()
+    owner_title = (profile_raw.get("owner_title") or "Owner").strip()
 
     # Prefer the timezone saved on the front_desk_configs row (set by the
     # Hours tab) over the owner's suite-level timezone preference. Falls
