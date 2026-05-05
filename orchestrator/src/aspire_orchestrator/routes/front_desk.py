@@ -43,6 +43,17 @@ from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
 from aspire_orchestrator.services import receipt_store
+# MARK: persona-imports
+from aspire_orchestrator.services.elevenlabs_phone import (
+    ElevenLabsPhoneError,
+    attach_to_agent,
+)
+from aspire_orchestrator.services.receptionist_personas import (
+    DEFAULT_PERSONA_SLUG,
+    get_persona,
+    is_valid_slug,
+    list_personas,
+)
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_delete,
@@ -154,6 +165,121 @@ def _invalidate_personalization_cache_safe(office_id: str) -> None:
         )
 
 
+# MARK: persona-swap-helper
+async def _apply_persona_swap(
+    *,
+    office_id: str,
+    suite_id: str,
+    tenant_id: str,
+    from_slug: str,
+    to_slug: str,
+    cap_token_id: str | None,
+) -> None:
+    """Re-attach the office's EL phone number to the new persona's agent.
+
+    Cuts a receipt on every outcome (Law #2). Pre-purchase tenants get a
+    deferred_no_number receipt; the eventual purchase route reads
+    front_desk_configs.receptionist_persona and attaches at creation time.
+    EL failures emit a 'failed' receipt but do NOT roll back the
+    front_desk_configs insert.
+    """
+    new_persona = get_persona(to_slug)
+    new_agent_id = new_persona.agent_id
+    phone_rows = await supabase_select(
+        "tenant_phone_numbers",
+        f"office_id=eq.{office_id}&status=eq.active",
+        order_by="purchased_at.desc",
+        limit=1,
+    )
+    receipt_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    if not phone_rows:
+        receipt_store.store_receipts([{
+            "id": receipt_id, "receipt_type": "receptionist_persona_changed",
+            "suite_id": suite_id, "office_id": office_id, "tenant_id": tenant_id,
+            "outcome": "deferred_no_number",
+            "action_type": "receptionist_persona_changed",
+            "tool_used": "elevenlabs_phone_attach", "risk_tier": "yellow",
+            "redacted_outputs": {
+                "from_persona": from_slug, "to_persona": to_slug,
+                "agent_id": new_agent_id,
+                "deferred_reason": "office has no purchased number yet",
+            },
+            "trace_id": get_trace_id(), "correlation_id": get_correlation_id(),
+            "capability_token_id": cap_token_id, "created_at": now,
+        }])
+        logger.info("persona_swap deferred office_id=%s from=%s to=%s reason=no_number",
+                    office_id, from_slug, to_slug)
+        return
+    phone_row = phone_rows[0]
+    el_phone_number_id = phone_row.get("elevenlabs_phone_number_id")
+    phone_pk = phone_row.get("id")
+    if not el_phone_number_id:
+        receipt_store.store_receipts([{
+            "id": receipt_id, "receipt_type": "receptionist_persona_changed",
+            "suite_id": suite_id, "office_id": office_id, "tenant_id": tenant_id,
+            "outcome": "deferred_no_el_id",
+            "action_type": "receptionist_persona_changed",
+            "tool_used": "elevenlabs_phone_attach", "risk_tier": "yellow",
+            "redacted_outputs": {
+                "from_persona": from_slug, "to_persona": to_slug,
+                "agent_id": new_agent_id,
+                "deferred_reason": "tenant_phone_numbers row missing elevenlabs_phone_number_id",
+            },
+            "trace_id": get_trace_id(), "correlation_id": get_correlation_id(),
+            "capability_token_id": cap_token_id, "created_at": now,
+        }])
+        logger.warning("persona_swap deferred office_id=%s from=%s to=%s reason=no_el_id phone_pk=%s",
+                       office_id, from_slug, to_slug, phone_pk)
+        return
+    try:
+        await attach_to_agent(el_phone_number_id, agent_id=new_agent_id)
+    except ElevenLabsPhoneError as exc:
+        receipt_store.store_receipts([{
+            "id": receipt_id, "receipt_type": "receptionist_persona_changed",
+            "suite_id": suite_id, "office_id": office_id, "tenant_id": tenant_id,
+            "outcome": "failed",
+            "action_type": "receptionist_persona_changed",
+            "tool_used": "elevenlabs_phone_attach", "risk_tier": "yellow",
+            "reason_code": exc.code,
+            "redacted_outputs": {
+                "from_persona": from_slug, "to_persona": to_slug,
+                "agent_id": new_agent_id, "el_status": exc.status_code,
+                "el_message": str(exc)[:200],
+            },
+            "trace_id": get_trace_id(), "correlation_id": get_correlation_id(),
+            "capability_token_id": cap_token_id, "created_at": now,
+        }])
+        logger.error("persona_swap el_attach_failed office_id=%s from=%s to=%s code=%s",
+                     office_id, from_slug, to_slug, exc.code)
+        return
+    try:
+        await supabase_update(
+            "tenant_phone_numbers",
+            f"id=eq.{phone_pk}",
+            {"attached_to_agent_id": new_agent_id, "updated_at": now},
+        )
+    except SupabaseClientError as exc:
+        logger.warning("persona_swap db_mirror_update_failed office_id=%s phone_pk=%s: %s",
+                       office_id, phone_pk, exc)
+    receipt_store.store_receipts([{
+        "id": receipt_id, "receipt_type": "receptionist_persona_changed",
+        "suite_id": suite_id, "office_id": office_id, "tenant_id": tenant_id,
+        "outcome": "success",
+        "action_type": "receptionist_persona_changed",
+        "tool_used": "elevenlabs_phone_attach", "risk_tier": "yellow",
+        "redacted_outputs": {
+            "from_persona": from_slug, "to_persona": to_slug,
+            "agent_id": new_agent_id,
+            "el_phone_number_id_prefix": str(el_phone_number_id)[:12],
+        },
+        "trace_id": get_trace_id(), "correlation_id": get_correlation_id(),
+        "capability_token_id": cap_token_id, "created_at": now,
+    }])
+    logger.info("persona_swap success office_id=%s from=%s to=%s",
+                office_id, from_slug, to_slug)
+
+
 def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
     """Extract deterministic capability_token_id for receipt tracing."""
     if not cap_token:
@@ -191,6 +317,8 @@ class FrontDeskConfigPatch(BaseModel):
     # per business, not versioned per front_desk_configs row). PATCH handler
     # relays this through to suite_profiles when present.
     voicemail_email: str | None = None
+    # MARK: persona-field — migration 109
+    receptionist_persona: str | None = Field(None, pattern=r"^[a-z]{2,32}$")
     capability_token: dict[str, Any] | None = None
 
 
@@ -336,6 +464,17 @@ async def get_config(
     }
 
 
+# MARK: personas-route
+@router.get("/personas")
+async def list_receptionist_personas() -> dict[str, Any]:
+    """Return the receptionist persona registry. Green tier — read-only."""
+    return {
+        "success": True,
+        "default_persona": DEFAULT_PERSONA_SLUG,
+        "personas": [p.to_dict() for p in list_personas()],
+    }
+
+
 @router.patch("/config")
 async def patch_config(
     req: FrontDeskConfigPatch,
@@ -352,6 +491,19 @@ async def patch_config(
     tenant_id = str(scope.tenant_id)
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+
+    # MARK: persona-validation
+    if req.receptionist_persona is not None and not is_valid_slug(req.receptionist_persona):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "UNKNOWN_PERSONA",
+                "message": (
+                    f"Unknown receptionist persona \'{req.receptionist_persona}\'. "
+                    "Allowed: sarah, tiffany."
+                ),
+            },
+        )
 
     # Fetch current max version
     current_rows = await supabase_select(
@@ -387,10 +539,32 @@ async def patch_config(
         "timezone": req.timezone
             if req.timezone is not None
             else current.get("timezone"),
+        # MARK: persona-new-row
+        "receptionist_persona": (
+            req.receptionist_persona.strip().lower()
+            if req.receptionist_persona is not None
+            else (current.get("receptionist_persona") or DEFAULT_PERSONA_SLUG)
+        ),
         "created_at": now,
     }
 
     inserted = await supabase_insert("front_desk_configs", new_row)
+
+    # MARK: persona-swap-call
+    # Only swap when the slug actually changes. Treat a missing column on
+    # the prior row (predates migration 109) as DEFAULT_PERSONA_SLUG so the
+    # first save after migration is a no-op for tenants on the default.
+    _prev_persona = (current.get("receptionist_persona") or DEFAULT_PERSONA_SLUG)
+    _next_persona = new_row.get("receptionist_persona")
+    if _next_persona and _prev_persona != _next_persona:
+        await _apply_persona_swap(
+            office_id=office_id,
+            suite_id=suite_id,
+            tenant_id=tenant_id,
+            from_slug=_prev_persona,
+            to_slug=_next_persona,
+            cap_token_id=_cap_token_id(req.capability_token) or None,
+        )
 
     # Tenant-level fields persisted on suite_profiles (not on the versioned
     # config row). voicemail_email is the dedicated inbox added in

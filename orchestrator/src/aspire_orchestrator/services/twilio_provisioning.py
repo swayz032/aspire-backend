@@ -52,6 +52,11 @@ from aspire_orchestrator.services.elevenlabs_phone import (
     detach_from_elevenlabs,
     import_to_elevenlabs,
 )
+# MARK: persona-imports
+from aspire_orchestrator.services.receptionist_personas import (
+    DEFAULT_PERSONA_SLUG,
+    get_persona,
+)
 from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.resilience import (
     TWILIO_RETRY,
@@ -641,8 +646,32 @@ async def purchase_number(
             twilio_token=auth_token,
         )
 
-        # ── Step 5: Attach to Sarah Receptionist ─────────────────────────
-        await attach_to_agent(el_phone_number_id, agent_id=SARAH_RECEPTIONIST_AGENT_ID)
+        # MARK: persona-attach
+        # ── Step 5: Attach to chosen receptionist persona ─────────────────
+        # Read the office's persona choice from front_desk_configs
+        # (migration 109). Defaults to 'sarah' if no config row exists yet —
+        # matches CHECK default and the historical attach behavior for
+        # offices purchasing before completing Front Desk Setup.
+        chosen_persona_slug = DEFAULT_PERSONA_SLUG
+        try:
+            persona_rows = await supabase_select(
+                "front_desk_configs",
+                f"office_id=eq.{office_id}&is_current=eq.true",
+                limit=1,
+            )
+            if persona_rows:
+                chosen_persona_slug = (
+                    persona_rows[0].get("receptionist_persona") or DEFAULT_PERSONA_SLUG
+                )
+        except SupabaseClientError as persona_exc:
+            logger.warning(
+                "purchase_number persona_lookup_failed office=%s — using default '%s': %s",
+                office_id, DEFAULT_PERSONA_SLUG, persona_exc,
+            )
+        chosen_persona = get_persona(chosen_persona_slug)
+        attached_agent_id = chosen_persona.agent_id
+
+        await attach_to_agent(el_phone_number_id, agent_id=attached_agent_id)
 
         # ── Step 6: UPDATE DB row: status=active, EL IDs ─────────────────
         await supabase_update(
@@ -651,7 +680,7 @@ async def purchase_number(
             {
                 "status": "active",
                 "elevenlabs_phone_number_id": el_phone_number_id,
-                "attached_to_agent_id": SARAH_RECEPTIONIST_AGENT_ID,
+                "attached_to_agent_id": attached_agent_id,
             },
         )
 
@@ -705,7 +734,8 @@ async def purchase_number(
         "redacted_outputs": {
             "twilio_sid": twilio_sid,
             "el_phone_number_id": el_phone_number_id,
-            "attached_to_agent_id": SARAH_RECEPTIONIST_AGENT_ID,
+            "attached_to_agent_id": attached_agent_id,
+            "receptionist_persona": chosen_persona_slug,
         },
         "trace_id": trace_id,
         "correlation_id": correlation_id,
@@ -717,7 +747,7 @@ async def purchase_number(
         phone_number=phone_number,
         twilio_sid=twilio_sid,
         elevenlabs_phone_number_id=el_phone_number_id,
-        attached_to_agent_id=SARAH_RECEPTIONIST_AGENT_ID,
+        attached_to_agent_id=attached_agent_id,
         tenant_id=tenant_id,
         suite_id=suite_id,
         office_id=office_id,
