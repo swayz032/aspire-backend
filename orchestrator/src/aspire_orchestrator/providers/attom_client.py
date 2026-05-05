@@ -1736,14 +1736,11 @@ async def execute_attom_poi_search(
             receipt_data=receipt,
         )
 
-    # Per ATTOM POI V4 docs: default 20 records / 5 sq mi. The V2 docs list
-    # `recordLimit` as the limit param but the V4 search-filters table does
-    # NOT include recordLimit — V4 follows the standard Property API
-    # pagination (`pageSize`). Pass both for forward/backward compat:
-    # whichever ATTOM honors wins, the other is ignored.
+    # ATTOM POI V4 uses the standard Property API pagination (`pageSize`).
+    # The legacy `recordLimit` parameter from /poisearch/v2.0.0 is dropped
+    # entirely — V4 ignores it and we're now V4-only.
     params["radius"] = str(payload.get("radius") or 5)
-    params["pageSize"] = str(payload.get("pageSize") or payload.get("recordLimit") or 50)
-    params["recordLimit"] = params["pageSize"]  # legacy V2 fallback
+    params["pageSize"] = str(payload.get("pageSize") or 50)
     # Sort by distance ascending so closest POIs are first — guarantees a
     # useful "near me" UX regardless of ATTOM's default ordering.
     params["orderby"] = str(payload.get("orderby") or "DISTANCE")

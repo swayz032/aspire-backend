@@ -864,7 +864,13 @@ def normalize_from_attom_preforeclosure(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_from_attom_schools(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize ATTOM detailwithschools response — nearby schools."""
+    """Normalize ATTOM /property/detailwithschools response.
+
+    Each school carries a `geo_id_v4` (ATTOM type SB) which can be passed
+    to /v4/school/profile for ratings + test scores. The district's
+    geoIdV4 (type DB) lives separately on the property's location block;
+    landlord.py extracts it from there for /v4/school/district.
+    """
     props = data.get("property", [])
     if not props:
         return []
@@ -873,12 +879,108 @@ def normalize_from_attom_schools(data: dict[str, Any]) -> list[dict[str, Any]]:
     schools_raw = p.get("school", [])
     schools = []
     for s in schools_raw:
+        if not isinstance(s, dict):
+            continue
+        # Each school's V4 geoid lives at school.geoIdV4 (sometimes nested
+        # under school.identifier.geoIdV4 in older response shapes).
+        geo_v4 = (
+            s.get("geoIdV4")
+            or s.get("geoidv4")
+            or (s.get("identifier", {}) or {}).get("geoIdV4")
+            or ""
+        )
         schools.append({
+            "geo_id_v4": str(geo_v4).strip(),
             "name": s.get("InstitutionName", s.get("institutionname", "")),
             "grade_range": s.get("gradeRange", s.get("Filetag", "")),
             "distance_miles": _safe_float(s.get("distance")),
+            # Filled in later by landlord.py via execute_attom_school_profile
+            "rating": None,
+            "test_score": None,
+            "enrollment": None,
+            "school_type": str(s.get("FileTypeText") or s.get("schoolType") or "").strip(),
         })
     return schools
+
+
+def normalize_from_attom_school_profile(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ATTOM /v4/school/profile response — ratings + scores.
+
+    Returns a flat dict to merge into a school record (already populated
+    by normalize_from_attom_schools). Fields land on the SchoolsSection
+    card so the user sees rating + test score per school.
+    """
+    schools = data.get("school") or data.get("schools") or []
+    if isinstance(schools, dict):
+        schools = [schools]
+    if not isinstance(schools, list) or not schools:
+        return {}
+
+    s = schools[0]
+    if not isinstance(s, dict):
+        return {}
+
+    return {
+        "rating": _safe_int(
+            s.get("schoolRating")
+            or s.get("schoolrating")
+            or s.get("rating")
+            or s.get("Rating")
+        ),
+        "test_score": _safe_float(
+            s.get("testScore")
+            or s.get("testscore")
+            or (s.get("schoolPerformance") or {}).get("testScore")
+        ),
+        "enrollment": _safe_int(
+            s.get("Enrollment")
+            or s.get("enrollment")
+        ),
+        "school_type": str(
+            s.get("FileTypeText")
+            or s.get("schoolType")
+            or s.get("school_type")
+            or ""
+        ).strip(),
+    }
+
+
+def normalize_from_attom_school_district(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ATTOM /v4/school/district response."""
+    districts = data.get("district") or data.get("districts") or []
+    if isinstance(districts, dict):
+        districts = [districts]
+    if not isinstance(districts, list) or not districts:
+        return {}
+
+    d = districts[0]
+    if not isinstance(d, dict):
+        return {}
+
+    return {
+        "district_name": str(
+            d.get("districtName")
+            or d.get("districtname")
+            or d.get("InstitutionName")
+            or d.get("name")
+            or ""
+        ).strip(),
+        "district_rating": _safe_int(
+            d.get("districtRating")
+            or d.get("districtrating")
+            or d.get("rating")
+        ),
+        "district_enrollment": _safe_int(
+            d.get("districtEnrollment")
+            or d.get("Enrollment")
+            or d.get("enrollment")
+        ),
+        "district_grade_range": str(
+            d.get("gradeRange")
+            or d.get("graderange")
+            or ""
+        ).strip(),
+    }
 
 
 def normalize_from_attom_expanded_profile(data: dict[str, Any]) -> dict[str, Any]:

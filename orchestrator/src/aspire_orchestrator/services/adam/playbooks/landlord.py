@@ -772,46 +772,21 @@ async def execute_property_facts(
                 **args,
             )
             if hl_result and hl_result.outcome == Outcome.SUCCESS and hl_result.data:
-                # Hierarchy lookup response shape varies by ATTOM API version:
-                #   V4 (current): {"geographies": [{"geoIdV4": "...",
+                # ATTOM Area API V4 hierarchy lookup response shape:
+                #   {"geographies": [{"geoIdV4": "...",
                 #     "geographyTypeAbbreviation": "ZI", ...}, ...]}
-                #   Legacy V2: {"response": {"result": {"package": {
-                #     "item": [{"id": "...", "type": "ZI", ...}, ...]}}}}
-                # Try V4 shape first, fall back to V2 for older deployments.
+                # We're V4-only — no legacy V2 fallback.
                 synthetic = {}
-
-                # V4 shape — direct geographies[] array on body root.
                 geographies = hl_result.data.get("geographies", [])
                 if isinstance(geographies, dict):
                     geographies = [geographies]
-                if isinstance(geographies, list) and geographies:
-                    for g in geographies:
-                        if not isinstance(g, dict):
-                            continue
-                        geo_type = str(
-                            g.get("geographyTypeAbbreviation")
-                            or g.get("type")
-                            or ""
-                        ).strip()
-                        geo_id = str(g.get("geoIdV4") or g.get("id") or "").strip()
-                        if geo_type and geo_id:
-                            synthetic[geo_type] = geo_id
-
-                # Legacy V2 shape — only used if V4 parse came up empty.
-                if not synthetic:
-                    resp = hl_result.data.get("response", {}) if isinstance(hl_result.data, dict) else {}
-                    result = resp.get("result", {}) if isinstance(resp, dict) else {}
-                    package = result.get("package", {}) if isinstance(result, dict) else {}
-                    items = package.get("item", []) if isinstance(package, dict) else []
-                    if isinstance(items, dict):
-                        items = [items]
-                    for item in items if isinstance(items, list) else []:
-                        if not isinstance(item, dict):
-                            continue
-                        geo_type = str(item.get("type") or "").strip()
-                        geo_id = str(item.get("id") or item.get("geoIdV4") or "").strip()
-                        if geo_type and geo_id:
-                            synthetic[geo_type] = geo_id
+                for g in geographies if isinstance(geographies, list) else []:
+                    if not isinstance(g, dict):
+                        continue
+                    geo_type = str(g.get("geographyTypeAbbreviation") or "").strip()
+                    geo_id = str(g.get("geoIdV4") or "").strip()
+                    if geo_type and geo_id:
+                        synthetic[geo_type] = geo_id
 
                 if synthetic:
                     prop_dict["geo_id_v4"] = synthetic
@@ -862,6 +837,21 @@ async def execute_property_facts(
         or ""
     )
 
+    # School district geoIdV4 — type DB (School District Boundary) per
+    # ATTOM Area API V4 docs. Used to call /v4/school/district once for
+    # the property's district name + rating.
+    district_geo = geo_id_v4_dict.get("DB") or ""
+
+    # Per-school geoIdV4s — extracted by the schools normalizer above.
+    # Each item has type SB (School Attendance Area). We cap at 6 to
+    # bound the per-pull receipt count + parallel fan-out width.
+    nearby_schools_for_enrichment = (prop_dict.get("nearby_schools") or [])[:6]
+    school_geo_ids = [
+        str(sch.get("geo_id_v4") or "").strip()
+        for sch in nearby_schools_for_enrichment
+        if isinstance(sch, dict) and sch.get("geo_id_v4")
+    ]
+
     second_wave_calls: list[Any] = []
     second_wave_keys: list[str] = []
     if community_geo:
@@ -888,6 +878,30 @@ async def execute_property_facts(
             payload={"attomId": subject_attomid}, **args,
         ))
         second_wave_keys.append("sales_comparables")
+    # School enrichment — district + per-school profile. Also runs in
+    # parallel with the rest of the second wave so it adds zero latency.
+    # The school normalizer pulls name/grade/distance from
+    # /property/detailwithschools (already in first wave); /v4/school/profile
+    # adds rating + test score, /v4/school/district adds district name +
+    # district rating. Skipped silently when no geoIdV4s present.
+    if district_geo:
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_school_district,
+        )
+        second_wave_calls.append(execute_attom_school_district(
+            payload={"geoIdV4": district_geo}, **args,
+        ))
+        second_wave_keys.append("school_district")
+    if school_geo_ids:
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_school_profile,
+        )
+        for sch_geo in school_geo_ids:
+            second_wave_calls.append(execute_attom_school_profile(
+                payload={"geoIdV4": sch_geo}, **args,
+            ))
+            second_wave_keys.append(f"school_profile:{sch_geo}")
+
     # /sale/snapshot fallback — runs in parallel with /salescomparables.
     # When salescomparables fails (no entitlement, no attomid, etc.) the
     # /sale/snapshot results take over so the comps card still renders.
@@ -1041,6 +1055,68 @@ async def execute_property_facts(
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("landlord.property_facts: neighborhood_comps normalize failed: %s", exc)
+
+        # --- Merge school district + per-school profiles --------------------
+        # district adds district_name + district_rating to prop_dict.
+        # Each school_profile result merges rating + test_score back into
+        # the matching school record in prop_dict["nearby_schools"].
+        district_result = _safe_result(sw_by_key.get("school_district"))
+        if district_result and district_result.outcome == Outcome.SUCCESS and district_result.data:
+            try:
+                from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                    normalize_from_attom_school_district,
+                )
+                district = normalize_from_attom_school_district(district_result.data)
+                if district and prop_dict:
+                    if district.get("district_name"):
+                        prop_dict["school_district_name"] = district["district_name"]
+                    if district.get("district_rating") is not None:
+                        prop_dict["school_district_rating"] = district["district_rating"]
+                    if district.get("district_grade_range"):
+                        prop_dict["school_district_grade_range"] = district["district_grade_range"]
+                    if district.get("district_enrollment") is not None:
+                        prop_dict["school_district_enrollment"] = district["district_enrollment"]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("landlord.property_facts: school_district normalize failed: %s", exc)
+
+        # Per-school profiles — merge by geoIdV4 match into nearby_schools[].
+        if prop_dict and isinstance(prop_dict.get("nearby_schools"), list):
+            try:
+                from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                    normalize_from_attom_school_profile,
+                )
+                # Build lookup: geo_id_v4 → enriched fields
+                profile_by_geo = {}
+                for key, sw_result in sw_by_key.items():
+                    if not key.startswith("school_profile:"):
+                        continue
+                    sch_geo = key.split(":", 1)[1]
+                    sp_result = _safe_result(sw_result)
+                    if (
+                        sp_result
+                        and sp_result.outcome == Outcome.SUCCESS
+                        and sp_result.data
+                    ):
+                        profile = normalize_from_attom_school_profile(sp_result.data)
+                        if profile:
+                            profile_by_geo[sch_geo] = profile
+
+                # Merge into matching school records.
+                if profile_by_geo:
+                    for sch in prop_dict["nearby_schools"]:
+                        if not isinstance(sch, dict):
+                            continue
+                        geo = sch.get("geo_id_v4")
+                        if geo and geo in profile_by_geo:
+                            for k, v in profile_by_geo[geo].items():
+                                if v not in (None, ""):
+                                    sch[k] = v
+                    logger.info(
+                        "landlord.property_facts: enriched %d schools with ratings",
+                        len(profile_by_geo),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("landlord.property_facts: school_profile merge failed: %s", exc)
 
     # --- Merge foreclosure filings + expanded sale history ----------------
     # (was a sequential await; now part of the parallel gather above.)

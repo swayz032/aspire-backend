@@ -1850,3 +1850,122 @@ class TestNormalizeAttomSalesComparables:
     def test_empty_returns_empty_list(self):
         assert normalize_from_attom_sales_comparables({}) == []
         assert normalize_from_attom_sales_comparables({"comparables": []}) == []
+
+
+# ---------------------------------------------------------------------------
+# W3 — school enrichment (school_profile + school_district)
+# ---------------------------------------------------------------------------
+
+from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+    normalize_from_attom_school_profile,
+    normalize_from_attom_school_district,
+    normalize_from_attom_schools,
+)
+
+
+class TestNormalizeAttomSchoolsEnriched:
+    """Each school record now carries geo_id_v4 + placeholders for rating
+    and test_score, populated later by /v4/school/profile."""
+
+    def _payload(self) -> dict:
+        return {
+            "property": [{
+                "school": [
+                    {
+                        "InstitutionName": "Forest Park HS",
+                        "gradeRange": "9-12",
+                        "distance": "0.42",
+                        "geoIdV4": "abc123",
+                        "FileTypeText": "Public",
+                    },
+                    {
+                        "InstitutionName": "Babb Middle",
+                        "gradeRange": "6-8",
+                        "distance": "1.10",
+                        "identifier": {"geoIdV4": "def456"},
+                    },
+                ]
+            }]
+        }
+
+    def test_geo_id_v4_extracted(self):
+        result = normalize_from_attom_schools(self._payload())
+        assert result[0]["geo_id_v4"] == "abc123"
+
+    def test_geo_id_v4_falls_back_to_identifier_block(self):
+        result = normalize_from_attom_schools(self._payload())
+        assert result[1]["geo_id_v4"] == "def456"
+
+    def test_rating_test_score_initially_null(self):
+        """Placeholders so the merge step in landlord.py can fill them."""
+        result = normalize_from_attom_schools(self._payload())
+        assert result[0]["rating"] is None
+        assert result[0]["test_score"] is None
+
+    def test_school_type_extracted(self):
+        result = normalize_from_attom_schools(self._payload())
+        assert result[0]["school_type"] == "Public"
+
+
+class TestNormalizeAttomSchoolProfile:
+    """ATTOM /v4/school/profile → rating + test score per school."""
+
+    def _payload(self) -> dict:
+        return {
+            "school": [{
+                "schoolRating": 7,
+                "testScore": 78.5,
+                "Enrollment": 1250,
+                "FileTypeText": "Public",
+            }]
+        }
+
+    def test_rating_extracted(self):
+        result = normalize_from_attom_school_profile(self._payload())
+        assert result["rating"] == 7
+
+    def test_test_score_extracted(self):
+        result = normalize_from_attom_school_profile(self._payload())
+        assert result["test_score"] == 78.5
+
+    def test_enrollment_extracted(self):
+        result = normalize_from_attom_school_profile(self._payload())
+        assert result["enrollment"] == 1250
+
+    def test_empty_returns_empty_dict(self):
+        assert normalize_from_attom_school_profile({}) == {}
+        assert normalize_from_attom_school_profile({"school": []}) == {}
+
+
+class TestNormalizeAttomSchoolDistrict:
+    """ATTOM /v4/school/district → district name + rating + grade range."""
+
+    def _payload(self) -> dict:
+        return {
+            "district": [{
+                "districtName": "Clayton County Schools",
+                "districtRating": 6,
+                "districtEnrollment": 52000,
+                "gradeRange": "K-12",
+            }]
+        }
+
+    def test_district_name_extracted(self):
+        result = normalize_from_attom_school_district(self._payload())
+        assert result["district_name"] == "Clayton County Schools"
+
+    def test_district_rating_extracted(self):
+        result = normalize_from_attom_school_district(self._payload())
+        assert result["district_rating"] == 6
+
+    def test_district_enrollment_extracted(self):
+        result = normalize_from_attom_school_district(self._payload())
+        assert result["district_enrollment"] == 52000
+
+    def test_district_grade_range_extracted(self):
+        result = normalize_from_attom_school_district(self._payload())
+        assert result["district_grade_range"] == "K-12"
+
+    def test_empty_returns_empty_dict(self):
+        assert normalize_from_attom_school_district({}) == {}
+        assert normalize_from_attom_school_district({"district": []}) == {}
