@@ -574,15 +574,21 @@ async def execute_property_facts(
         "address": normalized_address,
     }
 
-    # Step 2: 9 parallel ATTOM calls — FULL property intelligence in one shot
+    # Step 2: 12 parallel ATTOM calls — single asyncio.gather covers
+    # everything that doesn't depend on detail-response IDs. Each call has
+    # its own retry + per-call timeout in _attom_request, so the wallclock
+    # is bounded by the slowest endpoint, not the sum of all of them.
     from aspire_orchestrator.providers.attom_client import (
         execute_attom_allevents_snapshot,
         execute_attom_assessment_detail,
         execute_attom_avm_history,
+        execute_attom_building_permits,
         execute_attom_expanded_profile,
         execute_attom_home_equity,
         execute_attom_poi_search,
+        execute_attom_property_detail_with_schools,
         execute_attom_sale_detail,
+        execute_attom_sales_expanded_history,
     )
 
     _raw_results = await asyncio.gather(
@@ -595,6 +601,9 @@ async def execute_property_facts(
         execute_attom_allevents_snapshot(payload=attom_payload, **args),
         execute_attom_poi_search(payload=attom_payload, **args),
         execute_attom_avm_history(payload=attom_payload, **args),
+        execute_attom_building_permits(payload=attom_payload, **args),
+        execute_attom_property_detail_with_schools(payload=attom_payload, **args),
+        execute_attom_sales_expanded_history(payload=attom_payload, **args),
         return_exceptions=True,
     )
     # Guard: convert exceptions to None (graceful degradation, not crash)
@@ -607,6 +616,9 @@ async def execute_property_facts(
     allevents_result = _safe_result(_raw_results[6])    # full transaction history (W1b)
     poi_result = _safe_result(_raw_results[7])          # nearby POIs (W2)
     avm_history_result = _safe_result(_raw_results[8])  # AVM trajectory (W2)
+    permit_result = _safe_result(_raw_results[9])       # building permits (was sequential)
+    schools_result = _safe_result(_raw_results[10])     # nearby schools (was sequential)
+    fc_result = _safe_result(_raw_results[11])          # foreclosure / expanded sale history (was sequential)
     providers_called.append("attom")
 
     # --- Normalize base property record (building + owner + mortgage) ---
@@ -701,16 +713,10 @@ async def execute_property_facts(
         except Exception as exc:  # noqa: BLE001
             logger.warning("landlord.property_facts: avm_history normalize failed: %s", exc)
 
-    # --- Merge permits + comps (additional ATTOM calls) ---
-    from aspire_orchestrator.providers.attom_client import (
-        execute_attom_building_permits,
-        execute_attom_sale_snapshot_zip,
-    )
-
-    # Permits
-    try:
-        permit_result = await execute_attom_building_permits(payload=attom_payload, **args)
-        if permit_result.outcome == Outcome.SUCCESS and permit_result.data:
+    # --- Merge building permits from first-wave result --------------------
+    # (was a sequential await; now part of the parallel gather above.)
+    if permit_result and permit_result.outcome == Outcome.SUCCESS and permit_result.data:
+        try:
             pinned_permit_data = _pin_attom_payload_to_subject(permit_result.data, normalized_address)
             permits_raw = []
             for p in (pinned_permit_data or permit_result.data).get("property", []):
@@ -726,100 +732,19 @@ async def execute_property_facts(
                     })
             if permits_raw and prop_dict:
                 prop_dict["permit_signals"] = permits_raw
-    except Exception:
-        pass  # Permits are enrichment, not critical
+        except Exception:
+            pass  # Permits are enrichment, not critical
 
-    # Comps — neighborhood-level using geoIdV4 N4 (same neighborhood boundary)
-    # Falls back to address+radius if geoIdV4 not available
-    if prop_dict:
+    # --- Merge schools from first-wave result -----------------------------
+    # (was a sequential await; now part of the parallel gather above.)
+    if schools_result and schools_result.outcome == Outcome.SUCCESS and schools_result.data:
         try:
-            # Extract geoIdV4 N4 (neighborhood) from detail response
-            n4_id = ""
-            if detail_result and detail_result.outcome == Outcome.SUCCESS and detail_result.data:
-                det_props = detail_result.data.get("property", [])
-                if det_props:
-                    geo_v4 = det_props[0].get("location", {}).get("geoIdV4", {})
-                    n4_id = geo_v4.get("N4", "") if isinstance(geo_v4, dict) else ""
-
-            comp_result = None
-            if n4_id:
-                # Neighborhood comps (tight — same ATTOM neighborhood boundary)
-                comp_result = await _attom_request(
-                    path="/sale/snapshot",
-                    query_params={
-                        "geoIdV4": n4_id,
-                        "minsaleamt": "100000",
-                        "maxsaleamt": "500000",
-                        "propertytype": "SFR",
-                        "pagesize": "10",
-                        "orderby": "saleSearchDate desc",
-                    },
-                    tool_id="attom.neighborhood_comps",
-                    correlation_id=context.correlation_id,
-                    suite_id=context.suite_id,
-                    office_id=context.office_id,
-                )
-            if not comp_result or comp_result.outcome != Outcome.SUCCESS:
-                # Fallback: address + 0.5 mile radius
-                comp_result = await _attom_request(
-                    path="/sale/snapshot",
-                    query_params={
-                        "address1": normalized_address.split(",")[0].strip(),
-                        "address2": ",".join(normalized_address.split(",")[1:]).strip(),
-                        "radius": "0.5",
-                        "minsaleamt": "100000",
-                        "maxsaleamt": "500000",
-                        "propertytype": "SFR",
-                        "pagesize": "10",
-                        "orderby": "saleSearchDate desc",
-                    },
-                    tool_id="attom.radius_comps",
-                    correlation_id=context.correlation_id,
-                    suite_id=context.suite_id,
-                    office_id=context.office_id,
-                )
-
-            if comp_result and comp_result.outcome == Outcome.SUCCESS and comp_result.data:
-                comps = []
-                subject_attom_id = prop_dict.get("attom_id", "")
-                for cp in comp_result.data.get("property", [])[:15]:
-                    # Skip the subject property itself
-                    cp_id = str(cp.get("identifier", {}).get("attomId", ""))
-                    if cp_id == subject_attom_id:
-                        continue
-                    cp_addr = cp.get("address", {}).get("oneLine", "")
-                    cp_sale = cp.get("sale", {})
-                    cp_amt = cp_sale.get("amount", {})
-                    cp_bldg = cp.get("building", {})
-                    cp_calc = cp_sale.get("calculation", {})
-                    comps.append({
-                        "address": cp_addr,
-                        "sale_price": cp_amt.get("saleamt"),
-                        "sale_date": cp_amt.get("salerecdate", cp_sale.get("saleTransDate", "")),
-                        "sqft": cp_bldg.get("size", {}).get("universalsize") or cp_bldg.get("size", {}).get("livingsize"),
-                        "beds": cp_bldg.get("rooms", {}).get("beds"),
-                        "year_built": cp.get("summary", {}).get("yearbuilt"),
-                        "price_per_sqft": cp_calc.get("pricepersizeunit"),
-                        "distance_miles": cp.get("location", {}).get("distance"),
-                    })
-                if comps:
-                    prop_dict["nearby_comps"] = comps[:10]
-        except Exception as exc:
-            logger.warning("landlord.property_facts: comps failed: %s", exc)
-
-    # --- Merge schools from detailwithschools (optional extra call) ---
-    # Schools come from the detailwithschools endpoint — try it if we have data
-    try:
-        schools_result = await execute_attom_property_detail_with_schools(
-            payload=attom_payload, **args,
-        )
-        if schools_result.outcome == Outcome.SUCCESS and schools_result.data:
             pinned_schools_data = _pin_attom_payload_to_subject(schools_result.data, normalized_address)
             schools = normalize_from_attom_schools(pinned_schools_data or schools_result.data)
             if schools and prop_dict:
                 prop_dict["nearby_schools"] = schools
-    except Exception:
-        pass  # Schools are nice-to-have, not critical
+        except Exception:
+            pass  # Schools are nice-to-have, not critical
 
     # --- W2 second wave: community / salestrend / sales_comparables ----------
     # These ATTOM calls require IDs that only appear AFTER the first-wave
@@ -827,6 +752,53 @@ async def execute_property_facts(
     # We fan them out in parallel here, gated on the IDs being present.
     # Each is non-fatal — failure of one doesn't block the others or the pull.
     geo_id_v4_dict = prop_dict.get("geo_id_v4") or {}
+    # Some ATTOM /property/detail responses come back with an empty geoIdV4
+    # block — usually for newly-recorded parcels or rural addresses. Without
+    # a geoIdV4 we lose community + salestrend cards entirely. Fallback path:
+    # if we have lat/lng, resolve the hierarchy via /v4/area/hierarchy/lookup
+    # and synthesize the missing keys ourselves. Keeps the Demographics + POI
+    # + SalesTrend cards alive on properties with sparse detail responses.
+    if not geo_id_v4_dict and prop_dict.get("latitude") and prop_dict.get("longitude"):
+        try:
+            from aspire_orchestrator.providers.attom_client import (
+                execute_attom_area_hierarchy_lookup,
+            )
+            hl_result = await execute_attom_area_hierarchy_lookup(
+                payload={
+                    "latitude": prop_dict["latitude"],
+                    "longitude": prop_dict["longitude"],
+                    "geoType": "All",
+                },
+                **args,
+            )
+            if hl_result and hl_result.outcome == Outcome.SUCCESS and hl_result.data:
+                # Hierarchy response shape: response.result.package.item[]
+                # with each entry having `id` (geoIdV4) and `type` (e.g. "ZI",
+                # "ND", "N2", "CS"). Build a dict keyed on type.
+                synthetic = {}
+                resp = hl_result.data.get("response", {}) if isinstance(hl_result.data, dict) else {}
+                result = resp.get("result", {}) if isinstance(resp, dict) else {}
+                package = result.get("package", {}) if isinstance(result, dict) else {}
+                items = package.get("item", []) if isinstance(package, dict) else []
+                if isinstance(items, dict):
+                    items = [items]
+                for item in items if isinstance(items, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    geo_type = str(item.get("type") or "").strip()
+                    geo_id = str(item.get("id") or item.get("geoIdV4") or "").strip()
+                    if geo_type and geo_id:
+                        synthetic[geo_type] = geo_id
+                if synthetic:
+                    prop_dict["geo_id_v4"] = synthetic
+                    geo_id_v4_dict = synthetic
+                    logger.info(
+                        "landlord.property_facts: synthesized geoIdV4 via hierarchy lookup (%d keys)",
+                        len(synthetic),
+                    )
+        except Exception as exc:  # noqa: BLE001 — fallback is non-fatal enrichment
+            logger.warning("landlord.property_facts: hierarchy lookup failed: %s", exc)
+
     # Prefer neighborhood-level (ND) for community, fall back to ZI (zip).
     community_geo = (
         geo_id_v4_dict.get("ND")
@@ -906,11 +878,10 @@ async def execute_property_facts(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("landlord.property_facts: sales_comparables normalize failed: %s", exc)
 
-    # --- Merge foreclosure filings (NOD, lis pendens, auction dates, trustee info) ---
-    try:
-        from aspire_orchestrator.providers.attom_client import execute_attom_sales_expanded_history
-        fc_result = await execute_attom_sales_expanded_history(payload=attom_payload, **args)
-        if fc_result.outcome == Outcome.SUCCESS and fc_result.data:
+    # --- Merge foreclosure filings + expanded sale history ----------------
+    # (was a sequential await; now part of the parallel gather above.)
+    if fc_result and fc_result.outcome == Outcome.SUCCESS and fc_result.data:
+        try:
             pinned_fc_data = _pin_attom_payload_to_subject(fc_result.data, normalized_address)
             from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
                 normalize_from_attom_foreclosure,
@@ -923,8 +894,8 @@ async def execute_property_facts(
                 # Merge expanded sale history if we don't have it yet
                 if not prop_dict.get("sale_history") and fc_data.get("sale_history_expanded"):
                     prop_dict["sale_history"] = fc_data["sale_history_expanded"]
-    except Exception as exc:
-        logger.warning("landlord.property_facts: foreclosure data failed: %s", exc)
+        except Exception as exc:
+            logger.warning("landlord.property_facts: foreclosure normalize failed: %s", exc)
 
     # --- Merge active preforeclosure filing (W1c) ----------------------------
     # Only call /property/v3/preforeclosuredetails when there's a flag worth

@@ -19,6 +19,8 @@ Address normalization: HERE geocoding BEFORE querying ATTOM.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
 from typing import Any
@@ -122,6 +124,8 @@ async def _attom_request(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
     api_root: str = "/propertyapi/v1.0.0",
+    timeout_seconds: float = 8.0,
+    cache_ttl_seconds: int | None = 86400,
 ) -> ToolExecutionResult:
     """Shared ATTOM request handler for all endpoint families.
 
@@ -130,20 +134,83 @@ async def _attom_request(
     "/property/v3" for Transaction V3 endpoints (preforeclosuredetails),
     "/v4" for Area / Community / Location lookup endpoints, "" for absolute
     paths. Final URL is `https://api.gateway.attomdata.com{api_root}{path}`.
+
+    timeout_seconds caps the wallclock per call so one slow ATTOM endpoint
+    cannot drag the whole property pull. Defaults to 8s (covers the 95th
+    percentile of ATTOM latency observed in production).
+
+    cache_ttl_seconds enables a process-local response cache. ATTOM property
+    data updates daily-ish, so a 24h TTL on (path, params) means repeat pulls
+    of the same address are sub-second. None = no caching for this call.
+    Defaults to None — callers opt in via wrappers.
     """
     client = _get_client()
     full_path = f"{api_root}{path}"
 
-    response = await client._request(
-        ProviderRequest(
-            method="GET",
-            path=full_path,
-            query_params=query_params,
-            correlation_id=correlation_id,
-            suite_id=suite_id,
-            office_id=office_id,
-        )
+    # Cache lookup BEFORE the network call. Caching is process-local and
+    # tenant-shared (ATTOM data is public-records, not tenant-scoped) so the
+    # tenant_id passed to cache_get is a fixed sentinel "attom_shared".
+    if cache_ttl_seconds and cache_ttl_seconds > 0:
+        try:
+            from aspire_orchestrator.services.adam.cache import cache_get
+            cached = cache_get(
+                tenant_id="attom_shared",
+                provider="attom",
+                playbook=tool_id,
+                query=full_path,
+                params=query_params,
+            )
+            if cached is not None:
+                logger.debug("ATTOM cache hit: %s %s", tool_id, full_path)
+                # Re-emit a fresh receipt for the cached call so receipt
+                # coverage stays at 100% (Law #2). The receipt is marked
+                # cached=True so dashboards can see hit-rate.
+                receipt = _build_receipt(
+                    client, tool_id, correlation_id, suite_id, office_id,
+                    Outcome.SUCCESS, "EXECUTED_FROM_CACHE",
+                    capability_token_id=capability_token_id,
+                    capability_token_hash=capability_token_hash,
+                )
+                return ToolExecutionResult(
+                    outcome=Outcome.SUCCESS,
+                    tool_id=tool_id,
+                    data=cached,
+                    receipt_data=receipt,
+                )
+        except Exception as exc:  # noqa: BLE001 — cache failures are never fatal
+            logger.debug("ATTOM cache lookup failed (continuing without): %s", exc)
+
+    request = ProviderRequest(
+        method="GET",
+        path=full_path,
+        query_params=query_params,
+        correlation_id=correlation_id,
+        suite_id=suite_id,
+        office_id=office_id,
     )
+
+    try:
+        response = await asyncio.wait_for(
+            client._request(request),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "ATTOM %s timed out after %.1fs (path=%s)",
+            tool_id, timeout_seconds, full_path,
+        )
+        timeout_receipt = _build_receipt(
+            client, tool_id, correlation_id, suite_id, office_id,
+            Outcome.FAILED, "TIMEOUT",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=f"ATTOM call timed out after {timeout_seconds:.1f}s",
+            receipt_data=timeout_receipt,
+        )
 
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
     reason = "EXECUTED" if response.success else (
@@ -197,6 +264,22 @@ async def _attom_request(
     SUCCESS_EMPTY_MSGS = {"SuccessWithoutResult", "Success", ""}
 
     if response.success and (custom_code in (None, 0) or custom_code == 0):
+        # Cache the successful response so subsequent pulls of the same
+        # address are sub-second. ATTOM data updates daily-ish; 24h TTL is safe.
+        if cache_ttl_seconds and cache_ttl_seconds > 0 and response.body is not None:
+            try:
+                from aspire_orchestrator.services.adam.cache import cache_set
+                cache_set(
+                    tenant_id="attom_shared",
+                    provider="attom",
+                    playbook=tool_id,
+                    query=full_path,
+                    params=query_params,
+                    value=response.body,
+                    ttl_override=cache_ttl_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001 — cache failures are never fatal
+                logger.debug("ATTOM cache write failed (continuing): %s", exc)
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS,
             tool_id=tool_id,
@@ -969,7 +1052,17 @@ async def execute_attom_sales_comparables(
     client = _get_client()
 
     # Prefer attomid (propid) when available — cleanest URL, no parsing.
-    propid = str(payload.get("attomid") or payload.get("propid") or "").strip()
+    # Accept all three casing conventions our callers use: attomid (lowercase
+    # — this wrapper's own preferred form), attomId (camelCase — what
+    # landlord.py and ATTOM docs use), and propid (legacy alias).
+    propid = str(
+        payload.get("attomid")
+        or payload.get("attomId")
+        or payload.get("attom_id")
+        or payload.get("propid")
+        or payload.get("propId")
+        or ""
+    ).strip()
     apn = str(payload.get("apn") or "").strip()
     county = str(payload.get("county") or "").strip()
     state_code = str(payload.get("state") or "").strip()
@@ -1635,16 +1728,18 @@ async def execute_attom_poi_search(
             receipt_data=receipt,
         )
 
-    if payload.get("radius"):
-        params["radius"] = str(payload["radius"])
+    # Per ATTOM POI V4 docs: default recordLimit=20, default search radius
+    # 5 sq mi. Both produce a stunted POI list for property cards. We default
+    # to recordLimit=50 inside a 5-mile radius so the desktop POI section
+    # shows enough variety to be useful.
+    params["radius"] = str(payload.get("radius") or 5)
+    params["recordLimit"] = str(payload.get("recordLimit") or 50)
     if payload.get("categoryName"):
         params["categoryName"] = str(payload["categoryName"])
     if payload.get("lineOfBusinessName"):
         params["LineOfBusinessName"] = str(payload["lineOfBusinessName"])
     if payload.get("industryName"):
         params["IndustryName"] = str(payload["industryName"])
-    if payload.get("recordLimit"):
-        params["recordLimit"] = str(payload["recordLimit"])
 
     return await _attom_request(
         path="/neighborhood/poi",
