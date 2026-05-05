@@ -192,6 +192,11 @@ class PropertyRecord:
     zcta: str = ""
     latitude: float | None = None
     longitude: float | None = None
+    # geoIdV4 dict from ATTOM detail.location — keys are 2-letter geography
+    # type codes (ZI=zip, ND=neighborhood, SB=school boundary, CS=county
+    # subdivision, etc.). Used to call community_profile / salestrend at
+    # the right granularity.
+    geo_id_v4: dict[str, Any] = field(default_factory=dict)
 
     # Freshness
     source_last_modified: str = ""

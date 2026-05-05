@@ -139,10 +139,16 @@ _SECTION_PLAN: list[tuple[str, str, Any]] = [
         lambda r: bool(r.get("owner_name") or r.get("previous_owner_name") or r.get("mailing_address"))),
     ("valuation", "Valuations & Tax",
         lambda r: bool(r.get("tax_market_value") or r.get("estimated_value") or r.get("annual_tax_amount"))),
+    ("avm_history", "AVM History",
+        lambda r: bool(r.get("avm_history"))),
     ("mortgage", "Mortgage",
         lambda r: bool(r.get("mortgage_amount") or r.get("mortgage_lender") or r.get("current_loan_balance"))),
     ("sale_history", "Sale History",
-        lambda r: bool(r.get("last_sale_amount") or r.get("last_sale_date") or r.get("sale_history") or r.get("transaction_history"))),
+        lambda r: bool(r.get("last_sale_amount") or r.get("last_sale_date") or r.get("sale_history"))),
+    ("transaction_history", "Transaction History",
+        lambda r: bool(r.get("transaction_history"))),
+    ("comps", "Sales Comparables",
+        lambda r: bool(r.get("comps"))),
     ("foreclosure", "Foreclosure",
         lambda r: bool(
             r.get("prior_foreclosure")
@@ -155,6 +161,12 @@ _SECTION_PLAN: list[tuple[str, str, Any]] = [
         lambda r: bool(r.get("permit_signals") or r.get("major_improvements_year"))),
     ("schools", "Schools",
         lambda r: bool(r.get("nearby_schools") or r.get("school_district_name"))),
+    ("community", "Community & Demographics",
+        lambda r: bool(r.get("community"))),
+    ("poi", "Points of Interest",
+        lambda r: bool(r.get("poi"))),
+    ("salestrend", "Market Sales Trends",
+        lambda r: bool(r.get("salestrend"))),
     ("rental", "Rental",
         lambda r: r.get("estimated_rent") is not None),
 ]
@@ -562,12 +574,14 @@ async def execute_property_facts(
         "address": normalized_address,
     }
 
-    # Step 2: 6 parallel ATTOM calls — FULL property intelligence in one shot
+    # Step 2: 9 parallel ATTOM calls — FULL property intelligence in one shot
     from aspire_orchestrator.providers.attom_client import (
         execute_attom_allevents_snapshot,
         execute_attom_assessment_detail,
+        execute_attom_avm_history,
         execute_attom_expanded_profile,
         execute_attom_home_equity,
+        execute_attom_poi_search,
         execute_attom_sale_detail,
     )
 
@@ -579,6 +593,8 @@ async def execute_property_facts(
         execute_attom_sale_detail(payload=attom_payload, **args),
         execute_attom_expanded_profile(payload=attom_payload, **args),
         execute_attom_allevents_snapshot(payload=attom_payload, **args),
+        execute_attom_poi_search(payload=attom_payload, **args),
+        execute_attom_avm_history(payload=attom_payload, **args),
         return_exceptions=True,
     )
     # Guard: convert exceptions to None (graceful degradation, not crash)
@@ -589,6 +605,8 @@ async def execute_property_facts(
     sale_result = _safe_result(_raw_results[4])         # last sale detail + price/sqft
     expanded_result = _safe_result(_raw_results[5])     # zoning, seller, census, REO flags
     allevents_result = _safe_result(_raw_results[6])    # full transaction history (W1b)
+    poi_result = _safe_result(_raw_results[7])          # nearby POIs (W2)
+    avm_history_result = _safe_result(_raw_results[8])  # AVM trajectory (W2)
     providers_called.append("attom")
 
     # --- Normalize base property record (building + owner + mortgage) ---
@@ -656,6 +674,32 @@ async def execute_property_facts(
                 prop_dict["transaction_history"] = transaction_history
         except Exception as exc:  # noqa: BLE001 — never fail the pull on a normalizer bug
             logger.warning("landlord.property_facts: allevents normalize failed: %s", exc)
+
+    # --- Merge POI search (W2 — ATTOM /v4/neighborhood/poi) ---
+    # Up to 25 nearby points of interest, deduplicated, sorted by distance.
+    if poi_result and poi_result.outcome == Outcome.SUCCESS and poi_result.data:
+        try:
+            from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                normalize_from_attom_poi,
+            )
+            poi_list = normalize_from_attom_poi(poi_result.data)
+            if poi_list and prop_dict:
+                prop_dict["poi"] = poi_list
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("landlord.property_facts: poi normalize failed: %s", exc)
+
+    # --- Merge AVM trajectory (W2 — ATTOM /avmhistory/detail) ---
+    if avm_history_result and avm_history_result.outcome == Outcome.SUCCESS and avm_history_result.data:
+        try:
+            from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                normalize_from_attom_avm_history,
+            )
+            pinned_avmhx = _pin_attom_payload_to_subject(avm_history_result.data, normalized_address)
+            avm_history = normalize_from_attom_avm_history(pinned_avmhx or avm_history_result.data)
+            if avm_history and prop_dict:
+                prop_dict["avm_history"] = avm_history
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("landlord.property_facts: avm_history normalize failed: %s", exc)
 
     # --- Merge permits + comps (additional ATTOM calls) ---
     from aspire_orchestrator.providers.attom_client import (
@@ -776,6 +820,91 @@ async def execute_property_facts(
                 prop_dict["nearby_schools"] = schools
     except Exception:
         pass  # Schools are nice-to-have, not critical
+
+    # --- W2 second wave: community / salestrend / sales_comparables ----------
+    # These ATTOM calls require IDs that only appear AFTER the first-wave
+    # detail response: geoIdV4 (community + salestrend) and attomId (comps).
+    # We fan them out in parallel here, gated on the IDs being present.
+    # Each is non-fatal — failure of one doesn't block the others or the pull.
+    geo_id_v4_dict = prop_dict.get("geo_id_v4") or {}
+    # Prefer neighborhood-level (ND) for community, fall back to ZI (zip).
+    community_geo = (
+        geo_id_v4_dict.get("ND")
+        or geo_id_v4_dict.get("N2")
+        or geo_id_v4_dict.get("ZI")
+        or ""
+    )
+    # Salestrend is published at zip level by ATTOM (see /v4/transaction/salestrend
+    # docs). Prefer ZI; ND/N2 are accepted but yield smaller samples.
+    salestrend_geo = geo_id_v4_dict.get("ZI") or geo_id_v4_dict.get("ND") or ""
+    subject_attomid = prop_dict.get("attom_id") or ""
+
+    second_wave_calls: list[Any] = []
+    second_wave_keys: list[str] = []
+    if community_geo:
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_community_profile,
+        )
+        second_wave_calls.append(execute_attom_community_profile(
+            payload={"geoIdV4": community_geo}, **args,
+        ))
+        second_wave_keys.append("community")
+    if salestrend_geo:
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_sales_trends,
+        )
+        second_wave_calls.append(execute_attom_sales_trends(
+            payload={"geoIdV4": salestrend_geo, "interval": "monthly"}, **args,
+        ))
+        second_wave_keys.append("salestrend")
+    if subject_attomid:
+        from aspire_orchestrator.providers.attom_client import (
+            execute_attom_sales_comparables,
+        )
+        second_wave_calls.append(execute_attom_sales_comparables(
+            payload={"attomId": subject_attomid}, **args,
+        ))
+        second_wave_keys.append("sales_comparables")
+
+    if second_wave_calls:
+        sw_results = await asyncio.gather(*second_wave_calls, return_exceptions=True)
+        sw_by_key = dict(zip(second_wave_keys, sw_results, strict=True))
+
+        community_result = _safe_result(sw_by_key.get("community"))
+        if community_result and community_result.outcome == Outcome.SUCCESS and community_result.data:
+            try:
+                from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                    normalize_from_attom_community,
+                )
+                community = normalize_from_attom_community(community_result.data)
+                if community and prop_dict:
+                    prop_dict["community"] = community
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("landlord.property_facts: community normalize failed: %s", exc)
+
+        salestrend_result = _safe_result(sw_by_key.get("salestrend"))
+        if salestrend_result and salestrend_result.outcome == Outcome.SUCCESS and salestrend_result.data:
+            try:
+                from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                    normalize_from_attom_salestrend,
+                )
+                salestrend = normalize_from_attom_salestrend(salestrend_result.data)
+                if salestrend and prop_dict:
+                    prop_dict["salestrend"] = salestrend
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("landlord.property_facts: salestrend normalize failed: %s", exc)
+
+        comps_result = _safe_result(sw_by_key.get("sales_comparables"))
+        if comps_result and comps_result.outcome == Outcome.SUCCESS and comps_result.data:
+            try:
+                from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                    normalize_from_attom_sales_comparables,
+                )
+                comps = normalize_from_attom_sales_comparables(comps_result.data)
+                if comps and prop_dict:
+                    prop_dict["comps"] = comps
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("landlord.property_facts: sales_comparables normalize failed: %s", exc)
 
     # --- Merge foreclosure filings (NOD, lis pendens, auction dates, trustee info) ---
     try:

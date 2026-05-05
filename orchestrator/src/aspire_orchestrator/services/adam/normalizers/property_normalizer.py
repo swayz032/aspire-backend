@@ -134,6 +134,14 @@ def normalize_from_attom_detail(data: dict[str, Any]) -> PropertyRecord:
         or ""
     )
 
+    # geoIdV4 dict — keys like ND (neighborhood), SB (school boundary),
+    # CS (county subdivision), ZI (zip), N1/N2/N3 (neighborhood hierarchy).
+    # Used by community_profile + salestrend calls in the W2 second-wave
+    # gather. Falls back to legacy `geoid` string parsing when geoIdV4 is
+    # missing (some ATTOM responses still return the comma-joined legacy
+    # string only).
+    geo_id_v4 = location.get("geoIdV4") if isinstance(location.get("geoIdV4"), dict) else {}
+
     # Owner name — ATTOM uses lowercase keys (fullname, not fullName)
     owner1 = owner.get("owner1", {}) or {}
     owner_name = (
@@ -190,6 +198,7 @@ def normalize_from_attom_detail(data: dict[str, Any]) -> PropertyRecord:
         county=county,
         latitude=latitude,
         longitude=longitude,
+        geo_id_v4=dict(geo_id_v4),
         source_last_modified=str(vintage.get("lastModified", "") or ""),
         verification_status="verified",
         confidence=0.92,
@@ -334,6 +343,337 @@ def normalize_from_attom_sale_detail(data: dict[str, Any]) -> dict[str, Any]:
         "last_sale_doc_number": str(amount.get("saledocnum", "")),
         "appreciation_pct": appreciation,
     }
+
+
+def normalize_from_attom_community(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ATTOM /v4/neighborhood/community response.
+
+    ATTOM returns 600+ attributes nested under `community`. We surface the
+    top-line numbers a user would actually look at on a property card —
+    population, income, crime, weather, employment. The full payload is
+    discarded to keep the desktop record under a reasonable size; the card
+    can show the curated subset and a "more" affordance can re-fetch on
+    demand if needed.
+    """
+    community = data.get("community") or {}
+    if not isinstance(community, dict) or not community:
+        return {}
+
+    demographics = community.get("demographics") or {}
+    crime = community.get("crime") or {}
+    employment = community.get("employment") or {}
+    weather = community.get("weather") or {}
+    education = community.get("education") or {}
+
+    # ATTOM Community attributes are sometimes flat (e.g. demographics is a
+    # dict of scalar values) and sometimes nested. Use .get() everywhere
+    # and skip blanks.
+    return {
+        "population": _safe_int(demographics.get("population")),
+        "population_density_sq_mi": _safe_float(demographics.get("population_density_sq_mi")),
+        "median_household_income": _safe_float(
+            demographics.get("median_household_income")
+            or demographics.get("medianHouseholdIncome")
+        ),
+        "median_age": _safe_float(demographics.get("median_age") or demographics.get("medianAge")),
+        "owner_occupied_pct": _safe_float(
+            demographics.get("owner_occupied_pct")
+            or demographics.get("ownerOccupiedPct")
+        ),
+        "renter_occupied_pct": _safe_float(
+            demographics.get("renter_occupied_pct")
+            or demographics.get("renterOccupiedPct")
+        ),
+        "vacancy_pct": _safe_float(demographics.get("vacancy_pct") or demographics.get("vacancyPct")),
+        "median_home_value": _safe_float(
+            demographics.get("median_home_value")
+            or demographics.get("medianHomeValue")
+        ),
+        # Crime — ATTOM exposes a normalized 0-100 index ("100=highest risk"
+        # in their docs); the per-category counts vary by package.
+        "crime_index": _safe_float(crime.get("crime_index") or crime.get("crimeIndex")),
+        "violent_crime_index": _safe_float(
+            crime.get("violent_crime_index") or crime.get("violentCrimeIndex")
+        ),
+        "property_crime_index": _safe_float(
+            crime.get("property_crime_index") or crime.get("propertyCrimeIndex")
+        ),
+        # Employment / unemployment
+        "unemployment_pct": _safe_float(
+            employment.get("unemployment_pct")
+            or employment.get("unemploymentPct")
+        ),
+        # Weather averages — useful for property-condition context
+        "weather_avg_temp_f": _safe_float(
+            weather.get("avg_annual_temp_f")
+            or weather.get("avgAnnualTempF")
+        ),
+        "weather_avg_rainfall_in": _safe_float(
+            weather.get("avg_annual_rainfall_in")
+            or weather.get("avgAnnualRainfallIn")
+        ),
+        # Education quality proxy
+        "education_high_school_pct": _safe_float(
+            education.get("high_school_grad_pct")
+            or education.get("highSchoolGradPct")
+        ),
+        "education_bachelors_pct": _safe_float(
+            education.get("bachelors_or_higher_pct")
+            or education.get("bachelorsOrHigherPct")
+        ),
+    }
+
+
+def normalize_from_attom_poi(data: dict[str, Any], max_items: int = 25) -> list[dict[str, Any]]:
+    """Normalize ATTOM /v4/neighborhood/poi response.
+
+    Returns up to `max_items` POIs sorted by distance ascending, deduplicated
+    by `ob_id` so a Home Depot listed under multiple business categories
+    only appears once.
+    """
+    pois_raw = data.get("poi", []) or data.get("POI", []) or []
+    if isinstance(pois_raw, dict):
+        # Some packages wrap under poi.item
+        pois_raw = pois_raw.get("item", []) or []
+    if not isinstance(pois_raw, list):
+        return []
+
+    seen_ids: set[str] = set()
+    items: list[dict[str, Any]] = []
+    for poi in pois_raw:
+        if not isinstance(poi, dict):
+            continue
+        # Skip secondary listings (PRIMARY=OTHER per ATTOM docs)
+        primary = (poi.get("primary") or poi.get("PRIMARY") or "").upper()
+        if primary == "OTHER":
+            continue
+        ob_id = str(poi.get("ob_id", "") or poi.get("OB_ID", "") or "")
+        if ob_id and ob_id in seen_ids:
+            continue
+        if ob_id:
+            seen_ids.add(ob_id)
+
+        items.append({
+            "ob_id": ob_id,
+            "name": str(poi.get("name") or poi.get("NAME") or ""),
+            "category": str(
+                poi.get("business_category")
+                or poi.get("BUSINESS_CATEGORY")
+                or ""
+            ),
+            "lob": str(poi.get("lob") or poi.get("LOB") or ""),
+            "industry": str(poi.get("industry") or poi.get("INDUSTRY") or ""),
+            "distance_miles": _safe_float(poi.get("distance") or poi.get("DISTANCE")),
+            "address": str(
+                poi.get("address_full")
+                or poi.get("ADDRESS_FULL")
+                or poi.get("address")
+                or ""
+            ),
+            "city": str(poi.get("city") or poi.get("CITY") or ""),
+            "state": str(poi.get("state") or poi.get("STATE") or ""),
+            "phone": str(poi.get("phone") or poi.get("PHONE") or ""),
+            "latitude": _safe_float(poi.get("geo_latitude") or poi.get("GEO_LATITUDE")),
+            "longitude": _safe_float(poi.get("geo_longitude") or poi.get("GEO_LONGITUDE")),
+            "franchise": str(poi.get("franchise") or poi.get("FRANCHISE") or ""),
+        })
+
+    items.sort(key=lambda x: x["distance_miles"] if x["distance_miles"] is not None else 999.0)
+    return items[:max_items]
+
+
+def normalize_from_attom_salestrend(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ATTOM /v4/transaction/salestrend response.
+
+    Returns the most recent quarter snapshot + a 24-month series suitable
+    for the salestrend card's mini chart. ATTOM publishes monthly,
+    quarterly, and yearly intervals; we keep all three for the card to
+    pick.
+    """
+    salestrends = data.get("salestrends") or data.get("SalesTrend") or []
+    if isinstance(salestrends, dict):
+        salestrends = [salestrends]
+    if not isinstance(salestrends, list) or not salestrends:
+        return {}
+
+    # ATTOM groups responses by interval. Pick the most informative.
+    monthly: list[dict[str, Any]] = []
+    quarterly: list[dict[str, Any]] = []
+    yearly: list[dict[str, Any]] = []
+
+    for trend_block in salestrends:
+        if not isinstance(trend_block, dict):
+            continue
+        interval = (trend_block.get("interval") or "").lower()
+        items = trend_block.get("salesTrend") or trend_block.get("salestrend") or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            entry = {
+                "period": str(item.get("date") or item.get("period") or ""),
+                "median_sale_price": _safe_float(
+                    item.get("avgSalesPrice")
+                    or item.get("medianSalesPrice")
+                    or item.get("avgsalesprice")
+                ),
+                "sale_count": _safe_int(item.get("homesSold") or item.get("salesCount")),
+            }
+            if interval == "monthly":
+                monthly.append(entry)
+            elif interval == "quarterly":
+                quarterly.append(entry)
+            elif interval == "yearly":
+                yearly.append(entry)
+
+    monthly.sort(key=lambda e: e["period"], reverse=True)
+    quarterly.sort(key=lambda e: e["period"], reverse=True)
+    yearly.sort(key=lambda e: e["period"], reverse=True)
+
+    latest = (monthly[:1] or quarterly[:1] or yearly[:1] or [{}])[0]
+    return {
+        "latest_period": latest.get("period", ""),
+        "latest_median_sale_price": latest.get("median_sale_price"),
+        "latest_sale_count": latest.get("sale_count"),
+        "monthly": monthly[:24],
+        "quarterly": quarterly[:8],
+        "yearly": yearly[:5],
+    }
+
+
+def normalize_from_attom_avm_history(data: dict[str, Any], max_items: int = 24) -> list[dict[str, Any]]:
+    """Normalize ATTOM /avmhistory/detail response — per-period AVM values.
+
+    Returns up to `max_items` snapshots sorted newest-first for the AVM
+    history card's trajectory chart.
+    """
+    props = data.get("property", [])
+    if not props:
+        return []
+
+    p = props[0] if isinstance(props, list) else props
+    history_raw = p.get("avmhistory", []) or p.get("avmHistory", []) or []
+    if not isinstance(history_raw, list):
+        return []
+
+    points: list[dict[str, Any]] = []
+    for snap in history_raw:
+        if not isinstance(snap, dict):
+            continue
+        amount = snap.get("amount") if isinstance(snap.get("amount"), dict) else snap
+        points.append({
+            "date": str(snap.get("eventDate") or snap.get("eventdate") or ""),
+            "value": _safe_float(amount.get("value") if isinstance(amount, dict) else None),
+            "value_high": _safe_float(amount.get("high") if isinstance(amount, dict) else None),
+            "value_low": _safe_float(amount.get("low") if isinstance(amount, dict) else None),
+            "confidence_score": _safe_int(amount.get("scr") if isinstance(amount, dict) else None),
+        })
+
+    points = [pt for pt in points if pt["date"] and pt["value"] is not None]
+    points.sort(key=lambda pt: pt["date"], reverse=True)
+    return points[:max_items]
+
+
+def normalize_from_attom_sales_comparables(
+    data: dict[str, Any],
+    max_items: int = 12,
+) -> list[dict[str, Any]]:
+    """Normalize ATTOM /property/v2/salescomparables response.
+
+    Returns up to `max_items` recent comparable sales sorted by distance
+    ascending. Each comp has the fields the comps card needs to render a
+    meaningful list: address, distance, beds/baths/sqft, last sale, AVM.
+    """
+    # Sales comparables responses come back as a different envelope shape
+    # than detail/snapshot — the comps live under `RESPONSE_GROUP.RESPONSE.RESPONSE_DATA.PROPERTY_INFORMATION_RESPONSE_ext`
+    # in the ATTOM v2 packaging. We try the modern key first and fall back
+    # to the legacy nested path.
+    comps_raw: list[dict[str, Any]] = []
+
+    # Modern shape: data.comparables[] or data.property[]
+    if isinstance(data.get("comparables"), list):
+        comps_raw = data["comparables"]
+    elif isinstance(data.get("property"), list):
+        comps_raw = data["property"]
+    else:
+        # Legacy nested ATTOM v2 envelope
+        rg = data.get("RESPONSE_GROUP") or {}
+        resp = rg.get("RESPONSE") if isinstance(rg, dict) else None
+        if isinstance(resp, dict):
+            rd = resp.get("RESPONSE_DATA") or {}
+            if isinstance(rd, dict):
+                pir = (
+                    rd.get("PROPERTY_INFORMATION_RESPONSE_ext")
+                    or rd.get("PROPERTY_INFORMATION_RESPONSE")
+                    or {}
+                )
+                if isinstance(pir, dict):
+                    sr = pir.get("SUBJECT_PROPERTY_ext") or {}
+                    comps = sr.get("PROPERTY") or pir.get("PROPERTY") or []
+                    if isinstance(comps, list):
+                        comps_raw = comps
+
+    if not comps_raw:
+        return []
+
+    items: list[dict[str, Any]] = []
+    for c in comps_raw:
+        if not isinstance(c, dict):
+            continue
+        # ATTOM comps uppercase keys at the legacy node, lowercase at the
+        # v4 node — handle both.
+        addr = c.get("address") or c.get("ADDRESS") or {}
+        addr_one = (
+            (addr.get("oneLine") if isinstance(addr, dict) else None)
+            or c.get("AddressLine1")
+            or c.get("address_full")
+            or ""
+        )
+        building = c.get("building") or c.get("BUILDING") or {}
+        rooms = building.get("rooms") if isinstance(building, dict) else {} or {}
+        size = building.get("size") if isinstance(building, dict) else {} or {}
+        sale = c.get("sale") or c.get("SALE") or {}
+        sale_amount = (
+            sale.get("amount", {}).get("saleAmt") if isinstance(sale.get("amount"), dict)
+            else sale.get("saleAmount")
+            or sale.get("salesPriceAmount")
+        )
+        avm = c.get("avm") or {}
+        avm_amount = avm.get("amount", {}) if isinstance(avm.get("amount"), dict) else {}
+
+        items.append({
+            "attom_id": str(
+                (c.get("identifier") or {}).get("attomId", "")
+                or c.get("attomId")
+                or c.get("PropertyAddressKey")
+                or ""
+            ),
+            "address": str(addr_one or ""),
+            "distance_miles": _safe_float(
+                c.get("distance")
+                or c.get("Distance")
+                or c.get("DistanceMiles")
+            ),
+            "beds": _safe_int(rooms.get("beds") if isinstance(rooms, dict) else None),
+            "baths": _safe_float(rooms.get("bathstotal") if isinstance(rooms, dict) else None),
+            "living_sqft": _safe_int(size.get("livingsize") if isinstance(size, dict) else None),
+            "year_built": _safe_int(
+                (building.get("summary") or {}).get("yearbuilt") if isinstance(building, dict) else None
+            ),
+            "last_sale_date": str(
+                (sale.get("salesSearchDate") if isinstance(sale, dict) else "")
+                or (sale.get("saleTransDate") if isinstance(sale, dict) else "")
+                or ""
+            ),
+            "last_sale_amount": _safe_float(sale_amount),
+            "estimated_value": _safe_float(avm_amount.get("value") if isinstance(avm_amount, dict) else None),
+        })
+
+    # Drop entries with no usable info
+    items = [it for it in items if it["address"] or it["last_sale_amount"]]
+    items.sort(key=lambda x: x["distance_miles"] if x["distance_miles"] is not None else 999.0)
+    return items[:max_items]
 
 
 def normalize_from_attom_allevents(data: dict[str, Any]) -> list[dict[str, Any]]:

@@ -35,12 +35,14 @@ def _full_property_dict() -> dict:
         "tax_market_value": 316800,
         "estimated_value": 295330,
         "annual_tax_amount": 4508.14,
+        "avm_history": [{"date": "2026-04-01", "value": 295330, "confidence_score": 90}],
         "mortgage_amount": 192449,
         "mortgage_lender": "UNITED WHOLESALE",
         "current_loan_balance": 166170,
         "last_sale_amount": 196000,
         "last_sale_date": "2019-09-30",
         "transaction_history": [{"date": "2019-09-30", "type": "Sale", "amount": 196000}],
+        "comps": [{"address": "4865 Price St", "last_sale_amount": 200000, "distance_miles": 0.05}],
         "prior_foreclosure": True,
         "foreclosure_stage": "none",
         "foreclosure_records": [{"recording_date": "2018-05-12"}],
@@ -49,16 +51,19 @@ def _full_property_dict() -> dict:
         "major_improvements_year": 2013,
         "nearby_schools": [{"name": "Forest Park HS", "rating": 6}],
         "school_district_name": "Clayton County Schools",
+        "community": {"population": 18000, "median_household_income": 42000},
+        "poi": [{"name": "Home Depot", "distance_miles": 1.2}],
+        "salestrend": {"latest_period": "2026-04", "latest_median_sale_price": 285000},
         "estimated_rent": 1850.0,
     }
 
 
 class TestFanOutFullProperty:
-    """A maximal property record fans out into all 9 section cards."""
+    """A maximal property record fans out into all 15 section cards."""
 
-    def test_emits_nine_cards_when_every_section_qualifies(self):
+    def test_emits_fifteen_cards_when_every_section_qualifies(self):
         records = fan_out_property_sections(_full_property_dict())
-        assert len(records) == 9
+        assert len(records) == 15
 
     def test_section_order_is_locked(self):
         records = fan_out_property_sections(_full_property_dict())
@@ -67,11 +72,17 @@ class TestFanOutFullProperty:
             "overview",
             "ownership",
             "valuation",
+            "avm_history",
             "mortgage",
             "sale_history",
+            "transaction_history",
+            "comps",
             "foreclosure",
             "permits",
             "schools",
+            "community",
+            "poi",
+            "salestrend",
             "rental",
         ]
 
@@ -206,11 +217,13 @@ class TestSectionPlanIntegrity:
     section keys PropertyCard.tsx is wired to render."""
 
     def test_section_keys_match_renderer_contract(self):
-        """The renderer map at PropertyCard.tsx:344 expects these exact keys.
+        """The renderer map at PropertyCard.tsx:580 expects these exact keys.
         Renaming any of them silently breaks the UI without a test failure."""
         expected = {
-            "overview", "ownership", "mortgage", "valuation", "sale_history",
-            "rental", "permits", "schools", "foreclosure",
+            "overview", "ownership", "mortgage", "valuation", "avm_history",
+            "sale_history", "transaction_history", "comps", "rental",
+            "permits", "schools", "community", "poi", "salestrend",
+            "foreclosure",
         }
         actual = {section for section, _, _ in _SECTION_PLAN}
         assert actual == expected, f"Section keys drifted from PropertyCard.tsx contract: {actual ^ expected}"

@@ -1545,3 +1545,308 @@ class TestExpandedProfileLegalDescription:
     def test_empty_legal_returns_empty_string(self):
         result = normalize_from_attom_expanded_profile(self._payload(legal1="", legal2=""))
         assert result["legal_description"] == ""
+
+
+# ---------------------------------------------------------------------------
+# W2 — community / POI / salestrend / avm_history / sales_comparables
+# ---------------------------------------------------------------------------
+
+from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+    normalize_from_attom_community,
+    normalize_from_attom_poi,
+    normalize_from_attom_salestrend,
+    normalize_from_attom_avm_history,
+    normalize_from_attom_sales_comparables,
+)
+
+
+class TestNormalizeAttomCommunity:
+    """ATTOM Community API → flat demographics/crime/employment dict."""
+
+    def _payload(self) -> dict:
+        return {
+            "community": {
+                "demographics": {
+                    "population": 18000,
+                    "population_density_sq_mi": 2400.5,
+                    "median_household_income": 42000,
+                    "median_age": 36.2,
+                    "owner_occupied_pct": 51.4,
+                    "renter_occupied_pct": 41.6,
+                    "vacancy_pct": 7.0,
+                    "median_home_value": 165000,
+                },
+                "crime": {
+                    "crime_index": 68,
+                    "violent_crime_index": 45,
+                    "property_crime_index": 72,
+                },
+                "employment": {"unemployment_pct": 6.4},
+                "weather": {
+                    "avg_annual_temp_f": 64.5,
+                    "avg_annual_rainfall_in": 49.2,
+                },
+                "education": {
+                    "high_school_grad_pct": 82.1,
+                    "bachelors_or_higher_pct": 21.4,
+                },
+            }
+        }
+
+    def test_population_extracted(self):
+        result = normalize_from_attom_community(self._payload())
+        assert result["population"] == 18000
+
+    def test_median_income_extracted(self):
+        result = normalize_from_attom_community(self._payload())
+        assert result["median_household_income"] == 42000.0
+
+    def test_crime_index_extracted(self):
+        result = normalize_from_attom_community(self._payload())
+        assert result["crime_index"] == 68.0
+
+    def test_unemployment_extracted(self):
+        result = normalize_from_attom_community(self._payload())
+        assert result["unemployment_pct"] == 6.4
+
+    def test_camelcase_alternate_keys_supported(self):
+        payload = {
+            "community": {
+                "demographics": {
+                    "population": 100,
+                    "medianHouseholdIncome": 80000,
+                    "ownerOccupiedPct": 70.0,
+                },
+                "crime": {"crimeIndex": 25},
+            }
+        }
+        result = normalize_from_attom_community(payload)
+        assert result["median_household_income"] == 80000.0
+        assert result["owner_occupied_pct"] == 70.0
+        assert result["crime_index"] == 25.0
+
+    def test_empty_payload_returns_empty_dict(self):
+        assert normalize_from_attom_community({}) == {}
+        assert normalize_from_attom_community({"community": {}}) == {}
+
+
+class TestNormalizeAttomPoi:
+    """ATTOM POI search → deduplicated, distance-sorted POI list."""
+
+    def _payload(self) -> dict:
+        return {
+            "poi": [
+                {
+                    "ob_id": "1",
+                    "name": "Home Depot",
+                    "business_category": "SHOPPING",
+                    "lob": "HARDWARE",
+                    "distance": "1.2",
+                    "primary": "PRIMARY",
+                    "address_full": "111 Main St",
+                },
+                {
+                    "ob_id": "1",  # duplicate same OB_ID
+                    "name": "Home Depot (Garden)",
+                    "business_category": "SHOPPING",
+                    "lob": "GARDEN CENTER",
+                    "distance": "1.2",
+                    "primary": "OTHER",  # secondary classification
+                },
+                {
+                    "ob_id": "2",
+                    "name": "Walmart",
+                    "business_category": "SHOPPING",
+                    "lob": "DEPARTMENT",
+                    "distance": "0.5",
+                    "primary": "PRIMARY",
+                },
+            ]
+        }
+
+    def test_secondary_listings_filtered(self):
+        result = normalize_from_attom_poi(self._payload())
+        # Walmart (0.5 mi) and Home Depot (1.2 mi); Home Depot Garden is OTHER → skipped
+        assert len(result) == 2
+
+    def test_sorted_by_distance_ascending(self):
+        result = normalize_from_attom_poi(self._payload())
+        assert result[0]["name"] == "Walmart"
+        assert result[1]["name"] == "Home Depot"
+
+    def test_distance_coerced_to_float(self):
+        result = normalize_from_attom_poi(self._payload())
+        assert result[0]["distance_miles"] == 0.5
+
+    def test_max_items_caps_results(self):
+        big_payload = {"poi": [
+            {"ob_id": str(i), "name": f"Spot {i}", "distance": str(i), "primary": "PRIMARY"}
+            for i in range(50)
+        ]}
+        result = normalize_from_attom_poi(big_payload, max_items=10)
+        assert len(result) == 10
+
+    def test_empty_payload_returns_empty_list(self):
+        assert normalize_from_attom_poi({}) == []
+        assert normalize_from_attom_poi({"poi": []}) == []
+
+
+class TestNormalizeAttomSalestrend:
+    """ATTOM /v4/transaction/salestrend → monthly/quarterly/yearly series."""
+
+    def _payload(self) -> dict:
+        return {
+            "salestrends": [
+                {
+                    "interval": "monthly",
+                    "salesTrend": [
+                        {"date": "2026-04", "avgSalesPrice": 285000, "homesSold": 18},
+                        {"date": "2026-03", "avgSalesPrice": 280000, "homesSold": 22},
+                    ]
+                },
+                {
+                    "interval": "yearly",
+                    "salesTrend": [
+                        {"date": "2025", "avgSalesPrice": 270000, "homesSold": 240},
+                    ]
+                },
+            ]
+        }
+
+    def test_latest_period_picked_from_monthly(self):
+        result = normalize_from_attom_salestrend(self._payload())
+        assert result["latest_period"] == "2026-04"
+        assert result["latest_median_sale_price"] == 285000.0
+
+    def test_monthly_sorted_newest_first(self):
+        result = normalize_from_attom_salestrend(self._payload())
+        assert result["monthly"][0]["period"] == "2026-04"
+        assert result["monthly"][1]["period"] == "2026-03"
+
+    def test_yearly_series_preserved(self):
+        result = normalize_from_attom_salestrend(self._payload())
+        assert len(result["yearly"]) == 1
+        assert result["yearly"][0]["period"] == "2025"
+
+    def test_empty_returns_empty_dict(self):
+        assert normalize_from_attom_salestrend({}) == {}
+        assert normalize_from_attom_salestrend({"salestrends": []}) == {}
+
+
+class TestNormalizeAttomAvmHistory:
+    """ATTOM /avmhistory/detail → AVM trajectory list."""
+
+    def _payload(self) -> dict:
+        return {
+            "property": [{
+                "avmhistory": [
+                    {"eventDate": "2026-04-01", "amount": {"value": 295000, "high": 320000, "low": 270000, "scr": 90}},
+                    {"eventDate": "2026-01-01", "amount": {"value": 285000, "high": 310000, "low": 260000, "scr": 88}},
+                    {"eventDate": "2025-10-01", "amount": {"value": 280000, "high": 300000, "low": 260000, "scr": 87}},
+                ]
+            }]
+        }
+
+    def test_history_returned_newest_first(self):
+        result = normalize_from_attom_avm_history(self._payload())
+        assert result[0]["date"] == "2026-04-01"
+        assert result[-1]["date"] == "2025-10-01"
+
+    def test_value_coerced_to_float(self):
+        result = normalize_from_attom_avm_history(self._payload())
+        assert result[0]["value"] == 295000.0
+
+    def test_confidence_score_extracted(self):
+        result = normalize_from_attom_avm_history(self._payload())
+        assert result[0]["confidence_score"] == 90
+
+    def test_high_low_band_extracted(self):
+        result = normalize_from_attom_avm_history(self._payload())
+        assert result[0]["value_high"] == 320000.0
+        assert result[0]["value_low"] == 270000.0
+
+    def test_max_items_caps_history(self):
+        big_payload = {
+            "property": [{
+                "avmhistory": [
+                    {"eventDate": f"2024-{m:02d}-01", "amount": {"value": 100000 + m * 1000}}
+                    for m in range(1, 13)
+                ] + [
+                    {"eventDate": f"2025-{m:02d}-01", "amount": {"value": 110000 + m * 1000}}
+                    for m in range(1, 13)
+                ]
+            }]
+        }
+        result = normalize_from_attom_avm_history(big_payload, max_items=10)
+        assert len(result) == 10
+
+    def test_empty_returns_empty_list(self):
+        assert normalize_from_attom_avm_history({}) == []
+        assert normalize_from_attom_avm_history({"property": [{}]}) == []
+
+
+class TestNormalizeAttomSalesComparables:
+    """ATTOM /salescomparables → distance-sorted comparable sales."""
+
+    def _payload(self) -> dict:
+        return {
+            "comparables": [
+                {
+                    "identifier": {"attomId": "C1"},
+                    "address": {"oneLine": "4865 Price St"},
+                    "distance": "0.05",
+                    "building": {
+                        "rooms": {"beds": 5, "bathstotal": 3},
+                        "size": {"livingsize": 2400},
+                        "summary": {"yearbuilt": 2014},
+                    },
+                    "sale": {
+                        "amount": {"saleAmt": 290000},
+                        "saleTransDate": "2024-08-12",
+                    },
+                },
+                {
+                    "identifier": {"attomId": "C2"},
+                    "address": {"oneLine": "4870 Price St"},
+                    "distance": "0.08",
+                    "building": {
+                        "rooms": {"beds": 4, "bathstotal": 2.5},
+                        "size": {"livingsize": 2200},
+                        "summary": {"yearbuilt": 2010},
+                    },
+                    "sale": {
+                        "amount": {"saleAmt": 270000},
+                        "saleTransDate": "2024-06-01",
+                    },
+                },
+            ]
+        }
+
+    def test_returns_distance_sorted_list(self):
+        result = normalize_from_attom_sales_comparables(self._payload())
+        assert result[0]["distance_miles"] == 0.05
+        assert result[1]["distance_miles"] == 0.08
+
+    def test_sale_amount_coerced(self):
+        result = normalize_from_attom_sales_comparables(self._payload())
+        assert result[0]["last_sale_amount"] == 290000.0
+
+    def test_beds_baths_sqft_year_extracted(self):
+        result = normalize_from_attom_sales_comparables(self._payload())
+        assert result[0]["beds"] == 5
+        assert result[0]["baths"] == 3.0
+        assert result[0]["living_sqft"] == 2400
+        assert result[0]["year_built"] == 2014
+
+    def test_max_items_caps_comps(self):
+        big = {"comparables": [
+            {"identifier": {"attomId": str(i)}, "address": {"oneLine": f"{i} Test"},
+             "distance": str(i / 100), "sale": {"amount": {"saleAmt": 100000 + i}}}
+            for i in range(20)
+        ]}
+        result = normalize_from_attom_sales_comparables(big, max_items=5)
+        assert len(result) == 5
+
+    def test_empty_returns_empty_list(self):
+        assert normalize_from_attom_sales_comparables({}) == []
+        assert normalize_from_attom_sales_comparables({"comparables": []}) == []
