@@ -538,20 +538,42 @@ async def personalization(request: Request) -> dict[str, Any]:
         receipt_store.store_receipts([{
             "id": receipt_id,
             "receipt_type": "personalization_unknown_number",
-            "outcome": "failed",
+            "outcome": "degraded",
             "action_type": "sarah_personalization",
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
-            "reason_code": "UNKNOWN_NUMBER",
+            "reason_code": "UNKNOWN_NUMBER_DEGRADED",
             "redacted_inputs": {"called_number": called_number},
             "trace_id": trace_id,
             "correlation_id": correlation_id,
             "created_at": now,
         }])
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "UNKNOWN_NUMBER", "message": f"No tenant for number {called_number}"},
-        )
+        # Per ElevenLabs Twilio personalization docs:
+        # > "The dynamic_variables field MUST contain all dynamic variables
+        # >  defined for the agent."
+        # If we 404 here, EL has no dyn_vars → first_message template
+        # renders with raw {{business_name}} / {{time_of_day}} placeholders
+        # → EL aborts with "Missing required dynamic variables" → caller
+        # hears a click within 1 second. ALWAYS returning a complete
+        # dyn_vars payload (even with safe defaults) keeps the call alive
+        # so the caller hears Sarah/Tiffany greet them.
+        default_dyn_vars = dict(_DEFAULT_DYN_VARS)
+        try:
+            default_dyn_vars["time_of_day"] = _compute_time_of_day("America/New_York")
+        except Exception:  # noqa: BLE001 — never crash the webhook
+            pass
+        first_message = _build_first_message(default_dyn_vars, is_open=True)
+        return {
+            "type": "conversation_initiation_client_data",
+            "dynamic_variables": default_dyn_vars,
+            "conversation_config_override": {
+                "agent": {
+                    "first_message": first_message,
+                    "language": "en",
+                }
+            },
+            "_aspire_fallback": True,
+        }
 
     dyn_vars = resolution["dyn_vars"]
     suite_id = resolution["suite_id"]
