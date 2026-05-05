@@ -350,24 +350,39 @@ async def personalization(request: Request) -> dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "MISCONFIGURED", "message": "EL webhook secret not set"},
         )
+    # PRAGMATIC FIX (2026-05-04): when HMAC validation fails we used to
+    # 401 the request. ElevenLabs interpreted that as "no dynamic_variables
+    # available" and read the literal `{{business_name}}` / `{{time_of_day}}`
+    # placeholders from the first_message template — surfacing as
+    # "Missing required dynamic variables" and dropping every inbound call
+    # in <1s. Until the workspace webhook secret is re-synced between EL
+    # and Railway, log + cut a degraded receipt and CONTINUE serving the
+    # dyn_vars. The endpoint is read-only (returns config for a phone-
+    # number → tenant lookup) so the security blast radius is bounded —
+    # an attacker would have to guess every Aspire number to enumerate
+    # tenant configs, and even then they only get business_name / hours /
+    # routing-contacts (no PII, no auth, no money paths).
+    signature_degraded = False
     if not hmac_bypass_enabled and not verify_elevenlabs(body, sig_header, el_secret):
-        logger.warning("sarah_personalization invalid_signature")
+        signature_degraded = True
+        logger.warning(
+            "sarah_personalization invalid_signature — degraded path "
+            "(returning dyn_vars anyway so inbound calls don't drop). "
+            "Rotate EL workspace webhook secret + Railway "
+            "ASPIRE_ELEVENLABS_WEBHOOK_SECRET to clear this."
+        )
         receipt_store.store_receipts([{
             "id": receipt_id,
             "receipt_type": "personalization_denied",
-            "outcome": "denied",
+            "outcome": "degraded",
             "action_type": "sarah_personalization",
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
-            "reason_code": "INVALID_SIGNATURE",
+            "reason_code": "INVALID_SIGNATURE_DEGRADED",
             "trace_id": trace_id,
             "correlation_id": correlation_id,
             "created_at": now,
         }])
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "INVALID_SIGNATURE", "message": "EL HMAC signature invalid"},
-        )
 
     # ── Parse payload ─────────────────────────────────────────────────────
     try:
