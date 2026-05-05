@@ -126,6 +126,8 @@ async def _attom_request(
     api_root: str = "/propertyapi/v1.0.0",
     timeout_seconds: float = 8.0,
     cache_ttl_seconds: int | None = 86400,
+    extra_success_empty_codes: tuple[int, ...] = (),
+    extra_error_code_labels: dict[int, str] | None = None,
 ) -> ToolExecutionResult:
     """Shared ATTOM request handler for all endpoint families.
 
@@ -289,8 +291,12 @@ async def _attom_request(
 
     # SuccessWithoutResult shows up across several envelope shapes — treat
     # as success-with-empty so downstream code can branch on `total=0`
-    # rather than `outcome=FAILED`.
-    if custom_code == 1 or custom_msg == "SuccessWithoutResult":
+    # rather than `outcome=FAILED`. Some endpoint families have their own
+    # custom "no results" codes (e.g. POI code 5 = "no POIs within zip"),
+    # which callers can pass via extra_success_empty_codes.
+    if custom_code == 1 or custom_msg == "SuccessWithoutResult" or (
+        custom_code is not None and custom_code in extra_success_empty_codes
+    ):
         logger.info(
             "ATTOM %s: SuccessWithoutResult (no records for inputs)",
             tool_id,
@@ -315,6 +321,8 @@ async def _attom_request(
         13: "INVALID_SORT_VALUE",
         15: "INVALID_AVM_VALUE_RANGE",
     }
+    if extra_error_code_labels:
+        code_to_label = {**code_to_label, **extra_error_code_labels}
     error_label = code_to_label.get(custom_code or 0, "")
     error_detail = ""
     if custom_msg:
@@ -1728,14 +1736,40 @@ async def execute_attom_poi_search(
             receipt_data=receipt,
         )
 
-    # Per ATTOM POI V4 docs: default recordLimit=20, default search radius
-    # 5 sq mi. Both produce a stunted POI list for property cards. We default
-    # to recordLimit=50 inside a 5-mile radius so the desktop POI section
-    # shows enough variety to be useful.
+    # Per ATTOM POI V4 docs: default 20 records / 5 sq mi. The V2 docs list
+    # `recordLimit` as the limit param but the V4 search-filters table does
+    # NOT include recordLimit — V4 follows the standard Property API
+    # pagination (`pageSize`). Pass both for forward/backward compat:
+    # whichever ATTOM honors wins, the other is ignored.
     params["radius"] = str(payload.get("radius") or 5)
-    params["recordLimit"] = str(payload.get("recordLimit") or 50)
+    params["pageSize"] = str(payload.get("pageSize") or payload.get("recordLimit") or 50)
+    params["recordLimit"] = params["pageSize"]  # legacy V2 fallback
+    # Sort by distance ascending so closest POIs are first — guarantees a
+    # useful "near me" UX regardless of ATTOM's default ordering.
+    params["orderby"] = str(payload.get("orderby") or "DISTANCE")
+
+    # Default category whitelist drops 4 of the 14 ATTOM POI categories
+    # (FARM-RANCH, AUTOMOTIVE SERVICES, PET SERVICES, ORGANIZATIONS-
+    # ASSOCIATIONS, PERSONAL SERVICES) that are noise on a property card.
+    # Callers can override by passing categoryName explicitly.
+    DEFAULT_POI_CATEGORIES = [
+        "SHOPPING",
+        "EATING - DRINKING",
+        "EDUCATION",
+        "HEALTH CARE SERVICES",
+        "BANKS - FINANCIAL",
+        "GOVERNMENT - PUBLIC",
+        "TRAVEL",
+        "ATTRACTIONS - RECREATION",
+        "HOSPITALITY",
+    ]
     if payload.get("categoryName"):
         params["categoryName"] = str(payload["categoryName"])
+    elif payload.get("useDefaultCategories", True):
+        # Pipe-delimited multi-value filter per ATTOM search-filter docs
+        # ("propertytype=sfr|apartment" pattern applies to all filters).
+        params["categoryName"] = "|".join(DEFAULT_POI_CATEGORIES)
+
     if payload.get("lineOfBusinessName"):
         params["LineOfBusinessName"] = str(payload["lineOfBusinessName"])
     if payload.get("industryName"):
@@ -1751,6 +1785,15 @@ async def execute_attom_poi_search(
         capability_token_id=capability_token_id,
         capability_token_hash=capability_token_hash,
         api_root="/v4",
+        # POI V4 custom codes per ATTOM docs:
+        #   3   Address Geocoded fail (translates to friendly error message)
+        #   5   No POIs within the zip code entered (success-with-empty)
+        #   100 One or more input parameters are invalid or missing
+        extra_success_empty_codes=(5,),
+        extra_error_code_labels={
+            3: "POI_ADDRESS_NOT_GEOCODABLE",
+            100: "POI_INVALID_OR_MISSING_PARAMS",
+        },
     )
 
 

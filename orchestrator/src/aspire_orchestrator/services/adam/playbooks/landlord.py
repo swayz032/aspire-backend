@@ -772,23 +772,47 @@ async def execute_property_facts(
                 **args,
             )
             if hl_result and hl_result.outcome == Outcome.SUCCESS and hl_result.data:
-                # Hierarchy response shape: response.result.package.item[]
-                # with each entry having `id` (geoIdV4) and `type` (e.g. "ZI",
-                # "ND", "N2", "CS"). Build a dict keyed on type.
+                # Hierarchy lookup response shape varies by ATTOM API version:
+                #   V4 (current): {"geographies": [{"geoIdV4": "...",
+                #     "geographyTypeAbbreviation": "ZI", ...}, ...]}
+                #   Legacy V2: {"response": {"result": {"package": {
+                #     "item": [{"id": "...", "type": "ZI", ...}, ...]}}}}
+                # Try V4 shape first, fall back to V2 for older deployments.
                 synthetic = {}
-                resp = hl_result.data.get("response", {}) if isinstance(hl_result.data, dict) else {}
-                result = resp.get("result", {}) if isinstance(resp, dict) else {}
-                package = result.get("package", {}) if isinstance(result, dict) else {}
-                items = package.get("item", []) if isinstance(package, dict) else []
-                if isinstance(items, dict):
-                    items = [items]
-                for item in items if isinstance(items, list) else []:
-                    if not isinstance(item, dict):
-                        continue
-                    geo_type = str(item.get("type") or "").strip()
-                    geo_id = str(item.get("id") or item.get("geoIdV4") or "").strip()
-                    if geo_type and geo_id:
-                        synthetic[geo_type] = geo_id
+
+                # V4 shape — direct geographies[] array on body root.
+                geographies = hl_result.data.get("geographies", [])
+                if isinstance(geographies, dict):
+                    geographies = [geographies]
+                if isinstance(geographies, list) and geographies:
+                    for g in geographies:
+                        if not isinstance(g, dict):
+                            continue
+                        geo_type = str(
+                            g.get("geographyTypeAbbreviation")
+                            or g.get("type")
+                            or ""
+                        ).strip()
+                        geo_id = str(g.get("geoIdV4") or g.get("id") or "").strip()
+                        if geo_type and geo_id:
+                            synthetic[geo_type] = geo_id
+
+                # Legacy V2 shape — only used if V4 parse came up empty.
+                if not synthetic:
+                    resp = hl_result.data.get("response", {}) if isinstance(hl_result.data, dict) else {}
+                    result = resp.get("result", {}) if isinstance(resp, dict) else {}
+                    package = result.get("package", {}) if isinstance(result, dict) else {}
+                    items = package.get("item", []) if isinstance(package, dict) else []
+                    if isinstance(items, dict):
+                        items = [items]
+                    for item in items if isinstance(items, list) else []:
+                        if not isinstance(item, dict):
+                            continue
+                        geo_type = str(item.get("type") or "").strip()
+                        geo_id = str(item.get("id") or item.get("geoIdV4") or "").strip()
+                        if geo_type and geo_id:
+                            synthetic[geo_type] = geo_id
+
                 if synthetic:
                     prop_dict["geo_id_v4"] = synthetic
                     geo_id_v4_dict = synthetic
@@ -799,17 +823,44 @@ async def execute_property_facts(
         except Exception as exc:  # noqa: BLE001 — fallback is non-fatal enrichment
             logger.warning("landlord.property_facts: hierarchy lookup failed: %s", exc)
 
-    # Prefer neighborhood-level (ND) for community, fall back to ZI (zip).
+    # ATTOM V4 geoIdV4 keys per docs: ND (broad neighborhood — still
+    # populated in V4 responses despite the migration intro splitting it
+    # conceptually), N1 (Macro Neighborhood), N2 (Neighborhood), N3
+    # (Sub-Neighborhood), N4 (Residential Subdivision), CS (County
+    # Subdivision), PL (Place), ZI (Zip Code Tabulation Area). Community
+    # API accepts any of these; finer granularity = more relevant data.
+    # Fallback chain prefers most-specific to most-general.
     community_geo = (
         geo_id_v4_dict.get("ND")
         or geo_id_v4_dict.get("N2")
+        or geo_id_v4_dict.get("N1")
+        or geo_id_v4_dict.get("N3")
+        or geo_id_v4_dict.get("N4")
+        or geo_id_v4_dict.get("CS")
+        or geo_id_v4_dict.get("PL")
         or geo_id_v4_dict.get("ZI")
         or ""
     )
     # Salestrend is published at zip level by ATTOM (see /v4/transaction/salestrend
-    # docs). Prefer ZI; ND/N2 are accepted but yield smaller samples.
-    salestrend_geo = geo_id_v4_dict.get("ZI") or geo_id_v4_dict.get("ND") or ""
+    # docs). Prefer ZI; ND/N1/N2 are accepted but yield smaller samples.
+    salestrend_geo = (
+        geo_id_v4_dict.get("ZI")
+        or geo_id_v4_dict.get("ND")
+        or geo_id_v4_dict.get("N2")
+        or geo_id_v4_dict.get("N1")
+        or ""
+    )
     subject_attomid = prop_dict.get("attom_id") or ""
+
+    # Comps fallback geoIdV4 — use N4 (Residential Subdivision) or N3
+    # (Sub-Neighborhood) for tightest match. /sale/snapshot accepts geoIdV4
+    # so we get all recorded sales in the same boundary as the subject.
+    n4_id = (
+        geo_id_v4_dict.get("N4")
+        or geo_id_v4_dict.get("N3")
+        or geo_id_v4_dict.get("N2")
+        or ""
+    )
 
     second_wave_calls: list[Any] = []
     second_wave_keys: list[str] = []
@@ -837,6 +888,55 @@ async def execute_property_facts(
             payload={"attomId": subject_attomid}, **args,
         ))
         second_wave_keys.append("sales_comparables")
+    # /sale/snapshot fallback — runs in parallel with /salescomparables.
+    # When salescomparables fails (no entitlement, no attomid, etc.) the
+    # /sale/snapshot results take over so the comps card still renders.
+    # ATTOM /sale/snapshot accepts geoIdV4 (preferred — neighborhood-tight)
+    # OR address+radius (broader, distance-sorted). For radius searches
+    # the docs specify orderby=distance asc as the right sort.
+    if n4_id:
+        second_wave_calls.append(_attom_request(
+            path="/sale/snapshot",
+            query_params={
+                "geoIdV4": n4_id,
+                "minsaleamt": "100000",
+                "maxsaleamt": "1500000",
+                "propertytype": "SFR",
+                "pageSize": "20",
+                "orderby": "saleSearchDate desc",
+            },
+            tool_id="attom.neighborhood_comps",
+            correlation_id=context.correlation_id,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+        ))
+        second_wave_keys.append("neighborhood_comps")
+    elif normalized_address:
+        # No geoIdV4 N4 — fall back to address + 0.5 mi radius (max distance
+        # for "nearby" neighborhood-equivalent comps). orderby=distance asc
+        # so closest comparables surface first.
+        addr_parts = normalized_address.split(",", 1)
+        addr1 = addr_parts[0].strip() if addr_parts else normalized_address
+        addr2 = addr_parts[1].strip() if len(addr_parts) > 1 else ""
+        if addr1:
+            second_wave_calls.append(_attom_request(
+                path="/sale/snapshot",
+                query_params={
+                    "address1": addr1,
+                    "address2": addr2,
+                    "radius": "0.5",
+                    "minsaleamt": "100000",
+                    "maxsaleamt": "1500000",
+                    "propertytype": "SFR",
+                    "pageSize": "20",
+                    "orderby": "distance asc",
+                },
+                tool_id="attom.radius_comps",
+                correlation_id=context.correlation_id,
+                suite_id=context.suite_id,
+                office_id=context.office_id,
+            ))
+            second_wave_keys.append("neighborhood_comps")
 
     if second_wave_calls:
         sw_results = await asyncio.gather(*second_wave_calls, return_exceptions=True)
@@ -877,6 +977,70 @@ async def execute_property_facts(
                     prop_dict["comps"] = comps
             except Exception as exc:  # noqa: BLE001
                 logger.warning("landlord.property_facts: sales_comparables normalize failed: %s", exc)
+
+        # /sale/snapshot fallback — only populate comps from this if the
+        # primary /salescomparables path didn't return any. The two endpoints
+        # surface different things: salescomparables = AVM-matched true
+        # comparables; sale/snapshot = any recent sale in the geography.
+        # Falling back to sale/snapshot is better than zero comps.
+        nb_comps_result = _safe_result(sw_by_key.get("neighborhood_comps"))
+        if (
+            nb_comps_result
+            and nb_comps_result.outcome == Outcome.SUCCESS
+            and nb_comps_result.data
+            and prop_dict is not None
+            and not prop_dict.get("comps")  # only fill if salescomparables came up empty
+        ):
+            try:
+                # Use the same coercion helpers the normalizer uses for the
+                # primary comps path so types stay consistent across the two
+                # data sources.
+                from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                    _safe_float,
+                    _safe_int,
+                )
+
+                fallback_comps = []
+                subject_attom_id = prop_dict.get("attom_id", "")
+                for cp in nb_comps_result.data.get("property", [])[:15]:
+                    if not isinstance(cp, dict):
+                        continue
+                    cp_id = str(cp.get("identifier", {}).get("attomId", "")) if isinstance(cp.get("identifier"), dict) else ""
+                    if cp_id and cp_id == subject_attom_id:
+                        continue  # skip subject itself
+                    cp_addr = cp.get("address", {}).get("oneLine", "") if isinstance(cp.get("address"), dict) else ""
+                    cp_sale = cp.get("sale", {}) if isinstance(cp.get("sale"), dict) else {}
+                    cp_amt = cp_sale.get("amount", {}) if isinstance(cp_sale.get("amount"), dict) else {}
+                    cp_bldg = cp.get("building", {}) if isinstance(cp.get("building"), dict) else {}
+                    cp_summary = cp.get("summary", {}) if isinstance(cp.get("summary"), dict) else {}
+                    cp_loc = cp.get("location", {}) if isinstance(cp.get("location"), dict) else {}
+                    fallback_comps.append({
+                        "attom_id": cp_id,
+                        "address": cp_addr,
+                        "distance_miles": _safe_float(cp_loc.get("distance")),
+                        "beds": _safe_int((cp_bldg.get("rooms") or {}).get("beds")),
+                        "baths": _safe_float((cp_bldg.get("rooms") or {}).get("bathstotal")),
+                        "living_sqft": _safe_int(
+                            (cp_bldg.get("size") or {}).get("livingsize")
+                            or (cp_bldg.get("size") or {}).get("universalsize")
+                        ),
+                        "year_built": _safe_int(cp_summary.get("yearbuilt")),
+                        "last_sale_date": str(
+                            cp_amt.get("salerecdate")
+                            or cp_sale.get("saleTransDate", "")
+                            or ""
+                        ),
+                        "last_sale_amount": _safe_float(cp_amt.get("saleamt")),
+                        "estimated_value": None,
+                    })
+                if fallback_comps:
+                    prop_dict["comps"] = fallback_comps[:12]
+                    logger.info(
+                        "landlord.property_facts: comps populated from /sale/snapshot fallback (%d records)",
+                        len(fallback_comps),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("landlord.property_facts: neighborhood_comps normalize failed: %s", exc)
 
     # --- Merge foreclosure filings + expanded sale history ----------------
     # (was a sequential await; now part of the parallel gather above.)
