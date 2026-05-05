@@ -335,6 +335,67 @@ class TestNormalizeFromAttomDetail:
         assert record.normalized_address == ""
 
 
+class TestAttomDetailGeographyExtraction:
+    """W1a — normalize_from_attom_detail must extract lat/lng + county.
+
+    These fields land on PropertyRecord schema (lines 179-182) but were
+    previously dropped by the normalizer, breaking the Street View lat/lng
+    fallback path and leaving the County row empty on the property card.
+    """
+
+    def _payload_with_geo(self, **overrides) -> dict:
+        location = overrides.get("location", {"latitude": "33.6234", "longitude": "-84.3712"})
+        area = overrides.get("area", {"countrysecsubd": "Clayton", "munname": "Forest Park"})
+        return {
+            "property": [
+                {
+                    "identifier": {"apn": "X", "fips": "13063", "attomId": "1"},
+                    "address": {"oneLine": "4863 Price Street, Forest Park, GA 30297"},
+                    "location": location,
+                    "area": area,
+                    "building": {"summary": {}, "rooms": {}, "size": {}},
+                    "owner": {"owner1": {}},
+                    "vintage": {"lastModified": "2025-01-01"},
+                }
+            ]
+        }
+
+    def test_latitude_extracted_as_float(self):
+        record = normalize_from_attom_detail(self._payload_with_geo())
+        assert record.latitude == pytest.approx(33.6234)
+
+    def test_longitude_extracted_as_float(self):
+        record = normalize_from_attom_detail(self._payload_with_geo())
+        assert record.longitude == pytest.approx(-84.3712)
+
+    def test_county_extracted_from_countrysecsubd(self):
+        record = normalize_from_attom_detail(self._payload_with_geo())
+        assert record.county == "Clayton"
+
+    def test_county_falls_back_to_camelcase_key(self):
+        payload = self._payload_with_geo(area={"countrySecSubd": "Fulton"})
+        record = normalize_from_attom_detail(payload)
+        assert record.county == "Fulton"
+
+    def test_zero_zero_coords_treated_as_null(self):
+        """ATTOM uses 0/0 as a sentinel for 'no coords' — must not be returned."""
+        payload = self._payload_with_geo(location={"latitude": "0", "longitude": "0"})
+        record = normalize_from_attom_detail(payload)
+        assert record.latitude is None
+        assert record.longitude is None
+
+    def test_missing_location_block_returns_none(self):
+        payload = self._payload_with_geo(location={})
+        record = normalize_from_attom_detail(payload)
+        assert record.latitude is None
+        assert record.longitude is None
+
+    def test_empty_county_returns_empty_string(self):
+        payload = self._payload_with_geo(area={"munname": "Forest Park"})
+        record = normalize_from_attom_detail(payload)
+        assert record.county == ""
+
+
 # ---------------------------------------------------------------------------
 # SerpApi Shopping normalizer
 # ---------------------------------------------------------------------------
@@ -1271,3 +1332,216 @@ class TestAssertUnitDataComplete:
             assert exc.tax_market_value == 2.0
         else:
             pytest.fail("AttomUnitDataMissingError not raised")
+
+
+# ---------------------------------------------------------------------------
+# W1b — normalize_from_attom_allevents (full transaction history)
+# ---------------------------------------------------------------------------
+
+from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+    normalize_from_attom_allevents,
+    normalize_from_attom_preforeclosure,
+    normalize_from_attom_expanded_profile,
+)
+
+
+class TestNormalizeAttomAllEvents:
+    """normalize_from_attom_allevents flattens ATTOM /allevents/snapshot
+    response into the transaction_history list rendered on the sale_history
+    card section."""
+
+    def _payload(self) -> dict:
+        return {
+            "property": [{
+                "events": [
+                    {
+                        "eventType": "Sale",
+                        "eventDate": "2019-09-30",
+                        "amount": 196000,
+                        "lender": {"lastname": "United Wholesale"},
+                        "documentNumber": "0116450396",
+                        "transferor": "CEDRIC S HORTON",
+                        "transferee": "TONY LEWIS SCOTT",
+                    },
+                    {
+                        "eventType": "Mortgage",
+                        "eventDate": "2019-09-30",
+                        "loanAmount": 192449,
+                        "lenderName": "United Wholesale Mortgage",
+                    },
+                    {
+                        "eventType": "Sale",
+                        "eventDate": "2014-03-12",
+                        "amount": 145000,
+                    },
+                ]
+            }]
+        }
+
+    def test_returns_list(self):
+        history = normalize_from_attom_allevents(self._payload())
+        assert isinstance(history, list)
+        assert len(history) == 3
+
+    def test_sorted_newest_first(self):
+        history = normalize_from_attom_allevents(self._payload())
+        # Both 2019 entries come before the 2014 entry; relative order of
+        # equal-date events preserved by stable sort.
+        assert history[-1]["date"] == "2014-03-12"
+
+    def test_amount_coerced_to_float(self):
+        history = normalize_from_attom_allevents(self._payload())
+        assert history[0]["amount"] == 196000.0
+
+    def test_lender_extracted_from_object(self):
+        history = normalize_from_attom_allevents(self._payload())
+        sale_event = next(e for e in history if e["type"] == "Sale" and e["amount"] == 196000.0)
+        assert sale_event["lender"] == "United Wholesale"
+
+    def test_lender_extracted_from_flat_string(self):
+        history = normalize_from_attom_allevents(self._payload())
+        mortgage_event = next(e for e in history if e["type"] == "Mortgage")
+        assert mortgage_event["lender"] == "United Wholesale Mortgage"
+
+    def test_doc_number_extracted(self):
+        history = normalize_from_attom_allevents(self._payload())
+        first = next(e for e in history if e["amount"] == 196000.0)
+        assert first["doc_number"] == "0116450396"
+
+    def test_transferor_transferee_extracted(self):
+        history = normalize_from_attom_allevents(self._payload())
+        first = next(e for e in history if e["amount"] == 196000.0)
+        assert first["transferor"] == "CEDRIC S HORTON"
+        assert first["transferee"] == "TONY LEWIS SCOTT"
+
+    def test_empty_event_skipped(self):
+        payload = {"property": [{"events": [{}, {"eventType": "Sale"}]}]}
+        history = normalize_from_attom_allevents(payload)
+        assert len(history) == 1
+
+    def test_no_property_returns_empty(self):
+        assert normalize_from_attom_allevents({"property": []}) == []
+        assert normalize_from_attom_allevents({}) == []
+
+    def test_alternate_key_casings_supported(self):
+        """ATTOM mixes camelCase and lowercase across endpoints."""
+        payload = {
+            "property": [{
+                "allEvents": [
+                    {
+                        "type": "Sale",
+                        "recordingDate": "2020-01-15",
+                        "salesAmount": 300000,
+                    }
+                ]
+            }]
+        }
+        history = normalize_from_attom_allevents(payload)
+        assert len(history) == 1
+        assert history[0]["date"] == "2020-01-15"
+        assert history[0]["amount"] == 300000.0
+
+
+class TestNormalizeAttomPreforeclosure:
+    """normalize_from_attom_preforeclosure flattens ATTOM
+    /property/v3/preforeclosuredetails into a foreclosure_filing dict."""
+
+    def _payload(self) -> dict:
+        return {
+            "property": [{
+                "foreclosure": {
+                    "currentFiling": {
+                        "recordingDate": "2024-03-15",
+                        "defaultAmount": 24500,
+                        "lenderName": "Wells Fargo Bank",
+                        "auctionDate": "2024-09-22",
+                        "auctionLocation": "Clayton County Courthouse",
+                        "caseNumber": "FC-2024-1234",
+                        "distressType": "NOD",
+                    }
+                }
+            }]
+        }
+
+    def test_filing_date_extracted(self):
+        result = normalize_from_attom_preforeclosure(self._payload())
+        assert result["filing_date"] == "2024-03-15"
+
+    def test_default_amount_coerced_to_float(self):
+        result = normalize_from_attom_preforeclosure(self._payload())
+        assert result["default_amount"] == 24500.0
+
+    def test_lender_name_extracted(self):
+        result = normalize_from_attom_preforeclosure(self._payload())
+        assert result["lender_name"] == "Wells Fargo Bank"
+
+    def test_auction_date_extracted(self):
+        result = normalize_from_attom_preforeclosure(self._payload())
+        assert result["auction_date"] == "2024-09-22"
+
+    def test_case_number_extracted(self):
+        result = normalize_from_attom_preforeclosure(self._payload())
+        assert result["case_number"] == "FC-2024-1234"
+
+    def test_distress_type_extracted(self):
+        result = normalize_from_attom_preforeclosure(self._payload())
+        assert result["distress_type"] == "NOD"
+
+    def test_flat_filing_block_supported(self):
+        """Some ATTOM responses return filing fields directly on the
+        foreclosure block instead of nested under currentFiling."""
+        payload = {
+            "property": [{
+                "foreclosure": {
+                    "recordingDate": "2024-01-01",
+                    "defaultAmount": 10000,
+                    "lenderName": "Test Bank",
+                }
+            }]
+        }
+        result = normalize_from_attom_preforeclosure(payload)
+        assert result["filing_date"] == "2024-01-01"
+        assert result["default_amount"] == 10000.0
+
+    def test_no_property_returns_empty_dict(self):
+        assert normalize_from_attom_preforeclosure({"property": []}) == {}
+        assert normalize_from_attom_preforeclosure({}) == {}
+
+    def test_no_filing_signal_returns_empty_dict(self):
+        """When ATTOM returns the foreclosure block but with no actionable
+        fields, the normalizer must return an empty dict so the playbook
+        doesn't surface a phantom filing card."""
+        payload = {"property": [{"foreclosure": {"someOtherKey": "x"}}]}
+        result = normalize_from_attom_preforeclosure(payload)
+        assert result == {}
+
+
+class TestExpandedProfileLegalDescription:
+    """W1a — expanded_profile must surface legal_description for the
+    ownership card."""
+
+    def _payload(self, legal1: str = "LOT 14 CROWN RIVER SUBD UNIT 2", legal2: str = "") -> dict:
+        return {
+            "property": [{
+                "summary": {"legal1": legal1, "legal2": legal2},
+                "lot": {},
+                "area": {},
+                "sale": {},
+                "building": {"size": {}, "construction": {}},
+                "assessment": {"tax": {}},
+            }]
+        }
+
+    def test_legal_description_extracted_from_legal1(self):
+        result = normalize_from_attom_expanded_profile(self._payload())
+        assert result["legal_description"] == "LOT 14 CROWN RIVER SUBD UNIT 2"
+
+    def test_legal1_and_legal2_joined(self):
+        result = normalize_from_attom_expanded_profile(
+            self._payload(legal1="LOT 14 CROWN RIVER", legal2="UNIT 2 PHASE A")
+        )
+        assert result["legal_description"] == "LOT 14 CROWN RIVER UNIT 2 PHASE A"
+
+    def test_empty_legal_returns_empty_string(self):
+        result = normalize_from_attom_expanded_profile(self._payload(legal1="", legal2=""))
+        assert result["legal_description"] == ""

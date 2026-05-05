@@ -114,6 +114,25 @@ def normalize_from_attom_detail(data: dict[str, Any]) -> PropertyRecord:
     vintage = p.get("vintage", {}) or {}
     mortgage = p.get("mortgage", {}) or {}
     area = p.get("area", {}) or {}
+    location = p.get("location", {}) or {}
+
+    # Geography — lat/lng + county. ATTOM returns lat/lng as strings inside
+    # the location block. _safe_float coerces and falls back to None on parse
+    # error (e.g. empty string or "0"). County lives in area.countrysecsubd
+    # (county name) for most responses; some use area.munname for the
+    # municipality and area.countrysecsubd for county. Try the canonical key
+    # first, then fall back.
+    latitude = _safe_float(location.get("latitude"))
+    longitude = _safe_float(location.get("longitude"))
+    # ATTOM uses 0/0 as a sentinel for "no coords" — treat as null.
+    if latitude == 0 and longitude == 0:
+        latitude = longitude = None
+    county = (
+        area.get("countrysecsubd", "")
+        or area.get("countrySecSubd", "")
+        or area.get("countyrsa", "")
+        or ""
+    )
 
     # Owner name — ATTOM uses lowercase keys (fullname, not fullName)
     owner1 = owner.get("owner1", {}) or {}
@@ -168,6 +187,9 @@ def normalize_from_attom_detail(data: dict[str, Any]) -> PropertyRecord:
         # Geography
         subdivision=lot.get("subdname", "") or area.get("subdname", ""),
         neighborhood=area.get("munname", ""),
+        county=county,
+        latitude=latitude,
+        longitude=longitude,
         source_last_modified=str(vintage.get("lastModified", "") or ""),
         verification_status="verified",
         confidence=0.92,
@@ -314,6 +336,193 @@ def normalize_from_attom_sale_detail(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_from_attom_allevents(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize ATTOM /allevents/snapshot response to a flat transaction
+    history list.
+
+    Each entry covers one event in the property's recorded timeline (sale,
+    mortgage origination, assessment, transfer, foreclosure filing, etc.).
+    The shape is intentionally flat so the desktop card can render the
+    timeline as MiniRow entries without further reshaping.
+    """
+    props = data.get("property", [])
+    if not props:
+        return []
+
+    p = props[0] if isinstance(props, list) else props
+    events_raw = (
+        p.get("events", [])
+        or p.get("allEvents", [])
+        or p.get("event", [])
+        or []
+    )
+    if not isinstance(events_raw, list):
+        events_raw = [events_raw]
+
+    history: list[dict[str, Any]] = []
+    for ev in events_raw:
+        if not isinstance(ev, dict):
+            continue
+        # ATTOM uses several casing conventions across endpoints — try each.
+        ev_type = (
+            ev.get("eventType")
+            or ev.get("eventtype")
+            or ev.get("type")
+            or ev.get("category")
+            or ""
+        )
+        ev_date = (
+            ev.get("eventDate")
+            or ev.get("eventdate")
+            or ev.get("date")
+            or ev.get("recordingDate")
+            or ev.get("recordingdate")
+            or ""
+        )
+        amount = _safe_float(
+            ev.get("amount")
+            or ev.get("eventAmount")
+            or ev.get("eventamount")
+            or ev.get("salesAmount")
+            or ev.get("loanAmount")
+        )
+        lender_obj = ev.get("lender") if isinstance(ev.get("lender"), dict) else {}
+        lender = (
+            lender_obj.get("lastname", "")
+            or lender_obj.get("lastName", "")
+            or ev.get("lenderName", "")
+            or ev.get("lendername", "")
+            or ""
+        )
+        doc_number = str(
+            ev.get("documentNumber", "")
+            or ev.get("documentnumber", "")
+            or ev.get("docNum", "")
+            or ev.get("docnum", "")
+            or ""
+        )
+        # ATTOM transferor = seller / outgoing party; transferee = buyer.
+        transferor = (
+            ev.get("transferor", "")
+            or ev.get("seller", "")
+            or ev.get("sellerName", "")
+            or ""
+        )
+        transferee = (
+            ev.get("transferee", "")
+            or ev.get("buyer", "")
+            or ev.get("buyerName", "")
+            or ""
+        )
+
+        # Skip wholly empty entries — happens when ATTOM returns a placeholder.
+        if not (ev_type or ev_date or amount or lender):
+            continue
+
+        history.append({
+            "type": str(ev_type),
+            "date": str(ev_date),
+            "amount": amount,
+            "lender": str(lender),
+            "doc_number": doc_number,
+            "transferor": str(transferor),
+            "transferee": str(transferee),
+        })
+
+    # Newest first — ATTOM sometimes returns oldest-first depending on package.
+    history.sort(key=lambda h: h.get("date") or "", reverse=True)
+    return history
+
+
+def normalize_from_attom_preforeclosure(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ATTOM /property/v3/preforeclosuredetails response into a
+    flat foreclosure_filing dict for the foreclosure card.
+
+    Captures the most recent active filing only (NOD, lis pendens, or
+    auction). Older filings are tracked separately in foreclosure_records.
+    """
+    props = data.get("property", [])
+    if not props:
+        return {}
+
+    p = props[0] if isinstance(props, list) else props
+    fc_block = (
+        p.get("foreclosure", {})
+        or p.get("preforeclosure", {})
+        or p.get("preForeclosure", {})
+        or {}
+    )
+    if not isinstance(fc_block, dict):
+        return {}
+
+    # Some ATTOM responses nest the active filing under `currentFiling` or
+    # return the filing fields directly on the foreclosure block.
+    filing = (
+        fc_block.get("currentFiling", {})
+        or fc_block.get("currentfiling", {})
+        or fc_block
+    )
+    if not isinstance(filing, dict):
+        return {}
+
+    filing_date = (
+        filing.get("recordingDate", "")
+        or filing.get("recordingdate", "")
+        or filing.get("filingDate", "")
+        or filing.get("filingdate", "")
+        or ""
+    )
+    default_amount = _safe_float(
+        filing.get("defaultAmount")
+        or filing.get("defaultamount")
+        or filing.get("originalLoanAmount")
+        or filing.get("originalloanamount")
+    )
+    lender_name = (
+        filing.get("lenderName", "")
+        or filing.get("lendername", "")
+        or filing.get("trustee", "")
+        or ""
+    )
+    auction_date = (
+        filing.get("auctionDate", "")
+        or filing.get("auctiondate", "")
+        or filing.get("auctionDateTime", "")
+        or ""
+    )
+    case_number = str(
+        filing.get("caseNumber", "")
+        or filing.get("casenumber", "")
+        or filing.get("docNumber", "")
+        or filing.get("docnumber", "")
+        or ""
+    )
+    auction_location = (
+        filing.get("auctionLocation", "")
+        or filing.get("auctionlocation", "")
+        or ""
+    )
+    distress_type = (
+        filing.get("distressType", "")
+        or filing.get("distresstype", "")
+        or filing.get("filingType", "")
+        or ""
+    )
+
+    if not (filing_date or default_amount or lender_name or auction_date):
+        return {}
+
+    return {
+        "filing_date": str(filing_date),
+        "default_amount": default_amount,
+        "lender_name": str(lender_name),
+        "auction_date": str(auction_date),
+        "auction_location": str(auction_location),
+        "case_number": case_number,
+        "distress_type": str(distress_type),
+    }
+
+
 def normalize_from_attom_schools(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize ATTOM detailwithschools response — nearby schools."""
     props = data.get("property", [])
@@ -363,6 +572,15 @@ def normalize_from_attom_expanded_profile(data: dict[str, Any]) -> dict[str, Any
         "homeowner_exemption": exemption.get("Homeowner") == "Y" or exemption.get("homeowner") == "Y",
         "reo_flag": summary.get("REOflag") == "True" or summary.get("reoflag") == "True",
         "quit_claim_flag": summary.get("quitClaimFlag") == "True" or summary.get("quitclaimflag") == "True",
+        # Legal description — ATTOM stores it on the property summary as
+        # `legal1` (and sometimes legal2 for overflow). We concatenate when
+        # both are present so the full legal text is preserved.
+        "legal_description": " ".join(
+            part.strip() for part in [
+                str(summary.get("legal1", "") or ""),
+                str(summary.get("legal2", "") or ""),
+            ] if part and part.strip()
+        ),
     }
 
 

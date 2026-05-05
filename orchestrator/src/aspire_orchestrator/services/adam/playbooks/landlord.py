@@ -113,6 +113,86 @@ def _provider_args(ctx: PlaybookContext) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Card-per-section fanout (W0)
+# ---------------------------------------------------------------------------
+# The desktop carousel renders one PropertyCard per record in the response.
+# `_cardSection` (consumed in PropertyCard.tsx:599) selects which renderer
+# from SECTION_RENDERERS (PropertyCard.tsx:344) to use. By emitting one
+# record per section we light up every category of data ATTOM returned —
+# overview, ownership, mortgage, valuation, sale_history, foreclosure,
+# permits, schools, rental — instead of cramming everything into a single
+# overview card.
+#
+# Each section has a predicate that decides whether the card is worth
+# emitting at all. Empty sections are skipped so the user never swipes onto
+# a blank "Mortgage" or "Schools" card. The predicate signature is
+# `(record) -> bool`; predicates must be total functions and never raise.
+#
+# Order is locked to read like a property report:
+#   overview → ownership → valuation → mortgage → sale_history →
+#   foreclosure → permits → schools → rental
+_SECTION_PLAN: list[tuple[str, str, Any]] = [
+    ("overview", "Property Overview",
+        lambda r: True),
+    ("ownership", "Ownership",
+        lambda r: bool(r.get("owner_name") or r.get("previous_owner_name") or r.get("mailing_address"))),
+    ("valuation", "Valuations & Tax",
+        lambda r: bool(r.get("tax_market_value") or r.get("estimated_value") or r.get("annual_tax_amount"))),
+    ("mortgage", "Mortgage",
+        lambda r: bool(r.get("mortgage_amount") or r.get("mortgage_lender") or r.get("current_loan_balance"))),
+    ("sale_history", "Sale History",
+        lambda r: bool(r.get("last_sale_amount") or r.get("last_sale_date") or r.get("sale_history") or r.get("transaction_history"))),
+    ("foreclosure", "Foreclosure",
+        lambda r: bool(
+            r.get("prior_foreclosure")
+            or r.get("foreclosure_records")
+            or r.get("foreclosure_filing")
+            or (r.get("foreclosure_stage") and r.get("foreclosure_stage") != "none")
+            or r.get("reo_flag")
+        )),
+    ("permits", "Permits",
+        lambda r: bool(r.get("permit_signals") or r.get("major_improvements_year"))),
+    ("schools", "Schools",
+        lambda r: bool(r.get("nearby_schools") or r.get("school_district_name"))),
+    ("rental", "Rental",
+        lambda r: r.get("estimated_rent") is not None),
+]
+
+
+def fan_out_property_sections(prop_dict: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expand a single normalized property record into one record per UI
+    section.
+
+    Returns a list of dict copies, each tagged with `_cardSection`,
+    `_sectionLabel`, and `_section_order`. Sections whose predicate returns
+    False are skipped. If every predicate fails (extremely sparse property),
+    a single overview-tagged record is returned as a safety net so the
+    carousel always shows at least one card.
+    """
+    section_records: list[dict[str, Any]] = []
+    for order, (section, label, predicate) in enumerate(_SECTION_PLAN):
+        try:
+            if not predicate(prop_dict):
+                continue
+        except Exception:  # noqa: BLE001 — predicate guards must never crash playbook
+            continue
+        section_record = dict(prop_dict)
+        section_record["_cardSection"] = section
+        section_record["_sectionLabel"] = label
+        section_record["_section_order"] = order
+        section_records.append(section_record)
+
+    if not section_records:
+        fallback = dict(prop_dict)
+        fallback["_cardSection"] = "overview"
+        fallback["_sectionLabel"] = "Property Overview"
+        fallback["_section_order"] = 0
+        section_records.append(fallback)
+
+    return section_records
+
+
 def _extract_location_label(query: str) -> str:
     """Pull a human location string out of an investment-scan query for
     the Exa web search prompt. Examples:
@@ -484,6 +564,7 @@ async def execute_property_facts(
 
     # Step 2: 6 parallel ATTOM calls — FULL property intelligence in one shot
     from aspire_orchestrator.providers.attom_client import (
+        execute_attom_allevents_snapshot,
         execute_attom_assessment_detail,
         execute_attom_expanded_profile,
         execute_attom_home_equity,
@@ -497,6 +578,7 @@ async def execute_property_facts(
         execute_attom_assessment_detail(payload=attom_payload, **args),
         execute_attom_sale_detail(payload=attom_payload, **args),
         execute_attom_expanded_profile(payload=attom_payload, **args),
+        execute_attom_allevents_snapshot(payload=attom_payload, **args),
         return_exceptions=True,
     )
     # Guard: convert exceptions to None (graceful degradation, not crash)
@@ -506,6 +588,7 @@ async def execute_property_facts(
     assessment_result = _safe_result(_raw_results[3])   # tax assessment + market value
     sale_result = _safe_result(_raw_results[4])         # last sale detail + price/sqft
     expanded_result = _safe_result(_raw_results[5])     # zoning, seller, census, REO flags
+    allevents_result = _safe_result(_raw_results[6])    # full transaction history (W1b)
     providers_called.append("attom")
 
     # --- Normalize base property record (building + owner + mortgage) ---
@@ -556,6 +639,23 @@ async def execute_property_facts(
         expanded = normalize_from_attom_expanded_profile(pinned_expanded_data or expanded_result.data)
         if expanded and prop_dict:
             prop_dict.update(expanded)
+
+    # --- Merge full transaction history (W1b — ATTOM /allevents/snapshot) ---
+    # Provides the complete recorded timeline (sale, mortgage origination,
+    # transfer, assessment, foreclosure filing, etc.) for the property. The
+    # SaleHistorySection on the desktop card surfaces this as a chronological
+    # list. Failure here is non-fatal — transcript-level data still flows.
+    if allevents_result and allevents_result.outcome == Outcome.SUCCESS and allevents_result.data:
+        try:
+            from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                normalize_from_attom_allevents,
+            )
+            pinned_events_data = _pin_attom_payload_to_subject(allevents_result.data, normalized_address)
+            transaction_history = normalize_from_attom_allevents(pinned_events_data or allevents_result.data)
+            if transaction_history and prop_dict:
+                prop_dict["transaction_history"] = transaction_history
+        except Exception as exc:  # noqa: BLE001 — never fail the pull on a normalizer bug
+            logger.warning("landlord.property_facts: allevents normalize failed: %s", exc)
 
     # --- Merge permits + comps (additional ATTOM calls) ---
     from aspire_orchestrator.providers.attom_client import (
@@ -697,6 +797,34 @@ async def execute_property_facts(
     except Exception as exc:
         logger.warning("landlord.property_facts: foreclosure data failed: %s", exc)
 
+    # --- Merge active preforeclosure filing (W1c) ----------------------------
+    # Only call /property/v3/preforeclosuredetails when there's a flag worth
+    # investigating: prior_foreclosure, an active stage, or REO. Skipping when
+    # the property is clean keeps the per-pull receipt count low for the 95%
+    # of properties that have no distress signal.
+    needs_preforeclosure = bool(
+        prop_dict.get("prior_foreclosure")
+        or (prop_dict.get("foreclosure_stage") and prop_dict.get("foreclosure_stage") != "none")
+        or prop_dict.get("reo_flag")
+        or prop_dict.get("in_foreclosure")
+    )
+    if needs_preforeclosure:
+        try:
+            from aspire_orchestrator.providers.attom_client import (
+                execute_attom_preforeclosure_details,
+            )
+            from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
+                normalize_from_attom_preforeclosure,
+            )
+            pf_result = await execute_attom_preforeclosure_details(payload=attom_payload, **args)
+            if pf_result and pf_result.outcome == Outcome.SUCCESS and pf_result.data:
+                pinned_pf_data = _pin_attom_payload_to_subject(pf_result.data, normalized_address)
+                filing = normalize_from_attom_preforeclosure(pinned_pf_data or pf_result.data)
+                if filing and prop_dict:
+                    prop_dict["foreclosure_filing"] = filing
+        except Exception as exc:  # noqa: BLE001 — non-fatal enrichment
+            logger.warning("landlord.property_facts: preforeclosure_details failed: %s", exc)
+
     if prop_dict:
         # Set property_value = tax market value (county official) as the default.
         # AVM is an algorithm estimate — tax assessment is authoritative.
@@ -712,13 +840,30 @@ async def execute_property_facts(
         # PropertyFactPack flows through verify_records and surfaces the
         # missing fields naturally, no degraded artifact_type=error path.
 
+        # Append the canonical record once for verification. The card-per-
+        # section fanout happens AFTER verify_records to avoid inflating the
+        # conflict-detector with duplicated rows that differ only in their
+        # `_cardSection` metadata.
         records.append(prop_dict)
 
+    # Verify on the single canonical record(s) BEFORE the section fanout below.
+    # Running the verifier post-fanout would treat the per-section copies as
+    # multiple records with conflicting `_cardSection` values, dropping the
+    # confidence score for purely cosmetic reasons.
     report = verify_records(
         records=records,
         sources=sources,
         required_fields=["normalized_address", "living_sqft", "year_built", "owner_name"],
     )
+
+    # ── Card-per-section dispatch (W0) ────────────────────────────────────────
+    # Now expand the canonical record into one card per UI section.
+    if prop_dict:
+        section_records = fan_out_property_sections(prop_dict)
+        # Replace the single canonical record with the per-section fanout.
+        # records[] has only the prop_dict at this point (lines above).
+        records.clear()
+        records.extend(section_records)
 
     next_queries: list[str] = []
     if "normalized_address" in report.missing_fields:

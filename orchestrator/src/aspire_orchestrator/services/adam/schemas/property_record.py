@@ -165,6 +165,18 @@ class PropertyRecord:
     census_tract: str = ""
     census_block_group: str = ""
 
+    # Legal
+    legal_description: str = ""
+
+    # Transaction history (full mortgage/transfer/deed timeline from ATTOM
+    # /allevents/snapshot — distinct from `sale_history` which is only the
+    # sale events from /saleshistory).
+    transaction_history: list[dict[str, Any]] = field(default_factory=list)
+
+    # Foreclosure filing detail (from /property/v3/preforeclosuredetails when
+    # prior_foreclosure flag is true). Surfaced on the foreclosure card.
+    foreclosure_filing: dict[str, Any] = field(default_factory=dict)
+
     # Additional Building Detail
     attic_sqft: int | None = None
     major_improvements_year: int | None = None
