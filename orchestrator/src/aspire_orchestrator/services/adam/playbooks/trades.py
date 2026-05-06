@@ -44,6 +44,9 @@ def _emit_playbook_receipt(
     reason_code: str,
     playbook_name: str,
     summary: dict[str, Any] | None = None,
+    redacted_inputs: dict[str, Any] | None = None,
+    redacted_outputs: dict[str, Any] | None = None,
+    risk_tier: str = "green",
 ) -> None:
     """Emit a playbook-rollup receipt for Adam (Law #2 — 100% coverage).
 
@@ -53,12 +56,27 @@ def _emit_playbook_receipt(
     one receipt with actor_type=WORKER and the correct status. Best-effort:
     receipt-store failures are logged and swallowed so receipt persistence
     NEVER blocks the user-facing response (Law #2 + reliability balance).
+
+    Parameters
+    ----------
+    redacted_inputs:
+        PII-scrubbed representation of what went INTO this playbook call.
+        Never pass raw addresses, owner names, or financial data.
+    redacted_outputs:
+        Summary of what came OUT (record counts, artifact_type, status).
+        Supersedes the legacy ``summary`` kwarg when both are provided.
+    risk_tier:
+        Override the default ``green`` tier when the playbook touches
+        sensitive data (e.g. YELLOW for mortgage/ownership records).
     """
     try:
         from aspire_orchestrator.services.receipt_store import store_receipts
 
         # Outcome string at the receipt-store layer is lowercased by status_map.
         outcome_lower = outcome_status.lower()
+        # redacted_outputs wins over legacy summary kwarg so existing callers
+        # that only pass summary= continue to work unchanged.
+        effective_outputs = redacted_outputs if redacted_outputs is not None else summary
         receipt: dict[str, Any] = {
             "id": str(_uuid.uuid4()),
             "correlation_id": ctx.correlation_id or "",
@@ -68,14 +86,14 @@ def _emit_playbook_receipt(
             "actor_type": "WORKER",
             "actor_id": "adam",
             "action_type": f"adam.playbook.{playbook_name}",
-            "risk_tier": "green",
+            "risk_tier": risk_tier,
             "tool_used": "adam_playbook",
             "outcome": outcome_lower,
             "reason_code": reason_code,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "receipt_type": "agent_playbook",
-            "redacted_inputs": None,
-            "redacted_outputs": summary or None,
+            "redacted_inputs": redacted_inputs,
+            "redacted_outputs": effective_outputs,
             "capability_token_id": ctx.capability_token_id,
             "capability_token_hash": ctx.capability_token_hash,
         }
@@ -91,6 +109,39 @@ def _emit_playbook_receipt(
             "Adam playbook receipt emission failed (outcome=%s reason=%s): %s",
             outcome_status, reason_code, exc,
         )
+
+
+_UNIT_KEYWORD_RE = re.compile(
+    r'(?:\b(?:apartment|apt|unit|suite|ste)\s*\S+|#\s*\S+)',
+    re.IGNORECASE,
+)
+_LEADING_DIGITS_RE = re.compile(r'^\d{4,}')
+
+
+def _redact_address(raw: str) -> str:
+    """Return a PII-scrubbed version of a raw address string (Law #9).
+
+    Strips occupant/unit identifiers and masks long leading street numbers
+    so owner-identifiable data is not persisted in receipt logs.
+
+    Examples:
+        "1575 Paul Russell Road, apartment 4802, Tallahassee, FL 32301"
+        → "XXX Paul Russell Road, Tallahassee, FL 32301"
+
+        "200 Main St, Suite 400, Austin TX 78701"
+        → "XXX Main St, Austin TX 78701"
+    """
+    # Remove unit/apt qualifiers ("apartment 4802", "apt 4802", "#4802", etc.)
+    redacted = _UNIT_KEYWORD_RE.sub('', raw)
+    # Collapse double commas/spaces left by removal
+    redacted = re.sub(r',\s*,', ',', redacted)
+    redacted = re.sub(r'\s{2,}', ' ', redacted).strip().strip(',').strip()
+    # Mask leading street number when it is ≥4 digits (unit-level identifiable)
+    parts = redacted.split(' ', 1)
+    if parts and _LEADING_DIGITS_RE.match(parts[0]):
+        parts[0] = 'XXX'
+        redacted = ' '.join(parts)
+    return redacted
 
 
 def _extract_address_from_query(query: str) -> str:
@@ -158,6 +209,10 @@ async def execute_property_facts_and_permits(
         execute_attom_detail_mortgage_owner,
         execute_attom_sales_history,
     )
+    from aspire_orchestrator.services.adam.address_parser import (
+        ParseError,
+        parse_us_address,
+    )
     from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
         normalize_from_attom_detail,
         normalize_from_attom_sales_history,
@@ -169,12 +224,70 @@ async def execute_property_facts_and_permits(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # Extract address from query
-    attom_address = address or _extract_address_from_query(query)
+    # Step 1: Deterministic address parse (usaddress CRF tagger).
+    # parse_us_address normalises "apartment 4802" → "APT 4802" and emits
+    # address1/address2 in ATTOM /expandedprofile format. Sending address1
+    # WITH the normalised unit (e.g. "1575 Paul Russell Rd APT 4802") lets
+    # ATTOM resolve to the unit-level parcel. ATTOM rejects the separate
+    # `unitnumber` query param as invalid (verified 2026-05-04).
+    raw_address = address or _extract_address_from_query(query)
+    try:
+        parsed = parse_us_address(raw_address)
+        attom_payload: dict[str, str] = {
+            "address1": parsed.address1,
+            "address2": parsed.address2,
+            "address": f"{parsed.address1}, {parsed.address2}",
+        }
+        normalized_address = attom_payload["address"]
+        # Cache parsed unit info on the receipt context so show_cards can
+        # render unit-specific fields without re-parsing downstream.
+        _unit_type: str = parsed.components.get("OccupancyType", "")
+        _unit_num: str = parsed.components.get("OccupancyIdentifier", "")
+        logger.info(
+            "PROPERTY_FACTS_AND_PERMITS: parsed address1=%r address2=%r unit=%r%r",
+            parsed.address1, parsed.address2, _unit_type, _unit_num,
+        )
+        providers_called.append("address_parser")
+    except ParseError as exc:
+        logger.info(
+            "PROPERTY_FACTS_AND_PERMITS: address parse failed — %s (raw=%r)",
+            exc, raw_address[:80],
+        )
+        # P0-1 (Law #2): receipt for ParseError exit path.
+        _emit_playbook_receipt(
+            ctx=ctx,
+            outcome_status="FAILED",
+            reason_code="address_parse_error",
+            playbook_name="PROPERTY_FACTS_AND_PERMITS",
+            risk_tier="green",
+            redacted_inputs={"raw_address": _redact_address(raw_address)},
+            redacted_outputs={"error": str(exc)[:200]},
+        )
+        return ResearchResponse(
+            artifact_type="needs_more_input",
+            summary=(
+                "I need a complete street address with city and state to look that up — "
+                "what's the full address including city and state?"
+            ),
+            records=[],
+            sources=[],
+            freshness={"mode": "live", "provider": "address_parser"},
+            confidence={"status": "needs_input", "score": 0.0},
+            missing_fields=["city", "state"],
+            next_queries=["Provide street, city, state (and ZIP if available)"],
+            segment="trades",
+            intent="property_fact",
+            playbook="PROPERTY_FACTS_AND_PERMITS",
+            providers_called=providers_called,
+            extra={"parse_error": str(exc), "raw_query": query},
+        )
 
-    # 1. ATTOM property detail (with mortgage+owner for full context)
+    # 1. ATTOM property detail (with mortgage+owner for full context).
+    # address1 carries the normalised unit suffix so ATTOM resolves to the
+    # unit-level parcel (e.g. "1575 Paul Russell Rd APT 4802") rather than
+    # the building master parcel.
     detail_result = await execute_attom_detail_mortgage_owner(
-        payload={"address": attom_address},
+        payload=attom_payload,
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
         office_id=ctx.office_id,
@@ -194,7 +307,23 @@ async def execute_property_facts_and_permits(
         # unavailable" instead of "I found nothing".
         logger.warning(
             "ATTOM property detail unavailable for %s — outcome=%s",
-            attom_address[:60], detail_result.outcome.value,
+            normalized_address[:60], detail_result.outcome.value,
+        )
+        # P0-1 (Law #2): receipt for ATTOM error exit path. address1/address2
+        # from the parsed struct do not contain owner/occupant PII — safe to log.
+        _emit_playbook_receipt(
+            ctx=ctx,
+            outcome_status="FAILED",
+            reason_code="attom_unavailable",
+            playbook_name="PROPERTY_FACTS_AND_PERMITS",
+            risk_tier="green",
+            redacted_inputs={
+                "address1": parsed.address1,
+                "address2": parsed.address2,
+            },
+            redacted_outputs={
+                "detail_outcome": str(detail_result.outcome.value),
+            },
         )
         return ResearchResponse(
             artifact_type="error",
@@ -218,7 +347,7 @@ async def execute_property_facts_and_permits(
 
     # 2. ATTOM sales history (best-effort — primary path is detail above).
     history_result = await execute_attom_sales_history(
-        payload={"address": attom_address},
+        payload=attom_payload,
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
         office_id=ctx.office_id,
@@ -251,9 +380,29 @@ async def execute_property_facts_and_permits(
         required_fields=["normalized_address", "living_sqft", "year_built"],
     )
 
+    # P0-1 (Law #2): receipt for success exit path.
+    # Risk tier is YELLOW because this response contains mortgage/ownership data
+    # (owner name, mailing address, corporate indicator, absentee status).
+    # TOOL_MATERIAL_PRICE_CHECK uses GREEN because it only touches product/price data.
+    # Decision: YELLOW is intentional here, not an error. Auditor sign-off 2026-05-06.
+    _emit_playbook_receipt(
+        ctx=ctx,
+        outcome_status="SUCCEEDED",
+        reason_code="property_facts_success",
+        playbook_name="PROPERTY_FACTS_AND_PERMITS",
+        risk_tier="yellow",
+        redacted_inputs={
+            "address1": parsed.address1,
+            "address2": parsed.address2,
+        },
+        redacted_outputs={
+            "record_count": len(records),
+            "artifact_type": "PropertyFactPack",
+        },
+    )
     return ResearchResponse(
         artifact_type="PropertyFactPack",
-        summary=f"Property facts for {address or query}",
+        summary=f"Property facts for {normalized_address}",
         records=records,
         sources=sources,
         freshness={"provider": "attom"},
