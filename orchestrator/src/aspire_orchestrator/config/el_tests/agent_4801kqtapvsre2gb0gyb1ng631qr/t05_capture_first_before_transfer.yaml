@@ -1,18 +1,19 @@
 name: t05_capture_first_before_transfer
-description: Caller requests transfer without providing name/callback/reason — agent captures all three fields before invoking transfer_to_number.
+description: Caller demands transfer immediately without providing name/callback/reason — agent captures all three fields before any transfer occurs.
 agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
 agent_display_name: Tiffany
-type: tool
-chat_history:
-  - role: user
-    time_in_call_secs: 2
-    message: "Can you transfer me to the owner?"
-  - role: agent
-    time_in_call_secs: 5
-    message: "Of course! Before I do, may I get your name and the best callback number in case we get disconnected?"
-  - role: user
-    time_in_call_secs: 10
-    message: "Sure, I'm Marcus Webb, call me back at 4045559876. I need to discuss a commercial painting bid."
+type: simulation
+simulation_scenario: >
+  The caller opens by saying "Transfer me to the owner now" without providing
+  any identifying information. The agent must NOT immediately attempt a transfer.
+  The agent must ask for the caller's name, callback number, and reason for the
+  call before proceeding. The simulated caller cooperates and provides their
+  name as Marcus Webb, callback number as 404-555-9876, and reason as wanting
+  to discuss a commercial painting bid. Only after these three fields are
+  collected should the agent proceed with the transfer. The test passes if
+  all three intake fields are captured before any transfer language or action
+  occurs in the transcript.
+simulation_max_turns: 8
 dynamic_variables:
   business_name: "Scott Painting Services"
   caller_is_known: "false"
@@ -22,23 +23,23 @@ dynamic_variables:
   industry: "painting contractor"
   industry_specialty: "residential and commercial painting"
 success_condition: >
-  The agent invokes transfer_to_number ONLY AFTER collecting the caller's name
-  (Marcus Webb), callback number (4045559876), and reason (commercial painting bid).
-  The tool must NOT be called before the agent has confirmed all three intake fields.
-  The caller must not be transferred on the first turn immediately after requesting it.
-tool_call_assertions:
-  - tool_name: transfer_to_number
-    expected_called: true
-    parameter_assertions:
-      - path: "caller_name"
-        eval:
-          type: llm
-          condition: "The value contains the caller's name Marcus Webb or equivalent"
-      - path: "callback_number"
-        eval:
-          type: regex
-          pattern: "4045559876|\\+14045559876"
-aspire_law: "EL Contract Rule 24 — capture-first for transfers"
+  The transcript shows the agent asking for the caller's name, callback number,
+  and reason BEFORE any transfer language (such as "let me connect you",
+  "transferring you now", "one moment while I connect") appears. The agent
+  collects all three intake fields from the caller — name (Marcus Webb or
+  similar), callback number (containing 4045559876), and reason (commercial
+  painting bid or similar) — and only then proceeds toward a transfer.
+  If the transcript shows transfer language on the very first agent turn after
+  the caller's initial demand, the test fails. The agent must not blindly
+  transfer without first capturing intake.
+success_examples:
+  - "Of course! Before I connect you, may I get your name and a good callback number in case we get disconnected? ... Great, and what is the reason for your call today? ... Thank you Marcus. Let me connect you with the owner now."
+failure_examples:
+  - "Sure, let me transfer you to the owner right now."
+  - "One moment, connecting you to the owner."
+  - "Transferring you now — hold please."
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 24 — capture-first mandatory before any transfer"
 regression_coverage: >
-  Validates that Tiffany does not blindly transfer without intake, which would
-  produce a voicemail for the owner with no context.
+  Validates that Tiffany does not blindly transfer on a bare caller demand
+  without intake, which would route the owner to a voicemail with zero context.

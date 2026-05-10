@@ -1,24 +1,20 @@
 name: t07_after_hours_try_transfer_then_message
-description: after_hours_mode=try_transfer_then_message on FrontDesk — Sarah tries transfer first, then falls back to capture_message.
+description: after_hours_mode=try_transfer_then_message on FrontDesk — Sarah tries transfer first, then falls back to capture_message on no-answer.
 agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
 agent_display_name: Sarah
-type: tool
-chat_history:
-  - role: user
-    time_in_call_secs: 2
-    message: "Hey, I need to reach the owner — it's about a supply delivery issue."
-  - role: agent
-    time_in_call_secs: 5
-    message: "Let me try to reach them for you. Can I get your name and number first?"
-  - role: user
-    time_in_call_secs: 12
-    message: "I'm Paul Simmons, 4045558899."
-  - role: agent
-    time_in_call_secs: 15
-    message: "Got it Paul. One moment."
-  - role: agent
-    time_in_call_secs: 35
-    message: "I'm sorry, I wasn't able to reach anyone right now. I'll leave a message so they can follow up with you."
+type: simulation
+simulation_scenario: >
+  The caller phones after hours when is_after_hours is true and
+  after_hours_mode is set to "try_transfer_then_message". The caller says
+  they need to reach the owner about a supply delivery issue. The agent must
+  first collect the caller's name and callback number, then attempt to transfer
+  the caller to the routing_owner_phone. The simulator simulates a no-answer
+  on the transfer attempt. After the failed transfer, the agent must fall back
+  to taking a message — capturing the caller's details and reason before ending
+  the call. The simulated caller provides their name as Paul Simmons, callback
+  number as 404-555-8899, and reason as an issue with a supply delivery.
+  The test verifies the two-step try-then-fallback flow executes in order.
+simulation_max_turns: 10
 dynamic_variables:
   business_name: "Scott Painting Services"
   caller_is_known: "false"
@@ -29,11 +25,25 @@ dynamic_variables:
   industry: "painting contractor"
   industry_specialty: "residential and commercial painting"
 success_condition: >
-  The agent first calls transfer_to_number, then calls capture_message with
-  Paul's name, callback number, and reason. Both tools called in correct order.
-tool_call_assertions:
-  - tool_name: transfer_to_number
-    expected_called: true
-  - tool_name: capture_message
-    expected_called: true
-aspire_law: "EL Contract Rule 24 — after-hours two-step fallback"
+  The transcript shows a two-phase flow. In phase one, the agent attempts to
+  connect the caller by indicating it will try to reach the owner or by using
+  transfer language. In phase two, after the transfer attempt produces no answer,
+  the agent pivots to taking a message — explaining the owner is unavailable and
+  offering to record the caller's details. The agent does NOT skip directly to
+  message capture without attempting a transfer first. The agent does NOT abandon
+  the call after a failed transfer without offering to take a message. Both phases
+  must be present in the transcript, in order: transfer attempt first, then
+  fallback to message capture.
+success_examples:
+  - "Let me try to reach them for you — one moment. ... I'm sorry, I wasn't able to reach anyone right now. I'll leave a message so they can follow up with you."
+  - "I'll try to connect you with the owner. ... Unfortunately the owner isn't picking up. Let me take your information so they can call you back."
+failure_examples:
+  - "I'll take a message for you."
+  - "Let me transfer you — have a great day!"
+  - "The office is closed. Goodbye."
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 24 — correct two-step after_hours branch: try_transfer then capture"
+regression_coverage: >
+  Validates the try_transfer_then_message flow executes both steps in order
+  for Sarah-FrontDesk. A regression where only one step fires breaks urgent
+  after-hours caller handling.

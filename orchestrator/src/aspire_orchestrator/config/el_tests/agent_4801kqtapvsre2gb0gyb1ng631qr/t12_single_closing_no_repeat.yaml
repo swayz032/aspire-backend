@@ -1,24 +1,21 @@
 name: t12_single_closing_no_repeat
-description: After a full capture flow, agent says closing line exactly once — no echo, no repeat in subsequent turns.
+description: After a full capture flow, agent says closing line exactly once with no echo, no repeat, and no follow-up question after the caller says goodbye.
 agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
 agent_display_name: Tiffany
-type: llm
-chat_history:
-  - role: user
-    time_in_call_secs: 2
-    message: "Hi, I'd like to leave a message for the owner."
-  - role: agent
-    time_in_call_secs: 5
-    message: "Of course! May I get your name and a good callback number?"
-  - role: user
-    time_in_call_secs: 10
-    message: "Sure, I'm Priya Nair, 6785552233. Tell them I want to discuss the interior painting quote from last week."
-  - role: agent
-    time_in_call_secs: 16
-    message: "Got it Priya — I've noted your callback number 678-555-2233 and your message about the interior painting quote. I'll make sure the owner gets this message right away. Is there anything else I can help you with?"
-  - role: user
-    time_in_call_secs: 22
-    message: "No, that's all. Thank you."
+type: simulation
+simulation_scenario: >
+  The caller phones in to leave a message for the owner. The agent greets
+  the caller, collects name, callback number, and message. The simulated
+  caller provides: name Priya Nair, callback number 678-555-2233, message
+  about following up on an interior painting quote from last week. The agent
+  confirms all details back to the caller. The caller then says "No, that's
+  all. Thank you." to signal they are done. The agent must deliver a single
+  warm closing farewell and end the call. The agent must NOT repeat the
+  closing phrase a second time, must NOT echo back all the captured details
+  again after already confirming them, and must NOT ask a follow-up question
+  after the caller has said goodbye. The conversation ends cleanly after one
+  closing line.
+simulation_max_turns: 10
 dynamic_variables:
   business_name: "Scott Painting Services"
   caller_is_known: "false"
@@ -27,22 +24,24 @@ dynamic_variables:
   industry: "painting contractor"
   industry_specialty: "residential and commercial painting"
 success_condition: >
-  The agent's closing turn is a single, warm farewell that ends the call. The
-  agent says a closing phrase (e.g., "Have a great day!", "Take care!", "Goodbye!")
-  exactly once. The agent does NOT then say another closing phrase in a follow-up
-  turn. The agent does NOT echo back the entire captured message again after having
-  already confirmed it. The agent does NOT ask a follow-up question after the caller
-  says goodbye. The conversation ends cleanly after the agent's single closing line.
+  The transcript shows a complete call flow: greeting, intake (name, callback,
+  message), confirmation of details, and a single closing turn. The agent's
+  final turn is a concise farewell that does NOT repeat the captured details
+  a second time after having already confirmed them. The farewell phrase
+  (e.g., "Have a great day!", "Take care!", "Goodbye!") appears exactly once
+  in the agent's closing turn. There is no subsequent agent turn containing
+  another farewell, another recap, or another question. The conversation ends
+  immediately after the single closing line.
 success_examples:
   - "Wonderful! Have a great rest of your day, Priya. We'll be in touch soon!"
   - "Thank you for calling, Priya. Take care and goodbye!"
 failure_examples:
-  - "Have a great day! ... And just to confirm, you said your name is Priya and your number is 678-555-2233. Have a great day!"
+  - "Have a great day! ... And just to confirm, your name is Priya and your number is 678-555-2233. Have a great day!"
   - "Goodbye! ... Is there anything else I can help you with today?"
   - "Take care! ... Thank you for calling Scott Painting Services. Goodbye. Have a great day. Take care!"
 tool_call_assertions: []
-aspire_law: "EL Contract Rule 21 — closing single-utterance; no echo after farewell"
+aspire_law: "EL Contract Rule 21 — closing must be a single utterance; no echo after farewell"
 regression_coverage: >
-  Validates that the closing is atomic — one farewell, clean end. Multi-echo
-  closings degrade caller experience and indicate the agent is not honoring
-  the single-closing rule.
+  Validates that the agent closing is atomic — one farewell, clean end.
+  Multi-echo closings degrade caller experience and indicate the agent is
+  not honoring the single-closing rule.

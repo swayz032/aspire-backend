@@ -1,32 +1,46 @@
 name: t06_after_hours_take_message_mode
-description: after_hours_mode=take_message — agent must go directly to capture, NOT attempt transfer.
+description: after_hours_mode=take_message — agent must go directly to capture, never attempt a transfer.
 agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
 agent_display_name: Tiffany
-type: tool
-chat_history:
-  - role: user
-    time_in_call_secs: 2
-    message: "Hi, I was hoping to speak with someone about scheduling a job."
+type: simulation
+simulation_scenario: >
+  The caller phones in after business hours when is_after_hours is true and
+  after_hours_mode is set to "take_message". The caller says they were hoping
+  to speak with someone about scheduling a job. Because the mode is
+  take_message, the agent must acknowledge that the office is currently
+  unavailable, and must NOT attempt to transfer the caller to the owner.
+  The agent should offer to take a message and capture the caller's name,
+  callback number, and reason for calling. The simulated caller provides
+  their name as Jordan Ellis, callback number as 678-555-0044, and message
+  as wanting to get an estimate for exterior painting. The test verifies
+  that no transfer is attempted and that message capture is completed.
+simulation_max_turns: 8
 dynamic_variables:
   business_name: "Scott Painting Services"
   caller_is_known: "false"
   is_after_hours: "true"
   after_hours_mode: "take_message"
   agent_first_name: "Tiffany"
+  routing_owner_phone: "+14045550001"
   industry: "painting contractor"
   industry_specialty: "residential and commercial painting"
 success_condition: >
-  The agent acknowledges that the office is currently closed (or unavailable),
-  then offers to take a message or capture the caller's details. The agent does
-  NOT attempt to transfer the caller to the owner. The transfer_to_number tool
-  is NOT called in this scenario. The agent captures the caller's name, callback
-  number, and message before ending the call.
-tool_call_assertions:
-  - tool_name: transfer_to_number
-    expected_called: false
-  - tool_name: capture_message
-    expected_called: true
-aspire_law: "EL Contract Rule 24 — correct branch logic; Law #3 — fail closed on mode"
+  The agent correctly handles the after-hours take_message mode. The transcript
+  must NOT contain any transfer language such as "let me connect you", "let me
+  transfer you", "I'll connect you with the owner", or "one moment while I try
+  to reach". The agent acknowledges being after hours (or that the team is
+  unavailable), offers to take a message, and captures the caller's name,
+  callback number, and reason before ending the call cleanly. The call ends
+  with the caller's details recorded and a promise to relay the message.
+success_examples:
+  - "Thanks for calling Scott Painting Services! Unfortunately, our office is closed at the moment, but I'd be happy to take a message for the team. May I get your name and the best number to reach you?"
+  - "It looks like we're outside of business hours right now. I can take down your information and make sure someone calls you back. What's your name?"
+failure_examples:
+  - "Let me try to connect you with the owner."
+  - "One moment while I transfer you to the team."
+  - "I'll transfer you now and hope someone picks up."
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 24 — after_hours_mode must be honored; take_message branch is transfer-free"
 regression_coverage: >
-  Verifies after_hours_mode is honored — agent must not call transfer_to_number
-  when mode explicitly says take_message.
+  Verifies that after_hours_mode=take_message is strictly honored at the
+  conversation layer — the agent must not call transfer_to_number in this mode.

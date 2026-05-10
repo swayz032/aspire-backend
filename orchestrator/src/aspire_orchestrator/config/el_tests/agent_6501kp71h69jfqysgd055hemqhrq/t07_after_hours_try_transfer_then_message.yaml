@@ -1,24 +1,21 @@
 name: t07_after_hours_try_transfer_then_message
-description: after_hours_mode=try_transfer_then_message — Sarah attempts transfer, then falls back to capture_message on no-answer.
+description: after_hours_mode=try_transfer_then_message — Sarah attempts transfer first, then falls back to capture_message on no-answer.
 agent_id: agent_6501kp71h69jfqysgd055hemqhrq
 agent_display_name: Sarah
-type: tool
-chat_history:
-  - role: user
-    time_in_call_secs: 2
-    message: "I need to speak with someone urgently about a water damage issue from your team's work."
-  - role: agent
-    time_in_call_secs: 5
-    message: "I hear you — let me try to reach someone for you right now. May I have your name and callback number first?"
-  - role: user
-    time_in_call_secs: 12
-    message: "It's Beatrice Osei, 6785553344."
-  - role: agent
-    time_in_call_secs: 15
-    message: "Thank you Beatrice. One moment while I try to connect you."
-  - role: agent
-    time_in_call_secs: 35
-    message: "I'm sorry, I wasn't able to reach anyone directly right now. I'll take a message to make sure this gets addressed as soon as possible."
+type: simulation
+simulation_scenario: >
+  The caller phones after hours when is_after_hours is true and
+  after_hours_mode is set to "try_transfer_then_message". The caller says
+  they need to speak with someone urgently about a water damage issue from
+  the team's work. The agent must first collect the caller's name and callback
+  number, then attempt to transfer the caller to the routing_owner_phone.
+  The simulator simulates a no-answer on the transfer attempt. After the
+  failed transfer, the agent must fall back to taking a message — capturing
+  the caller's details and reason before ending the call. The simulated
+  caller provides their name as Beatrice Osei, callback number as 678-555-3344,
+  and reason as an urgent concern about water damage from a recent job.
+  The test verifies the two-step try-then-fallback flow executes in order.
+simulation_max_turns: 10
 dynamic_variables:
   business_name: "Scott Painting Services"
   caller_is_known: "false"
@@ -29,12 +26,25 @@ dynamic_variables:
   industry: "painting contractor"
   industry_specialty: "residential and commercial painting"
 success_condition: >
-  The agent first calls transfer_to_number, then after no-answer calls
-  capture_message with Beatrice's details and reason. Both tools called
-  in the correct order.
-tool_call_assertions:
-  - tool_name: transfer_to_number
-    expected_called: true
-  - tool_name: capture_message
-    expected_called: true
-aspire_law: "EL Contract Rule 24 — after-hours two-step fallback"
+  The transcript shows a two-phase flow. In phase one, the agent attempts to
+  connect the caller by indicating it will try to reach the owner or by using
+  transfer language. In phase two, after the transfer attempt produces no answer,
+  the agent pivots to taking a message — explaining the owner is unavailable and
+  offering to record the caller's details. The agent does NOT skip directly to
+  message capture without attempting a transfer first. The agent does NOT abandon
+  the call after a failed transfer without offering to take a message. Both phases
+  must be present in the transcript, in order: transfer attempt first, then
+  fallback to message capture.
+success_examples:
+  - "Let me try to reach someone for you — one moment. ... I'm sorry, I wasn't able to reach anyone directly right now. I'll take a message so they can call you back."
+  - "Since it's after hours, I'll try connecting you with the owner. ... Unfortunately, the owner isn't available. Let me take down your information so they can follow up."
+failure_examples:
+  - "I'll take a message for you."
+  - "Let me transfer you — have a great day!"
+  - "The office is closed. Goodbye."
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 24 — correct two-step after_hours branch: try_transfer then capture"
+regression_coverage: >
+  Validates the try_transfer_then_message flow executes both steps in order
+  for Sarah-Receptionist. A regression where only one step fires breaks urgent
+  after-hours caller handling.

@@ -2,23 +2,19 @@ name: t12_single_closing_no_repeat
 description: After full FrontDesk capture flow, Sarah says closing exactly once — no echo, no re-opening.
 agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
 agent_display_name: Sarah
-type: llm
-chat_history:
-  - role: user
-    time_in_call_secs: 2
-    message: "I just need to update the contact email on our account."
-  - role: agent
-    time_in_call_secs: 5
-    message: "Of course! Can you confirm your name and the new email address?"
-  - role: user
-    time_in_call_secs: 10
-    message: "I'm Linda Park, and the new email is linda@parkdesign.com."
-  - role: agent
-    time_in_call_secs: 15
-    message: "Got it, Linda — I've noted the update to linda@parkdesign.com. I'll pass this to the team to update your records. Is there anything else I can help with?"
-  - role: user
-    time_in_call_secs: 21
-    message: "Nope, that's all. Thanks!"
+type: simulation
+simulation_scenario: >
+  The caller phones in to update the contact email on their account. The agent
+  greets the caller, collects name and the new email address to update. The
+  simulated caller provides: name Linda Park, new email linda@parkdesign.com.
+  The agent confirms the update back to the caller and asks if there is anything
+  else. The caller then says "Nope, that's all. Thanks!" to signal they are done.
+  The agent must deliver a single warm closing farewell and end the call. The
+  agent must NOT repeat the closing phrase a second time, must NOT echo back
+  the email address again after already confirming it, and must NOT ask another
+  follow-up question after the caller has said goodbye. The conversation ends
+  cleanly after one closing line.
+simulation_max_turns: 8
 dynamic_variables:
   business_name: "Scott Painting Services"
   caller_is_known: "false"
@@ -27,15 +23,24 @@ dynamic_variables:
   industry: "painting contractor"
   industry_specialty: "residential and commercial painting"
 success_condition: >
-  The agent's closing turn is a single warm farewell. The agent says goodbye
-  exactly once. The agent does NOT re-open the conversation after the caller
-  says goodbye. The agent does NOT repeat the email address again after already
-  confirming it. The conversation ends cleanly.
+  The transcript shows a complete call flow: greeting, collection of update
+  details (name and new email), confirmation, and a single closing turn. The
+  agent's final turn is a concise farewell that does NOT repeat the email
+  address a second time after having already confirmed it. The farewell phrase
+  (e.g., "Have a great day!", "Take care!", "Goodbye!") appears exactly once
+  in the agent's closing turn. There is no subsequent agent turn containing
+  another farewell, another recap, or another question. The conversation ends
+  immediately after the single closing line.
 success_examples:
   - "You're very welcome, Linda! Have a wonderful day!"
   - "Of course! Take care, Linda. Goodbye!"
 failure_examples:
   - "Have a great day! ... Just to confirm, the email is linda@parkdesign.com. Have a great day!"
   - "Goodbye! ... Is there anything else I can help you with today?"
+  - "Take care! ... Your update is in — goodbye, have a great day, take care!"
 tool_call_assertions: []
-aspire_law: "EL Contract Rule 21 — single closing utterance"
+aspire_law: "EL Contract Rule 21 — closing must be a single utterance; no echo after farewell"
+regression_coverage: >
+  Validates that the Sarah-FrontDesk closing is atomic — one farewell,
+  clean end. Multi-echo closings degrade caller experience and indicate
+  the agent is not honoring the single-closing rule.
