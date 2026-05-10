@@ -438,12 +438,17 @@ class ElevenLabsIngestionAdapter(BaseIngestionAdapter):
         # memory_objects writes above are the authoritative trail per Law #2,
         # and the post-call webhook MUST return 200 to avoid EL retries.
         try:
-            from aspire_orchestrator.services import (
-                contact_writer,
-                call_logger,
-                voicemail_writer,
-                voicemail_notifier,
-            )
+            # Use `import package.module` form, NOT `from package import module`.
+            # The latter fails in the installed wheel because contact_writer
+            # itself does `from aspire_orchestrator.services import receipt_store`
+            # at module load time -- when our outer import re-enters the partly-
+            # loaded services package the name lookup fails (ImportError).
+            # `import package.module` bypasses package-namespace lookup and goes
+            # straight to the submodule loader, which is reentrant-safe.
+            import aspire_orchestrator.services.contact_writer as contact_writer  # noqa: I001
+            import aspire_orchestrator.services.call_logger as call_logger
+            import aspire_orchestrator.services.voicemail_writer as voicemail_writer
+            import aspire_orchestrator.services.voicemail_notifier as voicemail_notifier
 
             phone_call_meta: dict[str, Any] = metadata.get("phone_call", {}) or {}
             # Twilio: external_number is the caller. SIP/generic: from_number.
