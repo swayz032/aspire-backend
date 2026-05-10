@@ -142,7 +142,11 @@ def _build_trade_dyn_vars(trade_id: str | None) -> dict[str, str]:
 
 # Hard timeout for the DB query inside _resolve_personalization (Pass 4 requirement).
 # Separate from _PERSONALIZATION_BUDGET_SECONDS which is the outer wall-clock budget.
-_TRADE_DB_TIMEOUT_SECONDS = 0.200  # 200ms hard limit per Pass 4 spec
+_TRADE_DB_TIMEOUT_SECONDS = 0.700  # 700ms — Pass 4 spec'd 200ms but observed RPC latency
+# is consistently 250-300ms (Supabase RPC roundtrip), causing 100% fallback hits and
+# stale cache poisoning. 700ms keeps us under EL's 800ms personalization budget while
+# letting the RPC actually complete. If observed p95 exceeds 700ms, raise to 1000ms
+# AND parallel-queue the RPC at conversation_initiation time to pre-warm the cache.
 
 # ── Last-known-good (LKG) config cache for Sarah personalization ─────────────
 # In-memory LRU keyed by called_number. Used when DB lookups exceed the 800ms
