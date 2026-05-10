@@ -257,8 +257,8 @@ _DEFAULT_DYN_VARS: dict[str, Any] = {
     "is_after_hours": False,                        # Pass 19: inverse of is_open_now
     "after_hours_mode": "take_message",
     "busy_mode": "take_message",
-    "public_number_mode": "ASPIRE_NEW_NUMBER",      # Pass 19: updated to new enum value
-    "catch_mode": "APP_AND_PHONE_SIMUL_RING",
+    "public_number_mode": "aspire_new_number",      # lowercase: prompt uses lowercase conditionals
+    "catch_mode": "app_and_phone_simul_ring",       # lowercase: prompt uses lowercase conditionals
     "greeting_name_override": "",
     "pronunciation_override": "",
     "routing_contacts_summary": "",
@@ -1250,14 +1250,15 @@ async def _resolve_personalization(
         "time_of_day": time_of_day,
         "is_open_now": is_open,
         "is_after_hours": not is_open,              # Pass 19 §3.5
-        # Normalize behavior-mode strings to UPPERCASE so the prompt's
-        # uppercase pattern matching (TAKE_MESSAGE / ASK_CALLBACK_WINDOW /
-        # TRY_TRANSFER_THEN_MESSAGE) always lines up regardless of how the
-        # Front Desk Setup UI persists them.
-        "after_hours_mode": str(config.get("after_hours_mode") or "take_message").upper(),
-        "busy_mode": str(config.get("busy_mode") or "take_message").upper(),
-        "public_number_mode": str(config.get("public_number_mode") or "ASPIRE_NEW_NUMBER").upper(),
-        "catch_mode": str(config.get("catch_mode") or "APP_AND_PHONE_SIMUL_RING").upper(),
+        # Normalize behavior-mode strings to lowercase so the prompt's
+        # conditional checks ("take_message", "try_transfer_then_message",
+        # "ask_callback_window") match regardless of how the DB stores them.
+        # The DB stores UPPERCASE (e.g. TRY_TRANSFER_THEN_MESSAGE); the prompt
+        # uses lowercase literals — normalize at the boundary here.
+        "after_hours_mode": str(config.get("after_hours_mode") or "take_message").lower(),
+        "busy_mode": str(config.get("busy_mode") or "take_message").lower(),
+        "public_number_mode": str(config.get("public_number_mode") or "aspire_new_number").lower(),
+        "catch_mode": str(config.get("catch_mode") or "app_and_phone_simul_ring").lower(),
         "greeting_name_override": config.get("greeting_name_override") or "",
         "pronunciation_override": config.get("pronunciation_override") or "",
         "routing_contacts_summary": routing_contacts_summary,
