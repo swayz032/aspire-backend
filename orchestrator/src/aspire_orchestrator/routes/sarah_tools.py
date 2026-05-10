@@ -76,9 +76,12 @@ async def _resolve_tenant_from_called_number(
     if not called_number or not _E164.match(called_number):
         return None
     try:
+        # Use dict form so supabase_select URL-encodes the value.
+        # Raw-string form leaves "+" unencoded, which PostgREST parses as space
+        # ("+14482885386" -> " 14482885386" in the WHERE clause -> 0 rows).
         rows = await supabase_select(
             "tenant_phone_numbers",
-            f"phone_number=eq.{called_number}&status=eq.active",
+            {"phone_number": called_number, "status": "active"},
             limit=1,
         )
     except SupabaseClientError as exc:
