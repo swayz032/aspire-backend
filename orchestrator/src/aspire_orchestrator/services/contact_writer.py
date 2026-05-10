@@ -209,10 +209,27 @@ async def upsert_contact_from_call(
     # --- Build upsert payload ------------------------------------------------
     # display_name: carry forward the owner-set name if one already exists, so
     # PostgREST merge-duplicates never overwrites a curated name with a raw EL value.
+    #
+    # Sanitize aggressively. Observed in prod: a contact row was created with
+    # display_name = "None" (Python's None coerced to str) which then fed
+    # the receptionist's known-caller greeting as "Hi None, ...". Filter out:
+    #   - Python None / null literals as strings
+    #   - Empty / whitespace-only strings
+    # Any of these collapse to empty string -> caller stays anonymous in greeting.
+    def _sanitize_name(raw: str | None) -> str:
+        if not raw:
+            return ""
+        s = str(raw).strip()
+        if not s:
+            return ""
+        if s.lower() in ("none", "null", "undefined", "n/a", "na"):
+            return ""
+        return s
+
     existing_name: str = ""
     if existing_contact_id and existing_rows:
-        existing_name = existing_rows[0].get("display_name") or ""
-    resolved_name = existing_name or caller_name or ""
+        existing_name = _sanitize_name(existing_rows[0].get("display_name"))
+    resolved_name = existing_name or _sanitize_name(caller_name)
 
     # Category logic: preserve owner-set categorization on returning contacts
     # (only update from 'unknown' → known classification); for fresh contacts

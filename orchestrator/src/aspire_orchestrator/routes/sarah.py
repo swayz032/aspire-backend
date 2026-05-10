@@ -471,7 +471,16 @@ def _build_first_message(
     seed = sum(ord(c) for c in call_sid) if call_sid else 0
 
     caller_is_known = bool(dyn_vars.get("caller_is_known"))
-    caller_first_name = (dyn_vars.get("caller_first_name") or "").strip()
+    # Defensive: reject literal "None"/"null"/"undefined" strings that have crept
+    # in from upstream data (observed prod bug: contact display_name="None" produced
+    # "Hi None, ..." greetings). Belt-and-suspenders alongside contact_writer's
+    # _sanitize_name which prevents the corruption at write-time.
+    caller_first_name_raw = (dyn_vars.get("caller_first_name") or "").strip()
+    caller_first_name = (
+        ""
+        if caller_first_name_raw.lower() in ("none", "null", "undefined", "n/a", "na")
+        else caller_first_name_raw
+    )
     # Normalize after-hours mode (lowercased upstream) for routing the after-hours opener.
     ah_mode = (dyn_vars.get("after_hours_mode") or "").strip().lower()
     owner_formal = (dyn_vars.get("owner_formal_name") or "the owner").strip()
