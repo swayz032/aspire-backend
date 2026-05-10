@@ -175,8 +175,11 @@ def _row_to_memory_out(row: dict[str, Any]) -> MemoryObjectOut:
         summary_window_start_at=row.get("summary_window_start_at"),
         summary_window_end_at=row.get("summary_window_end_at"),
         fresh_until=row.get("fresh_until"),
-        # Embedding is never returned by default (large payload); callers request explicitly
-        embedding=row.get("embedding"),
+        # Embedding is never returned to callers (large payload + PostgREST returns it
+        # as a string like "[0.1,0.2,...]" rather than list[float], which fails Pydantic
+        # validation on the embedding_dims field_validator). Callers that genuinely need
+        # the vector must SELECT embedding explicitly through a dedicated query.
+        embedding=None,
         idempotency_key=row.get("idempotency_key"),
     )
 
