@@ -269,16 +269,16 @@ class TestFullPayloadShape:
         assert dyn["routing_scheduling_phone"] == ""
 
     def test_public_number_mode_uses_new_enum(self) -> None:
-        """public_number_mode must be 'ASPIRE_NEW_NUMBER' not 'ASPIRE_NUMBER'."""
+        """public_number_mode must be lowercase (e.g. 'aspire_new_number'), not 'ASPIRE_NUMBER'."""
         resp = self._post_personalization()
         dyn = resp.json()["dynamic_variables"]
         assert dyn["public_number_mode"] in (
-            "ASPIRE_NEW_NUMBER",
-            "FORWARD_EXISTING",
-            "PORT_IN",
+            "aspire_new_number",
+            "forward_existing",
+            "port_in",
         )
-        assert dyn["public_number_mode"] != "ASPIRE_NUMBER"
-        assert dyn["public_number_mode"] != "KEEP_CURRENT_NUMBER"
+        assert dyn["public_number_mode"] != "aspire_number"
+        assert dyn["public_number_mode"] != "keep_current_number"
 
 
 # ---------------------------------------------------------------------------
