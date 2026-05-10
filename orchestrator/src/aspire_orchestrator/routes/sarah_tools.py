@@ -138,9 +138,9 @@ async def _insert_memory_object(
     scope: dict[str, str],
     summary: str,
     detail: dict[str, Any],
-    source_surface: str = "phone",
-    source_agent: str = "sarah",
-    channel: str = "inbound_call",
+    source_surface: str = "sarah_voice",  # CHECK constraint: ava_voice|sarah_voice|...
+    source_agent: str = "sarah",          # CHECK constraint: ava|sarah|eli|nora|finn|tim|system
+    channel: str = "voice",                # CHECK constraint: voice|video|email|sms|workflow|finance|ui|webhook
     session_provider: str = "twilio",
     runtime_family: str = "elevenlabs",
     external_session_id: str | None = None,
@@ -339,7 +339,7 @@ async def capture_message(req: CaptureMessageReq) -> dict[str, Any]:
     caller_label = req.caller_name or "caller"
     try:
         memory_id = await _insert_memory_object(
-            memory_type="voicemail_capture",
+            memory_type="call",  # CHECK constraint allowed value (was 'voicemail_capture' — invalid)
             scope=scope,
             summary=(
                 f"Message from {caller_label}: {req.message[:120]}"
@@ -377,6 +377,19 @@ async def capture_message(req: CaptureMessageReq) -> dict[str, Any]:
         redacted_outputs={"memory_id": memory_id},
     )
 
+    if not memory_id:
+        # Insert failed — DO NOT lie to the agent. Return failure so the EL
+        # agent + caller-side fallback can react. Receipt was already emitted
+        # with outcome="failed".
+        return {
+            "success": False,
+            "message_id": "",
+            "reason": "persist_failed",
+            "confirmation": (
+                "Got it — I had trouble saving that on my end, but I'll make sure "
+                "someone follows up with you."
+            ),
+        }
     return {
         "success": True,
         "message_id": memory_id,
@@ -510,7 +523,7 @@ async def callback_request(req: CallbackRequestReq) -> dict[str, Any]:
     caller_label = req.caller_name or "caller"
     try:
         memory_id = await _insert_memory_object(
-            memory_type="callback_request",
+            memory_type="followup_task",  # CHECK constraint allowed value (was 'callback_request' — invalid)
             scope=scope,
             summary=(
                 f"Callback requested by {caller_label}"
@@ -577,7 +590,7 @@ async def call_summary(req: CallSummaryReq) -> dict[str, Any]:
     )
     try:
         memory_id = await _insert_memory_object(
-            memory_type="call_summary",
+            memory_type="session_summary",  # CHECK constraint allowed value (was 'call_summary' — invalid)
             scope=scope,
             summary=summary_text,
             detail={
