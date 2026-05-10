@@ -55,8 +55,12 @@ class ApifyZillowClient(BaseProviderClient):
 
     provider_id = "apify_zillow"
     base_url = "https://api.apify.com/v2"
-    # 15s wallclock — Apify cold-start can take 10s+. Verified 2026-05-10.
-    timeout_seconds = 15.0
+    # 90s HTTP wallclock — Apify Zillow actor cold-starts can hit 30-45s
+    # before returning the first byte; 15s was rejecting valid responses
+    # with TIMEOUT (verified in production logs 2026-05-10). The Apify run
+    # itself is server-bounded by _APIFY_RUN_TIMEOUT_SECONDS=120 query param,
+    # so the client just needs enough headroom to outlast cold start.
+    timeout_seconds = 90.0
     max_retries = 1
     idempotency_support = False
 
