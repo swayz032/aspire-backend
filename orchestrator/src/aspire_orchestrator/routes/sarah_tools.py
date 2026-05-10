@@ -131,34 +131,63 @@ def _cut_receipt(
 
 async def _insert_memory_object(
     *,
-    object_type: str,
+    memory_type: str,
     scope: dict[str, str],
-    metadata: dict[str, Any],
+    summary: str,
+    detail: dict[str, Any],
+    source_surface: str = "phone",
+    source_agent: str = "sarah",
+    channel: str = "inbound_call",
+    session_provider: str = "twilio",
+    runtime_family: str = "elevenlabs",
+    external_session_id: str | None = None,
+    idempotency_key: str | None = None,
+    title: str | None = None,
+    event_at: str | None = None,
 ) -> str:
     """Insert a memory_object row for a Sarah tool call.
 
-    Returns the new memory_object id. Fails soft — returns "" on DB error so
-    the tool can still respond to the agent.
+    Uses the correct memory_objects schema (migration 099+):
+    - memory_type  replaces old object_type (non-existent column)
+    - summary      is a top-level NOT NULL column (not inside metadata/detail)
+    - detail       is the jsonb payload column (was incorrectly called metadata)
+    - trace_id / correlation_id are required NOT NULL columns — generated here
+
+    Returns the inserted memory_id (uuid string).
+
+    Raises SupabaseClientError on DB failure so callers can cut a failure
+    receipt and return an honest error to the agent. Does NOT swallow errors.
     """
-    obj_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    row = {
-        "id": obj_id,
-        "tenant_id": scope.get("tenant_id", ""),
-        "suite_id": scope.get("suite_id", ""),
-        "office_id": scope.get("office_id", ""),
-        "object_type": object_type,
-        "metadata": metadata,
-        "created_at": now,
+    row: dict[str, Any] = {
+        "tenant_id": scope["tenant_id"],
+        "suite_id": scope["suite_id"],
+        "office_id": scope["office_id"],
+        "memory_type": memory_type,
+        "summary": summary,
+        "detail": detail,
+        "trace_id": get_trace_id() or str(uuid.uuid4()),
+        "correlation_id": get_correlation_id() or str(uuid.uuid4()),
+        "source_surface": source_surface,
+        "source_agent": source_agent,
+        "channel": channel,
+        "session_provider": session_provider,
+        "runtime_family": runtime_family,
     }
-    try:
-        await supabase_insert("memory_objects", row)
-    except SupabaseClientError as exc:
-        logger.warning(
-            "sarah_tools memory_object_insert_failed type=%s: %s", object_type, exc
-        )
-        return ""
-    return obj_id
+    if external_session_id is not None:
+        row["external_session_id"] = external_session_id
+    if idempotency_key is not None:
+        row["idempotency_key"] = idempotency_key
+    if title is not None:
+        row["title"] = title
+    if event_at is not None:
+        row["event_at"] = event_at
+
+    del now  # unused; DB sets created_at via default
+    # SupabaseClientError propagates to caller — no silent swallow
+    # supabase_insert returns the inserted row dict (already unwrapped from list)
+    inserted: dict[str, Any] = await supabase_insert("memory_objects", row)
+    return str(inserted.get("memory_id", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -304,23 +333,39 @@ async def capture_message(req: CaptureMessageReq) -> dict[str, Any]:
     if not scope:
         return {"success": False, "reason": "unknown_number"}
 
-    memory_id = await _insert_memory_object(
-        object_type="caller_message",
-        scope=scope,
-        metadata={
-            "caller_name": req.caller_name,
-            "caller_phone": req.caller_phone,
-            "message": req.message,
-            "urgency": req.urgency,
-            "reason_category": req.reason_category,
-            "captured_at": datetime.now(timezone.utc).isoformat(),
-            "source": "sarah_receptionist",
-        },
-    )
+    caller_label = req.caller_name or "caller"
+    try:
+        memory_id = await _insert_memory_object(
+            memory_type="voicemail_capture",
+            scope=scope,
+            summary=(
+                f"Message from {caller_label}: {req.message[:120]}"
+                if req.message
+                else f"Message captured from {caller_label}"
+            ),
+            detail={
+                "caller_name": req.caller_name,
+                "urgency": req.urgency,
+                "reason_category": req.reason_category,
+                "message": req.message,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+            },
+            title=f"Message — {caller_label}",
+            source_agent="sarah",
+            channel="inbound_call",
+        )
+        receipt_outcome = "success"
+    except SupabaseClientError as exc:
+        logger.error(
+            "sarah_tools capture_message memory_insert_failed: %s", exc
+        )
+        memory_id = ""
+        receipt_outcome = "failed"
 
     _cut_receipt(
         receipt_type="sarah_tool_capture_message",
         scope=scope,
+        outcome=receipt_outcome,
         redacted_inputs={
             "caller_phone": _redact_phone(req.caller_phone),
             "urgency": req.urgency,
@@ -459,22 +504,37 @@ async def callback_request(req: CallbackRequestReq) -> dict[str, Any]:
     if not scope:
         return {"success": False, "reason": "unknown_number"}
 
-    memory_id = await _insert_memory_object(
-        object_type="callback_request",
-        scope=scope,
-        metadata={
-            "caller_name": req.caller_name,
-            "caller_phone": req.caller_phone,
-            "preferred_window": req.preferred_window,
-            "reason": req.reason,
-            "requested_at": datetime.now(timezone.utc).isoformat(),
-            "source": "sarah_receptionist",
-        },
-    )
+    caller_label = req.caller_name or "caller"
+    try:
+        memory_id = await _insert_memory_object(
+            memory_type="callback_request",
+            scope=scope,
+            summary=(
+                f"Callback requested by {caller_label}"
+                + (f" for window: {req.preferred_window}" if req.preferred_window else "")
+            ),
+            detail={
+                "caller_name": req.caller_name,
+                "preferred_window": req.preferred_window,
+                "reason": req.reason,
+                "requested_at": datetime.now(timezone.utc).isoformat(),
+            },
+            title=f"Callback — {caller_label}",
+            source_agent="sarah",
+            channel="inbound_call",
+        )
+        receipt_outcome = "success"
+    except SupabaseClientError as exc:
+        logger.error(
+            "sarah_tools callback_request memory_insert_failed: %s", exc
+        )
+        memory_id = ""
+        receipt_outcome = "failed"
 
     _cut_receipt(
         receipt_type="sarah_tool_callback_request",
         scope=scope,
+        outcome=receipt_outcome,
         redacted_inputs={"caller_phone": _redact_phone(req.caller_phone)},
         redacted_outputs={"memory_id": memory_id},
     )
@@ -506,24 +566,39 @@ async def call_summary(req: CallSummaryReq) -> dict[str, Any]:
     if not scope:
         return {"success": False, "reason": "unknown_number"}
 
-    memory_id = await _insert_memory_object(
-        object_type="session_summary",
-        scope=scope,
-        metadata={
-            "outcome": req.outcome,
-            "summary": req.summary,
-            "caller_name": req.caller_name,
-            "caller_phone": req.caller_phone,
-            "channel": "voice",
-            "agent": "sarah_receptionist",
-            "saved_via": "in_call_tool",
-            "saved_at": datetime.now(timezone.utc).isoformat(),
-        },
+    caller_label = req.caller_name or "caller"
+    summary_text = (
+        req.summary.strip()
+        if req.summary.strip()
+        else f"Call summary — {caller_label} — outcome: {req.outcome}"
     )
+    try:
+        memory_id = await _insert_memory_object(
+            memory_type="call_summary",
+            scope=scope,
+            summary=summary_text,
+            detail={
+                "outcome": req.outcome,
+                "caller_name": req.caller_name,
+                "saved_via": "in_call_tool",
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            },
+            title=f"Call Summary — {caller_label}",
+            source_agent="sarah",
+            channel="inbound_call",
+        )
+        receipt_outcome = "success"
+    except SupabaseClientError as exc:
+        logger.error(
+            "sarah_tools call_summary memory_insert_failed: %s", exc
+        )
+        memory_id = ""
+        receipt_outcome = "failed"
 
     _cut_receipt(
         receipt_type="sarah_tool_call_summary",
         scope=scope,
+        outcome=receipt_outcome,
         redacted_inputs={
             "outcome": req.outcome,
             "caller_phone": _redact_phone(req.caller_phone),
