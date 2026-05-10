@@ -495,20 +495,20 @@ def _build_first_message(
             ]
         elif ah_mode == "try_transfer_then_message":
             variants = [
-                f"Hey {caller_first_name} — we're closed, but I can try to reach {owner_formal} for you. What's going on?",
-                f"Hi {caller_first_name}, good to hear from you. We're outside hours, but let me see if I can grab {owner_formal}. Tell me what you need.",
+                f"Hey {caller_first_name} — we're closed right now, but I can try to reach {owner_formal} for you. What's going on?",
+                f"Hi {caller_first_name}, good to hear from you. We're closed at the moment — let me see if I can grab {owner_formal}. Tell me what you need.",
                 f"{caller_first_name}, hey — we're closed but I'll see if I can get {owner_formal} on the line real quick. What do you need?",
             ]
         elif ah_mode == "ask_callback_window":
             variants = [
-                f"Hey {caller_first_name} — we're closed, but I can have {owner_formal} call you back. What time works?",
-                f"Hi {caller_first_name}, good to hear from you. We're outside hours — I can schedule {owner_formal} to call back. What window works for you?",
+                f"Hey {caller_first_name} — we're closed right now, but I can have {owner_formal} call you back. What time works?",
+                f"Hi {caller_first_name}, good to hear from you. We're closed at the moment — I can schedule {owner_formal} to call back. What window works for you?",
             ]
         else:
             # take_message / empty / unknown — message-first
             variants = [
                 f"Hi {caller_first_name} — we're closed for the evening, but I can grab a message for you. What's going on?",
-                f"Hey {caller_first_name}, good to hear from you. We're outside hours right now, but I can take a message — what do you need?",
+                f"Hey {caller_first_name}, good to hear from you. We're closed right now, but I can take a message — what do you need?",
                 f"{caller_first_name}, hi — we're closed at the moment, but I'm here. Let me grab a message for you, what's up?",
             ]
         return variants[seed % len(variants)]
@@ -539,19 +539,19 @@ def _build_first_message(
     # said try_transfer_then_message — observed 2026-05-10 conv_0001/conv_1801.
     if ah_mode == "try_transfer_then_message":
         variants = [
-            f"Hey, you've reached {biz} — we're closed, but I can try to reach {owner_formal} for you. What's going on?",
-            f"Hi, {biz} after hours — this is {name}. Tell me what you need and I'll see if I can grab {owner_formal}.",
-            f"Good {tod}, {biz} is closed, but I'm {name} — let me see if I can get {owner_formal} on the line. What do you need?",
+            f"Hey, you've reached {biz} — we're closed right now, but I can try to reach {owner_formal} for you. What's going on?",
+            f"Hi, you've reached {biz} — this is {name}. We're closed at the moment, but tell me what you need and I'll see if I can grab {owner_formal}.",
+            f"{biz} is closed right now, but I'm {name} — let me see if I can get {owner_formal} on the line. What do you need?",
         ]
     elif ah_mode == "ask_callback_window":
         variants = [
-            f"Hi, you've reached {biz} after hours — this is {name}. I can have {owner_formal} call you back. What time works for you?",
+            f"Hi, you've reached {biz} — we're closed right now. This is {name} — I can have {owner_formal} call you back. What time works?",
             f"Hey, {biz} is closed right now, but I can schedule {owner_formal} to call you. What window works?",
         ]
     else:
         # take_message / empty / unknown — message-first opener
         variants = [
-            f"Hi, you've reached {biz} after hours — this is {name}. I can take a quick message and someone will follow up first thing.",
+            f"Hi, you've reached {biz} — we're closed right now. This is {name} — I can take a quick message and someone will follow up first thing.",
             f"Good {tod}, {biz} is closed right now, but I'm {name} and I can grab a message for you.",
             f"Hey, thanks for calling {biz} — we're closed, but I'm {name}. What can I help with?",
         ]
