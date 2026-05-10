@@ -472,6 +472,10 @@ def _build_first_message(
 
     caller_is_known = bool(dyn_vars.get("caller_is_known"))
     caller_first_name = (dyn_vars.get("caller_first_name") or "").strip()
+    # Normalize after-hours mode (lowercased upstream) for routing the after-hours opener.
+    ah_mode = (dyn_vars.get("after_hours_mode") or "").strip().lower()
+    owner_formal = (dyn_vars.get("owner_formal_name") or "the owner").strip()
+
     if caller_is_known and caller_first_name:
         if is_open:
             variants = [
@@ -480,10 +484,19 @@ def _build_first_message(
                 f"{caller_first_name}, hi — what can I do for you?",
                 f"Hi {caller_first_name}, good to hear from you. What's up?",
             ]
+        elif ah_mode == "try_transfer_then_message":
+            variants = [
+                f"Hey {caller_first_name} — we're closed, but I can try {owner_formal} for you. What's going on?",
+                f"Hi {caller_first_name}, good to hear from you. We're outside hours, but let me see if I can grab {owner_formal}. Tell me what you need.",
+                f"{caller_first_name}, hey — we're closed but I'll try {owner_formal} real quick. What do you need?",
+            ]
+        elif ah_mode == "ask_callback_window":
+            variants = [
+                f"Hey {caller_first_name} — we're closed, but I can have {owner_formal} call you back. What time works?",
+                f"Hi {caller_first_name}, good to hear from you. We're outside hours — I can schedule {owner_formal} to call back. What window works for you?",
+            ]
         else:
-            # Known caller, after-hours: warm name greeting + acknowledge timing
-            # so caller knows up front a transfer probably isn't going to happen
-            # tonight and we'll be capturing a message instead.
+            # take_message / empty / unknown — message-first
             variants = [
                 f"Hi {caller_first_name} — we're closed for the evening, but I can grab a message for you. What's going on?",
                 f"Hey {caller_first_name}, good to hear from you. We're outside hours right now, but I can take a message — what do you need?",
@@ -508,12 +521,28 @@ def _build_first_message(
         ]
         return variants[seed % len(variants)]
 
-    # After-hours
-    variants = [
-        f"Hi, you've reached {biz} after hours — this is {name}. I can take a message and have someone follow up.",
-        f"Good {tod}, {biz} is closed right now, but I'm {name} and I can grab a message for you.",
-        f"Hey, thanks for calling {biz} — we're closed, but I'm {name}. What can I help with?",
-    ]
+    # After-hours — branch on after_hours_mode so the OPENER matches the
+    # configured flow. Hardcoded "I can take a message" everywhere caused
+    # Tiffany/Sarah to commit to message-first even when the office settings
+    # said try_transfer_then_message — observed 2026-05-10 conv_0001/conv_1801.
+    if ah_mode == "try_transfer_then_message":
+        variants = [
+            f"Hey, you've reached {biz} — we're closed, but I can try {owner_formal} for you. What's going on?",
+            f"Hi, {biz} after hours — this is {name}. Tell me what you need and I'll see if I can grab {owner_formal}.",
+            f"Good {tod}, {biz} is closed, but I'm {name} — let me try {owner_formal} for you. What do you need?",
+        ]
+    elif ah_mode == "ask_callback_window":
+        variants = [
+            f"Hi, you've reached {biz} after hours — this is {name}. I can have {owner_formal} call you back. What time works for you?",
+            f"Hey, {biz} is closed right now, but I can schedule {owner_formal} to call you. What window works?",
+        ]
+    else:
+        # take_message / empty / unknown — message-first opener
+        variants = [
+            f"Hi, you've reached {biz} after hours — this is {name}. I can take a quick message and someone will follow up first thing.",
+            f"Good {tod}, {biz} is closed right now, but I'm {name} and I can grab a message for you.",
+            f"Hey, thanks for calling {biz} — we're closed, but I'm {name}. What can I help with?",
+        ]
     return variants[seed % len(variants)]
 
 
