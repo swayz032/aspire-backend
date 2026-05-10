@@ -511,13 +511,16 @@ def _build_first_message(
     # before calling this function (the personalization handler does so).
     name = _resolve_agent_display_name(agent_id)
     if is_open:
-        # Time-of-day prefix on every variant — sounds professional and
-        # mirrors how a real receptionist answers ("Good morning, ...").
+        # Open-hours variants -- match the after-hours rhythm pattern
+        # (greeting + em-dash pause + name + conversational open) so the
+        # voice model breathes between clauses instead of racing through
+        # a comma-chain. Comma-only sentences read as one rushed unit on
+        # v3 Conversational; em-dash + short clauses force natural pacing.
         variants = [
-            f"Good {tod}, thanks for calling {biz}, this is {name}. How can I help?",
-            f"Good {tod}, you've reached {biz} — this is {name}. What can I do for you?",
-            f"Good {tod}, {biz}, this is {name}. How can I help today?",
-            f"Good {tod}, {biz} — {name} speaking. What can I do for you?",
+            f"Good {tod} — you've reached {biz}. This is {name} — what can I help with?",
+            f"Hey, thanks for calling {biz} — this is {name}. What's going on?",
+            f"{biz}, good {tod} — {name} here. How can I help?",
+            f"Hi, you've reached {biz} — I'm {name}. What can I do for you?",
         ]
         return variants[seed % len(variants)]
 
