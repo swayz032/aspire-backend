@@ -574,10 +574,10 @@ async def execute_property_facts(
         "address": normalized_address,
     }
 
-    # Step 2: 12 parallel ATTOM calls — single asyncio.gather covers
-    # everything that doesn't depend on detail-response IDs. Each call has
-    # its own retry + per-call timeout in _attom_request, so the wallclock
-    # is bounded by the slowest endpoint, not the sum of all of them.
+    # Step 2: 12 parallel ATTOM calls + 1 Apify Zillow photos call —
+    # single asyncio.gather covers everything that doesn't depend on
+    # detail-response IDs. Each call has its own retry + per-call timeout
+    # so the wallclock is bounded by the slowest endpoint.
     from aspire_orchestrator.providers.attom_client import (
         execute_attom_allevents_snapshot,
         execute_attom_assessment_detail,
@@ -589,6 +589,9 @@ async def execute_property_facts(
         execute_attom_property_detail_with_schools,
         execute_attom_sale_detail,
         execute_attom_sales_expanded_history,
+    )
+    from aspire_orchestrator.providers.apify_zillow_client import (
+        execute_apify_zillow_photos,
     )
 
     _raw_results = await asyncio.gather(
@@ -604,6 +607,7 @@ async def execute_property_facts(
         execute_attom_building_permits(payload=attom_payload, **args),
         execute_attom_property_detail_with_schools(payload=attom_payload, **args),
         execute_attom_sales_expanded_history(payload=attom_payload, **args),
+        execute_apify_zillow_photos(payload={"address": normalized_address}, **args),
         return_exceptions=True,
     )
     # Guard: convert exceptions to None (graceful degradation, not crash)
@@ -619,7 +623,9 @@ async def execute_property_facts(
     permit_result = _safe_result(_raw_results[9])       # building permits (was sequential)
     schools_result = _safe_result(_raw_results[10])     # nearby schools (was sequential)
     fc_result = _safe_result(_raw_results[11])          # foreclosure / expanded sale history (was sequential)
+    apify_result = _safe_result(_raw_results[12])       # Apify Zillow photos (Estimate Studio Visuals)
     providers_called.append("attom")
+    providers_called.append("apify_zillow")
 
     # --- Normalize base property record (building + owner + mortgage) ---
     prop_dict: dict[str, Any] = {}
@@ -1179,6 +1185,53 @@ async def execute_property_facts(
         # removed — if expandedprofile cannot find unit-level records the empty
         # PropertyFactPack flows through verify_records and surfaces the
         # missing fields naturally, no degraded artifact_type=error path.
+
+        # --- Merge Apify Zillow photos (Estimate Studio Visuals tab) ---
+        # ATTOM has no photos; Zillow scraped via Apify provides
+        # interior/exterior/roof lanes for the contractor's visual brief.
+        # Failure is non-fatal — facts still flow, photo lanes go empty.
+        try:
+            if (
+                apify_result
+                and apify_result.outcome == Outcome.SUCCESS
+                and apify_result.data
+                and isinstance(apify_result.data, dict)
+            ):
+                photos_raw = apify_result.data.get("photos") or []
+                if isinstance(photos_raw, list) and photos_raw:
+                    prop_dict["photos"] = [
+                        {
+                            "url": (p.get("url") or "").strip(),
+                            "caption": p.get("caption"),
+                            "lane": (p.get("lane") or "uncategorized").strip().lower(),
+                        }
+                        for p in photos_raw
+                        if isinstance(p, dict) and p.get("url")
+                    ]
+                    listing_url = apify_result.data.get("listing_url")
+                    if listing_url:
+                        prop_dict["zillow_listing_url"] = listing_url
+                    logger.info(
+                        "landlord.property_facts: Apify Zillow merged %d photos",
+                        len(prop_dict["photos"]),
+                        extra={"correlation_id": context.correlation_id},
+                    )
+                else:
+                    logger.info(
+                        "landlord.property_facts: Apify Zillow returned 0 photos",
+                        extra={"correlation_id": context.correlation_id},
+                    )
+            else:
+                logger.warning(
+                    "landlord.property_facts: Apify Zillow unavailable — facts flow without photos",
+                    extra={"correlation_id": context.correlation_id},
+                )
+        except Exception as merge_err:  # noqa: BLE001 — merge must never break facts
+            logger.warning(
+                "landlord.property_facts: Apify merge failed (non-fatal): %s",
+                str(merge_err)[:160],
+                extra={"correlation_id": context.correlation_id},
+            )
 
         # Append the canonical record once for verification. The card-per-
         # section fanout happens AFTER verify_records to avoid inflating the
