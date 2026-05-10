@@ -1,0 +1,19 @@
+# Trade pack: Plumber
+# Pass 4 stub — Pass 5 (aspire-rnd-engineer) will deepen with PHCC sources.
+# Schema version: 1
+trade_id: plumber
+display_name: "Plumbing"
+
+primary_term: "service call"
+
+emergency_keywords:
+  - "water leak"
+  - "sewer backup"
+  - "gas leak"
+  - "no water"
+  - "frozen pipes"
+
+intake_fields:
+  - fixture_type
+  - leak_severity
+  - water_shutoff_accessible

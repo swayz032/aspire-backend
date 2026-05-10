@@ -1,0 +1,25 @@
+# Trade pack: Specialty Remodeler / Contractor
+# Pass 4 stub — Pass 5 (aspire-rnd-engineer) will deepen with AGC sources.
+# Schema version: 1
+trade_id: specialty_remodeler
+display_name: "Specialty Remodeling"
+
+# Remodelers lead with estimates, not immediate dispatch.
+primary_term: "estimate"
+
+# No true emergencies in specialty remodeling — intentionally empty.
+emergency_keywords: []
+
+intake_fields:
+  - project_scope
+  - sketch_capture_channel
+  - material_preferences
+  - timeline
+  - budget_range
+
+# Founder decision 2026-05-07: 3D-from-sketch capture via SMS to
+# the receptionist's number. Sarah gives this instruction when the
+# caller wants to share a design sketch or site photo.
+sketch_capture_instruction: >
+  Just text a photo of your sketch to this same number,
+  and I will attach it to your project.

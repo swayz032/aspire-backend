@@ -1,0 +1,19 @@
+# Trade pack: Electrician
+# Pass 4 stub — Pass 5 (aspire-rnd-engineer) will deepen with NFPA 70 sources.
+# Schema version: 1
+trade_id: electrician
+display_name: "Electrical"
+
+primary_term: "service call"
+
+emergency_keywords:
+  - "sparks"
+  - "no power"
+  - "burning smell"
+  - "exposed wire"
+
+intake_fields:
+  - panel_access
+  - voltage
+  - breaker_count
+  - property_type

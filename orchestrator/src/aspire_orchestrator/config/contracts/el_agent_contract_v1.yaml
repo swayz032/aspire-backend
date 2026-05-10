@@ -1,0 +1,671 @@
+---
+contract_version: 1
+elevenlabs_docs_url: https://elevenlabs.io/docs/conversational-ai/best-practices/prompting-guide
+elevenlabs_docs_fetched_at: "2026-05-07T00:00:00Z"
+elevenlabs_docs_sha256: "<placeholder — Pass 7 will fetch and pin the real hash>"
+applies_to: all_workspace_agents
+enforcement_layers:
+  - pre_commit
+  - sync_script
+  - ci_pipeline
+  - runtime_audit
+override_policy: >
+  Each rule may be waived per-agent via a signed YAML block under the key
+  `contract_overrides`. Every override must carry: rule (int), reason (str),
+  approved_by (str), approved_at (date). Missing any field invalidates the
+  override and the rule is treated as failing. Overrides appear in the daily
+  audit report and are never invisible.
+
+# ---------------------------------------------------------------------------
+# Rules
+# Each rule carries:
+#   id           — int, 1-based, stable across contract versions
+#   name         — short human-readable name
+#   severity     — HIGH | MEDIUM
+#   category     — grouping label for reporting
+#   description  — normative statement (what MUST be true)
+#   source_citation — traceability to official EL docs or Aspire architectural decision
+#   validator_kind  — regex | structural | config | allowlist
+#   validator_params — kind-specific parameters (see each rule)
+#   failure_message_template — f-string compatible; placeholders: {agent_id}, {evidence}
+# ---------------------------------------------------------------------------
+
+rules:
+
+  - id: 1
+    name: required_section_headings
+    severity: HIGH
+    category: structure
+    description: >
+      The system prompt MUST contain all seven required top-level headings in
+      sentence case using Markdown H1 syntax: "# Personality" (or "# Persona"),
+      "# Environment", "# Tone", "# Goal", "# Guardrails", "# Tools",
+      "# Error handling". Order is not enforced but all seven must be present.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Structure your prompt" section.
+      Aspire architectural decision: single canonical section schema across agents.
+    validator_kind: structural
+    validator_params:
+      required_headings:
+        - "# Personality"
+        - "# Persona"
+        - "# Environment"
+        - "# Tone"
+        - "# Goal"
+        - "# Guardrails"
+        - "# Tools"
+        - "# Error handling"
+      # Headings are OR-grouped: ("# Personality" OR "# Persona") counts as one
+      heading_groups:
+        - ["# Personality", "# Persona"]
+        - ["# Environment"]
+        - ["# Tone"]
+        - ["# Goal"]
+        - ["# Guardrails"]
+        - ["# Tools"]
+        - ["# Error handling"]
+      match_mode: case_insensitive_line_start
+    failure_message_template: >
+      Agent {agent_id}: missing required heading(s). Evidence: {evidence}
+
+  - id: 2
+    name: conciseness_no_filler
+    severity: MEDIUM
+    category: conciseness
+    description: >
+      No line in the system prompt body may exceed 200 characters. The following
+      filler phrases are banned (case-insensitive): "I'd be happy to assist you
+      with that today", "thank you for your patience", "I appreciate your inquiry",
+      "have a wonderful day", "is there anything else I can help you with today",
+      "please hold while I", "based on my analysis", "I am now transferring".
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Keep your instructions concise" section.
+    validator_kind: regex
+    validator_params:
+      max_line_length: 200
+      banned_phrases:
+        - "i'd be happy to assist you with that today"
+        - "thank you for your patience"
+        - "i appreciate your inquiry"
+        - "have a wonderful day"
+        - "is there anything else i can help you with today"
+        - "please hold while i"
+        - "based on my analysis"
+        - "i am now transferring"
+      match_flags: case_insensitive
+    failure_message_template: >
+      Agent {agent_id}: conciseness violation. Evidence: {evidence}
+
+  - id: 3
+    name: emphasis_critical_steps
+    severity: MEDIUM
+    category: emphasis
+    description: >
+      Every section that contains numbered step sequences (lines starting with
+      "1.", "2.", etc.) MUST include at least one occurrence of the phrase
+      "This step is important." (sentence case, with period) within that section.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Use emphasis for critical instructions" section.
+    validator_kind: structural
+    validator_params:
+      trigger: numbered_step_list_in_section
+      required_phrase: "This step is important."
+      scope: per_section
+    failure_message_template: >
+      Agent {agent_id}: section with numbered steps is missing "This step is important." Evidence: {evidence}
+
+  - id: 4
+    name: guardrails_section_populated
+    severity: HIGH
+    category: structure
+    description: >
+      The "# Guardrails" section must be non-empty and must contain at least
+      three explicit rule statements. A rule statement is a line beginning with
+      a dash, asterisk, or digit (list or numbered list item). Prose paragraphs
+      without list markers do not count toward the three.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Always include guardrails" section.
+    validator_kind: structural
+    validator_params:
+      target_section: "# Guardrails"
+      min_list_items: 3
+      list_item_patterns:
+        - "^\\s*[-*]\\s+"
+        - "^\\s*\\d+\\.\\s+"
+    failure_message_template: >
+      Agent {agent_id}: "# Guardrails" section has fewer than 3 explicit rules. Evidence: {evidence}
+
+  - id: 5
+    name: tool_description_format
+    severity: HIGH
+    category: tool_documentation
+    description: >
+      Every tool block within the "# Tools" section MUST contain all three
+      required subsection labels: "**When to use:**", "**Parameters:**", and
+      "**Error handling:**". The labels must appear in bold Markdown and end with
+      a colon. This rule does not apply when the "# Tools" section contains
+      only the phrase "No tools are configured for this agent."
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Document each tool" section.
+    validator_kind: structural
+    validator_params:
+      target_section: "# Tools"
+      exempt_phrase: "No tools are configured for this agent."
+      required_labels:
+        - "**When to use:**"
+        - "**Parameters:**"
+        - "**Error handling:**"
+      scope: per_tool_block
+    failure_message_template: >
+      Agent {agent_id}: tool block missing required label(s). Evidence: {evidence}
+
+  - id: 6
+    name: tool_param_examples
+    severity: MEDIUM
+    category: tool_documentation
+    description: >
+      Every parameter description within a "**Parameters:**" block MUST contain
+      at least one example using the notation "(e.g., …)". The text "(e.g.,"
+      must appear within 200 characters of the parameter name. This rule does
+      not apply when the "# Tools" section contains only the exempt phrase.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Document each tool parameter with examples".
+    validator_kind: regex
+    validator_params:
+      scope: parameters_block_within_tool
+      required_pattern: "\\(e\\.g\\.,\\s*.+?\\)"
+      exempt_phrase: "No tools are configured for this agent."
+    failure_message_template: >
+      Agent {agent_id}: parameter missing "(e.g., …)" example. Evidence: {evidence}
+
+  - id: 7
+    name: tool_error_handling_instructions
+    severity: MEDIUM
+    category: tool_documentation
+    description: >
+      Every "**Error handling:**" block within the "# Tools" section MUST
+      contain at least one explicit recovery instruction (minimum 15 characters,
+      not just "N/A" or a single word). This rule does not apply when the
+      "# Tools" section contains only the exempt phrase.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Always describe error recovery".
+    validator_kind: structural
+    validator_params:
+      target_label: "**Error handling:**"
+      min_content_length: 15
+      banned_content:
+        - "n/a"
+        - "none"
+        - "tbd"
+      exempt_phrase: "No tools are configured for this agent."
+    failure_message_template: >
+      Agent {agent_id}: "**Error handling:**" block is empty or placeholder. Evidence: {evidence}
+
+  - id: 8
+    name: single_goal_max_seven_steps
+    severity: MEDIUM
+    category: specialization
+    description: >
+      The "# Goal" section MUST contain exactly one top-level goal statement and
+      MAY contain a numbered step list of at most 7 items. If a numbered list is
+      present, it must not exceed 7 items (lines beginning with "1." through "7.").
+      Multiple goal paragraphs separated by blank lines count as one if not
+      numbered. A numbered list beyond step 7 (i.e., "8." or higher) FAILS this rule.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Keep each agent specialized" section.
+    validator_kind: structural
+    validator_params:
+      target_section: "# Goal"
+      max_numbered_steps: 7
+      step_pattern: "^\\s*(\\d+)\\."
+    failure_message_template: >
+      Agent {agent_id}: "# Goal" section has more than 7 numbered steps. Evidence: {evidence}
+
+  - id: 9
+    name: markdown_style_sentence_case
+    severity: MEDIUM
+    category: markdown_style
+    description: >
+      All H1 headings (lines beginning with "# ") in the system prompt body MUST
+      use sentence case — the first word capitalized, subsequent words lowercase
+      unless they are proper nouns. Headings that are ALL CAPS or Title Case With
+      Every Word Capitalized fail this rule. Proper nouns (e.g., tool or brand
+      names following "# Tools") are exempt.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Use consistent Markdown formatting".
+    validator_kind: structural
+    validator_params:
+      heading_level: 1
+      check: sentence_case
+      exempt_patterns:
+        - "# Tools"
+        - "# Goal"
+        - "# Tone"
+    failure_message_template: >
+      Agent {agent_id}: heading not in sentence case. Evidence: {evidence}
+
+  - id: 10
+    name: text_normalisation_declared
+    severity: MEDIUM
+    category: config
+    description: >
+      The agent configuration MUST declare the field `text_normalisation_type`
+      with a value of either "system_prompt" or "elevenlabs". The field must
+      be present and non-null. An absent or null field fails this rule.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Text normalization" section.
+      EL API reference: agent.tts.text_normalization field.
+    validator_kind: config
+    validator_params:
+      config_field: "text_normalisation_type"
+      allowed_values:
+        - "system_prompt"
+        - "elevenlabs"
+    failure_message_template: >
+      Agent {agent_id}: `text_normalisation_type` missing or invalid. Evidence: {evidence}
+
+  - id: 11
+    name: model_selection_rationale
+    severity: MEDIUM
+    category: config
+    description: >
+      The agent configuration MUST contain the field `model_rationale` with a
+      non-empty string value (at least 20 characters) documenting why the
+      selected LLM model was chosen for this agent. An absent, null, or
+      short value fails this rule.
+    source_citation: >
+      Aspire architectural decision: every config decision must be documented
+      (traceability requirement).
+    validator_kind: config
+    validator_params:
+      config_field: "model_rationale"
+      min_length: 20
+    failure_message_template: >
+      Agent {agent_id}: `model_rationale` missing or too short (min 20 chars). Evidence: {evidence}
+
+  - id: 12
+    name: no_bracketed_audio_cues_in_prompt_body
+    severity: HIGH
+    category: audio_tags
+    description: >
+      The system prompt body MUST NOT contain bracketed audio cue tokens of the
+      form "[word]" or "[word_word]" (lowercase letters and underscores inside
+      square brackets). Such tokens are spoken aloud literally on some EL
+      configurations. ALL audio cues must be configured exclusively via the
+      `suggested_audio_tags` agent config field (rule 12b). The regex
+      \[[a-z][a-z_]*\] is applied to every line; any match is a failure.
+    source_citation: >
+      EL workspace screenshot 2026-05-07 — v3 Conversational does not consume
+      bracketed cues as audio instructions; they are spoken literally.
+      EL Prompting Guide 2026-05-07 — audio tags are agent-config level, not prompt level.
+    validator_kind: regex
+    validator_params:
+      pattern: "\\[[a-z][a-z_]*\\]"
+      match_mode: per_line
+      invert: true
+    failure_message_template: >
+      Agent {agent_id}: bracketed audio cue found in prompt body (would be spoken aloud). Evidence: {evidence}
+
+  - id: 12
+    name: per_tag_description_min_length
+    rule_id_suffix: b
+    severity: HIGH
+    category: audio_tags
+    description: >
+      Every entry in `agent.voice.suggested_audio_tags` MUST have a non-empty
+      `description` field of at least 20 characters explaining when the agent
+      should use that tag. A missing, null, or short description fails this rule.
+    source_citation: >
+      EL workspace 2026-05-07 — "Explain when the agent should use this audio tag"
+      instruction field per tag.
+      Aspire plan make-sure-we-have-wise-quail, rule 12b.
+    validator_kind: structural
+    validator_params:
+      config_path: "agent.voice.suggested_audio_tags"
+      per_item_field: "description"
+      min_length: 20
+    failure_message_template: >
+      Agent {agent_id}: audio tag "{evidence}" has missing or too-short description (min 20 chars).
+
+  - id: 12
+    name: no_voice_settings_for_v3_conversational
+    rule_id_suffix: c
+    severity: HIGH
+    category: audio_tags
+    description: >
+      If `agent.voice.model_family` equals "v3_conversational" (case-insensitive),
+      the agent configuration MUST NOT set any of the following fields:
+      `stability`, `similarity_boost`, `speed`, `style`, `use_speaker_boost`.
+      EL ignores these for v3; their presence creates false expectations.
+    source_citation: >
+      EL UI banner 2026-05-07 — "Voice settings are not customizable for v3 models."
+      Aspire plan make-sure-we-have-wise-quail, rule 12c.
+    validator_kind: config
+    validator_params:
+      condition_field: "model_family"
+      condition_value: "v3_conversational"
+      condition_match: case_insensitive
+      forbidden_fields:
+        - "stability"
+        - "similarity_boost"
+        - "speed"
+        - "style"
+        - "use_speaker_boost"
+      config_scope: "agent.voice"
+    failure_message_template: >
+      Agent {agent_id}: voice setting(s) set for v3_conversational model (ignored by EL, must be removed). Evidence: {evidence}
+
+  - id: 13
+    name: no_read_back_phrase
+    severity: MEDIUM
+    category: banned_phrases
+    description: >
+      The system prompt MUST NOT contain the phrase "read back", "read it back",
+      or "read that back" (case-insensitive). These phrases conflict with EL
+      voice model behavior on playback scenarios.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Avoid 'read back' instructions" section.
+    validator_kind: regex
+    validator_params:
+      pattern: "read\\s+(back|it\\s+back|that\\s+back)"
+      match_flags: case_insensitive
+      invert: true
+    failure_message_template: >
+      Agent {agent_id}: forbidden phrase "read back" found in prompt. Evidence: {evidence}
+
+  - id: 14
+    name: no_other_agent_name_in_prompt
+    severity: HIGH
+    category: identity
+    description: >
+      The rendered system prompt (after dynamic variable substitution) MUST NOT
+      contain the display name of any other EL workspace agent. The validator
+      compares the rendered prompt against the canonical agent name registry.
+      This rule prevents identity confusion between agents.
+    source_citation: >
+      Aspire architectural decision: agent identity must be unambiguous per call session.
+    validator_kind: allowlist
+    validator_params:
+      check: agent_name_does_not_appear_in_other_agents_prompts
+      agent_name_registry:
+        - "Tiffany"
+        - "Sarah"
+        - "Ava"
+        - "Finn"
+        - "Eli"
+        - "Nora"
+    failure_message_template: >
+      Agent {agent_id}: another agent's name appears in this prompt. Evidence: {evidence}
+
+  - id: 15
+    name: first_message_empty_slot_defense
+    severity: HIGH
+    category: personalization
+    description: >
+      The first-message template MUST safely degrade when any dynamic variable
+      is null or empty. Concretely: every `{{var}}` reference in the first-message
+      template must either (a) be wrapped in a conditional guard construct, or
+      (b) have a documented fallback value in `_DEFAULT_DYN_VARS`. A first-message
+      template that would produce a blank greeting slot fails this rule.
+    source_citation: >
+      Aspire incident 2026-05-07 — Tiffany silent-slot bug (empty business_name).
+      Aspire plan make-sure-we-have-wise-quail, rule 15.
+    validator_kind: structural
+    validator_params:
+      target: first_message_template
+      dyn_var_pattern: "\\{\\{([a-z_]+)\\}\\}"
+      check: all_vars_have_fallback_or_guard
+    failure_message_template: >
+      Agent {agent_id}: first-message template has unguarded variable(s) with no fallback. Evidence: {evidence}
+
+  - id: 16
+    name: dyn_var_coverage
+    severity: HIGH
+    category: personalization
+    description: >
+      Every `{{var}}` token that appears in the system prompt template or the
+      first-message template MUST have a corresponding entry in `_DEFAULT_DYN_VARS`
+      (the canonical default variables map). A variable appearing in the template
+      but absent from `_DEFAULT_DYN_VARS` fails this rule, as it may receive
+      no value at runtime.
+    source_citation: >
+      Aspire architectural decision: all dynamic variables must be declared.
+    validator_kind: structural
+    validator_params:
+      scan_targets:
+        - system_prompt
+        - first_message_template
+      dyn_var_pattern: "\\{\\{([a-z_]+)\\}\\}"
+      check: all_vars_in_default_map
+    failure_message_template: >
+      Agent {agent_id}: dynamic variable(s) not in _DEFAULT_DYN_VARS. Evidence: {evidence}
+
+  - id: 17
+    name: webhook_conversation_initiation_enabled
+    severity: MEDIUM
+    category: config
+    description: >
+      Agents that receive inbound calls or personalized sessions MUST have the
+      agent config field `enable_conversation_initiation_client_data_from_webhook`
+      set to `true`. This field gates the personalization webhook flow. This rule
+      applies only when `agent_kind` is one of: "receptionist", "front_desk",
+      "inbound_voice". Other agent kinds are exempt.
+    source_citation: >
+      EL API reference — conversation initiation webhook.
+      Aspire Sarah/Tiffany architecture: personalization requires webhook at call start.
+    validator_kind: config
+    validator_params:
+      applies_to_agent_kinds:
+        - "receptionist"
+        - "front_desk"
+        - "inbound_voice"
+      config_field: "enable_conversation_initiation_client_data_from_webhook"
+      required_value: true
+    failure_message_template: >
+      Agent {agent_id}: conversation initiation webhook not enabled. Evidence: {evidence}
+
+  - id: 18
+    name: post_call_webhook_attached
+    severity: HIGH
+    category: config
+    description: >
+      Every agent MUST have a post-call webhook configured. The agent config
+      field `post_call_webhook_id` must be a non-null, non-empty string. The
+      value must match the workspace canonical post-call webhook identifier
+      declared in `ASPIRE_EL_POST_CALL_WEBHOOK_ID` environment variable
+      (or the contract's `canonical_post_call_webhook_id` field).
+    source_citation: >
+      Aspire Law #2: every state change produces a receipt. Post-call webhook
+      is the integration point that triggers receipt creation after a call ends.
+    validator_kind: config
+    validator_params:
+      config_field: "post_call_webhook_id"
+      required: true
+      match_env_var: "ASPIRE_EL_POST_CALL_WEBHOOK_ID"
+    failure_message_template: >
+      Agent {agent_id}: post-call webhook missing or does not match canonical ID. Evidence: {evidence}
+
+  - id: 19
+    name: tool_registry_uniqueness
+    severity: HIGH
+    category: tool_documentation
+    description: >
+      No two tools within an agent's tool list may share the same name. The tool
+      name `transfer_to_number` may appear at most once. Duplicate tool names
+      or multiple `transfer_to_number` entries fail this rule.
+    source_citation: >
+      EL API reference — tool name must be unique per agent.
+    validator_kind: structural
+    validator_params:
+      check: no_duplicate_tool_names
+      max_occurrences:
+        transfer_to_number: 1
+    failure_message_template: >
+      Agent {agent_id}: duplicate tool name(s) in tool registry. Evidence: {evidence}
+
+  - id: 20
+    name: ai_disclosure_policy
+    severity: HIGH
+    category: guardrails
+    description: >
+      The system prompt MUST contain an explicit rule stating that the agent
+      will disclose being an AI ONLY when asked directly by the caller. A
+      disclosure rule that proactively announces AI status (rather than
+      responding only to direct questions) also fails this rule.
+    source_citation: >
+      Aspire governance — AI disclosure must be agent-initiated only on direct query.
+      FTC guidance on AI disclosure in voice contexts.
+    validator_kind: structural
+    validator_params:
+      required_phrase_pattern: "(?i)(only\\s+when\\s+asked|when\\s+directly\\s+asked|if\\s+(a\\s+caller|someone|they)\\s+ask)"
+      context_keywords:
+        - "AI"
+        - "artificial intelligence"
+        - "not a human"
+        - "language model"
+    failure_message_template: >
+      Agent {agent_id}: AI disclosure policy missing or incorrectly stated. Evidence: {evidence}
+
+  - id: 21
+    name: closing_single_utterance
+    severity: MEDIUM
+    category: guardrails
+    description: >
+      The system prompt MUST contain an explicit instruction directing the agent
+      to deliver its closing line once and then stop talking — not to continue
+      speaking or ask follow-up questions after the caller has signaled they are
+      done. Acceptable forms include "say [closing] once" or "do not speak after
+      [the caller hangs up / goodbye]".
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Avoid over-talking at call end" section.
+    validator_kind: structural
+    validator_params:
+      required_phrase_pattern: "(?i)(say.{0,30}once|do\\s+not\\s+(speak|continue|say).{0,30}after)"
+      context_keywords:
+        - "closing"
+        - "goodbye"
+        - "end of call"
+        - "hang up"
+    failure_message_template: >
+      Agent {agent_id}: closing single-utterance rule missing. Evidence: {evidence}
+
+  - id: 22
+    name: identity_verification_for_state_changes
+    severity: HIGH
+    category: guardrails
+    description: >
+      Agents whose tool list includes any state-changing tool (tools other than
+      purely read/search operations — e.g., `schedule_appointment`,
+      `create_invoice`, `update_record`, `send_message`) MUST include an
+      identity-verification step in the "# Goal" or "# Guardrails" section
+      before executing the state-changing tool. Agents with no state-changing
+      tools are exempt via override.
+    source_citation: >
+      Aspire Law #4: Yellow/Red tier actions require user confirmation.
+      Aspire Law #5: capability tokens scoped to tenant + tool + action.
+    validator_kind: structural
+    validator_params:
+      state_changing_tool_patterns:
+        - "schedule"
+        - "create"
+        - "update"
+        - "delete"
+        - "send"
+        - "book"
+        - "cancel"
+        - "pay"
+      required_phrase_pattern: "(?i)(verif|confirm|identif).{0,50}(caller|identity|name|number)"
+    failure_message_template: >
+      Agent {agent_id}: identity verification step missing for agent with state-changing tools. Evidence: {evidence}
+
+  - id: 23
+    name: escalation_path_declared
+    severity: HIGH
+    category: guardrails
+    description: >
+      The system prompt MUST declare a fallback escalation path — either a human
+      operator, a specific other agent (by name), or an async message capture
+      flow. The declaration must appear in the "# Guardrails" or "# Error handling"
+      section and must specify what happens when the agent cannot resolve the
+      caller's need.
+    source_citation: >
+      EL Prompting Guide 2026-05-07 — "Always declare an escalation path".
+      Aspire Law #3: fail closed — unknown states must resolve to a defined outcome.
+    validator_kind: structural
+    validator_params:
+      target_sections:
+        - "# Guardrails"
+        - "# Error handling"
+      required_phrase_pattern: "(?i)(escalat|transfer|human|message.{0,20}captur|voicemail|callback)"
+    failure_message_template: >
+      Agent {agent_id}: escalation path not declared in Guardrails or Error handling. Evidence: {evidence}
+
+  - id: 24
+    name: capture_first_for_transfers
+    severity: HIGH
+    category: guardrails
+    description: >
+      If the agent's tool list includes `transfer_to_number`, the system prompt
+      MUST contain a capture-first rule directing the agent to capture the
+      caller's name, purpose, and contact number BEFORE initiating the transfer.
+      An agent that transfers without capture fails this rule.
+    source_citation: >
+      Aspire receptionist SOP — capture before transfer ensures no-answer scenarios
+      do not lose lead data.
+    validator_kind: structural
+    validator_params:
+      trigger_tool: "transfer_to_number"
+      required_phrase_pattern: "(?i)(captur|collect|get|confirm).{0,80}(before.{0,30}transfer|prior.{0,30}transfer)"
+    failure_message_template: >
+      Agent {agent_id}: capture-first rule missing for agent with transfer_to_number tool. Evidence: {evidence}
+
+  - id: 25
+    name: receipts_declaration
+    severity: HIGH
+    category: governance
+    description: >
+      The agent configuration MUST contain a `receipts_emitted` array that
+      enumerates every state-changing action the agent can perform. Each entry
+      must be a non-empty string. An absent or empty array fails this rule.
+      Agents with no state-changing actions must declare an empty array
+      explicitly with a comment explaining the exemption.
+    source_citation: >
+      Aspire Law #2: every state change produces an immutable, append-only receipt.
+      Receipt coverage: 100%, no exceptions.
+    validator_kind: config
+    validator_params:
+      config_field: "receipts_emitted"
+      required: true
+      min_items_if_state_changing: 1
+    failure_message_template: >
+      Agent {agent_id}: `receipts_emitted` missing or empty for agent with state-changing tools. Evidence: {evidence}
+
+  - id: 26
+    name: trade_aware_vocabulary
+    severity: HIGH
+    category: personalization
+    description: >
+      For agents with `agent_kind` of "receptionist" or "front_desk", the system
+      prompt template MUST reference BOTH `{{industry}}` AND `{{industry_specialty}}`
+      as dynamic variables. Hardcoded vertical names (e.g., "HVAC", "electrician",
+      "plumber") instead of these variables fail this rule, as they prevent
+      multi-trade deployment.
+    source_citation: >
+      Aspire plan make-sure-we-have-wise-quail — trade-aware receptionist architecture.
+      Aspire Law #6: tenant isolation — no hardcoded tenant-specific values in shared prompts.
+    validator_kind: structural
+    validator_params:
+      applies_to_agent_kinds:
+        - "receptionist"
+        - "front_desk"
+      required_variables:
+        - "{{industry}}"
+        - "{{industry_specialty}}"
+      banned_hardcoded_verticals:
+        - "HVAC"
+        - "electrician"
+        - "plumber"
+        - "specialty remodeler"
+        - "specialty_remodeler"
+    failure_message_template: >
+      Agent {agent_id}: receptionist prompt missing {{industry}} or {{industry_specialty}} variable(s). Evidence: {evidence}

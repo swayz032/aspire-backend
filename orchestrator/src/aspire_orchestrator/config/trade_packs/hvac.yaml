@@ -1,0 +1,28 @@
+# Trade pack: HVAC Contractor
+# Pass 4 stub — Pass 5 (aspire-rnd-engineer) will deepen with ACCA sources.
+# Schema version: 1
+trade_id: hvac
+display_name: "HVAC"
+
+# The term Sarah uses for the job type in caller-facing language.
+# e.g. "I can schedule a service call for you"
+primary_term: "service call"
+
+# Keywords that trigger the emergency routing flow when spoken by the caller.
+# Case-insensitive match in the LLM prompt guardrail.
+emergency_keywords:
+  - "no heat"
+  - "no cooling"
+  - "gas smell"
+  - "carbon monoxide"
+  - "frozen pipes"
+
+# Ordered list of intake fields Sarah collects before scheduling.
+# Field names match the EL tool parameter schema for schedule_service_call.
+# Pass 5 will add validation rules and acceptable values per field.
+intake_fields:
+  - square_footage
+  - system_type
+  - system_age
+  - last_service_date
+  - thermostat_brand

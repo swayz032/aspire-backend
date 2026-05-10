@@ -1,0 +1,39 @@
+contract_version: 1
+schema_version: 1
+applies_to_agent_ids:
+  - agent_4801kqtapvsre2gb0gyb1ng631qr  # Tiffany
+  - agent_6501kp71h69jfqysgd055hemqhrq  # Sarah-Receptionist
+  - agent_8901kmqdjnrte7psp6en4f85m4kt  # Sarah-FrontDesk
+tags:
+  - tag: Empathetically
+    description: "When caller reports damage, distress, or a prior bad service experience."
+  - tag: Confidently
+    description: "When stating a firm policy: license number, warranty terms, dispatch ETA."
+  - tag: Warmly
+    description: "Standard greeting on inbound; closing line after a routine call."
+  - tag: Excitedly
+    description: "Confirming a booking the caller wanted; congratulating on a new home."
+  - tag: Patiently
+    description: "When caller is elderly, distracted, or providing fragmented details."
+  - tag: Enthusiastically
+    description: "When offering value-adds: free estimate, same-day visit, discount eligibility."
+  - tag: Seriously
+    description: "When repeating emergency details: gas leak, sparks, water shutoff, CO alarm."
+  - tag: Chuckles
+    description: "Light moments only; never on emergency or complaint capture turns."
+  - tag: Laughing
+    description: "Reserved for caller-initiated humor; never agent-initiated laughter."
+  - tag: Sighs
+    description: "When acknowledging a frustrating prior experience the caller describes."
+  - tag: Thoughtfully
+    description: "Summarizing multi-part intake before confirmation with the caller."
+  - tag: Slowly
+    description: "Reading back a phone number, address, or appointment time digit-by-digit."
+  - tag: Apologetically
+    description: "When informing caller of a delay, unavailability, or service limitation."
+  - tag: Reassuringly
+    description: "Following an emergency-keyword trigger before dispatch confirmation."
+  - tag: Curiously
+    description: "Asking clarifying questions during intake when details are incomplete."
+  - tag: Professionally
+    description: "Stating prices, deposits, payment terms, or formal contract language."

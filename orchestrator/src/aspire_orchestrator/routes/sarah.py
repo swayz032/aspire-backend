@@ -1,4 +1,4 @@
-"""Sarah Receptionist personalization webhook (Pass 16 — §16.D).
+"""Sarah Receptionist personalization webhook (Pass 16 — §16.D, hardened Pass 4).
 
 POST /v1/sarah/personalization — EL calls this at inbound call start.
 
@@ -56,20 +56,93 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Request, HTTPException, status
 
+import hashlib
+
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.services import receipt_store
-from aspire_orchestrator.services.ingestion.signatures import verify_elevenlabs
+import hmac
 from aspire_orchestrator.services.metrics import METRICS
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_rpc,
     supabase_select,
 )
+from aspire_orchestrator.services import personalization_cache
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/sarah", tags=["sarah"])
+
+# ── Trade pack loader (Pass 4) ───────────────────────────────────────────────
+# Loaded once at module import. Each pack is a small YAML stub that drives the
+# {{trade_primary_term}}, {{trade_emergency_keywords}}, and
+# {{trade_intake_fields_json}} dyn_vars. Pass 5 will deepen these.
+
+import json as _json
+import os as _os
+import pathlib as _pathlib
+
+_TRADE_PACKS_DIR = (
+    _pathlib.Path(__file__).parent.parent / "config" / "trade_packs"
+)
+
+_TRADE_ID_TO_DISPLAY: dict[str, str] = {
+    "hvac": "HVAC",
+    "electrician": "Electrical",
+    "plumber": "Plumbing",
+    "specialty_remodeler": "Specialty Remodeling",
+}
+
+# Loaded trade packs: trade_id -> pack dict
+_TRADE_PACKS: dict[str, dict[str, Any]] = {}
+
+
+def _load_trade_packs() -> None:
+    """Load all trade pack YAML files at startup. Non-raising — missing file = empty pack."""
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        logger.warning("trade_pack_loader yaml_not_available — trade dyn_vars will be empty")
+        return
+
+    for trade_id in _TRADE_ID_TO_DISPLAY:
+        pack_path = _TRADE_PACKS_DIR / f"{trade_id}.yaml"
+        if not pack_path.exists():
+            logger.warning("trade_pack_missing path=%s", pack_path)
+            _TRADE_PACKS[trade_id] = {}
+            continue
+        try:
+            with pack_path.open("r", encoding="utf-8") as fh:
+                _TRADE_PACKS[trade_id] = yaml.safe_load(fh) or {}
+        except Exception as exc:
+            logger.error("trade_pack_load_error path=%s: %s", pack_path, exc)
+            _TRADE_PACKS[trade_id] = {}
+
+
+_load_trade_packs()
+
+
+def _build_trade_dyn_vars(trade_id: str | None) -> dict[str, str]:
+    """Return the three trade dyn_vars for the given trade_id.
+
+    Falls back to empty strings on unknown or NULL trade_id so the EL agent
+    still receives all registered vars (EL requires every custom var to be present).
+    """
+    pack = _TRADE_PACKS.get(trade_id or "", {})
+    primary_term: str = str(pack.get("primary_term") or "service call")
+    keywords: list[str] = pack.get("emergency_keywords") or []
+    intake: list[str] = pack.get("intake_fields") or []
+    return {
+        "trade_primary_term": primary_term,
+        "trade_emergency_keywords": ", ".join(keywords),
+        "trade_intake_fields_json": _json.dumps(intake),
+    }
+
+
+# Hard timeout for the DB query inside _resolve_personalization (Pass 4 requirement).
+# Separate from _PERSONALIZATION_BUDGET_SECONDS which is the outer wall-clock budget.
+_TRADE_DB_TIMEOUT_SECONDS = 0.200  # 200ms hard limit per Pass 4 spec
 
 # ── Last-known-good (LKG) config cache for Sarah personalization ─────────────
 # In-memory LRU keyed by called_number. Used when DB lookups exceed the 800ms
@@ -145,6 +218,17 @@ _ROLE_TO_DYN_VAR: dict[str, str] = {
     "scheduling": "routing_scheduling_phone",
 }
 
+# Parallel mapping for the team member's display name. The receptionist refers
+# to non-owner team members by name to a caller, never by role label
+# ("Maria handles billing" — not "the billing department").
+_ROLE_TO_NAME_DYN_VAR: dict[str, str] = {
+    "owner": "routing_owner_name",
+    "sales": "routing_sales_name",
+    "support": "routing_support_name",
+    "billing": "routing_billing_name",
+    "scheduling": "routing_scheduling_name",
+}
+
 # Default dynamic vars — ALL custom vars Sarah expects must be present
 # to avoid breaking the agent (EL requirement).
 # Pass 19 §3.5: extended with is_after_hours, tenant_id, office_id,
@@ -179,10 +263,46 @@ _DEFAULT_DYN_VARS: dict[str, Any] = {
     "routing_support_phone": "",
     "routing_billing_phone": "",
     "routing_scheduling_phone": "",
+    # Per-role display names — receptionist uses these to refer to team members
+    # by NAME to callers, never by role label.
+    "routing_owner_name": "",
+    "routing_sales_name": "",
+    "routing_support_name": "",
+    "routing_billing_name": "",
+    "routing_scheduling_name": "",
+    # Owner formal address — "Mr. Scott" / "Ms. Lopez" — used when speaking
+    # ABOUT the owner to a caller. Default salutation is "Mr." until a per-tenant
+    # salutation field exists in suite_profiles.
+    "owner_salutation": "Mr.",
+    "owner_formal_name": "",
+    # Configured-roles list — humanized comma-separated string of department
+    # role labels that have an actual configured contact. Lets the agent know
+    # which departments exist for THIS business so it doesn't promise sales/
+    # support/billing if those aren't real.
+    "configured_roles": "",
     "tenant_id": "",                                 # Pass 19: scope identifiers for EL runtime
     "office_id": "",
     "voicemail_email": "",                           # Pass 19: from office_profiles
     "caller_history_summary": "",                   # Pass 19: V1 = empty string; V2 = prior call digest
+    # Caller Memory (migration 110) — populated when the inbound caller is a known contact.
+    # Public to the LLM so it can greet known callers by first name.
+    "caller_is_known": False,
+    "caller_display_name": "",
+    "caller_first_name": "",
+    "caller_company": "",
+    "caller_last_call_summary": "",
+    "caller_total_calls": 0,
+    "caller_last_seen_days_ago": 0,
+    # Category Tiffany assigned at contact-create time (lead/client/vendor/friend/
+    # other/unknown). Empty for first-time callers (Tiffany classifies during the call).
+    "caller_category": "",
+    # Trade pack dyn_vars (Pass 4 — migration 113, trade_packs/*.yaml).
+    # Populated from suite_profiles.trade_id → _build_trade_dyn_vars().
+    # Empty defaults ensure EL agents always receive all registered custom vars
+    # even on tenants with no trade_id configured yet.
+    "trade_primary_term": "service call",
+    "trade_emergency_keywords": "",
+    "trade_intake_fields_json": "[]",
 }
 
 
@@ -222,12 +342,15 @@ def _is_open_now(
         }
 
     Days marked `open: false` (or missing entirely) are treated as closed.
-    Empty/missing dict (legacy rows that pre-date the Hours tab being wired)
-    is treated as "always open" so the receptionist greets calls instead of
-    permanently routing to after-hours.
+    Empty/missing dict means hours have NEVER been configured for this
+    business — fail CLOSED. Returning True here would silently make every
+    new tenant appear 24/7 open until they explicitly save Hours, which
+    is misleading for callers (e.g., calling at 11pm and being greeted
+    as if the business is open). Treat unconfigured-hours as after-hours
+    so the take_message flow fires by default.
     """
     if not business_hours:
-        return True
+        return False
 
     try:
         tz = ZoneInfo(tz_name)
@@ -262,25 +385,132 @@ def _is_open_now(
     return start_t <= current_time <= end_t
 
 
+# Internal-only fields that must NEVER appear in the agent's prompt context.
+# EL injects every dynamic_variable into the agent's system prompt — if these
+# are present, the LLM can verbalize them and trip EL's "no sharing personal/
+# internal info" guardrail (or worse, leak a tenant UUID / owner email to the
+# caller). Stripped at the response boundary, kept on backend for receipts +
+# tool-scope routing.
+_INTERNAL_DYN_VAR_KEYS: frozenset[str] = frozenset({
+    "tenant_id",
+    "office_id",
+    "voicemail_email",
+})
+
+
+def _strip_internal_fields(dyn_vars: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of dyn_vars with internal-only fields removed."""
+    return {k: v for k, v in dyn_vars.items() if k not in _INTERNAL_DYN_VAR_KEYS}
+
+
+# Maps EL agent_id → receptionist display name used in the spoken first_message.
+# Production rule: never speak a default — if the agent_id is unknown, raise so
+# the call drops loudly rather than silently introducing the wrong persona.
+# Agent IDs are CASE-SENSITIVE (EL workspace canonical IDs, lower-hex).
+_AGENT_DISPLAY_NAME: dict[str, str] = {
+    "agent_4801kqtapvsre2gb0gyb1ng631qr": "Tiffany",
+    "agent_6501kp71h69jfqysgd055hemqhrq": "Sarah",
+    "agent_8901kmqdjnrte7psp6en4f85m4kt": "Sarah",
+}
+
+
+class UnknownAgentError(Exception):
+    """Raised when an agent_id is not present in _AGENT_DISPLAY_NAME.
+
+    Law #3 (Fail Closed): callers must never receive a blank or wrong agent
+    name in the spoken greeting. An unknown agent_id indicates a misconfigured
+    EL agent workspace or a spoofed webhook payload. The personalization handler
+    catches this and returns HTTP 400 + receipt instead of silently degrading.
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        super().__init__(f"agent_id {agent_id!r} is not in the receptionist registry")
+
+
+def _resolve_agent_display_name(agent_id: str) -> str:
+    """Strict lookup of the receptionist display name for a given EL agent_id.
+
+    Trims leading/trailing whitespace before lookup (edge-case defence).
+    Raises UnknownAgentError — never returns an empty string.
+    Agent IDs are case-sensitive; do not normalise case here.
+    """
+    normalised = agent_id.strip() if agent_id else ""
+    if not normalised:
+        raise UnknownAgentError(agent_id)
+    name = _AGENT_DISPLAY_NAME.get(normalised)
+    if name is None:
+        raise UnknownAgentError(normalised)
+    return name
+
+
 def _build_first_message(
     dyn_vars: dict[str, Any],
     is_open: bool,
+    agent_id: str,
+    call_sid: str = "",
 ) -> str:
-    """Build a time-of-day + hours-aware greeting first_message."""
+    """Build the spoken first_message — rotated per call to feel less canned.
+
+    Real receptionists never say it the same way twice. We rotate among 3-4
+    variants per scenario, seeded by call_sid so the same call always renders
+    the same opener (idempotent across EL retries) but consecutive calls feel
+    different. Per approved plan §3 "Option A — server-side rotation".
+
+    When the caller is a known contact (caller_is_known=True), greet by FIRST
+    NAME ONLY — no company, no time-of-day prefix. New callers get the full
+    business-name greeting keyed to agent_id (Tiffany / Sarah).
+    """
+    # Deterministic-per-call selector: hash call_sid → index. Same call_sid
+    # always picks the same variant (replay-safe) but different calls land
+    # on different variants.
+    seed = sum(ord(c) for c in call_sid) if call_sid else 0
+
+    caller_is_known = bool(dyn_vars.get("caller_is_known"))
+    caller_first_name = (dyn_vars.get("caller_first_name") or "").strip()
+    if caller_is_known and caller_first_name:
+        if is_open:
+            variants = [
+                f"Hi {caller_first_name}, how can I help today?",
+                f"Hey {caller_first_name}, what's going on?",
+                f"{caller_first_name}, hi — what can I do for you?",
+                f"Hi {caller_first_name}, good to hear from you. What's up?",
+            ]
+        else:
+            # Known caller, after-hours: warm name greeting + acknowledge timing
+            # so caller knows up front a transfer probably isn't going to happen
+            # tonight and we'll be capturing a message instead.
+            variants = [
+                f"Hi {caller_first_name} — we're closed for the evening, but I can grab a message for you. What's going on?",
+                f"Hey {caller_first_name}, good to hear from you. We're outside hours right now, but I can take a message — what do you need?",
+                f"{caller_first_name}, hi — we're closed at the moment, but I'm here. Let me grab a message for you, what's up?",
+            ]
+        return variants[seed % len(variants)]
+
     tod = dyn_vars.get("time_of_day", "morning")
     biz = dyn_vars.get("business_name", "your business")
+    # Strict lookup — raises UnknownAgentError if agent_id is missing or unknown.
+    # Callers of _build_first_message must catch UnknownAgentError and handle it
+    # before calling this function (the personalization handler does so).
+    name = _resolve_agent_display_name(agent_id)
     if is_open:
-        return (
-            f"Good {tod}, thank you for calling {biz}. "
-            "This is Sarah, the AI front desk assistant. "
-            "How can I help you today?"
-        )
-    return (
-        f"Good {tod}, thank you for calling {biz}. "
-        "We're currently closed, but I'm Sarah and I'd be happy "
-        "to take a message or answer any questions I can help with. "
-        "How can I assist you?"
-    )
+        # Time-of-day prefix on every variant — sounds professional and
+        # mirrors how a real receptionist answers ("Good morning, ...").
+        variants = [
+            f"Good {tod}, thanks for calling {biz}, this is {name}. How can I help?",
+            f"Good {tod}, you've reached {biz} — this is {name}. What can I do for you?",
+            f"Good {tod}, {biz}, this is {name}. How can I help today?",
+            f"Good {tod}, {biz} — {name} speaking. What can I do for you?",
+        ]
+        return variants[seed % len(variants)]
+
+    # After-hours
+    variants = [
+        f"Hi, you've reached {biz} after hours — this is {name}. I can take a message and have someone follow up.",
+        f"Good {tod}, {biz} is closed right now, but I'm {name} and I can grab a message for you.",
+        f"Hey, thanks for calling {biz} — we're closed, but I'm {name}. What can I help with?",
+    ]
+    return variants[seed % len(variants)]
 
 
 def _is_production_origin() -> bool:
@@ -306,35 +536,29 @@ async def personalization(request: Request) -> dict[str, Any]:
       check in dev only. Hard-blocked in prod via _is_production_origin().
     """
     body = await request.body()
-    sig_header = request.headers.get("ElevenLabs-Signature", "")
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    # Extract trace context from middleware contextvars (degrades gracefully
-    # if called outside a middleware-wrapped request — returns "" in that case).
     trace_id = get_trace_id()
     correlation_id = get_correlation_id()
 
-    # ── Signature verification (Law #3: fail closed) ─────────────────────
-    # Pass 18 fix: an empty secret + missing/invalid signature must STILL fail
-    # closed. Previous form `if el_secret and not verify_elevenlabs(...)`
-    # silently bypassed verification when the secret env var was unset, which
-    # would let any unauthenticated POST through in dev/staging where the
-    # secret might not be configured.
-    #
-    # Pass 19 dev bypass: when ASPIRE_DISABLE_PERSONALIZATION_HMAC=true AND
-    # aspire_env != 'prod', skip the signature check. This allows local dev
-    # to hit the endpoint without setting up the EL webhook secret.
-    # In production this bypass is ALWAYS blocked.
-    hmac_bypass_enabled = (
+    # ── Auth (Law #3: fail closed) ───────────────────────────────────────
+    # ElevenLabs personalization (conversation_initiation_client_data) webhooks
+    # are NOT HMAC-signed by EL — only post-call webhooks are. Per EL's
+    # documented pattern (https://elevenlabs.io/docs/agents-platform/customization/
+    # personalization/twilio-personalization), auth is via custom headers set
+    # in the agent's workspace_overrides.request_headers. We require a shared
+    # secret in `X-Aspire-Webhook-Secret`, constant-time compared against
+    # ASPIRE_PERSONALIZATION_WEBHOOK_SECRET. Auth failure → 401 + denied
+    # receipt (no fallback). Dev bypass is unchanged: ASPIRE_DISABLE_
+    # PERSONALIZATION_HMAC=true skips auth in non-prod only.
+    auth_bypass_enabled = (
         settings.disable_personalization_hmac
         and not _is_production_origin()
     )
 
-    el_secret = settings.elevenlabs_webhook_secret
-    if not el_secret and not hmac_bypass_enabled:
-        logger.error(
-            "sarah_personalization missing_webhook_secret — refusing to verify"
-        )
+    expected_secret = settings.personalization_webhook_secret
+    if not expected_secret and not auth_bypass_enabled:
+        logger.error("sarah_personalization missing_webhook_secret")
         receipt_store.store_receipts([{
             "id": receipt_id,
             "receipt_type": "personalization_denied",
@@ -349,41 +573,29 @@ async def personalization(request: Request) -> dict[str, Any]:
         }])
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "MISCONFIGURED", "message": "EL webhook secret not set"},
+            detail={"error": "MISCONFIGURED", "message": "Personalization webhook secret not set"},
         )
-    # PRAGMATIC FIX (2026-05-04): when HMAC validation fails we used to
-    # 401 the request. ElevenLabs interpreted that as "no dynamic_variables
-    # available" and read the literal `{{business_name}}` / `{{time_of_day}}`
-    # placeholders from the first_message template — surfacing as
-    # "Missing required dynamic variables" and dropping every inbound call
-    # in <1s. Until the workspace webhook secret is re-synced between EL
-    # and Railway, log + cut a degraded receipt and CONTINUE serving the
-    # dyn_vars. The endpoint is read-only (returns config for a phone-
-    # number → tenant lookup) so the security blast radius is bounded —
-    # an attacker would have to guess every Aspire number to enumerate
-    # tenant configs, and even then they only get business_name / hours /
-    # routing-contacts (no PII, no auth, no money paths).
-    signature_degraded = False
-    if not hmac_bypass_enabled and not verify_elevenlabs(body, sig_header, el_secret):
-        signature_degraded = True
-        logger.warning(
-            "sarah_personalization invalid_signature — degraded path "
-            "(returning dyn_vars anyway so inbound calls don't drop). "
-            "Rotate EL workspace webhook secret + Railway "
-            "ASPIRE_ELEVENLABS_WEBHOOK_SECRET to clear this."
-        )
-        receipt_store.store_receipts([{
-            "id": receipt_id,
-            "receipt_type": "personalization_denied",
-            "outcome": "degraded",
-            "action_type": "sarah_personalization",
-            "tool_used": "sarah_personalization",
-            "risk_tier": "green",
-            "reason_code": "INVALID_SIGNATURE_DEGRADED",
-            "trace_id": trace_id,
-            "correlation_id": correlation_id,
-            "created_at": now,
-        }])
+
+    if not auth_bypass_enabled:
+        provided = request.headers.get("X-Aspire-Webhook-Secret", "")
+        if not provided or not hmac.compare_digest(provided, expected_secret):
+            logger.warning("sarah_personalization invalid_secret — denying")
+            receipt_store.store_receipts([{
+                "id": receipt_id,
+                "receipt_type": "personalization_denied",
+                "outcome": "denied",
+                "action_type": "sarah_personalization",
+                "tool_used": "sarah_personalization",
+                "risk_tier": "green",
+                "reason_code": "INVALID_WEBHOOK_SECRET",
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
+                "created_at": now,
+            }])
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": "UNAUTHORIZED", "message": "Invalid webhook secret"},
+            )
 
     # ── Parse payload ─────────────────────────────────────────────────────
     try:
@@ -396,8 +608,61 @@ async def personalization(request: Request) -> dict[str, Any]:
 
     called_number = payload.get("called_number", "")
     call_sid = payload.get("call_sid", "")
+    agent_id = (payload.get("agent_id") or "").strip()
     # Law #9: log only first 6 digits of caller_id
     caller_id_log = (payload.get("caller_id") or "")[:6] + "..."
+
+    # ── Pass 3: fail closed on unknown agent_id (Law #3) ─────────────────
+    # Validate agent_id against the registry BEFORE any DB work so we never
+    # waste a query slot on an unconfigured or spoofed webhook payload.
+    # SHA256 of request headers is stored in the receipt for audit; raw
+    # header values are never logged (Law #9).
+    if not agent_id or agent_id not in _AGENT_DISPLAY_NAME:
+        raw_headers_sha256 = hashlib.sha256(
+            str(sorted(request.headers.items())).encode()
+        ).hexdigest()
+        source_ip = (
+            request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or request.client.host
+            if request.client
+            else "unknown"
+        )
+        logger.warning(
+            "sarah_personalization unknown_agent_id agent_id=%r source_ip=%s",
+            agent_id,
+            source_ip,
+        )
+        try:
+            receipt_store.store_receipts([{
+                "id": receipt_id,
+                "receipt_type": "unknown_agent_in_personalization",
+                "outcome": "denied",
+                "action_type": "sarah_personalization",
+                "tool_used": "sarah_personalization",
+                "risk_tier": "yellow",
+                "reason_code": "UNKNOWN_AGENT",
+                "redacted_inputs": {
+                    "attempted_agent_id": agent_id,
+                    "source_ip": source_ip,
+                    "headers_sha256": raw_headers_sha256,
+                },
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
+                "created_at": now,
+            }])
+        except Exception as _receipt_err:
+            logger.error(
+                "sarah_personalization unknown_agent receipt_store_error err=%s",
+                _receipt_err,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "UNKNOWN_AGENT",
+                "detail": f"agent_id {agent_id!r} not in registry",
+                "trace_id": trace_id,
+            },
+        )
 
     # Pass 18 fix THREAT-014: validate E.164 format BEFORE building any
     # PostgREST filter string. Without this, a forged HMAC could inject
@@ -431,9 +696,13 @@ async def personalization(request: Request) -> dict[str, Any]:
     fallback_reason: str | None = None
     used_cache = False
 
+    raw_caller_id = (payload.get("caller_id") or "").strip() or None
     try:
         resolution = await asyncio.wait_for(
-            _resolve_personalization(called_number=called_number),
+            _resolve_personalization(
+                called_number=called_number,
+                caller_id=raw_caller_id,
+            ),
             timeout=_PERSONALIZATION_BUDGET_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -450,34 +719,99 @@ async def personalization(request: Request) -> dict[str, Any]:
         resolution = None
 
     if resolution is None:
-        # Attempt LKG cache fallback before defaults
-        cached = _cache_get(called_number)
-        if cached is not None:
-            dyn_vars, scope = cached
-            suite_id = scope.get("suite_id", "")
-            office_id = scope.get("office_id", "")
-            tenant_id = scope.get("tenant_id", "")
-            front_desk_config_id = scope.get("front_desk_config_id", "")
-            is_open = bool(dyn_vars.get("is_open_now", True))
-            time_of_day = str(dyn_vars.get("time_of_day", "morning"))
-            used_cache = True
+        # ── Pass 4: fallback chain — Redis warm-cache → LKG cache → safe defaults ──
+        # Try Redis warm-cache (suite_id unknown at this point; keyed by agent_id + called_number
+        # proxy via LKG scope). The LKG cache still contains the scope dict with suite_id.
+        redis_cache_hit = False
+        redis_cache_unavailable = False
+        lkg_cached = _cache_get(called_number)
+
+        if lkg_cached is not None:
+            _lkg_dyn_vars, _lkg_scope = lkg_cached
+            _lkg_suite_id = _lkg_scope.get("suite_id", "")
+            if _lkg_suite_id and agent_id:
+                # Attempt Redis cache lookup using known scope
+                try:
+                    redis_hit = await personalization_cache.get(_lkg_suite_id, agent_id)
+                    if redis_hit is not None:
+                        dyn_vars = redis_hit
+                        suite_id = _lkg_suite_id
+                        office_id = _lkg_scope.get("office_id", "")
+                        tenant_id = _lkg_scope.get("tenant_id", "")
+                        front_desk_config_id = _lkg_scope.get("front_desk_config_id", "")
+                        is_open = bool(dyn_vars.get("is_open_now", True))
+                        time_of_day = str(dyn_vars.get("time_of_day", "morning"))
+                        used_cache = True
+                        redis_cache_hit = True
+                except Exception as _redis_exc:
+                    logger.warning("personalization_cache redis_get_failed: %s", _redis_exc)
+                    redis_cache_unavailable = True
+
+        if not redis_cache_hit:
+            # Fall to LKG in-memory cache
+            if lkg_cached is not None:
+                dyn_vars, scope = lkg_cached
+                suite_id = scope.get("suite_id", "")
+                office_id = scope.get("office_id", "")
+                tenant_id = scope.get("tenant_id", "")
+                front_desk_config_id = scope.get("front_desk_config_id", "")
+                is_open = bool(dyn_vars.get("is_open_now", True))
+                time_of_day = str(dyn_vars.get("time_of_day", "morning"))
+                used_cache = True
+            else:
+                # No cache anywhere → safe defaults so EL still gets a complete response.
+                dyn_vars = dict(_DEFAULT_DYN_VARS)
+                tz_name = "America/New_York"
+                dyn_vars["time_of_day"] = _compute_time_of_day(tz_name)
+                suite_id = ""
+                office_id = ""
+                tenant_id = ""
+                front_desk_config_id = ""
+                is_open = True
+                time_of_day = dyn_vars["time_of_day"]
+
+        # Determine outcome label for Pass 4 metrics
+        if redis_cache_hit:
+            _p4_outcome = "cache_fallback"
+        elif used_cache:
+            _p4_outcome = "cache_fallback"
         else:
-            # No cache → safe defaults so EL still gets a complete response.
-            dyn_vars = dict(_DEFAULT_DYN_VARS)
-            tz_name = "America/New_York"
-            dyn_vars["time_of_day"] = _compute_time_of_day(tz_name)
-            suite_id = ""
-            office_id = ""
-            tenant_id = ""
-            front_desk_config_id = ""
-            is_open = True
-            time_of_day = dyn_vars["time_of_day"]
+            _p4_outcome = "degraded"
 
         latency = time.monotonic() - handler_start
         METRICS.personalization_latency.observe(latency)
         METRICS.personalization_cache_fallback_counter.labels(
             reason=fallback_reason or "no_resolution"
         ).inc()
+        # Pass 4 Prometheus — requests_total + latency_by_outcome
+        try:
+            METRICS.personalization_requests_total.labels(
+                agent_id=agent_id or "unknown",
+                outcome=_p4_outcome,
+            ).inc()
+            METRICS.personalization_latency_by_outcome.labels(
+                agent_id=agent_id or "unknown",
+                outcome=_p4_outcome,
+            ).observe(latency)
+        except Exception:
+            pass  # Never break personalization for metrics failure
+
+        if redis_cache_unavailable:
+            # Law #2: emit receipt when Redis outage occurs during fallback path
+            receipt_store.store_receipts([{
+                "id": str(uuid.uuid4()),
+                "receipt_type": "personalization_cache_unavailable",
+                "suite_id": suite_id,
+                "outcome": "warning",
+                "action_type": "sarah_personalization",
+                "tool_used": "sarah_personalization",
+                "risk_tier": "green",
+                "reason_code": "REDIS_UNAVAILABLE_ON_FALLBACK",
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
+                "created_at": now,
+            }])
+
         # Cut a fallback receipt (Law #2 — even degraded paths are state changes
         # in the trace).
         receipt_store.store_receipts([{
@@ -490,7 +824,9 @@ async def personalization(request: Request) -> dict[str, Any]:
             "action_type": "sarah_personalization",
             "tool_used": "sarah_personalization",
             "risk_tier": "green",
-            "reason_code": "STALE_CONFIG_FALLBACK" if used_cache else "DEFAULT_CONFIG_FALLBACK",
+            "reason_code": "REDIS_CACHE_FALLBACK" if redis_cache_hit else (
+                "STALE_CONFIG_FALLBACK" if used_cache else "DEFAULT_CONFIG_FALLBACK"
+            ),
             "redacted_inputs": {
                 "called_number": called_number,
                 "caller_id_prefix": caller_id_log,
@@ -501,23 +837,26 @@ async def personalization(request: Request) -> dict[str, Any]:
                 "is_open_now": is_open,
                 "time_of_day": time_of_day,
                 "used_lkg_cache": used_cache,
+                "used_redis_cache": redis_cache_hit,
                 "latency_seconds": round(latency, 3),
             },
             "trace_id": trace_id,
             "correlation_id": correlation_id,
             "created_at": now,
         }])
-        first_message = _build_first_message(dyn_vars, is_open)
+        first_message = _build_first_message(dyn_vars, is_open, agent_id, call_sid)
+        public_dyn_vars = _strip_internal_fields(dyn_vars)
         logger.warning(
-            "sarah_personalization fallback called=%s reason=%s used_cache=%s latency=%.3fs",
+            "sarah_personalization fallback called=%s reason=%s used_cache=%s redis_hit=%s latency=%.3fs",
             called_number,
             fallback_reason or "unknown",
             used_cache,
+            redis_cache_hit,
             latency,
         )
         return {
             "type": "conversation_initiation_client_data",
-            "dynamic_variables": dyn_vars,
+            "dynamic_variables": public_dyn_vars,
             "conversation_config_override": {
                 "agent": {
                     "first_message": first_message,
@@ -567,6 +906,9 @@ async def personalization(request: Request) -> dict[str, Any]:
     is_open = resolution["is_open"]
     time_of_day = resolution["time_of_day"]
     config_version = resolution["version_no"]
+    # Pass 4 signals from _resolve_personalization
+    business_name_was_blank: bool = bool(resolution.get("business_name_was_blank", False))
+    resolved_trade_id: str = str(resolution.get("trade_id") or "")
 
     # Populate LKG cache for future degraded calls.
     _cache_put(
@@ -580,9 +922,77 @@ async def personalization(request: Request) -> dict[str, Any]:
         },
     )
 
-    first_message = _build_first_message(dyn_vars, is_open)
+    # Pass 4: write to Redis warm-cache (non-blocking — Redis outage must not
+    # break personalization). Cache write wraps in try/except per plan constraint.
+    if suite_id and agent_id:
+        try:
+            await personalization_cache.set(suite_id, agent_id, dyn_vars)
+            if METRICS.personalization_cache_size_bytes is not None:
+                import sys as _sys
+                METRICS.personalization_cache_size_bytes.set(
+                    _sys.getsizeof(dyn_vars)
+                )
+        except Exception as _cache_exc:
+            logger.warning("personalization_cache write_failed suite_id=%s: %s", suite_id, _cache_exc)
+            # Law #2: emit receipt for cache write failure (monitoring surface)
+            receipt_store.store_receipts([{
+                "id": str(uuid.uuid4()),
+                "receipt_type": "personalization_cache_unavailable",
+                "suite_id": suite_id,
+                "outcome": "warning",
+                "action_type": "sarah_personalization",
+                "tool_used": "sarah_personalization",
+                "risk_tier": "green",
+                "reason_code": "REDIS_WRITE_FAILED",
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
+                "created_at": now,
+            }])
+
+    first_message = _build_first_message(dyn_vars, is_open, agent_id, call_sid)
+    public_dyn_vars = _strip_internal_fields(dyn_vars)
     latency = time.monotonic() - handler_start
     METRICS.personalization_latency.observe(latency)
+
+    # Pass 4: emit blank business_name receipt + Prometheus counter (plan §4.2).
+    if business_name_was_blank:
+        try:
+            receipt_store.store_receipts([{
+                "id": str(uuid.uuid4()),
+                "receipt_type": "personalization_blank_business_name_filled",
+                "suite_id": suite_id,
+                "office_id": office_id,
+                "outcome": "warning",
+                "action_type": "sarah_personalization",
+                "tool_used": "sarah_personalization",
+                "risk_tier": "yellow",
+                "reason_code": "BLANK_BUSINESS_NAME_FILLED",
+                "redacted_inputs": {
+                    "agent_id": agent_id,
+                    "called_number": called_number,
+                },
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
+                "created_at": now,
+            }])
+            METRICS.personalization_blank_business_name_total.labels(
+                suite_id=suite_id or "unknown"
+            ).inc()
+        except Exception as _blank_exc:
+            logger.warning("personalization blank_business_name receipt_error: %s", _blank_exc)
+
+    # Pass 4 Prometheus — requests_total + latency_by_outcome for happy path
+    try:
+        METRICS.personalization_requests_total.labels(
+            agent_id=agent_id or "unknown",
+            outcome="hit",
+        ).inc()
+        METRICS.personalization_latency_by_outcome.labels(
+            agent_id=agent_id or "unknown",
+            outcome="hit",
+        ).observe(latency)
+    except Exception:
+        pass  # Never break personalization for metrics failure
 
     # ── Cut receipt (Law #2) — idempotent on call_sid ─────────────────────
     receipt_store.store_receipts([{
@@ -605,6 +1015,7 @@ async def personalization(request: Request) -> dict[str, Any]:
             "version_no": config_version,
             "is_open_now": is_open,
             "time_of_day": time_of_day,
+            "trade_id": resolved_trade_id,
             "latency_seconds": round(latency, 3),
         },
         "trace_id": trace_id,
@@ -613,17 +1024,18 @@ async def personalization(request: Request) -> dict[str, Any]:
     }])
 
     logger.info(
-        "sarah_personalization resolved called=%s caller=%s is_open=%s tod=%s latency=%.3fs",
+        "sarah_personalization resolved called=%s caller=%s is_open=%s tod=%s trade_id=%s latency=%.3fs",
         called_number,
         caller_id_log,
         is_open,
         time_of_day,
+        resolved_trade_id or "none",
         latency,
     )
 
     return {
         "type": "conversation_initiation_client_data",
-        "dynamic_variables": dyn_vars,
+        "dynamic_variables": public_dyn_vars,
         "conversation_config_override": {
             "agent": {
                 "first_message": first_message,
@@ -634,7 +1046,7 @@ async def personalization(request: Request) -> dict[str, Any]:
 
 
 async def _resolve_personalization(
-    *, called_number: str
+    *, called_number: str, caller_id: str | None = None
 ) -> dict[str, Any] | None:
     """Resolve everything via a single SECURITY DEFINER RPC.
 
@@ -654,12 +1066,16 @@ async def _resolve_personalization(
         webhook 404s — support sees the receipt and routes to ops.
       Otherwise a dict with dyn_vars + scope fields.
     """
+    # Pass 4: 200ms hard timeout on the RPC call itself (plan §4 spec).
+    # The outer handler still enforces _PERSONALIZATION_BUDGET_SECONDS as the
+    # wall-clock guard. Raising asyncio.TimeoutError here propagates up to the
+    # handler which tries the Redis warm-cache before safe defaults.
     rpc_result = await asyncio.wait_for(
         supabase_rpc(
             "resolve_personalization_by_phone",
-            {"p_phone": called_number},
+            {"p_phone": called_number, "p_caller_id": caller_id or None},
         ),
-        timeout=_PER_QUERY_TIMEOUT_SECONDS,
+        timeout=_TRADE_DB_TIMEOUT_SECONDS,
     )
 
     # supabase_rpc returns the raw RPC body. For a scalar-returning
@@ -692,18 +1108,46 @@ async def _resolve_personalization(
     # Normalize profile fields to the names the rest of the function
     # expects. Empty-string defaults match the prior _fetch_profile
     # behavior so downstream code paths stay identical.
-    biz_name = (profile_raw.get("business_name") or "").strip()
+
+    # Pass 4: business_name blank defense (Law #2 + plan §4.2).
+    # NULL or empty business_name from DB → "your business" safe default.
+    # A receipt is cut by the caller after _resolve_personalization returns
+    # so we signal the blank via a flag rather than writing the receipt here
+    # (receipts require correlation_id/trace_id from the request context).
+    raw_biz_name = (profile_raw.get("business_name") or "").strip()
+    business_name_was_blank = not raw_biz_name
+    biz_name = raw_biz_name if raw_biz_name else "your business"
+
     owner_full = (profile_raw.get("owner_name") or "").strip()
     first_name, _, last_name = owner_full.partition(" ")
-    industry = (profile_raw.get("industry") or "").strip()
+
+    # Pass 4: trade_id → {{industry}} display string (plan §4.2).
+    # Falls back to the freeform `industry` field when no trade_id is set,
+    # then to "contractor" if both are empty.
+    trade_id_raw = (profile_raw.get("trade_id") or "").strip() or None
+    trade_display = _TRADE_ID_TO_DISPLAY.get(trade_id_raw or "", "")
+    freeform_industry = (profile_raw.get("industry") or "").strip()
+    industry = trade_display or freeform_industry or "contractor"
+
     profile_tz = (profile_raw.get("timezone") or "America/New_York").strip()
     voicemail_email = (
         profile_raw.get("voicemail_email") or profile_raw.get("email") or ""
     ).strip()
-    industry_specialty = (profile_raw.get("industry_specialty") or "").strip()
+
+    # Pass 4: trade_specialty → {{industry_specialty}} (plan §4.2).
+    # NULL → empty string; prompt template handles gracefully per contract rule 15.
+    industry_specialty = (
+        profile_raw.get("trade_specialty")
+        or profile_raw.get("industry_specialty")
+        or ""
+    ).strip()
+
     business_city = (profile_raw.get("business_city") or "").strip()
     business_state = (profile_raw.get("business_state") or "").strip()
     owner_title = (profile_raw.get("owner_title") or "Owner").strip()
+
+    # Pass 4: build trade-specific dyn_vars from the loaded YAML pack.
+    trade_dyn_vars = _build_trade_dyn_vars(trade_id_raw)
 
     # Prefer the timezone saved on the front_desk_configs row (set by the
     # Hours tab) over the owner's suite-level timezone preference. Falls
@@ -720,18 +1164,74 @@ async def _resolve_personalization(
     is_open = _is_open_now(business_hours_dict, tz_name)
 
     routing_dyn: dict[str, str] = {v: "" for v in _ROLE_TO_DYN_VAR.values()}
+    routing_dyn.update({v: "" for v in _ROLE_TO_NAME_DYN_VAR.values()})
     routing_summary_parts: list[str] = []
+    configured_role_labels: list[str] = []
     for row in routing_rows or []:
         role = row.get("role", "")
-        dyn_var = _ROLE_TO_DYN_VAR.get(role)
-        if dyn_var:
-            phone = row.get("phone") or ""
-            routing_dyn[dyn_var] = phone
-            label = row.get("label") or row.get("name") or role
-            if phone:
-                routing_summary_parts.append(f"{label} ({role})")
+        phone_var = _ROLE_TO_DYN_VAR.get(role)
+        name_var = _ROLE_TO_NAME_DYN_VAR.get(role)
+        if not phone_var:
+            continue
+        phone = (row.get("phone") or "").strip()
+        team_name = (row.get("name") or "").strip()
+        if phone:
+            routing_dyn[phone_var] = phone
+            if name_var:
+                routing_dyn[name_var] = team_name
+            label = row.get("label") or team_name or role
+            routing_summary_parts.append(f"{label} ({role})")
+            configured_role_labels.append(role)
 
     routing_contacts_summary = ", ".join(routing_summary_parts)
+    configured_roles = ", ".join(configured_role_labels)
+
+    # Owner formal address — "Mr. Scott" / "Ms. Lopez". Used when the receptionist
+    # speaks ABOUT the owner to a caller. Defaults to "Mr." salutation until a
+    # per-tenant salutation field exists in suite_profiles.
+    owner_salutation_value = (profile_raw.get("owner_salutation") or "Mr.").strip()
+    owner_formal_name = (
+        f"{owner_salutation_value} {last_name}".strip()
+        if last_name
+        else (owner_full or "the owner")
+    )
+
+    # Caller Memory: parse the 'contact' field returned by the extended RPC
+    # (migration 110). When the caller's number matches a known contact in
+    # frontdesk_contacts (and the contact is not soft-deleted), populate
+    # public-facing dyn_vars so the receptionist can greet by first name.
+    contact_block: dict[str, Any] | None = payload.get("contact")
+    caller_is_known = False
+    caller_display_name = ""
+    caller_first_name = ""
+    caller_company = ""
+    caller_last_call_summary = ""
+    caller_total_calls = 0
+    caller_last_seen_days_ago = 0
+    caller_category = ""
+    if isinstance(contact_block, dict) and contact_block.get("status") != "blocked":
+        caller_is_known = True
+        caller_display_name = (contact_block.get("display_name") or "").strip()
+        # First-name only greeting per approved plan §8(b): "Do not mention
+        # company in the greeting." Company is still exposed as a separate
+        # dyn_var for use elsewhere if relevant.
+        caller_first_name = caller_display_name.partition(" ")[0]
+        caller_company = (contact_block.get("company") or "").strip()
+        caller_last_call_summary = (contact_block.get("last_call_summary") or "").strip()
+        try:
+            caller_total_calls = int(contact_block.get("total_calls") or 0)
+        except (TypeError, ValueError):
+            caller_total_calls = 0
+        last_seen_iso = contact_block.get("last_seen_at")
+        if last_seen_iso:
+            try:
+                last_seen_dt = datetime.fromisoformat(str(last_seen_iso).replace("Z", "+00:00"))
+                caller_last_seen_days_ago = max(
+                    0, (datetime.now(timezone.utc) - last_seen_dt).days
+                )
+            except (TypeError, ValueError):
+                caller_last_seen_days_ago = 0
+        caller_category = (contact_block.get("category") or "").strip()
 
     dyn_vars: dict[str, Any] = {
         **_DEFAULT_DYN_VARS,
@@ -746,18 +1246,36 @@ async def _resolve_personalization(
         "time_of_day": time_of_day,
         "is_open_now": is_open,
         "is_after_hours": not is_open,              # Pass 19 §3.5
-        "after_hours_mode": config.get("after_hours_mode", "take_message"),
-        "busy_mode": config.get("busy_mode", "take_message"),
-        "public_number_mode": config.get("public_number_mode", "ASPIRE_NEW_NUMBER"),
-        "catch_mode": config.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
+        # Normalize behavior-mode strings to UPPERCASE so the prompt's
+        # uppercase pattern matching (TAKE_MESSAGE / ASK_CALLBACK_WINDOW /
+        # TRY_TRANSFER_THEN_MESSAGE) always lines up regardless of how the
+        # Front Desk Setup UI persists them.
+        "after_hours_mode": str(config.get("after_hours_mode") or "take_message").upper(),
+        "busy_mode": str(config.get("busy_mode") or "take_message").upper(),
+        "public_number_mode": str(config.get("public_number_mode") or "ASPIRE_NEW_NUMBER").upper(),
+        "catch_mode": str(config.get("catch_mode") or "APP_AND_PHONE_SIMUL_RING").upper(),
         "greeting_name_override": config.get("greeting_name_override") or "",
         "pronunciation_override": config.get("pronunciation_override") or "",
         "routing_contacts_summary": routing_contacts_summary,
+        "configured_roles": configured_roles,
+        "owner_salutation": owner_salutation_value,
+        "owner_formal_name": owner_formal_name,
         "tenant_id": tenant_id,                     # Pass 19 §3.5
         "office_id": office_id,                     # Pass 19 §3.5
         "voicemail_email": voicemail_email,          # Pass 19 §3.5
         "caller_history_summary": "",               # Pass 19 §3.5: V1 empty; V2 = prior call digest
+        # Caller Memory (migration 110)
+        "caller_is_known": caller_is_known,
+        "caller_display_name": caller_display_name,
+        "caller_first_name": caller_first_name,
+        "caller_company": caller_company,
+        "caller_last_call_summary": caller_last_call_summary,
+        "caller_total_calls": caller_total_calls,
+        "caller_last_seen_days_ago": caller_last_seen_days_ago,
+        "caller_category": caller_category,
         **routing_dyn,
+        # Pass 4: trade pack dyn_vars — always present (EL requires all registered vars).
+        **trade_dyn_vars,
     }
 
     return {
@@ -769,6 +1287,10 @@ async def _resolve_personalization(
         "version_no": config.get("version_no", 0),
         "is_open": is_open,
         "time_of_day": time_of_day,
+        # Pass 4 signal: tells handler to emit personalization_blank_business_name_filled receipt.
+        "business_name_was_blank": business_name_was_blank,
+        # Pass 4 signal: trade_id for Prometheus label.
+        "trade_id": trade_id_raw or "",
     }
 
 
