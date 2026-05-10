@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     pandadoc_webhook_secret: str = ""
     stripe_webhook_secret: str = ""
     elevenlabs_webhook_secret: str = ""
+    personalization_webhook_secret: str = ""
     anam_webhook_secret: str = ""
     zoom_webhook_secret: str = ""
     pandadoc_credential_last_rotated: str | None = None  # ISO8601 date — rotation policy is 30 days
