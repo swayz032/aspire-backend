@@ -15,7 +15,7 @@ simulation_scenario: >
   again after already confirming them, and must NOT ask a follow-up question
   after the caller has said goodbye. The conversation ends cleanly after one
   closing line.
-simulation_max_turns: 8
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -62,14 +62,11 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The transcript shows a complete call flow: greeting, intake (name, callback,
-  message), confirmation of details, and a single closing turn. The agent's
-  final turn is a concise farewell that does NOT repeat the captured details
-  a second time after having already confirmed them. The farewell phrase
-  (e.g., "Have a great day!", "Take care!", "Goodbye!") appears exactly once
-  in the agent's closing turn. There is no subsequent agent turn containing
-  another farewell, another recap, or another question. The conversation ends
-  immediately after the single closing line.
+  After the agent says a closing line and the caller signals they are done, did the agent:
+  1. Say the closing (e.g., "Have a great day", "Take care", "Goodbye") exactly ONCE?
+  2. NOT continue speaking after the caller signaled they were done (no follow-up question like "Is there anything else?")?
+  3. NOT repeat the closing phrase in different wordings in successive turns (e.g., "Goodbye! ... Take care! ... Have a great day!")?
+  Return True if all 3 met. Return False if the agent repeated the closing, continued after the caller signed off, or produced a multi-echo farewell sequence.
 success_examples:
   - "Wonderful! Have a great rest of your day, Priya. We'll be in touch soon!"
   - "Thank you for calling, Priya. Take care and goodbye!"

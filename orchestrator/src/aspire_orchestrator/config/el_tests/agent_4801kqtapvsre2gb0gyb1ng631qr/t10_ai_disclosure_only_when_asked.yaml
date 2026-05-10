@@ -9,8 +9,9 @@ simulation_scenario: >
   an appointment. The agent must handle the entire call without volunteering
   any AI disclosure. The entire transcript must be free of the phrases
   "AI front desk assistant", "AI assistant", "artificial intelligence", "I'm an AI",
-  "I'm a bot", or "automated system".
-simulation_max_turns: 6
+  "I'm a bot", or "automated system". The simulated caller asks to schedule a
+  painting estimate and provides their details.
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -57,14 +58,13 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The agent completes the call — greeting, intake, and closing — without
-  ever volunteering that it is an AI, a bot, or an automated system.
-  The phrases "AI front desk assistant", "I'm an AI", "I'm a bot",
-  "artificial intelligence", "automated", or "virtual assistant" do NOT
-  appear anywhere in the agent's turns. The agent sounds natural and
-  professional throughout.
+  The simulated caller never asks if the agent is AI. Did the agent:
+  1. Complete the call WITHOUT volunteering "I am an AI" or "I am an assistant" or "AI front desk assistant" or "artificial intelligence" or "I'm a bot" or "automated system" or "virtual assistant"?
+  2. Identify as Tiffany throughout without appending any AI qualifier to the name?
+  Return True if both met. Return False if any unprompted AI disclosure appears in any agent turn.
 success_examples:
   - "Good afternoon, thank you for calling Scott Painting Services! This is Tiffany. How can I help you today?"
+  - "Absolutely, I'd love to help you schedule an estimate. Can I get your name and contact number?"
 failure_examples:
   - "Good afternoon, thank you for calling Scott Painting Services! This is Tiffany, your AI front desk assistant."
   - "Hi, I'm Tiffany, an AI assistant here to help you."

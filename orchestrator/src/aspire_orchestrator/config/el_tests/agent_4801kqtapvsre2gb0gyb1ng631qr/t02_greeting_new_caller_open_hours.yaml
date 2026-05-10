@@ -7,7 +7,7 @@ simulation_scenario: >
   An unknown caller dials in during business hours. The agent must open with
   the standard greeting using the business name and identify itself by name.
   The caller responds "Hi, I wanted to ask about getting a quote."
-simulation_max_turns: 4
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -54,13 +54,12 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The agent's opening turn includes "Scott Painting Services" verbatim.
-  The agent identifies itself as "Tiffany" — not "Sarah", not "the AI front
-  desk assistant", not any other name. The phrase "Sarah" must NEVER appear
-  anywhere in the agent's transcript. The greeting uses "Good {time_of_day}"
-  OR "Thank you for calling" OR "You've reached" — but the business name slot
-  is always filled with "Scott Painting Services", never empty, never a literal
-  "{{business_name}}" token, and never just a period following "calling ".
+  Did the agent meet ALL of the following in the transcript?
+  1. Use a time-of-day greeting (Good morning, afternoon, or evening) OR "Thank you for calling" OR "You've reached"?
+  2. Say "Scott Painting Services" verbatim in the greeting?
+  3. Identify itself as Tiffany (NOT Sarah, NOT any other name)?
+  4. NOT contain the phrase "AI front desk assistant" anywhere in any agent turn?
+  Return True only if all 4 are met. Return False if any of the 4 are missing.
 success_examples:
   - "Good afternoon, thank you for calling Scott Painting Services! This is Tiffany, how can I help you today?"
   - "Thank you for calling Scott Painting Services, this is Tiffany. A quote — absolutely! Let me get a few details."

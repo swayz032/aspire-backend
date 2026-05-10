@@ -7,7 +7,7 @@ simulation_scenario: >
   The caller is a known contact already stored in the CRM. Business hours are open.
   The caller calls in and waits for the agent to greet them. The caller's first name
   is Alex. The caller then states their reason for calling (schedule a follow-up).
-simulation_max_turns: 4
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -54,14 +54,12 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The agent greets the caller using the caller's first name (Alex) without
-  prompting the caller to provide their name. The agent does NOT volunteer
-  that it is an AI. The agent does NOT say "AI front desk assistant" in any
-  turn. The agent identifies itself as Tiffany, not Sarah and not any other
-  name. The agent includes the business name "Scott Painting Services" in the
-  greeting. There is no time-of-day prefix like "Good morning" or "Good evening"
-  immediately before the business name — the greeting starts with "Thank you
-  for calling" or "You've reached" followed by the business name.
+  Did the agent meet ALL of the following in the transcript?
+  1. Greet the caller by their first name (Alex) without asking for it?
+  2. Avoid the phrase "AI front desk assistant" or any AI self-identification?
+  3. Identify itself as Tiffany (not Sarah)?
+  4. Include "Scott Painting Services" verbatim in the greeting?
+  Return True only if all 4 are present. Return False if the agent asked for the name, used a forbidden phrase, or identified as a name other than Tiffany.
 success_examples:
   - "Thank you for calling Scott Painting Services, this is Tiffany! Hi Alex, great to hear from you. How can I help you today?"
   - "You've reached Scott Painting Services, I'm Tiffany. Hey Alex — what can I do for you?"

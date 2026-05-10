@@ -15,7 +15,7 @@ simulation_scenario: >
   their name as Dana Kowalski, callback number as 770-555-4321, and reason
   as an urgent question about a recent job. The test verifies the two-step
   try-then-fallback flow is executed in the correct order.
-simulation_max_turns: 10
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -62,15 +62,11 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The transcript shows a two-phase flow. In phase one, the agent attempts to
-  connect the caller by indicating it will try to reach the owner or by using
-  transfer language. In phase two, after the transfer attempt produces no
-  answer, the agent pivots to taking a message — explaining the owner is
-  unavailable and offering to record the caller's details. The agent does NOT
-  skip directly to message capture without attempting a transfer first. The
-  agent also does NOT abandon the call after a failed transfer without offering
-  to take a message. Both phases must be present in the transcript, in order:
-  transfer attempt first, then fallback to message capture.
+  Given is_after_hours=true and after_hours_mode=try_transfer_then_message, did the agent show a two-phase flow?
+  1. Did the agent attempt transfer_to_number with routing_owner_phone parameter in the first phase?
+  2. Did the agent fall back to capture_message (or message capture language) after the transfer was simulated as no-answer?
+  3. Did the agent capture name and callback number as part of the message capture fallback?
+  Return True if all 3 met in order (transfer attempt THEN message capture). Return False if the agent skipped directly to message capture without attempting a transfer first, or abandoned the call without offering to take a message.
 success_examples:
   - "Let me try to reach the owner for you — one moment please. ... I'm sorry, it seems the owner isn't available right now. I'll take a message and make sure they call you back. Can I get your name and number?"
   - "Since it's after hours, I'll try connecting you with the owner. ... Unfortunately, the owner isn't picking up. Let me take down your information so they can follow up with you."

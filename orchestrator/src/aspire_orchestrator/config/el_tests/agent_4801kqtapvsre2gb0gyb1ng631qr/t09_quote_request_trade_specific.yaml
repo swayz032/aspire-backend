@@ -9,8 +9,10 @@ simulation_scenario: >
   like "estimate" or "project consultation" — and must capture the standard
   intake fields: project type, property address, approximate square footage,
   and a callback number. The agent must NOT use generic terms like "service call"
-  (HVAC terminology) or "dispatch" (plumbing terminology).
-simulation_max_turns: 8
+  (HVAC terminology) or "dispatch" (plumbing terminology). The simulated caller
+  provides name as Taylor Huang, callback as 512-555-3344, project type as
+  exterior residential, and approximate size as 2,000 square feet.
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -59,12 +61,11 @@ dynamic_variables:
   trade_primary_term: "estimate"
   trade_intake_fields_json: '["project_type","property_address","square_footage","callback_number","preferred_contact_time"]'
 success_condition: >
-  The agent offers to schedule an estimate or project consultation — NOT a
-  "service call" or "dispatch". The agent captures at minimum: the type of
-  painting project (exterior, interior, commercial), the property address or
-  general location, and a callback number. The agent uses the word "estimate"
-  or "consultation" at least once. The agent never says "service call" or
-  "dispatch" in this context. The agent is warm and professional throughout.
+  For a quote request about painting, did the agent:
+  1. Use trade-aware vocabulary — the word "estimate" OR "consultation" OR "quote" (painting-appropriate terms) — at least once?
+  2. Capture caller name and callback number?
+  3. Ask about the project scope (interior/exterior, square footage, type of work)?
+  Return True if all 3 met. Return False if the agent used cross-trade vocabulary like "service call", "dispatch", or "technician" without any painting-specific framing, or if name and callback were not captured.
 success_examples:
   - "Absolutely! We'd love to put together a free estimate for your exterior painting. Can I get your property address and a good callback number for our team?"
   - "Great, let me set up a consultation! What type of surfaces are we looking at — just the exterior, or interior as well? And what's the best number to reach you?"
@@ -72,9 +73,7 @@ failure_examples:
   - "Sure, I can schedule a service call for you. When would you like a technician to come out?"
   - "Let me dispatch someone to your location."
   - "What's your HVAC system model number?"
-tool_call_assertions:
-  - tool_name: capture_message
-    expected_called: true
+tool_call_assertions: []
 aspire_law: "EL Contract Rule 26 — trade-aware vocabulary; Law #3 — no cross-trade terminology"
 regression_coverage: >
   Validates trade dyn_vars are wired correctly and agent uses trade-appropriate

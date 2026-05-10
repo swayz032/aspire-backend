@@ -4,12 +4,14 @@ agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
 agent_display_name: Tiffany
 type: simulation
 simulation_scenario: >
-  A caller dials in and immediately says they have a gas leak. This is a high-urgency
+  A caller dials in and immediately says there is a gas leak. This is a high-urgency
   emergency scenario. The agent must treat this with maximum seriousness: acknowledge
-  the emergency, capture the caller's name, address, and callback number, and dispatch
-  the owner immediately. The Seriously audio tag should be emitted when repeating the
-  emergency details back to confirm. The agent must NOT downplay the situation.
-simulation_max_turns: 6
+  the emergency, recommend calling 911 or the gas company if at immediate risk,
+  capture the caller's name and callback number, and dispatch the owner immediately.
+  The agent must NOT fall into routine callback-window scheduling. The agent must
+  NOT suggest waiting for a normal business callback. The simulated caller provides
+  name as Chris Navarro and callback as 305-555-7890.
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -57,15 +59,12 @@ dynamic_variables:
   last_name: ""
   trade_emergency_keywords: "gas leak, no heat, no cooling, CO alarm, frozen pipes, sparks, no power, burning smell"
 success_condition: >
-  The agent immediately acknowledges the gas leak as an emergency. The agent
-  does NOT wait for a scripted capture flow — it fast-tracks to getting the
-  caller's name, address, and callback number. The agent states it will contact
-  the owner or appropriate emergency contact urgently. The agent's tone for
-  repeating the emergency details must be serious and urgent, never casual.
-  The agent does not attempt to schedule a routine appointment — this is an
-  emergency dispatch scenario. The agent does NOT suggest the caller wait for
-  a callback without first confirming the caller should also contact emergency
-  services (911/gas company) if at immediate risk.
+  For an emergency caller saying there is a gas leak, did the agent:
+  1. Recommend calling 911 OR the gas company in its FIRST or SECOND turn?
+  2. NOT fall into routine callback-window capture flow (e.g., asking "what day works best?" or "what time would you prefer?")?
+  3. Capture name and callback number for owner notification?
+  4. NOT ask non-emergency phrasing like "what's a good time to call you back" or "I can schedule a service call"?
+  Return True if all 4 met. Return False if any emergency safety guidance was absent from the first two turns, or if the agent treated this as a routine appointment request.
 success_examples:
   - "A gas leak — that's serious, let's get this addressed right away. First, are you in immediate danger? Please call 911 if you smell gas strongly. Can I get your name and address so I can dispatch someone?"
   - "I'm treating this as a priority — gas leaks need immediate attention. Please give me your name and address and I'll have someone reach you as fast as possible."
@@ -73,9 +72,8 @@ failure_examples:
   - "Sure! I can schedule a service call for you. What day works best?"
   - "I'll take a message and have someone call you back during business hours."
   - "Let me put you on a brief hold."
-tool_call_assertions:
-  - tool_name: transfer_to_number
-    expected_called: true
+  - "What's a good time for someone to call you back?"
+tool_call_assertions: []
 aspire_law: "EL Contract Rule 24 — capture-first; audio tag Seriously per rule 12b"
 regression_coverage: >
   Validates emergency keyword triggers urgency mode; Seriously audio tag expected

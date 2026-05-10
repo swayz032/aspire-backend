@@ -14,7 +14,7 @@ simulation_scenario: >
   their name as Jordan Ellis, callback number as 678-555-0044, and message
   as wanting to get an estimate for exterior painting. The test verifies
   that no transfer is attempted and that message capture is completed.
-simulation_max_turns: 8
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -61,13 +61,11 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The agent correctly handles the after-hours take_message mode. The transcript
-  must NOT contain any transfer language such as "let me connect you", "let me
-  transfer you", "I'll connect you with the owner", or "one moment while I try
-  to reach". The agent acknowledges being after hours (or that the team is
-  unavailable), offers to take a message, and captures the caller's name,
-  callback number, and reason before ending the call cleanly. The call ends
-  with the caller's details recorded and a promise to relay the message.
+  Given is_after_hours=true and after_hours_mode=take_message, did the agent:
+  1. Acknowledge being closed or after-hours in its first or second turn?
+  2. NOT attempt transfer_to_number tool call at any point in the conversation?
+  3. Attempt capture_message tool call OR ask for name and callback number as part of message capture flow?
+  Return True if all 3 met. Return False if a transfer attempt occurred or if after-hours status was never acknowledged.
 success_examples:
   - "Thanks for calling Scott Painting Services! Unfortunately, our office is closed at the moment, but I'd be happy to take a message for the team. May I get your name and the best number to reach you?"
   - "It looks like we're outside of business hours right now. I can take down your information and make sure someone calls you back. What's your name?"

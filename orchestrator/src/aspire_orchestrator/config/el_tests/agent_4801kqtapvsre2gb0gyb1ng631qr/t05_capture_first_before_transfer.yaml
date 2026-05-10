@@ -13,7 +13,7 @@ simulation_scenario: >
   collected should the agent proceed with the transfer. The test passes if
   all three intake fields are captured before any transfer language or action
   occurs in the transcript.
-simulation_max_turns: 6
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: "Scott Painting Services"
@@ -60,17 +60,14 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The transcript shows the agent asking for the caller's name, callback number,
-  and reason BEFORE any transfer language (such as "let me connect you",
-  "transferring you now", "one moment while I connect") appears. The agent
-  collects all three intake fields from the caller — name (Marcus Webb or
-  similar), callback number (containing 4045559876), and reason (commercial
-  painting bid or similar) — and only then proceeds toward a transfer.
-  If the transcript shows transfer language on the very first agent turn after
-  the caller's initial demand, the test fails. The agent must not blindly
-  transfer without first capturing intake.
+  Did the agent capture ALL THREE before invoking transfer_to_number tool?
+  1. Caller's name (any name spoken by simulated caller — Marcus Webb or similar)?
+  2. Callback phone number (containing 4045559876 or a 10-digit number)?
+  3. A SPECIFIC reason for the call (NOT just "transfer me to the owner" — must be a substantive topic like estimate, bid, complaint, follow-up, etc.)?
+  Return True only if all 3 were captured BEFORE any transfer_to_number tool call or transfer language in the transcript. Return False if transfer was attempted with fewer than 3 fields OR if the only "reason" given was a transfer request itself.
 success_examples:
   - "Of course! Before I connect you, may I get your name and a good callback number in case we get disconnected? ... Great, and what is the reason for your call today? ... Thank you Marcus. Let me connect you with the owner now."
+  - "Happy to connect you! First, could I get your name and the best number to reach you? ... And what specifically would you like to discuss with the owner? ... Perfect, connecting you now."
 failure_examples:
   - "Sure, let me transfer you to the owner right now."
   - "One moment, connecting you to the owner."

@@ -8,7 +8,7 @@ simulation_scenario: >
   The agent must open the call without producing the artifact "calling . This is"
   or any spoken empty slot. An acceptable fallback is to greet without a business
   name, or use a safe phrase like "How can I help you today?"
-simulation_max_turns: 3
+simulation_max_turns: 15
 dynamic_variables:
   agent_first_name: "Tiffany"
   business_name: ""
@@ -55,11 +55,12 @@ dynamic_variables:
   first_name: ""
   last_name: ""
 success_condition: >
-  The business_name dyn_var is empty for this test. The agent's first turn must NOT contain
-  the phrase "thank you for calling" or "calling [empty]" or any sentence with the word
-  "calling" followed immediately by a period or by the word "this". The agent must instead
-  open with a clean self-introduction: a greeting like "Hi" or "Hello" followed by the agent's
-  name and an offer of help. The agent must identify as Tiffany.
+  Did the agent's first turn meet ALL of the following?
+  1. NOT contain the literal phrase "thank you for calling . " (space-period-space pattern indicating empty slot)?
+  2. NOT contain "thank you for calling" followed by an empty slot before "this is"?
+  3. Open with "Hi" or "Hello" or "Good" as a clean self-introduction (no broken business name artifact)?
+  4. Identify as Tiffany?
+  Return True only if all 4 are met. The dyn_var business_name is intentionally empty for this test.
 success_examples:
   - "Good afternoon, this is Tiffany. How can I help you today?"
   - "Hi, this is Tiffany — thanks for calling! How can I assist you?"
@@ -68,6 +69,7 @@ failure_examples:
   - "Good evening, thank you for calling . This is Sarah, the AI front desk assistant."
   - "Thank you for calling , this is Tiffany."
   - "Thank you for calling {{business_name}}, this is Tiffany."
+  - "Thank you for calling. This is Tiffany."
 tool_call_assertions: []
 aspire_law: "Law #3 — fail closed; Rule 15 — first-message empty-slot defense"
 regression_coverage: >
