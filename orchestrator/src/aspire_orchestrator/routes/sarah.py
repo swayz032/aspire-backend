@@ -495,9 +495,9 @@ def _build_first_message(
             ]
         elif ah_mode == "try_transfer_then_message":
             variants = [
-                f"Hey {caller_first_name} — we're closed, but I can try {owner_formal} for you. What's going on?",
+                f"Hey {caller_first_name} — we're closed, but I can try to reach {owner_formal} for you. What's going on?",
                 f"Hi {caller_first_name}, good to hear from you. We're outside hours, but let me see if I can grab {owner_formal}. Tell me what you need.",
-                f"{caller_first_name}, hey — we're closed but I'll try {owner_formal} real quick. What do you need?",
+                f"{caller_first_name}, hey — we're closed but I'll see if I can get {owner_formal} on the line real quick. What do you need?",
             ]
         elif ah_mode == "ask_callback_window":
             variants = [
@@ -539,9 +539,9 @@ def _build_first_message(
     # said try_transfer_then_message — observed 2026-05-10 conv_0001/conv_1801.
     if ah_mode == "try_transfer_then_message":
         variants = [
-            f"Hey, you've reached {biz} — we're closed, but I can try {owner_formal} for you. What's going on?",
+            f"Hey, you've reached {biz} — we're closed, but I can try to reach {owner_formal} for you. What's going on?",
             f"Hi, {biz} after hours — this is {name}. Tell me what you need and I'll see if I can grab {owner_formal}.",
-            f"Good {tod}, {biz} is closed, but I'm {name} — let me try {owner_formal} for you. What do you need?",
+            f"Good {tod}, {biz} is closed, but I'm {name} — let me see if I can get {owner_formal} on the line. What do you need?",
         ]
     elif ah_mode == "ask_callback_window":
         variants = [
