@@ -220,6 +220,15 @@ class TransferReq(_BaseToolReq):
     )
     caller_name: str = ""
     reason: str = ""
+    # Optional enrichment fields — populated by EL agent when available.
+    # All default to empty/None so existing callers remain unaffected.
+    caller_phone: str = ""
+    caller_business_name: str = ""
+    caller_total_calls: int | None = None
+    transfer_reason: str = ""
+    capture_message: str = ""
+    agent_slug: str = ""          # e.g. 'sarah' | 'tiffany' | 'sarah_frontdesk'
+    agent_display_name: str = ""  # e.g. 'Sarah' | 'Tiffany'
 
 
 class FaqReq(_BaseToolReq):
@@ -448,6 +457,13 @@ async def transfer(req: TransferReq) -> dict[str, Any]:
         }
 
     contact = rows[0]
+
+    # --- App-ring dispatch (Law #2 receipt on every path) ---
+    # Only owner-bound transfers AND permitting catch_modes trigger the in-app
+    # ringing card. Failures here are non-fatal: the transfer proceeds regardless.
+    if role == "owner":
+        await _maybe_dispatch_app_ring(req=req, scope=scope)
+
     _cut_receipt(
         receipt_type="sarah_tool_transfer",
         scope=scope,
@@ -471,6 +487,127 @@ async def transfer(req: TransferReq) -> dict[str, Any]:
         # can reference it consistently.
         "dynamic_variable": f"routing_{role}_phone",
     }
+
+
+# ---------------------------------------------------------------------------
+# App-ring helper — called only for owner-bound transfers
+# ---------------------------------------------------------------------------
+
+_APP_RING_CATCH_MODES: frozenset[str] = frozenset(
+    {"APP_AND_PHONE_SIMUL_RING", "APP_ONLY"}
+)
+
+
+async def _maybe_dispatch_app_ring(
+    *,
+    req: TransferReq,
+    scope: dict[str, str],
+) -> None:
+    """Write a call_sessions row with status='ringing' when catch_mode permits.
+
+    This is the backend half of the in-app incoming-call card feature.
+    The frontend polls /api/frontdesk/calls and pops the overlay when it
+    finds an inbound ringing row for the authenticated office.
+
+    Failures are logged and a failure receipt is cut, but the exception is
+    swallowed so the caller's transfer is never blocked by this side-effect.
+    """
+    # 1. Read catch_mode for this office (f-string filter matches existing pattern)
+    catch_mode = "PHONE_ONLY"
+    try:
+        cfg_rows = await supabase_select(
+            "front_desk_configs",
+            f"office_id=eq.{scope['office_id']}&is_current=eq.true",
+            order_by="version_no.desc",
+            limit=1,
+        )
+        if cfg_rows:
+            catch_mode = cfg_rows[0].get("catch_mode") or "PHONE_ONLY"
+    except SupabaseClientError as exc:
+        logger.warning(
+            "sarah_tools transfer catch_mode_lookup_failed office_id=%s: %s",
+            scope.get("office_id"),
+            exc,
+        )
+        # Can't determine catch_mode — fail closed (no app ring, no block)
+        _cut_receipt(
+            receipt_type="app_ring_catch_mode_lookup_failed",
+            scope=scope,
+            outcome="failed",
+            risk_tier="green",
+            redacted_outputs={"error": str(exc)[:200]},
+        )
+        return
+
+    if catch_mode not in _APP_RING_CATCH_MODES:
+        # PHONE_ONLY or unknown — no app ring needed, no receipt required
+        return
+
+    # 2. Insert the ringing row
+    call_session_id = str(uuid.uuid4())
+    now_iso = datetime.now(timezone.utc).isoformat()
+    transfer_meta: dict[str, object] = {
+        "transfer": {
+            "agent": req.agent_slug or "sarah",
+            "agent_name": req.agent_display_name or "Sarah",
+            "reason": req.transfer_reason or req.reason or None,
+            "capture_message": req.capture_message or None,
+        },
+        "contact_business_name": req.caller_business_name or None,
+        "caller_total_calls": req.caller_total_calls,
+    }
+    try:
+        await supabase_insert(
+            "call_sessions",
+            {
+                "call_session_id": call_session_id,
+                "suite_id": scope["suite_id"],
+                "owner_office_id": scope["office_id"],
+                "direction": "inbound",
+                "status": "ringing",
+                "from_number": req.caller_phone or None,
+                "to_number": req.called_number,
+                "caller_name": req.caller_name or None,
+                "provider": "elevenlabs",
+                "provider_call_id": f"transfer-{call_session_id}",
+                "started_at": now_iso,
+                "metadata": transfer_meta,
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            },
+        )
+        _cut_receipt(
+            receipt_type="app_ring_dispatched",
+            scope=scope,
+            outcome="success",
+            risk_tier="green",
+            redacted_outputs={
+                "call_session_id": call_session_id,
+                "catch_mode": catch_mode,
+            },
+        )
+        logger.info(
+            "sarah_tools app_ring_dispatched call_session_id=%s catch_mode=%s",
+            call_session_id,
+            catch_mode,
+        )
+    except SupabaseClientError as exc:
+        logger.error(
+            "sarah_tools transfer app_ring_insert_failed call_session_id=%s: %s",
+            call_session_id,
+            exc,
+        )
+        _cut_receipt(
+            receipt_type="app_ring_insert_failed",
+            scope=scope,
+            outcome="failed",
+            risk_tier="green",
+            redacted_outputs={
+                "call_session_id": call_session_id,
+                "catch_mode": catch_mode,
+                "error": str(exc)[:200],
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
