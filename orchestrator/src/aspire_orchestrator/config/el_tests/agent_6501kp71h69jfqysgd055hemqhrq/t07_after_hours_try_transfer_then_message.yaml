@@ -1,50 +1,92 @@
 name: t07_after_hours_try_transfer_then_message
-description: after_hours_mode=try_transfer_then_message — Sarah attempts transfer first, then falls back to capture_message on no-answer.
+description: after_hours_mode=try_transfer_then_message — Sarah attempts transfer
+  first, then falls back to capture_message on no-answer.
 agent_id: agent_6501kp71h69jfqysgd055hemqhrq
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  The caller phones after hours when is_after_hours is true and
-  after_hours_mode is set to "try_transfer_then_message". The caller says
-  they need to speak with someone urgently about a water damage issue from
-  the team's work. The agent must first collect the caller's name and callback
-  number, then attempt to transfer the caller to the routing_owner_phone.
-  The simulator simulates a no-answer on the transfer attempt. After the
-  failed transfer, the agent must fall back to taking a message — capturing
-  the caller's details and reason before ending the call. The simulated
-  caller provides their name as Beatrice Osei, callback number as 678-555-3344,
-  and reason as an urgent concern about water damage from a recent job.
-  The test verifies the two-step try-then-fallback flow executes in order.
+simulation_scenario: 'The caller phones after hours when is_after_hours is true and
+  after_hours_mode is set to "try_transfer_then_message". The caller says they need
+  to speak with someone urgently about a water damage issue from the team''s work.
+  The agent must first collect the caller''s name and callback number, then attempt
+  to transfer the caller to the routing_owner_phone. The simulator simulates a no-answer
+  on the transfer attempt. After the failed transfer, the agent must fall back to
+  taking a message — capturing the caller''s details and reason before ending the
+  call. The simulated caller provides their name as Beatrice Osei, callback number
+  as 678-555-3344, and reason as an urgent concern about water damage from a recent
+  job. The test verifies the two-step try-then-fallback flow executes in order.
+
+  '
 simulation_max_turns: 10
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "false"
-  is_after_hours: "true"
-  after_hours_mode: "try_transfer_then_message"
-  routing_owner_phone: "+16785550001"
-  agent_first_name: "Sarah"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-success_condition: >
-  The transcript shows a two-phase flow. In phase one, the agent attempts to
-  connect the caller by indicating it will try to reach the owner or by using
-  transfer language. In phase two, after the transfer attempt produces no answer,
-  the agent pivots to taking a message — explaining the owner is unavailable and
-  offering to record the caller's details. The agent does NOT skip directly to
-  message capture without attempting a transfer first. The agent does NOT abandon
-  the call after a failed transfer without offering to take a message. Both phases
-  must be present in the transcript, in order: transfer attempt first, then
-  fallback to message capture.
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'false'
+  is_after_hours: 'true'
+  after_hours_mode: try_transfer_then_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+17705550001'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+success_condition: 'The transcript shows a two-phase flow. In phase one, the agent
+  attempts to connect the caller by indicating it will try to reach the owner or by
+  using transfer language. In phase two, after the transfer attempt produces no answer,
+  the agent pivots to taking a message — explaining the owner is unavailable and offering
+  to record the caller''s details. The agent does NOT skip directly to message capture
+  without attempting a transfer first. The agent does NOT abandon the call after a
+  failed transfer without offering to take a message. Both phases must be present
+  in the transcript, in order: transfer attempt first, then fallback to message capture.
+
+  '
 success_examples:
-  - "Let me try to reach someone for you — one moment. ... I'm sorry, I wasn't able to reach anyone directly right now. I'll take a message so they can call you back."
-  - "Since it's after hours, I'll try connecting you with the owner. ... Unfortunately, the owner isn't available. Let me take down your information so they can follow up."
+- Let me try to reach someone for you — one moment. ... I'm sorry, I wasn't able to
+  reach anyone directly right now. I'll take a message so they can call you back.
+- Since it's after hours, I'll try connecting you with the owner. ... Unfortunately,
+  the owner isn't available. Let me take down your information so they can follow
+  up.
 failure_examples:
-  - "I'll take a message for you."
-  - "Let me transfer you — have a great day!"
-  - "The office is closed. Goodbye."
+- I'll take a message for you.
+- Let me transfer you — have a great day!
+- The office is closed. Goodbye.
 tool_call_assertions: []
-aspire_law: "EL Contract Rule 24 — correct two-step after_hours branch: try_transfer then capture"
-regression_coverage: >
-  Validates the try_transfer_then_message flow executes both steps in order
-  for Sarah-Receptionist. A regression where only one step fires breaks urgent
+aspire_law: 'EL Contract Rule 24 — correct two-step after_hours branch: try_transfer
+  then capture'
+regression_coverage: 'Validates the try_transfer_then_message flow executes both steps
+  in order for Sarah-Receptionist. A regression where only one step fires breaks urgent
   after-hours caller handling.
+
+  '

@@ -1,47 +1,90 @@
 name: t12_single_closing_no_repeat
-description: After full capture flow, Sarah says closing exactly once — no echo, no re-opening the conversation.
+description: After full capture flow, Sarah says closing exactly once — no echo, no
+  re-opening the conversation.
 agent_id: agent_6501kp71h69jfqysgd055hemqhrq
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  The caller phones in to leave a message for the owner about a job they
-  need done. The agent greets the caller, collects name, callback number,
-  and message. The simulated caller provides: name Fernando Reyes, callback
-  number 404-555-9999, message about needing a quote for painting their garage
-  and driveway. The agent confirms all details back to the caller. The caller
-  then says "No, that's everything. Thanks Sarah!" to signal they are done.
-  The agent must deliver a single warm closing farewell and end the call. The
-  agent must NOT repeat the closing phrase a second time, must NOT echo back all
-  captured details again after already confirming them, and must NOT ask a
-  follow-up question after the caller has said goodbye. The conversation ends
-  cleanly after one closing line.
-simulation_max_turns: 10
+simulation_scenario: 'The caller phones in to leave a message for the owner about
+  a job they need done. The agent greets the caller, collects name, callback number,
+  and message. The simulated caller provides: name Fernando Reyes, callback number
+  404-555-9999, message about needing a quote for painting their garage and driveway.
+  The agent confirms all details back to the caller. The caller then says "No, that''s
+  everything. Thanks Sarah!" to signal they are done. The agent must deliver a single
+  warm closing farewell and end the call. The agent must NOT repeat the closing phrase
+  a second time, must NOT echo back all captured details again after already confirming
+  them, and must NOT ask a follow-up question after the caller has said goodbye. The
+  conversation ends cleanly after one closing line.
+
+  '
+simulation_max_turns: 6
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "false"
-  is_after_hours: "false"
-  agent_first_name: "Sarah"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-success_condition: >
-  The transcript shows a complete call flow: greeting, intake (name, callback,
-  message), confirmation of details, and a single closing turn. The agent's
-  final turn is a concise farewell that does NOT repeat the captured details
-  a second time after having already confirmed them. The farewell phrase
-  (e.g., "Have a great day!", "Take care!", "Goodbye!") appears exactly once
-  in the agent's closing turn. There is no subsequent agent turn containing
-  another farewell, another recap, or another question. The conversation ends
-  immediately after the single closing line.
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'true'
+  is_after_hours: 'false'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+18503666647'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+success_condition: 'The transcript shows a complete call flow: greeting, intake (name,
+  callback, message), confirmation of details, and a single closing turn. The agent''s
+  final turn is a concise farewell that does NOT repeat the captured details a second
+  time after having already confirmed them. The farewell phrase (e.g., "Have a great
+  day!", "Take care!", "Goodbye!") appears exactly once in the agent''s closing turn.
+  There is no subsequent agent turn containing another farewell, another recap, or
+  another question. The conversation ends immediately after the single closing line.
+
+  '
 success_examples:
-  - "You're welcome, Fernando! Have a wonderful day — we'll be in touch soon!"
-  - "Of course! Thanks for calling, Fernando. Goodbye!"
+- You're welcome, Fernando! Have a wonderful day — we'll be in touch soon!
+- Of course! Thanks for calling, Fernando. Goodbye!
 failure_examples:
-  - "Have a great day! ... Just to confirm, your number is 404-555-9999. Have a great day!"
-  - "Goodbye! ... Is there anything else I can help you with today?"
-  - "Take care! ... Thank you for calling Scott Painting Services. Goodbye. Have a great day!"
+- Have a great day! ... Just to confirm, your number is 404-555-9999. Have a great
+  day!
+- Goodbye! ... Is there anything else I can help you with today?
+- Take care! ... Thank you for calling Scott Painting Services. Goodbye. Have a great
+  day!
 tool_call_assertions: []
-aspire_law: "EL Contract Rule 21 — closing must be a single utterance; no echo after farewell"
-regression_coverage: >
-  Validates that the Sarah-Receptionist closing is atomic — one farewell,
-  clean end. Multi-echo closings degrade caller experience and indicate
+aspire_law: EL Contract Rule 21 — closing must be a single utterance; no echo after
+  farewell
+regression_coverage: 'Validates that the Sarah-Receptionist closing is atomic — one
+  farewell, clean end. Multi-echo closings degrade caller experience and indicate
   the agent is not honoring the single-closing rule.
+
+  '

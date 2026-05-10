@@ -1,46 +1,89 @@
 name: t06_after_hours_take_message_mode
-description: after_hours_mode=take_message on FrontDesk line — Sarah goes directly to capture, NOT transfer.
+description: after_hours_mode=take_message on FrontDesk line — Sarah goes directly
+  to capture, NOT transfer.
 agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  The caller phones in after business hours when is_after_hours is true and
-  after_hours_mode is set to "take_message". The caller says they need to
-  speak with someone about updating their project schedule. Because the mode
-  is take_message, the agent must acknowledge the office is currently
-  unavailable and must NOT attempt to transfer the caller to the owner.
-  The agent should offer to take a message and capture the caller's name,
-  callback number, and reason for calling. The simulated caller provides
-  their name as Marcus Webb, callback number as 404-555-1122, and message
-  about needing to update the project schedule for next week. The test
+simulation_scenario: 'The caller phones in after business hours when is_after_hours
+  is true and after_hours_mode is set to "take_message". The caller says they need
+  to speak with someone about updating their project schedule. Because the mode is
+  take_message, the agent must acknowledge the office is currently unavailable and
+  must NOT attempt to transfer the caller to the owner. The agent should offer to
+  take a message and capture the caller''s name, callback number, and reason for calling.
+  The simulated caller provides their name as Marcus Webb, callback number as 404-555-1122,
+  and message about needing to update the project schedule for next week. The test
   verifies that no transfer is attempted and that message capture is completed.
+
+  '
 simulation_max_turns: 8
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "false"
-  is_after_hours: "true"
-  after_hours_mode: "take_message"
-  agent_first_name: "Sarah"
-  routing_owner_phone: "+14045550001"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-success_condition: >
-  The agent correctly handles the after-hours take_message mode. The transcript
-  must NOT contain any transfer language such as "let me connect you", "let me
-  transfer you", "I'll connect you with the owner", or "one moment while I try
-  to reach". The agent acknowledges being after hours (or that the team is
-  unavailable), offers to take a message, and captures the caller's name,
-  callback number, and reason before ending the call cleanly. The call ends
-  with the caller's details recorded and a promise to relay the message.
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'false'
+  is_after_hours: 'true'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+14045550001'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+success_condition: 'The agent correctly handles the after-hours take_message mode.
+  The transcript must NOT contain any transfer language such as "let me connect you",
+  "let me transfer you", "I''ll connect you with the owner", or "one moment while
+  I try to reach". The agent acknowledges being after hours (or that the team is unavailable),
+  offers to take a message, and captures the caller''s name, callback number, and
+  reason before ending the call cleanly. The call ends with the caller''s details
+  recorded and a promise to relay the message.
+
+  '
 success_examples:
-  - "Thanks for calling Scott Painting Services! Unfortunately our office is closed right now, but I'd be happy to take a message. May I get your name and the best number to reach you?"
-  - "It looks like we're after hours at the moment. I can take down your information and have someone call you back. What's your name?"
+- Thanks for calling Scott Painting Services! Unfortunately our office is closed right
+  now, but I'd be happy to take a message. May I get your name and the best number
+  to reach you?
+- It looks like we're after hours at the moment. I can take down your information
+  and have someone call you back. What's your name?
 failure_examples:
-  - "Let me try to connect you with the owner."
-  - "One moment while I transfer you to the team."
-  - "I'll transfer you now and hope someone picks up."
+- Let me try to connect you with the owner.
+- One moment while I transfer you to the team.
+- I'll transfer you now and hope someone picks up.
 tool_call_assertions: []
-aspire_law: "EL Contract Rule 24 — after_hours_mode must be honored; take_message branch is transfer-free"
-regression_coverage: >
-  Verifies that after_hours_mode=take_message is strictly honored at the
-  conversation layer for Sarah-FrontDesk — no transfer attempt in this mode.
+aspire_law: EL Contract Rule 24 — after_hours_mode must be honored; take_message branch
+  is transfer-free
+regression_coverage: 'Verifies that after_hours_mode=take_message is strictly honored
+  at the conversation layer for Sarah-FrontDesk — no transfer attempt in this mode.
+
+  '

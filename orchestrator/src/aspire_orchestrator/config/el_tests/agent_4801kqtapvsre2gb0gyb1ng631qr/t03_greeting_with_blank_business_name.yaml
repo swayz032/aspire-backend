@@ -10,19 +10,56 @@ simulation_scenario: >
   name, or use a safe phrase like "How can I help you today?"
 simulation_max_turns: 3
 dynamic_variables:
-  business_name: ""
-  caller_is_known: "false"
-  is_after_hours: "false"
   agent_first_name: "Tiffany"
+  business_name: ""
   industry: "painting contractor"
   industry_specialty: ""
+  time_of_day: "morning"
+  is_open_now: "true"
+  is_after_hours: "false"
+  after_hours_mode: "take_message"
+  busy_mode: "take_message"
+  catch_mode: "APP_AND_PHONE_SIMUL_RING"
+  public_number_mode: "ASPIRE_NEW_NUMBER"
+  greeting_name_override: ""
+  pronunciation_override: ""
+  owner_title: "Mr."
+  owner_formal_name: "Mr. Scott"
+  business_city: ""
+  business_state: ""
+  routing_owner_phone: "+18503666647"
+  routing_sales_phone: "+18503666647"
+  routing_support_phone: "+18503666647"
+  routing_billing_phone: "+18503666647"
+  routing_scheduling_phone: "+18503666647"
+  routing_owner_name: "Tonio Scott"
+  routing_sales_name: "Tonio Scott"
+  routing_support_name: "Tonio Scott"
+  routing_billing_name: "Tonio Scott"
+  routing_scheduling_name: "Tonio Scott"
+  routing_contacts_summary: "Owner: Tonio Scott"
+  configured_roles: "owner,sales,support,billing,scheduling"
+  caller_first_name: ""
+  caller_last_name: ""
+  caller_is_known: "false"
+  caller_display_name: ""
+  caller_company: ""
+  caller_last_call_summary: ""
+  caller_history_summary: ""
+  caller_total_calls: "0"
+  caller_last_seen_days_ago: ""
+  caller_intent: ""
+  caller_name: ""
+  callback_number: ""
+  transfer_target: ""
+  first_name: ""
+  last_name: ""
 success_condition: >
-  The agent's first turn does NOT contain the substring "calling . " (a period
-  immediately following the word "calling" with a space and then "This" or any
-  continuation). The agent does NOT speak a literal empty slot or a visible
-  template token like "{{business_name}}". The agent does identify itself as
-  Tiffany. The greeting is grammatically complete and professional regardless
-  of the missing business name.
+  The business_name dyn_var is empty for this test. The agent's first turn must NOT contain
+  the phrase "thank you for calling" or "calling [empty]" or any sentence with the word
+  "calling" followed immediately by a period or by the word "this". The agent must instead
+  open with a clean self-introduction: a greeting like "Hi" or "Hello" followed by the agent's
+  name and an offer of help. The agent must identify as Tiffany.
 success_examples:
   - "Good afternoon, this is Tiffany. How can I help you today?"
   - "Hi, this is Tiffany — thanks for calling! How can I assist you?"

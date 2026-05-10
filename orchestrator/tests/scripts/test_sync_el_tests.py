@@ -68,8 +68,8 @@ _AGENT_IDS = {
     "agent_6501kp71h69jfqysgd055hemqhrq",   # Sarah-Receptionist
     "agent_8901kmqdjnrte7psp6en4f85m4kt",   # Sarah-FrontDesk
 }
-_EXPECTED_TESTS_PER_AGENT = 12
-_EXPECTED_TOTAL = len(_AGENT_IDS) * _EXPECTED_TESTS_PER_AGENT  # 36
+_EXPECTED_TESTS_PER_AGENT = 11  # t04 deleted 2026-05-09 (infra coverage moved to unit tests)
+_EXPECTED_TOTAL = len(_AGENT_IDS) * _EXPECTED_TESTS_PER_AGENT  # 33
 
 _EL_TESTS_DIR = _REPO_ROOT / "src" / "aspire_orchestrator" / "config" / "el_tests"
 
@@ -93,8 +93,8 @@ def _suppress_supabase_import() -> Any:
 
 
 class TestFileDiscovery:
-    def test_walks_el_tests_tree_finds_36_files(self) -> None:
-        """Walker must discover exactly 36 YAML files across 3 agent dirs."""
+    def test_walks_el_tests_tree_finds_33_files(self) -> None:
+        """Walker must discover exactly 33 YAML files across 3 agent dirs (11 per agent; t04 removed)."""
         yaml_files = list(_EL_TESTS_DIR.rglob("*.yaml"))
         agent_dirs = {f.parent.name for f in yaml_files}
 
@@ -106,7 +106,7 @@ class TestFileDiscovery:
             f"Expected agent dirs {_AGENT_IDS}, found {agent_dirs}"
         )
 
-        # Verify exactly 12 per agent.
+        # Verify exactly 11 per agent.
         for agent_id in _AGENT_IDS:
             agent_files = [f for f in yaml_files if f.parent.name == agent_id]
             assert len(agent_files) == _EXPECTED_TESTS_PER_AGENT, (
@@ -155,7 +155,7 @@ class TestIdempotency:
         # Exit 0 — idempotent skip is not an error.
         assert exit_code == 0, f"Expected exit 0 for idempotent run, got {exit_code}"
 
-        # Each skipped test emits a skipped_idempotent receipt.
+        # Each skipped test emits a skipped_idempotent receipt (33 tests, 11 per agent).
         skip_receipts = [
             r for r in captured_receipts
             if r.get("outcome") == "skipped_idempotent"
@@ -408,8 +408,8 @@ class TestDryRun:
 
 
 class TestYamlFileIntegrity:
-    def test_all_36_yaml_files_have_required_fields(self) -> None:
-        """Every on-disk YAML must have: name, agent_id, type fields."""
+    def test_all_33_yaml_files_have_required_fields(self) -> None:
+        """Every on-disk YAML must have: name, agent_id, type fields (33 files; t04 removed)."""
         yaml_files = list(_EL_TESTS_DIR.rglob("*.yaml"))
         assert len(yaml_files) == _EXPECTED_TOTAL, (
             f"Expected {_EXPECTED_TOTAL} files, found {len(yaml_files)}"

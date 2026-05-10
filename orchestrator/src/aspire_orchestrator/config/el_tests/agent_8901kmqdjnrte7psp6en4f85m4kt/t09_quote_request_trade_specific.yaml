@@ -1,33 +1,75 @@
 name: t09_quote_request_trade_specific
-description: Internal caller asks about a quote workflow — Sarah-FrontDesk uses painting-specific vocabulary, not HVAC or plumbing terms.
+description: Internal caller asks about a quote workflow — Sarah-FrontDesk uses painting-specific
+  vocabulary, not HVAC or plumbing terms.
 agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  An internal team member (or a transferred caller) asks about the quote process
-  for a new painting project. Sarah-FrontDesk must use trade-appropriate vocabulary
-  and capture the necessary intake information.
+simulation_scenario: 'An internal team member (or a transferred caller) asks about
+  the quote process for a new painting project. Sarah-FrontDesk must use trade-appropriate
+  vocabulary and capture the necessary intake information.
+
+  '
 simulation_max_turns: 6
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "false"
-  is_after_hours: "false"
-  agent_first_name: "Sarah"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-  trade_primary_term: "estimate"
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'true'
+  is_after_hours: 'false'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+18503666647'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+  trade_primary_term: estimate
   trade_intake_fields_json: '["project_type","property_address","square_footage","callback_number"]'
-success_condition: >
-  The agent uses the word "estimate" or "consultation" at least once. The agent
-  does NOT use "service call", "dispatch", "technician dispatch", or any
-  non-painting-contractor terminology. The agent captures the relevant project
+success_condition: 'The agent uses the word "estimate" or "consultation" at least
+  once. The agent does NOT use "service call", "dispatch", "technician dispatch",
+  or any non-painting-contractor terminology. The agent captures the relevant project
   intake fields.
+
+  '
 success_examples:
-  - "For a painting estimate we'd want to know the scope — interior, exterior, or both — and the property address. Let me grab that info."
+- For a painting estimate we'd want to know the scope — interior, exterior, or both
+  — and the property address. Let me grab that info.
 failure_examples:
-  - "I'll have a technician dispatched to you."
-  - "Let me schedule a service call."
+- I'll have a technician dispatched to you.
+- Let me schedule a service call.
 tool_call_assertions:
-  - tool_name: capture_message
-    expected_called: true
-aspire_law: "EL Contract Rule 26 — trade-aware vocabulary"
+- tool_name: capture_message
+  expected_called: true
+aspire_law: EL Contract Rule 26 — trade-aware vocabulary

@@ -1,35 +1,85 @@
 name: t03_greeting_with_blank_business_name
-description: Webhook returns business_name="" — Sarah must NOT speak an empty slot; fallback phrasing required.
+description: Webhook returns business_name="" — Sarah must NOT speak an empty slot;
+  fallback phrasing required.
 agent_id: agent_6501kp71h69jfqysgd055hemqhrq
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  The personalization webhook returned an empty string for business_name.
-  Sarah-Receptionist must handle this gracefully — no spoken empty slot,
-  no "calling . This is" artifact, no template token verbalized.
+simulation_scenario: 'The personalization webhook returned an empty string for business_name.
+  Sarah-Receptionist must handle this gracefully — no spoken empty slot, no "calling
+  . This is" artifact, no template token verbalized.
+
+  '
 simulation_max_turns: 3
 dynamic_variables:
-  business_name: ""
-  caller_is_known: "false"
-  is_after_hours: "false"
-  agent_first_name: "Sarah"
-  industry: "painting contractor"
-  industry_specialty: ""
-success_condition: >
-  The agent's first turn does NOT contain the substring "calling . " (a period
-  immediately following the word "calling" with a space). The agent does NOT
-  speak a literal empty slot or a visible template token like "{{business_name}}".
-  The agent identifies itself as Sarah. The greeting is grammatically complete
-  and professional regardless of the missing business name.
+  agent_first_name: Sarah
+  business_name: ''
+  industry: painting contractor
+  industry_specialty: ''
+  time_of_day: morning
+  is_open_now: 'true'
+  is_after_hours: 'false'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+18503666647'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+success_condition: 'The business_name dyn_var is empty for this test. The agent''s
+  first turn must NOT contain
+
+  the phrase "thank you for calling" or "calling [empty]" or any sentence with the
+  word
+
+  "calling" followed immediately by a period or by the word "this". The agent must
+  instead
+
+  open with a clean self-introduction: a greeting like "Hi" or "Hello" followed by
+  the agent''s
+
+  name and an offer of help. The agent must identify as Sarah.
+
+  '
 success_examples:
-  - "Good afternoon, this is Sarah. How can I help you today?"
-  - "Hi, this is Sarah — thanks for calling! How can I assist you?"
+- Good afternoon, this is Sarah. How can I help you today?
+- Hi, this is Sarah — thanks for calling! How can I assist you?
 failure_examples:
-  - "Good evening, thank you for calling . This is Sarah, the AI front desk assistant."
-  - "Thank you for calling , this is Sarah."
-  - "Thank you for calling {{business_name}}, this is Sarah."
+- Good evening, thank you for calling . This is Sarah, the AI front desk assistant.
+- Thank you for calling , this is Sarah.
+- Thank you for calling {{business_name}}, this is Sarah.
 tool_call_assertions: []
-aspire_law: "Law #3 — fail closed; Rule 15 — first-message empty-slot defense"
-regression_coverage: >
-  CANARY PRIMARY — This is the designated canary test for Sarah-Receptionist
+aspire_law: 'Law #3 — fail closed; Rule 15 — first-message empty-slot defense'
+regression_coverage: 'CANARY PRIMARY — This is the designated canary test for Sarah-Receptionist
   matching the exact 2026-05-09 live call failure pattern. Daily CI run.
+
+  '

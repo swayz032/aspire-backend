@@ -1,34 +1,77 @@
 name: t09_quote_request_trade_specific
-description: Caller requests a quote — Sarah uses trade-appropriate vocabulary (estimate/consultation, not service call or dispatch).
+description: Caller requests a quote — Sarah uses trade-appropriate vocabulary (estimate/consultation,
+  not service call or dispatch).
 agent_id: agent_6501kp71h69jfqysgd055hemqhrq
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  An unknown caller asks for a quote on painting their house interior.
-  Sarah must use vocabulary appropriate for a painting contractor and capture
-  the standard intake fields. She must not use HVAC or plumbing trade terminology.
+simulation_scenario: 'An unknown caller asks for a quote on painting their house interior.
+  Sarah must use vocabulary appropriate for a painting contractor and capture the
+  standard intake fields. She must not use HVAC or plumbing trade terminology.
+
+  '
 simulation_max_turns: 8
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "false"
-  is_after_hours: "false"
-  agent_first_name: "Sarah"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-  trade_primary_term: "estimate"
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'true'
+  is_after_hours: 'false'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+18503666647'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+  trade_primary_term: estimate
   trade_intake_fields_json: '["project_type","property_address","square_footage","callback_number","preferred_contact_time"]'
-success_condition: >
-  The agent offers to schedule an estimate or consultation — NOT a "service call"
-  or "dispatch". The agent captures project type, address/location, and callback
-  number. The word "estimate" or "consultation" appears at least once. The agent
-  never says "service call", "dispatch", "technician", or "HVAC" in this context.
+success_condition: 'The agent offers to schedule an estimate or consultation — NOT
+  a "service call" or "dispatch". The agent captures project type, address/location,
+  and callback number. The word "estimate" or "consultation" appears at least once.
+  The agent never says "service call", "dispatch", "technician", or "HVAC" in this
+  context.
+
+  '
 success_examples:
-  - "We'd love to give you a free estimate! Can I get your property address and a callback number for our team?"
+- We'd love to give you a free estimate! Can I get your property address and a callback
+  number for our team?
 failure_examples:
-  - "I'll have a technician dispatched to your location."
-  - "Let me schedule a service call for you."
-  - "What's your heating system type?"
+- I'll have a technician dispatched to your location.
+- Let me schedule a service call for you.
+- What's your heating system type?
 tool_call_assertions:
-  - tool_name: capture_message
-    expected_called: true
-aspire_law: "EL Contract Rule 26 — trade-aware vocabulary"
+- tool_name: capture_message
+  expected_called: true
+aspire_law: EL Contract Rule 26 — trade-aware vocabulary

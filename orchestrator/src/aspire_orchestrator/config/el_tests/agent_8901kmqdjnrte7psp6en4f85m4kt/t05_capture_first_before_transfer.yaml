@@ -1,47 +1,88 @@
 name: t05_capture_first_before_transfer
-description: Caller requests immediate transfer — Sarah-FrontDesk captures name/callback/reason before any transfer occurs.
+description: Caller requests immediate transfer — Sarah-FrontDesk captures name/callback/reason
+  before any transfer occurs.
 agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  The caller opens by saying "Can you put me through to the owner please,
-  it's important." without providing any identifying information. The agent
-  must NOT immediately attempt a transfer. The agent must ask for the caller's
-  name, callback number, and reason for the call before proceeding. The
-  simulated caller cooperates and provides their name as Diane Foster, callback
-  number as 770-555-6677, and reason as wanting to discuss the commercial
-  painting contract they sent over. Only after these three fields are collected
-  should the agent proceed toward a transfer. The test passes if all three
-  intake fields are captured before any transfer language appears in the
-  transcript.
-simulation_max_turns: 8
+simulation_scenario: 'The caller opens by saying "Can you put me through to the owner
+  please, it''s important." without providing any identifying information. The agent
+  must NOT immediately attempt a transfer. The agent must ask for the caller''s name,
+  callback number, and reason for the call before proceeding. The simulated caller
+  cooperates and provides their name as Diane Foster, callback number as 770-555-6677,
+  and reason as wanting to discuss the commercial painting contract they sent over.
+  Only after these three fields are collected should the agent proceed toward a transfer.
+  The test passes if all three intake fields are captured before any transfer language
+  appears in the transcript.
+
+  '
+simulation_max_turns: 6
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "false"
-  is_after_hours: "false"
-  agent_first_name: "Sarah"
-  routing_owner_phone: "+17705550001"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-success_condition: >
-  The transcript shows the agent asking for the caller's name, callback number,
-  and reason BEFORE any transfer language (such as "let me connect you",
-  "transferring you now", "one moment while I connect") appears. The agent
-  collects all three intake fields from the caller — name (Diane Foster or
-  similar), callback number (containing 7705556677), and reason (commercial
-  contract or similar) — and only then proceeds toward a transfer. If the
-  transcript shows transfer language on the very first agent turn after the
-  caller's initial demand, the test fails. The agent must not blindly transfer
-  without first capturing intake.
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'true'
+  is_after_hours: 'false'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+14045550001'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: ''
+  caller_last_name: ''
+  caller_is_known: 'false'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+success_condition: 'The transcript shows the agent asking for the caller''s name,
+  callback number, and reason BEFORE any transfer language (such as "let me connect
+  you", "transferring you now", "one moment while I connect") appears. The agent collects
+  all three intake fields from the caller — name (Diane Foster or similar), callback
+  number (containing 7705556677), and reason (commercial contract or similar) — and
+  only then proceeds toward a transfer. If the transcript shows transfer language
+  on the very first agent turn after the caller''s initial demand, the test fails.
+  The agent must not blindly transfer without first capturing intake.
+
+  '
 success_examples:
-  - "Absolutely — let me get your name and a quick callback number before I connect you. ... And the reason for your call? ... Thank you Diane. Let me connect you with the owner now."
+- Absolutely — let me get your name and a quick callback number before I connect you.
+  ... And the reason for your call? ... Thank you Diane. Let me connect you with the
+  owner now.
 failure_examples:
-  - "Sure, let me transfer you to the owner right now."
-  - "One moment, connecting you to the owner."
-  - "Transferring you now — hold please."
+- Sure, let me transfer you to the owner right now.
+- One moment, connecting you to the owner.
+- Transferring you now — hold please.
 tool_call_assertions: []
-aspire_law: "EL Contract Rule 24 — capture-first mandatory before any transfer"
-regression_coverage: >
-  Validates that Sarah-FrontDesk does not blindly transfer on a bare caller
-  demand without intake, which would route the owner to a voicemail with
-  zero context.
+aspire_law: EL Contract Rule 24 — capture-first mandatory before any transfer
+regression_coverage: 'Validates that Sarah-FrontDesk does not blindly transfer on
+  a bare caller demand without intake, which would route the owner to a voicemail
+  with zero context.
+
+  '

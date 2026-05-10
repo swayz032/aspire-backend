@@ -1,38 +1,82 @@
 name: t01_greeting_known_caller_open_hours
-description: Known caller during open hours — Sarah-Receptionist greets by caller first name, no AI disclosure, correct agent identity (Sarah, never Tiffany).
+description: Known caller during open hours — Sarah-Receptionist greets by caller
+  first name, no AI disclosure, correct agent identity (Sarah, never Tiffany).
 agent_id: agent_6501kp71h69jfqysgd055hemqhrq
 agent_display_name: Sarah
 type: simulation
-simulation_scenario: >
-  The caller is a known contact already stored in the CRM. Business hours are open.
-  The caller calls in and waits for the agent to greet them. The caller's first name
-  is Jordan. The caller then states their reason for calling (ask about a project update).
+simulation_scenario: 'The caller is a known contact already stored in the CRM. Business
+  hours are open. The caller calls in and waits for the agent to greet them. The caller''s
+  first name is Jordan. The caller then states their reason for calling (ask about
+  a project update).
+
+  '
 simulation_max_turns: 4
 dynamic_variables:
-  business_name: "Scott Painting Services"
-  caller_is_known: "true"
-  caller_first_name: "Jordan"
-  caller_last_name: "Mills"
-  is_after_hours: "false"
-  agent_first_name: "Sarah"
-  industry: "painting contractor"
-  industry_specialty: "residential and commercial painting"
-success_condition: >
-  The agent greets the caller using the caller's first name (Jordan) without
-  prompting the caller to provide their name. The agent does NOT volunteer
-  that it is an AI. The agent does NOT say "AI front desk assistant" in any
-  turn. The agent identifies itself as Sarah, not Tiffany and not any other name.
-  The word "Tiffany" must NOT appear anywhere in the agent's transcript.
-  The agent includes the business name "Scott Painting Services" in the greeting.
+  agent_first_name: Sarah
+  business_name: Scott Painting Services
+  industry: painting contractor
+  industry_specialty: residential and commercial painting
+  time_of_day: morning
+  is_open_now: 'true'
+  is_after_hours: 'false'
+  after_hours_mode: take_message
+  busy_mode: take_message
+  catch_mode: APP_AND_PHONE_SIMUL_RING
+  public_number_mode: ASPIRE_NEW_NUMBER
+  greeting_name_override: ''
+  pronunciation_override: ''
+  owner_title: Mr.
+  owner_formal_name: Mr. Scott
+  business_city: ''
+  business_state: ''
+  routing_owner_phone: '+18503666647'
+  routing_sales_phone: '+18503666647'
+  routing_support_phone: '+18503666647'
+  routing_billing_phone: '+18503666647'
+  routing_scheduling_phone: '+18503666647'
+  routing_owner_name: Tonio Scott
+  routing_sales_name: Tonio Scott
+  routing_support_name: Tonio Scott
+  routing_billing_name: Tonio Scott
+  routing_scheduling_name: Tonio Scott
+  routing_contacts_summary: 'Owner: Tonio Scott'
+  configured_roles: owner,sales,support,billing,scheduling
+  caller_first_name: Jordan
+  caller_last_name: Mills
+  caller_is_known: 'true'
+  caller_display_name: ''
+  caller_company: ''
+  caller_last_call_summary: ''
+  caller_history_summary: ''
+  caller_total_calls: '0'
+  caller_last_seen_days_ago: ''
+  caller_intent: ''
+  caller_name: ''
+  callback_number: ''
+  transfer_target: ''
+  first_name: ''
+  last_name: ''
+success_condition: 'The agent greets the caller using the caller''s first name (Jordan)
+  without prompting the caller to provide their name. The agent does NOT volunteer
+  that it is an AI. The agent does NOT say "AI front desk assistant" in any turn.
+  The agent identifies itself as Sarah, not Tiffany and not any other name. The word
+  "Tiffany" must NOT appear anywhere in the agent''s transcript. The agent includes
+  the business name "Scott Painting Services" in the greeting.
+
+  '
 success_examples:
-  - "Thank you for calling Scott Painting Services, this is Sarah! Hi Jordan, great to hear from you. How can I help you today?"
-  - "You've reached Scott Painting Services, I'm Sarah. Hey Jordan — what can I do for you?"
+- Thank you for calling Scott Painting Services, this is Sarah! Hi Jordan, great to
+  hear from you. How can I help you today?
+- You've reached Scott Painting Services, I'm Sarah. Hey Jordan — what can I do for
+  you?
 failure_examples:
-  - "Good evening, thank you for calling . This is Tiffany, the AI front desk assistant."
-  - "Hello, my name is Tiffany."
-  - "Hi, I'm an AI assistant. How may I help you?"
+- Good evening, thank you for calling . This is Tiffany, the AI front desk assistant.
+- Hello, my name is Tiffany.
+- Hi, I'm an AI assistant. How may I help you?
 tool_call_assertions: []
-aspire_law: "Law #14 — no agent name confusion; Law #3 — fail closed on blank business_name"
-regression_coverage: >
-  Catches the 2026-05-09 'calling . This is Sarah' regression AND any future
-  scenario where Sarah-Receptionist incorrectly resolves to Tiffany's name.
+aspire_law: 'Law #14 — no agent name confusion; Law #3 — fail closed on blank business_name'
+regression_coverage: 'Catches the 2026-05-09 ''calling . This is Sarah'' regression
+  AND any future scenario where Sarah-Receptionist incorrectly resolves to Tiffany''s
+  name.
+
+  '
