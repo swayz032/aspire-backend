@@ -149,10 +149,81 @@ PERSONALIZATION_CACHE_FALLBACK_COUNTER = Counter(
     ["reason"],  # timeout | db_error | circuit_open
 )
 
+# =============================================================================
+# Pass 4 — Trade-aware personalization hardening metrics
+# =============================================================================
+
+PERSONALIZATION_REQUESTS_TOTAL = Counter(
+    "aspire_personalization_requests_total",
+    "Total personalization webhook calls by agent and outcome",
+    ["agent_id", "outcome"],
+    # outcomes: hit | miss | timeout | cache_fallback | degraded
+)
+
+PERSONALIZATION_LATENCY_BY_OUTCOME = Histogram(
+    "aspire_personalization_latency_seconds_v2",
+    "Personalization webhook latency labelled by agent and outcome",
+    ["agent_id", "outcome"],
+    buckets=(0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.5, 3.0),
+)
+
+PERSONALIZATION_BLANK_BUSINESS_NAME_TOTAL = Counter(
+    "aspire_personalization_blank_business_name_total",
+    "DB row had NULL or empty business_name — filled with safe default",
+    ["suite_id"],
+    # Ops alert source: sustained hits on a suite_id = onboarding incomplete
+)
+
+PERSONALIZATION_CACHE_SIZE_BYTES = None  # Gauge placeholder — initialized lazily below
+try:
+    from prometheus_client import Gauge as _Gauge
+
+    PERSONALIZATION_CACHE_SIZE_BYTES = _Gauge(
+        "aspire_personalization_cache_size_bytes",
+        "Approximate byte size of personalization payload stored in Redis cache",
+    )
+except Exception:  # pragma: no cover
+    pass
+
 INGESTION_COUNTER = Counter(
     "aspire_ingestion_total",
     "Inbound provider ingestion attempts by provider and outcome",
     ["provider", "outcome"],  # provider in {twilio_sms, twilio_voice, elevenlabs, ...}
+)
+
+# =============================================================================
+# W1 — Receipt pipeline hardening metrics (INC-2026-05-07-001)
+# =============================================================================
+
+RECEIPT_FLUSH_ATTEMPTS = Counter(
+    "aspire_receipt_flush_attempts_total",
+    "Total receipt flush batch executions",
+)
+
+RECEIPT_FLUSH_FAILURES = Counter(
+    "aspire_receipt_flush_failures_total",
+    "Total receipt flush failures by error code",
+    ["code"],  # 23505 | retry | loop_error | queue_saturated | dead_letter
+)
+
+try:
+    from prometheus_client import Gauge as _Gauge2  # avoid re-import collision
+
+    RECEIPT_QUEUE_DEPTH = _Gauge2(
+        "aspire_receipt_queue_depth",
+        "Current number of receipts buffered in-memory awaiting Supabase persistence",
+    )
+except Exception:  # pragma: no cover
+    RECEIPT_QUEUE_DEPTH = None  # type: ignore[assignment]
+
+RECEIPT_DUPLICATE_SKIPPED = Counter(
+    "aspire_receipt_duplicate_skipped_total",
+    "Total receipt rows skipped due to ON CONFLICT DO NOTHING (idempotent success)",
+)
+
+RECEIPT_DEAD_LETTERED = Counter(
+    "aspire_receipt_dead_lettered_total",
+    "Total receipt rows written to dead-letter store after exhausting flush retries",
 )
 
 # Service info — static labels for service identification
@@ -193,6 +264,17 @@ class MetricsCollector:
     personalization_latency = PERSONALIZATION_LATENCY
     personalization_cache_fallback_counter = PERSONALIZATION_CACHE_FALLBACK_COUNTER
     ingestion_counter = INGESTION_COUNTER
+    # Pass 4 — trade-aware personalization hardening
+    personalization_requests_total = PERSONALIZATION_REQUESTS_TOTAL
+    personalization_latency_by_outcome = PERSONALIZATION_LATENCY_BY_OUTCOME
+    personalization_blank_business_name_total = PERSONALIZATION_BLANK_BUSINESS_NAME_TOTAL
+    personalization_cache_size_bytes = PERSONALIZATION_CACHE_SIZE_BYTES
+    # W1 — receipt pipeline hardening (INC-2026-05-07-001)
+    receipt_flush_attempts = RECEIPT_FLUSH_ATTEMPTS
+    receipt_flush_failures = RECEIPT_FLUSH_FAILURES
+    receipt_queue_depth = RECEIPT_QUEUE_DEPTH
+    receipt_duplicate_skipped = RECEIPT_DUPLICATE_SKIPPED
+    receipt_dead_lettered = RECEIPT_DEAD_LETTERED
 
     def record_request(
         self,

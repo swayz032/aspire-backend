@@ -288,6 +288,10 @@ async def supabase_insert_batch(table: str, rows: list[dict[str, Any]]) -> list[
 
     PostgREST supports batch insert by POSTing a JSON array.
     Returns all inserted rows.
+
+    Semantics: atomic-or-fail — any duplicate PK raises SupabaseClientError with
+    HTTP 409 / PG code 23505. The caller is responsible for handling duplicates.
+    For receipt-pipeline writes use supabase_insert_batch_ignore_conflicts instead.
     """
     if not rows:
         return []
@@ -305,6 +309,79 @@ async def supabase_insert_batch(table: str, rows: list[dict[str, Any]]) -> list[
         raise SupabaseClientError(f"insert_batch/{table}", detail="Connection failed")
     except Exception as e:
         raise SupabaseClientError(f"insert_batch/{table}", detail=str(e))
+
+
+async def supabase_insert_batch_ignore_conflicts(
+    table: str,
+    rows: list[dict[str, Any]],
+    conflict_target: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """INSERT multiple rows with ON CONFLICT (<conflict_target>) DO NOTHING semantics.
+
+    Uses PostgREST headers:
+      Prefer: resolution=ignore-duplicates,return=representation
+    combined with the on_conflict query parameter, which PostgREST translates to:
+      INSERT INTO <table> (...) VALUES (...) ON CONFLICT (<conflict_target>) DO NOTHING
+
+    Semantics (vs supabase_insert_batch):
+      - supabase_insert_batch: atomic-or-fail — ANY duplicate PK aborts the entire batch.
+      - supabase_insert_batch_ignore_conflicts: best-effort — rows that conflict on
+        <conflict_target> are silently skipped; non-conflicting rows are inserted.
+        PostgREST returns only the rows that were actually inserted (not skipped).
+
+    Returns:
+        A tuple of (inserted_rows, duplicate_count) where:
+        - inserted_rows: rows that were actually written to the table.
+        - duplicate_count: number of rows skipped due to ON CONFLICT.
+          Computed as len(rows) - len(inserted_rows).
+
+    Raises:
+        SupabaseClientError: on any non-duplicate error (network, schema mismatch,
+            auth failure, etc.). Callers should treat this as a retriable failure.
+
+    Usage:
+        inserted, skipped = await supabase_insert_batch_ignore_conflicts(
+            "receipts", rows, conflict_target="receipt_id"
+        )
+    """
+    if not rows:
+        return [], 0
+
+    from urllib.parse import quote as _quote
+
+    url = f"{_base_url()}/{table}?on_conflict={_quote(conflict_target, safe='')}"
+    headers = _headers()
+    headers["Prefer"] = "resolution=ignore-duplicates,return=representation"
+
+    try:
+        client = _get_async_pool()
+        resp = await client.post(url, json=rows, headers=headers, timeout=30.0)
+        result = _handle_response(resp, f"insert_batch_ignore_conflicts/{table}")
+        inserted: list[dict[str, Any]] = result if isinstance(result, list) else ([result] if result else [])
+        duplicate_count: int = len(rows) - len(inserted)
+        if duplicate_count > 0:
+            logger.info(
+                "supabase_insert_batch_ignore_conflicts: %d/%d rows skipped (ON CONFLICT DO NOTHING) table=%s conflict_target=%s",
+                duplicate_count,
+                len(rows),
+                table,
+                conflict_target,
+            )
+        return inserted, duplicate_count
+    except SupabaseClientError:
+        raise
+    except httpx.TimeoutException:
+        raise SupabaseClientError(
+            f"insert_batch_ignore_conflicts/{table}", detail="Request timed out"
+        )
+    except httpx.ConnectError:
+        raise SupabaseClientError(
+            f"insert_batch_ignore_conflicts/{table}", detail="Connection failed"
+        )
+    except Exception as e:
+        raise SupabaseClientError(
+            f"insert_batch_ignore_conflicts/{table}", detail=str(e)
+        )
 
 
 async def supabase_update(table: str, match_filters: str, data: dict[str, Any]) -> dict[str, Any]:
