@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     tripadvisor_api_key: str = ""      # ASPIRE_TRIPADVISOR_API_KEY — TripAdvisor Content API
     parallel_api_key: str = ""         # ASPIRE_PARALLEL_API_KEY — Parallel AI deep research
     parallel_extract_api_key: str = "" # ASPIRE_PARALLEL_EXTRACT_API_KEY — Parallel Extract (v1beta)
+    apify_api_key: str = ""            # ASPIRE_APIFY_API_KEY — Apify Zillow scraper (property photos)
 
     # --- Tec Documents (S3) provider keys ---
     aws_access_key_id: str = ""
@@ -195,6 +196,7 @@ class Settings(BaseSettings):
             ("tripadvisor_api_key",      "TRIPADVISOR_API_KEY"),
             ("parallel_api_key",         "PARALLEL_API_KEY"),
             ("parallel_extract_api_key", "PARALLEL_EXTRACT_API_KEY"),
+            ("apify_api_key",            "APIFY_API_KEY"),
         ]
         for field, env_name in _FALLBACKS:
             if not getattr(self, field):
