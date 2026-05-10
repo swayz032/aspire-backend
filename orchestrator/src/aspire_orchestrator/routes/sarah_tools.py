@@ -355,7 +355,7 @@ async def capture_message(req: CaptureMessageReq) -> dict[str, Any]:
             },
             title=f"Message — {caller_label}",
             source_agent="sarah",
-            channel="inbound_call",
+            channel="voice",
         )
         receipt_outcome = "success"
     except SupabaseClientError as exc:
@@ -537,7 +537,7 @@ async def callback_request(req: CallbackRequestReq) -> dict[str, Any]:
             },
             title=f"Callback — {caller_label}",
             source_agent="sarah",
-            channel="inbound_call",
+            channel="voice",
         )
         receipt_outcome = "success"
     except SupabaseClientError as exc:
@@ -601,7 +601,7 @@ async def call_summary(req: CallSummaryReq) -> dict[str, Any]:
             },
             title=f"Call Summary — {caller_label}",
             source_agent="sarah",
-            channel="inbound_call",
+            channel="voice",
         )
         receipt_outcome = "success"
     except SupabaseClientError as exc:
