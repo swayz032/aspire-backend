@@ -167,6 +167,53 @@ def mint_voice_token(
     }
 
 
+def public_request_url(request: Any) -> str:
+    """Return the URL Twilio signed against, even behind a TLS-terminating proxy.
+
+    Why: Railway (and most cloud platforms) terminate TLS at the edge and
+    forward to the app over plain HTTP. FastAPI's `request.url` reflects what
+    the app received, so it surfaces as `http://` even when the public URL
+    was `https://`. Twilio signs against the public URL it sent the request
+    to — so signature validation fails unless we reconstruct that URL from
+    the standard proxy headers.
+
+    Headers consulted (in order):
+      - X-Forwarded-Proto    — public scheme (https/http)
+      - X-Forwarded-Host     — public host:port (overrides app-side host)
+      - X-Forwarded-Port     — only used if Host header lacks a port
+
+    All three are added by Railway's edge proxy. Conservatively falls back
+    to `request.url` if any header is missing — that path still works for
+    direct (non-proxied) traffic during local dev.
+    """
+    raw = str(request.url)
+    headers = request.headers
+    forwarded_proto = (headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    forwarded_host = (headers.get("x-forwarded-host") or "").split(",")[0].strip()
+
+    # Build the corrected URL only when proxy headers are present. Without
+    # them we use request.url verbatim (covers local dev hitting the app
+    # directly without a proxy).
+    if not forwarded_proto and not forwarded_host:
+        return raw
+
+    # Split off the path+query to preserve them exactly.
+    try:
+        scheme_split = raw.split("://", 1)
+        if len(scheme_split) != 2:
+            return raw
+        original_scheme, rest = scheme_split
+        host_path = rest.split("/", 1)
+        host_part = host_path[0]
+        path_part = "/" + host_path[1] if len(host_path) > 1 else ""
+    except Exception:  # noqa: BLE001
+        return raw
+
+    final_scheme = forwarded_proto or original_scheme
+    final_host = forwarded_host or host_part
+    return f"{final_scheme}://{final_host}{path_part}"
+
+
 def verify_twilio_signature(
     *,
     request_url: str,
@@ -178,6 +225,12 @@ def verify_twilio_signature(
     Twilio signs `request_url + sorted(param key/value pairs joined)` with
     HMAC-SHA1 using the account's primary Auth Token (not API Key secret).
     See https://www.twilio.com/docs/usage/webhooks/webhooks-security.
+
+    Defense in depth: if the primary URL fails, retry with the scheme
+    swapped (http<->https). This makes the validator resilient to proxy
+    misconfigurations or partially-set X-Forwarded-Proto headers — the
+    correct URL is still required to match Twilio's signed payload, but
+    we try both common shapes before rejecting.
 
     Returns False on any error so the caller fail-closes with 401.
     """
@@ -193,8 +246,45 @@ def verify_twilio_signature(
         logger.error("twilio_auth_token not configured; rejecting webhook")
         return False
     validator = RequestValidator(auth_token)
+    # Build candidate URL list — Railway terminates TLS at the edge, so the
+    # app may receive http:// while Twilio signed against https://. Try every
+    # plausible variant before rejecting.
+    candidates: list[str] = [request_url]
+    if request_url.startswith("https://"):
+        candidates.append("http://" + request_url[len("https://"):])
+    elif request_url.startswith("http://"):
+        candidates.append("https://" + request_url[len("http://"):])
+    # Trailing-slash variants — Twilio Console URLs are sometimes saved with
+    # one even when our route is registered without (or vice versa). Cheap.
+    extra: list[str] = []
+    for c in candidates:
+        if c.endswith("/"):
+            extra.append(c.rstrip("/"))
+        else:
+            extra.append(c + "/")
+    candidates.extend(extra)
     try:
-        return bool(validator.validate(request_url, form_params, signature_header))
+        for candidate in candidates:
+            if validator.validate(candidate, form_params, signature_header):
+                return True
+        # All candidates failed — emit a diagnostic so we can see exactly
+        # which URLs we tried, which params were present, and a hash of the
+        # signature header. Never log the auth_token or full param values.
+        try:
+            import hashlib
+            sig_fingerprint = hashlib.sha1(signature_header.encode("utf-8")).hexdigest()[:12]
+            sample_keys = sorted(form_params.keys())[:24]
+            logger.warning(
+                "voice_twiml signature_diag candidates=%s param_keys=%s sig_sha1=%s "
+                "auth_token_prefix=%s",
+                candidates,
+                sample_keys,
+                sig_fingerprint,
+                (auth_token or "")[:6] + "...",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return False
     except Exception as e:  # noqa: BLE001
         logger.warning("verify_twilio_signature failed: %s", type(e).__name__)
         return False

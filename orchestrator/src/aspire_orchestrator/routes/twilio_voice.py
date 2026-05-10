@@ -49,6 +49,7 @@ from aspire_orchestrator.services.twilio_voice import (
     TwilioVoiceConfigError,
     mint_voice_token,
     parse_identity,
+    public_request_url,
     verify_twilio_signature,
 )
 
@@ -214,11 +215,12 @@ async def voice_twiml(request: Request) -> Response:
     form = await request.form()
     form_params = {k: str(v) for k, v in form.multi_items()}
 
-    # Twilio webhook signature lives in this header. Validate against the
-    # full request URL we received (needs to match what's configured on
-    # the TwiML App). Fail-closed if missing or invalid.
+    # Validate the Twilio webhook signature using the helper that respects
+    # X-Forwarded-Proto (Railway terminates TLS at the edge so request.url
+    # is http://, but Twilio signs against https://). See
+    # services/twilio_voice.public_request_url() for details. Fail-closed.
     signature_header = request.headers.get("X-Twilio-Signature", "")
-    request_url = str(request.url)
+    request_url = public_request_url(request)
     if not verify_twilio_signature(
         request_url=request_url,
         form_params=form_params,
