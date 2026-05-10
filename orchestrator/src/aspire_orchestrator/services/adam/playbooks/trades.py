@@ -204,10 +204,19 @@ def _extract_address_from_query(query: str) -> str:
 async def execute_property_facts_and_permits(
     query: str, ctx: PlaybookContext, address: str = "",
 ) -> ResearchResponse:
-    """PROPERTY_FACTS_AND_PERMITS — Resolve property context for quoting."""
+    """PROPERTY_FACTS_AND_PERMITS — Resolve property context for quoting.
+
+    Calls ATTOM (facts + sales history) AND Apify Zillow (photos) in
+    parallel. Photos are merged into the first record under a `photos` key
+    with `lane` (interior/exterior/roof/uncategorized) classification, ready
+    for the Aspire-Desktop Visuals tab to consume.
+    """
     from aspire_orchestrator.providers.attom_client import (
         execute_attom_detail_mortgage_owner,
         execute_attom_sales_history,
+    )
+    from aspire_orchestrator.providers.apify_zillow_client import (
+        execute_apify_zillow_photos,
     )
     from aspire_orchestrator.services.adam.address_parser import (
         ParseError,
@@ -282,23 +291,75 @@ async def execute_property_facts_and_permits(
             extra={"parse_error": str(exc), "raw_query": query},
         )
 
-    # 1. ATTOM property detail (with mortgage+owner for full context).
-    # address1 carries the normalised unit suffix so ATTOM resolves to the
-    # unit-level parcel (e.g. "1575 Paul Russell Rd APT 4802") rather than
-    # the building master parcel.
-    detail_result = await execute_attom_detail_mortgage_owner(
-        payload=attom_payload,
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-        capability_token_id=ctx.capability_token_id,
-        capability_token_hash=ctx.capability_token_hash,
+    # 1. ATTOM property detail + Apify Zillow photos in PARALLEL.
+    # Both keyed only by the address; running serially would cost the user
+    # 8s (ATTOM) + 10–15s (Apify cold start). Parallelizing keeps the user
+    # under the perceived-instant ceiling.
+    detail_result, apify_result = await asyncio.gather(
+        execute_attom_detail_mortgage_owner(
+            payload=attom_payload,
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+            capability_token_id=ctx.capability_token_id,
+            capability_token_hash=ctx.capability_token_hash,
+        ),
+        execute_apify_zillow_photos(
+            payload={"address": normalized_address},
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+            capability_token_id=ctx.capability_token_id,
+            capability_token_hash=ctx.capability_token_hash,
+        ),
+        return_exceptions=False,
     )
     providers_called.append("attom")
+    providers_called.append("apify_zillow")
 
     if detail_result.outcome.value == "success" and detail_result.data:
         prop = normalize_from_attom_detail(detail_result.data)
-        records.append(prop.to_dict())
+        record_dict = prop.to_dict()
+
+        # Merge Apify Zillow photos into the record. Failure is non-fatal —
+        # property facts still flow through; only the photo lanes go empty.
+        try:
+            apify_outcome = apify_result.outcome.value if apify_result else None
+            apify_data = apify_result.data if apify_result else None
+            if apify_outcome == "success" and isinstance(apify_data, dict):
+                photos_raw = apify_data.get("photos") or []
+                if isinstance(photos_raw, list) and photos_raw:
+                    record_dict["photos"] = [
+                        {
+                            "url": (p.get("url") or "").strip(),
+                            "caption": p.get("caption"),
+                            "lane": (p.get("lane") or "uncategorized").strip().lower(),
+                        }
+                        for p in photos_raw
+                        if isinstance(p, dict) and p.get("url")
+                    ]
+                    listing_url = apify_data.get("listing_url")
+                    if listing_url:
+                        record_dict["zillow_listing_url"] = listing_url
+                    logger.info(
+                        "Apify Zillow merged %d photos into property record",
+                        len(record_dict["photos"]),
+                    )
+                else:
+                    logger.info(
+                        "Apify Zillow returned 0 photos for %s",
+                        normalized_address[:60],
+                    )
+            else:
+                logger.warning(
+                    "Apify Zillow unavailable (outcome=%s) — continuing photos-less",
+                    apify_outcome,
+                )
+                providers_called.append("apify_zillow_failed")
+        except Exception as merge_err:  # noqa: BLE001 — merge must never break facts
+            logger.warning("Apify Zillow merge failed (non-fatal): %s", str(merge_err)[:160])
+
+        records.append(record_dict)
         sources.extend(prop.sources)
     else:
         # F-HIGH-8 + F-MED-1: ATTOM 500/timeout/network used to swallow the
@@ -345,8 +406,19 @@ async def execute_property_facts_and_permits(
             },
         )
 
-    # 2. ATTOM sales history (best-effort — primary path is detail above).
-    history_result = await execute_attom_sales_history(
+    # 2. Stage 1.5 — parallel fan-out: ATTOM sales history + Apify Zillow photos.
+    # Both are best-effort and run AFTER the ATTOM detail succeeds (above).
+    # asyncio.gather(return_exceptions=True) ensures one provider's failure
+    # does not kill the other (Law #3 — fail-closed for the playbook overall,
+    # graceful degradation for supplementary data).
+    import asyncio as _asyncio
+    from aspire_orchestrator.providers.apify_zillow_client import (
+        execute_apify_zillow_photos,
+    )
+    # Note: photo normalization happens inside execute_apify_zillow_photos.
+    # The result.data already contains the categorized photos[] list.
+
+    history_task = execute_attom_sales_history(
         payload=attom_payload,
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
@@ -354,8 +426,27 @@ async def execute_property_facts_and_permits(
         capability_token_id=ctx.capability_token_id,
         capability_token_hash=ctx.capability_token_hash,
     )
+    photos_task = execute_apify_zillow_photos(
+        payload={"address": normalized_address},
+        correlation_id=ctx.correlation_id,
+        suite_id=ctx.suite_id,
+        office_id=ctx.office_id,
+        capability_token_id=ctx.capability_token_id,
+        capability_token_hash=ctx.capability_token_hash,
+    )
 
-    if history_result.outcome.value == "success" and history_result.data:
+    history_result, photos_result = await _asyncio.gather(
+        history_task, photos_task, return_exceptions=True,
+    )
+
+    # ATTOM sales history (supplementary).
+    if isinstance(history_result, Exception):
+        logger.info(
+            "ATTOM sales history raised %s — continuing without history",
+            type(history_result).__name__,
+        )
+        providers_called.append("attom_sales_history_failed")
+    elif history_result.outcome.value == "success" and history_result.data:
         sales = normalize_from_attom_sales_history(history_result.data)
         if sales and records:
             records[0]["sale_history"] = [
@@ -372,6 +463,34 @@ async def execute_property_facts_and_permits(
             history_result.outcome.value,
         )
         providers_called.append("attom_sales_history_failed")
+
+    # Apify Zillow photos (supplementary — Visuals tab interior/exterior/roof).
+    # Photos are attached to records[0] so the desktop adamResearchClient can
+    # surface them as records[0].photos in the ResearchResponse contract.
+    photos: list[dict[str, Any]] = []
+    if isinstance(photos_result, Exception):
+        logger.info(
+            "Apify Zillow scrape raised %s — continuing without photos",
+            type(photos_result).__name__,
+        )
+        providers_called.append("apify_zillow_failed")
+    elif photos_result.outcome.value == "success" and photos_result.data:
+        photos = list(photos_result.data.get("photos") or [])
+        if photos:
+            providers_called.append("apify_zillow")
+        else:
+            providers_called.append("apify_zillow_empty")
+    else:
+        logger.info(
+            "Apify Zillow scrape unavailable (outcome=%s) — continuing without photos",
+            getattr(photos_result, "outcome", None)
+            and photos_result.outcome.value or "unknown",
+        )
+        providers_called.append("apify_zillow_failed")
+
+    if records:
+        records[0]["photos"] = photos
+        records[0]["photos_source"] = "apify_zillow" if photos else None
 
     # Verify
     report = verify_records(
