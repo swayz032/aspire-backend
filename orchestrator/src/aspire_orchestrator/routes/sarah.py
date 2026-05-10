@@ -485,6 +485,12 @@ def _build_first_message(
     ah_mode = (dyn_vars.get("after_hours_mode") or "").strip().lower()
     owner_formal = (dyn_vars.get("owner_formal_name") or "the owner").strip()
 
+    # Tone control is handled by the agent's `suggested_audio_tags` config
+    # (see `Naturally` / `Calmly` / `Warmly` / `Professionally` / `Apologetically`
+    # / `Reassuringly`, each with a description telling the v3 model when to
+    # apply it). DO NOT put bracket tags like [Naturally] inline in these
+    # variants -- they get spoken aloud as literal text on some configurations.
+    # The model selects the right tone from the tag descriptions in context.
     if caller_is_known and caller_first_name:
         if is_open:
             variants = [
