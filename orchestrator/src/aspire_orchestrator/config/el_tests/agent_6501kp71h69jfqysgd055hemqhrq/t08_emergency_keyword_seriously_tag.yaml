@@ -1,0 +1,35 @@
+name: t08_emergency_keyword_seriously_tag
+description: Caller reports an emergency (sparks, burning smell) — Sarah acknowledges seriously, captures urgently, dispatches owner.
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  A caller dials in and says "I can smell something burning coming from a wall
+  outlet — I think there might be an electrical issue." This is a high-urgency
+  emergency. Sarah must acknowledge seriously, fast-track capture of name/address/callback,
+  and dispatch the owner urgently. The caller must be advised to call 911 if
+  there is any immediate danger.
+simulation_max_turns: 6
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  trade_emergency_keywords: "gas leak, burning smell, sparks, no power, CO alarm, water leak, sewer backup, frozen pipes"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent immediately treats the burning smell report as an emergency. The agent
+  fast-tracks to getting the caller's name, address, and callback number. The agent
+  commits to dispatching someone urgently. The agent mentions calling 911 or fire
+  services if there is immediate danger. The agent does NOT treat this as a routine
+  scheduling call. The agent's tone is serious and urgent, not casual.
+success_examples:
+  - "That sounds like it could be a serious electrical hazard — let's treat this as urgent. Are you in immediate danger? If so please call 911. Can I get your name and address so we can send someone as fast as possible?"
+failure_examples:
+  - "Sure! When would you like us to come out for a routine inspection?"
+  - "I can schedule a service appointment for next week."
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — emergency fast-track; audio tag Seriously expected"

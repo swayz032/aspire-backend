@@ -1,0 +1,33 @@
+name: t04_greeting_with_unknown_agent_id
+description: Missing or unresolved agent_first_name — Sarah must not substitute another agent's name or verbalize a template token.
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: llm
+chat_history:
+  - role: user
+    time_in_call_secs: 0
+    message: "Hello?"
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  agent_first_name: ""
+  is_after_hours: "false"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  When agent_first_name is empty, the agent does NOT substitute another agent's
+  name (e.g., "Tiffany") and does NOT verbalize a template token. The agent
+  greets professionally without requiring a name slot. Under no circumstances
+  does the agent say "Hello, I'm Tiffany" or identify as any other named agent.
+success_examples:
+  - "Hello! Thanks for calling Scott Painting Services. How can I help?"
+  - "Good afternoon, you've reached Scott Painting Services. How may I assist you today?"
+failure_examples:
+  - "Hello, I'm Tiffany, the AI front desk assistant."
+  - "Hi, this is {{agent_first_name}}."
+  - "Good evening, thank you for calling . This is Tiffany."
+tool_call_assertions: []
+aspire_law: "Law #3 — fail closed; Law #14 — no agent name confusion"
+infra_coverage_note: >
+  HTTP 400 enforcement for unknown agent_id is tested at unit level in
+  tests/routes/test_sarah_agent_name_fallback.py::TestUnknownAgentId.
+  This EL test covers the prompt-layer defense.

@@ -1,0 +1,39 @@
+name: t02_greeting_new_caller_open_hours
+description: Unknown caller during open hours — agent greets with business name and correct agent name (Tiffany, never Sarah).
+agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
+agent_display_name: Tiffany
+type: simulation
+simulation_scenario: >
+  An unknown caller dials in during business hours. The agent must open with
+  the standard greeting using the business name and identify itself by name.
+  The caller responds "Hi, I wanted to ask about getting a quote."
+simulation_max_turns: 4
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Tiffany"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent's opening turn includes "Scott Painting Services" verbatim.
+  The agent identifies itself as "Tiffany" — not "Sarah", not "the AI front
+  desk assistant", not any other name. The phrase "Sarah" must NEVER appear
+  anywhere in the agent's transcript. The greeting uses "Good {time_of_day}"
+  OR "Thank you for calling" OR "You've reached" — but the business name slot
+  is always filled with "Scott Painting Services", never empty, never a literal
+  "{{business_name}}" token, and never just a period following "calling ".
+success_examples:
+  - "Good afternoon, thank you for calling Scott Painting Services! This is Tiffany, how can I help you today?"
+  - "Thank you for calling Scott Painting Services, this is Tiffany. A quote — absolutely! Let me get a few details."
+failure_examples:
+  - "Good evening, thank you for calling . This is Sarah, the AI front desk assistant."
+  - "Thank you for calling {{business_name}}, this is Tiffany."
+  - "Hi, I'm Sarah. How can I help you?"
+  - "Thank you for calling, this is the AI front desk assistant."
+tool_call_assertions: []
+aspire_law: "Law #3 — fail closed; Law #14 — no agent name confusion"
+regression_coverage: >
+  Catches the 2026-05-09 regression where deployed code used
+  _AGENT_DISPLAY_NAME.get(agent_id, '') and resolved to 'Sarah' for Tiffany's
+  agent_id, plus the empty business_name slot producing 'calling . This is'.

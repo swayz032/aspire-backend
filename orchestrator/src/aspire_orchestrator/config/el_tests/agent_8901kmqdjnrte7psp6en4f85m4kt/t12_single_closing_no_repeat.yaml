@@ -1,0 +1,41 @@
+name: t12_single_closing_no_repeat
+description: After full FrontDesk capture flow, Sarah says closing exactly once — no echo, no re-opening.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: llm
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "I just need to update the contact email on our account."
+  - role: agent
+    time_in_call_secs: 5
+    message: "Of course! Can you confirm your name and the new email address?"
+  - role: user
+    time_in_call_secs: 10
+    message: "I'm Linda Park, and the new email is linda@parkdesign.com."
+  - role: agent
+    time_in_call_secs: 15
+    message: "Got it, Linda — I've noted the update to linda@parkdesign.com. I'll pass this to the team to update your records. Is there anything else I can help with?"
+  - role: user
+    time_in_call_secs: 21
+    message: "Nope, that's all. Thanks!"
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent's closing turn is a single warm farewell. The agent says goodbye
+  exactly once. The agent does NOT re-open the conversation after the caller
+  says goodbye. The agent does NOT repeat the email address again after already
+  confirming it. The conversation ends cleanly.
+success_examples:
+  - "You're very welcome, Linda! Have a wonderful day!"
+  - "Of course! Take care, Linda. Goodbye!"
+failure_examples:
+  - "Have a great day! ... Just to confirm, the email is linda@parkdesign.com. Have a great day!"
+  - "Goodbye! ... Is there anything else I can help you with today?"
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 21 — single closing utterance"

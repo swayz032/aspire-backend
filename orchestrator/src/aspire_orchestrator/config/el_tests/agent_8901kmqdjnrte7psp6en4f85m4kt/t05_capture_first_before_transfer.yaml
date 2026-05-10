@@ -1,0 +1,40 @@
+name: t05_capture_first_before_transfer
+description: Caller requests immediate transfer — Sarah-FrontDesk captures name/callback/reason before invoking transfer_to_number.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: tool
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "Can you put me through to the owner please, it's important."
+  - role: agent
+    time_in_call_secs: 5
+    message: "Absolutely — let me get your name and a quick callback number before I connect you, just in case."
+  - role: user
+    time_in_call_secs: 12
+    message: "I'm Diane Foster, 7705556677. I need to discuss the commercial painting contract we sent over."
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  routing_owner_phone: "+17705550001"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent invokes transfer_to_number only after collecting Diane Foster's
+  name, callback number (7705556677), and reason (commercial contract discussion).
+  The tool must NOT be called on the first turn immediately after the request.
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+    parameter_assertions:
+      - path: "caller_name"
+        eval:
+          type: llm
+          condition: "The value contains Diane Foster or equivalent"
+      - path: "callback_number"
+        eval:
+          type: regex
+          pattern: "7705556677|\\+17705556677"
+aspire_law: "EL Contract Rule 24 — capture-first for transfers"

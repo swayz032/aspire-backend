@@ -1,0 +1,27 @@
+name: t06_after_hours_take_message_mode
+description: after_hours_mode=take_message on FrontDesk line — Sarah goes directly to capture, NOT transfer.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: tool
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "I need to speak with someone about updating our project schedule."
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "true"
+  after_hours_mode: "take_message"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent acknowledges after-hours and goes directly to message capture.
+  The agent does NOT attempt to transfer. transfer_to_number is NOT called.
+  capture_message IS called with the caller's details.
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: false
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — correct after-hours branch logic"

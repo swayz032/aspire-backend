@@ -1,0 +1,41 @@
+name: t12_single_closing_no_repeat
+description: After full capture flow, Sarah says closing exactly once — no echo, no re-opening the conversation.
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: llm
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "I'd like to leave a message for the owner about a job we need done."
+  - role: agent
+    time_in_call_secs: 5
+    message: "Absolutely! May I get your name and a callback number?"
+  - role: user
+    time_in_call_secs: 10
+    message: "Yes — I'm Fernando Reyes, 4045559999. Tell them I need a quote for painting my garage and driveway."
+  - role: agent
+    time_in_call_secs: 16
+    message: "Perfect, Fernando — I've got your number 404-555-9999 and your message about a garage and driveway quote. I'll make sure the owner reaches out to you. Anything else I can help with?"
+  - role: user
+    time_in_call_secs: 22
+    message: "No, that's everything. Thanks Sarah!"
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent's closing turn is a single warm farewell. The agent says goodbye
+  exactly once. The agent does NOT ask follow-up questions after the caller
+  says goodbye. The agent does NOT repeat the captured information again after
+  already confirming it. The conversation ends cleanly.
+success_examples:
+  - "You're welcome, Fernando! Have a wonderful day — we'll be in touch soon!"
+  - "Of course! Thanks for calling, Fernando. Goodbye!"
+failure_examples:
+  - "Have a great day! ... Just to confirm, your number is 404-555-9999. Have a great day!"
+  - "Goodbye! ... Is there anything else I can help you with today?"
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 21 — single closing utterance"

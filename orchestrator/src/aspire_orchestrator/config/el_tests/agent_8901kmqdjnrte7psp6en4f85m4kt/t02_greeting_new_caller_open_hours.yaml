@@ -1,0 +1,33 @@
+name: t02_greeting_new_caller_open_hours
+description: Unknown caller on FrontDesk line during open hours — Sarah identifies as Sarah with correct business name, never Tiffany.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  An unknown internal caller (e.g., a vendor) reaches Sarah-FrontDesk during
+  business hours. The agent opens with the standard greeting including business
+  name, identifies as Sarah, and asks how to help.
+simulation_max_turns: 4
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent's opening turn includes "Scott Painting Services". The agent
+  identifies as "Sarah" — never "Tiffany". The business_name slot is filled,
+  never empty, never a literal token. No phrase "AI front desk assistant" appears.
+success_examples:
+  - "Good morning, Scott Painting Services! This is Sarah, how can I help you today?"
+  - "Thank you for calling Scott Painting Services, Sarah speaking. How can I help?"
+failure_examples:
+  - "Good morning, this is Tiffany."
+  - "Thank you for calling . This is Sarah, the AI front desk assistant."
+  - "Scott Painting Services, {{agent_first_name}} speaking."
+tool_call_assertions: []
+aspire_law: "Law #3 — fail closed; Law #14 — no agent name confusion"
+regression_coverage: >
+  Validates Sarah-FrontDesk is not affected by the same stale name-lookup
+  that produced the 2026-05-09 regression on Tiffany's line.

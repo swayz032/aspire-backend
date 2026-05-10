@@ -1,0 +1,39 @@
+name: t07_after_hours_try_transfer_then_message
+description: after_hours_mode=try_transfer_then_message on FrontDesk — Sarah tries transfer first, then falls back to capture_message.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: tool
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "Hey, I need to reach the owner — it's about a supply delivery issue."
+  - role: agent
+    time_in_call_secs: 5
+    message: "Let me try to reach them for you. Can I get your name and number first?"
+  - role: user
+    time_in_call_secs: 12
+    message: "I'm Paul Simmons, 4045558899."
+  - role: agent
+    time_in_call_secs: 15
+    message: "Got it Paul. One moment."
+  - role: agent
+    time_in_call_secs: 35
+    message: "I'm sorry, I wasn't able to reach anyone right now. I'll leave a message so they can follow up with you."
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "true"
+  after_hours_mode: "try_transfer_then_message"
+  routing_owner_phone: "+14045550001"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent first calls transfer_to_number, then calls capture_message with
+  Paul's name, callback number, and reason. Both tools called in correct order.
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — after-hours two-step fallback"

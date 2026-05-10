@@ -1,0 +1,33 @@
+name: t01_greeting_known_caller_open_hours
+description: Known caller during open hours — Sarah-FrontDesk greets by caller first name, identifies as Sarah (not Tiffany), no AI disclosure.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  The owner or a known internal team member calls the Sarah-FrontDesk line.
+  The caller's name is Marcus (already in the system). Business hours are open.
+  Sarah-FrontDesk should greet Marcus by name and confirm what they need.
+simulation_max_turns: 4
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "true"
+  caller_first_name: "Marcus"
+  caller_last_name: "Scott"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent greets the caller by name (Marcus) without asking for it again.
+  The agent identifies itself as Sarah. The word "Tiffany" does NOT appear
+  in any agent turn. The agent does NOT volunteer AI disclosure. The business
+  name "Scott Painting Services" is included in or near the greeting.
+success_examples:
+  - "Hey Marcus, welcome back! This is Sarah at Scott Painting Services. How can I help you today?"
+  - "Hi Marcus! Sarah here — Scott Painting Services. What can I do for you?"
+failure_examples:
+  - "Good evening, this is Tiffany, the AI front desk assistant."
+  - "Hello, I'm an AI assistant for Scott Painting Services."
+  - "Thank you for calling . This is Sarah."
+tool_call_assertions: []
+aspire_law: "Law #14 — no agent name confusion; Law #3 — fail closed on blank business_name"

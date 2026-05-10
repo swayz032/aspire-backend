@@ -1,0 +1,31 @@
+name: t08_emergency_keyword_seriously_tag
+description: Caller on FrontDesk line reports an emergency (no heat) — Sarah acknowledges seriously, fast-tracks capture, dispatches urgently.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  A caller reaches the internal FrontDesk line and reports "We have no heat
+  and it's freezing in here — this is an emergency." The agent must treat this
+  seriously, capture name, address, and callback number immediately, and confirm
+  the owner will be contacted urgently. The Seriously audio tag is expected.
+simulation_max_turns: 6
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  trade_emergency_keywords: "no heat, no cooling, gas leak, CO alarm, frozen pipes, sparks, no power, water leak"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent immediately acknowledges the emergency (no heat). The agent
+  fast-tracks to getting name, address, and callback number. The agent confirms
+  urgent owner dispatch. The agent does NOT treat this as a routine scheduling
+  request. The tone is serious and urgent throughout the emergency capture.
+failure_examples:
+  - "Sure, I can put you on the schedule for next week."
+  - "Let me set up a non-urgent appointment for you."
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — emergency fast-track; audio tag Seriously expected"

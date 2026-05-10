@@ -1,0 +1,35 @@
+name: t03_greeting_with_blank_business_name
+description: Webhook returns business_name="" — Sarah must NOT speak an empty slot; fallback phrasing required.
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  The personalization webhook returned an empty string for business_name.
+  Sarah-Receptionist must handle this gracefully — no spoken empty slot,
+  no "calling . This is" artifact, no template token verbalized.
+simulation_max_turns: 3
+dynamic_variables:
+  business_name: ""
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: ""
+success_condition: >
+  The agent's first turn does NOT contain the substring "calling . " (a period
+  immediately following the word "calling" with a space). The agent does NOT
+  speak a literal empty slot or a visible template token like "{{business_name}}".
+  The agent identifies itself as Sarah. The greeting is grammatically complete
+  and professional regardless of the missing business name.
+success_examples:
+  - "Good afternoon, this is Sarah. How can I help you today?"
+  - "Hi, this is Sarah — thanks for calling! How can I assist you?"
+failure_examples:
+  - "Good evening, thank you for calling . This is Sarah, the AI front desk assistant."
+  - "Thank you for calling , this is Sarah."
+  - "Thank you for calling {{business_name}}, this is Sarah."
+tool_call_assertions: []
+aspire_law: "Law #3 — fail closed; Rule 15 — first-message empty-slot defense"
+regression_coverage: >
+  CANARY PRIMARY — This is the designated canary test for Sarah-Receptionist
+  matching the exact 2026-05-09 live call failure pattern. Daily CI run.

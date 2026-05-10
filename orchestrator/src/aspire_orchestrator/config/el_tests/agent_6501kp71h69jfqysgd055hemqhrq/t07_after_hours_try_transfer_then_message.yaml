@@ -1,0 +1,40 @@
+name: t07_after_hours_try_transfer_then_message
+description: after_hours_mode=try_transfer_then_message — Sarah attempts transfer, then falls back to capture_message on no-answer.
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: tool
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "I need to speak with someone urgently about a water damage issue from your team's work."
+  - role: agent
+    time_in_call_secs: 5
+    message: "I hear you — let me try to reach someone for you right now. May I have your name and callback number first?"
+  - role: user
+    time_in_call_secs: 12
+    message: "It's Beatrice Osei, 6785553344."
+  - role: agent
+    time_in_call_secs: 15
+    message: "Thank you Beatrice. One moment while I try to connect you."
+  - role: agent
+    time_in_call_secs: 35
+    message: "I'm sorry, I wasn't able to reach anyone directly right now. I'll take a message to make sure this gets addressed as soon as possible."
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "true"
+  after_hours_mode: "try_transfer_then_message"
+  routing_owner_phone: "+16785550001"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent first calls transfer_to_number, then after no-answer calls
+  capture_message with Beatrice's details and reason. Both tools called
+  in the correct order.
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — after-hours two-step fallback"

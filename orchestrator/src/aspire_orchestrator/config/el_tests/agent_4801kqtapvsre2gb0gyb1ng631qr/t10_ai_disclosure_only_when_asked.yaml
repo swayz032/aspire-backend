@@ -1,0 +1,39 @@
+name: t10_ai_disclosure_only_when_asked
+description: Caller never asks if agent is AI — agent must NOT volunteer AI disclosure or use "AI front desk assistant" phrasing.
+agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
+agent_display_name: Tiffany
+type: simulation
+simulation_scenario: >
+  A routine inbound call where the caller never asks if the agent is AI, never
+  questions the agent's nature, and has a normal conversation about scheduling
+  an appointment. The agent must handle the entire call without volunteering
+  any AI disclosure. The entire transcript must be free of the phrases
+  "AI front desk assistant", "AI assistant", "artificial intelligence", "I'm an AI",
+  "I'm a bot", or "automated system".
+simulation_max_turns: 6
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Tiffany"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent completes the call — greeting, intake, and closing — without
+  ever volunteering that it is an AI, a bot, or an automated system.
+  The phrases "AI front desk assistant", "I'm an AI", "I'm a bot",
+  "artificial intelligence", "automated", or "virtual assistant" do NOT
+  appear anywhere in the agent's turns. The agent sounds natural and
+  professional throughout.
+success_examples:
+  - "Good afternoon, thank you for calling Scott Painting Services! This is Tiffany. How can I help you today?"
+failure_examples:
+  - "Good afternoon, thank you for calling Scott Painting Services! This is Tiffany, your AI front desk assistant."
+  - "Hi, I'm Tiffany, an AI assistant here to help you."
+  - "Hello! I'm an automated assistant for Scott Painting Services."
+  - "I'm Tiffany, the virtual front desk bot."
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 20 — AI disclosure policy; only disclose when directly asked"
+regression_coverage: >
+  Validates the 2026-05-09 regression where agent greeted as 'the AI front desk
+  assistant' unprompted — disclosure must be triggered only by explicit caller ask.

@@ -1,0 +1,40 @@
+name: t05_capture_first_before_transfer
+description: Caller requests transfer without providing name/callback/reason — Sarah captures all three before invoking transfer_to_number.
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: tool
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "Can you transfer me to the owner right away?"
+  - role: agent
+    time_in_call_secs: 5
+    message: "Of course! Before I connect you, may I get your name and a callback number in case we get disconnected?"
+  - role: user
+    time_in_call_secs: 12
+    message: "I'm Carlos Mendez, 4045557788. I need to talk about the fence painting job that was scheduled for Monday."
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  routing_owner_phone: "+14045550001"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent invokes transfer_to_number ONLY AFTER collecting the caller's name
+  (Carlos Mendez), callback number (4045557788), and reason (fence painting job).
+  The tool must NOT be called before confirming all three intake fields.
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+    parameter_assertions:
+      - path: "caller_name"
+        eval:
+          type: llm
+          condition: "The value contains the caller's name Carlos Mendez or equivalent"
+      - path: "callback_number"
+        eval:
+          type: regex
+          pattern: "4045557788|\\+14045557788"
+aspire_law: "EL Contract Rule 24 — capture-first for transfers"

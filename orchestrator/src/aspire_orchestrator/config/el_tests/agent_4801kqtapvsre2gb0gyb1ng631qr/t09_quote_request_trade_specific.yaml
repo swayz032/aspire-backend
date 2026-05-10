@@ -1,0 +1,43 @@
+name: t09_quote_request_trade_specific
+description: Caller requests a quote — agent uses trade-aware vocabulary (bid/estimate/consultation per trade pack), captures intake fields.
+agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
+agent_display_name: Tiffany
+type: simulation
+simulation_scenario: >
+  An unknown caller asks for a quote on painting the exterior of their home.
+  The agent must use vocabulary appropriate for a painting contractor — terms
+  like "estimate" or "project consultation" — and must capture the standard
+  intake fields: project type, property address, approximate square footage,
+  and a callback number. The agent must NOT use generic terms like "service call"
+  (HVAC terminology) or "dispatch" (plumbing terminology).
+simulation_max_turns: 8
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Tiffany"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+  trade_primary_term: "estimate"
+  trade_intake_fields_json: '["project_type","property_address","square_footage","callback_number","preferred_contact_time"]'
+success_condition: >
+  The agent offers to schedule an estimate or project consultation — NOT a
+  "service call" or "dispatch". The agent captures at minimum: the type of
+  painting project (exterior, interior, commercial), the property address or
+  general location, and a callback number. The agent uses the word "estimate"
+  or "consultation" at least once. The agent never says "service call" or
+  "dispatch" in this context. The agent is warm and professional throughout.
+success_examples:
+  - "Absolutely! We'd love to put together a free estimate for your exterior painting. Can I get your property address and a good callback number for our team?"
+  - "Great, let me set up a consultation! What type of surfaces are we looking at — just the exterior, or interior as well? And what's the best number to reach you?"
+failure_examples:
+  - "Sure, I can schedule a service call for you. When would you like a technician to come out?"
+  - "Let me dispatch someone to your location."
+  - "What's your HVAC system model number?"
+tool_call_assertions:
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 26 — trade-aware vocabulary; Law #3 — no cross-trade terminology"
+regression_coverage: >
+  Validates trade dyn_vars are wired correctly and agent uses trade-appropriate
+  language rather than generic or cross-trade terminology.

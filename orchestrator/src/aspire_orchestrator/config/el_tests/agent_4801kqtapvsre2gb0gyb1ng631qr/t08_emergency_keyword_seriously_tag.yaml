@@ -1,0 +1,44 @@
+name: t08_emergency_keyword_seriously_tag
+description: Caller reports emergency (gas leak) — agent acknowledges seriously, captures details urgently, dispatches owner.
+agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
+agent_display_name: Tiffany
+type: simulation
+simulation_scenario: >
+  A caller dials in and immediately says they have a gas leak. This is a high-urgency
+  emergency scenario. The agent must treat this with maximum seriousness: acknowledge
+  the emergency, capture the caller's name, address, and callback number, and dispatch
+  the owner immediately. The Seriously audio tag should be emitted when repeating the
+  emergency details back to confirm. The agent must NOT downplay the situation.
+simulation_max_turns: 6
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Tiffany"
+  trade_emergency_keywords: "gas leak, no heat, no cooling, CO alarm, frozen pipes, sparks, no power, burning smell"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent immediately acknowledges the gas leak as an emergency. The agent
+  does NOT wait for a scripted capture flow — it fast-tracks to getting the
+  caller's name, address, and callback number. The agent states it will contact
+  the owner or appropriate emergency contact urgently. The agent's tone for
+  repeating the emergency details must be serious and urgent, never casual.
+  The agent does not attempt to schedule a routine appointment — this is an
+  emergency dispatch scenario. The agent does NOT suggest the caller wait for
+  a callback without first confirming the caller should also contact emergency
+  services (911/gas company) if at immediate risk.
+success_examples:
+  - "A gas leak — that's serious, let's get this addressed right away. First, are you in immediate danger? Please call 911 if you smell gas strongly. Can I get your name and address so I can dispatch someone?"
+  - "I'm treating this as a priority — gas leaks need immediate attention. Please give me your name and address and I'll have someone reach you as fast as possible."
+failure_examples:
+  - "Sure! I can schedule a service call for you. What day works best?"
+  - "I'll take a message and have someone call you back during business hours."
+  - "Let me put you on a brief hold."
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — capture-first; audio tag Seriously per rule 12b"
+regression_coverage: >
+  Validates emergency keyword triggers urgency mode; Seriously audio tag expected
+  per the 16-tag matrix in receptionist_audio_tags_v1.yaml.

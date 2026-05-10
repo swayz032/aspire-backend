@@ -1,0 +1,45 @@
+name: t07_after_hours_try_transfer_then_message
+description: after_hours_mode=try_transfer_then_message — agent attempts transfer, then falls back to capture_message.
+agent_id: agent_4801kqtapvsre2gb0gyb1ng631qr
+agent_display_name: Tiffany
+type: tool
+chat_history:
+  - role: user
+    time_in_call_secs: 2
+    message: "Hello, I have an urgent question about a job you did for us last month."
+  - role: agent
+    time_in_call_secs: 5
+    message: "I understand — let me try to connect you with the owner. May I get your name and callback number first?"
+  - role: user
+    time_in_call_secs: 12
+    message: "Sure, I'm Dana Kowalski, 7705554321."
+  - role: agent
+    time_in_call_secs: 15
+    message: "Thank you Dana. One moment while I try to connect you."
+  - role: agent
+    time_in_call_secs: 30
+    message: "I'm sorry, it looks like the owner is unavailable right now. I'll take a message and make sure they get back to you."
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "true"
+  after_hours_mode: "try_transfer_then_message"
+  routing_owner_phone: "+17705550001"
+  agent_first_name: "Tiffany"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent first calls transfer_to_number with the routing_owner_phone.
+  After the transfer attempt fails (no answer), the agent falls back to
+  capture_message and records Dana Kowalski's callback number and reason.
+  Both tools are called: transfer_to_number first, capture_message second.
+  The agent communicates naturally throughout, not robotically repeating steps.
+tool_call_assertions:
+  - tool_name: transfer_to_number
+    expected_called: true
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 24 — correct after-hours branch logic"
+regression_coverage: >
+  Validates the two-step after_hours_mode=try_transfer_then_message flow
+  completes both tool calls in the correct sequence.

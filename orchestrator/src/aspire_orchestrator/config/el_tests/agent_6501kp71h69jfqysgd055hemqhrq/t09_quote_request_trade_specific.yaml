@@ -1,0 +1,34 @@
+name: t09_quote_request_trade_specific
+description: Caller requests a quote — Sarah uses trade-appropriate vocabulary (estimate/consultation, not service call or dispatch).
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  An unknown caller asks for a quote on painting their house interior.
+  Sarah must use vocabulary appropriate for a painting contractor and capture
+  the standard intake fields. She must not use HVAC or plumbing trade terminology.
+simulation_max_turns: 8
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+  trade_primary_term: "estimate"
+  trade_intake_fields_json: '["project_type","property_address","square_footage","callback_number","preferred_contact_time"]'
+success_condition: >
+  The agent offers to schedule an estimate or consultation — NOT a "service call"
+  or "dispatch". The agent captures project type, address/location, and callback
+  number. The word "estimate" or "consultation" appears at least once. The agent
+  never says "service call", "dispatch", "technician", or "HVAC" in this context.
+success_examples:
+  - "We'd love to give you a free estimate! Can I get your property address and a callback number for our team?"
+failure_examples:
+  - "I'll have a technician dispatched to your location."
+  - "Let me schedule a service call for you."
+  - "What's your heating system type?"
+tool_call_assertions:
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 26 — trade-aware vocabulary"

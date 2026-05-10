@@ -1,0 +1,33 @@
+name: t09_quote_request_trade_specific
+description: Internal caller asks about a quote workflow — Sarah-FrontDesk uses painting-specific vocabulary, not HVAC or plumbing terms.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  An internal team member (or a transferred caller) asks about the quote process
+  for a new painting project. Sarah-FrontDesk must use trade-appropriate vocabulary
+  and capture the necessary intake information.
+simulation_max_turns: 6
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+  trade_primary_term: "estimate"
+  trade_intake_fields_json: '["project_type","property_address","square_footage","callback_number"]'
+success_condition: >
+  The agent uses the word "estimate" or "consultation" at least once. The agent
+  does NOT use "service call", "dispatch", "technician dispatch", or any
+  non-painting-contractor terminology. The agent captures the relevant project
+  intake fields.
+success_examples:
+  - "For a painting estimate we'd want to know the scope — interior, exterior, or both — and the property address. Let me grab that info."
+failure_examples:
+  - "I'll have a technician dispatched to you."
+  - "Let me schedule a service call."
+tool_call_assertions:
+  - tool_name: capture_message
+    expected_called: true
+aspire_law: "EL Contract Rule 26 — trade-aware vocabulary"

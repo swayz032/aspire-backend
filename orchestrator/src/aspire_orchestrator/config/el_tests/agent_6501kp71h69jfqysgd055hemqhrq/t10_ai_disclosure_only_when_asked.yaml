@@ -1,0 +1,31 @@
+name: t10_ai_disclosure_only_when_asked
+description: Routine call — Sarah never volunteers AI disclosure, never says "AI front desk assistant".
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  A routine inbound call where the caller never asks if Sarah is AI. The caller
+  asks about getting a painting estimate and is happy to leave their details.
+  The full call transcript must be free of any unprompted AI disclosure.
+simulation_max_turns: 6
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The phrases "AI front desk assistant", "I'm an AI", "I'm a bot", "artificial
+  intelligence", "automated", or "virtual assistant" do NOT appear anywhere in
+  the agent's turns throughout the entire call. The agent sounds natural and
+  professional. No AI disclosure is volunteered.
+failure_examples:
+  - "Good afternoon, this is Sarah, your AI front desk assistant."
+  - "Hi, I'm Sarah, an AI here to help."
+  - "I'm Sarah, the automated front desk system."
+tool_call_assertions: []
+aspire_law: "EL Contract Rule 20 — AI disclosure only when asked"
+regression_coverage: >
+  Validates the 2026-05-09 regression where agent announced 'AI front desk
+  assistant' in the opening greeting unprompted.

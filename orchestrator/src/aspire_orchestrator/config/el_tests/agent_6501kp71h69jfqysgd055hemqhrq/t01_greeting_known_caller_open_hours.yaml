@@ -1,0 +1,38 @@
+name: t01_greeting_known_caller_open_hours
+description: Known caller during open hours — Sarah-Receptionist greets by caller first name, no AI disclosure, correct agent identity (Sarah, never Tiffany).
+agent_id: agent_6501kp71h69jfqysgd055hemqhrq
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  The caller is a known contact already stored in the CRM. Business hours are open.
+  The caller calls in and waits for the agent to greet them. The caller's first name
+  is Jordan. The caller then states their reason for calling (ask about a project update).
+simulation_max_turns: 4
+dynamic_variables:
+  business_name: "Scott Painting Services"
+  caller_is_known: "true"
+  caller_first_name: "Jordan"
+  caller_last_name: "Mills"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: "painting contractor"
+  industry_specialty: "residential and commercial painting"
+success_condition: >
+  The agent greets the caller using the caller's first name (Jordan) without
+  prompting the caller to provide their name. The agent does NOT volunteer
+  that it is an AI. The agent does NOT say "AI front desk assistant" in any
+  turn. The agent identifies itself as Sarah, not Tiffany and not any other name.
+  The word "Tiffany" must NOT appear anywhere in the agent's transcript.
+  The agent includes the business name "Scott Painting Services" in the greeting.
+success_examples:
+  - "Thank you for calling Scott Painting Services, this is Sarah! Hi Jordan, great to hear from you. How can I help you today?"
+  - "You've reached Scott Painting Services, I'm Sarah. Hey Jordan — what can I do for you?"
+failure_examples:
+  - "Good evening, thank you for calling . This is Tiffany, the AI front desk assistant."
+  - "Hello, my name is Tiffany."
+  - "Hi, I'm an AI assistant. How may I help you?"
+tool_call_assertions: []
+aspire_law: "Law #14 — no agent name confusion; Law #3 — fail closed on blank business_name"
+regression_coverage: >
+  Catches the 2026-05-09 'calling . This is Sarah' regression AND any future
+  scenario where Sarah-Receptionist incorrectly resolves to Tiffany's name.

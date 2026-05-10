@@ -1,0 +1,34 @@
+name: t03_greeting_with_blank_business_name
+description: Webhook returns business_name="" — Sarah-FrontDesk must NOT speak an empty slot; clean fallback required.
+agent_id: agent_8901kmqdjnrte7psp6en4f85m4kt
+agent_display_name: Sarah
+type: simulation
+simulation_scenario: >
+  The personalization webhook returned an empty string for business_name.
+  Sarah-FrontDesk must not produce the "calling . This is" artifact or any
+  spoken template token. The agent must still open professionally.
+simulation_max_turns: 3
+dynamic_variables:
+  business_name: ""
+  caller_is_known: "false"
+  is_after_hours: "false"
+  agent_first_name: "Sarah"
+  industry: ""
+  industry_specialty: ""
+success_condition: >
+  The agent's first turn does NOT contain "calling . " (period immediately after
+  "calling"). The agent does NOT verbalize "{{business_name}}" literally.
+  The agent identifies as Sarah and the greeting is grammatically complete
+  and professional despite the missing business name.
+success_examples:
+  - "Good afternoon, this is Sarah. How can I help you today?"
+  - "Hi, Sarah speaking — what can I do for you?"
+failure_examples:
+  - "Thank you for calling . This is Sarah."
+  - "Good morning, thank you for calling {{business_name}}, this is Sarah."
+  - "Welcome to , I'm Sarah."
+tool_call_assertions: []
+aspire_law: "Law #3 — fail closed; Rule 15 — first-message empty-slot defense"
+regression_coverage: >
+  Validates the empty-slot defense on the FrontDesk line — same root cause
+  as the 2026-05-09 Tiffany regression, different agent.
