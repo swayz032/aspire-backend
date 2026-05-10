@@ -124,33 +124,36 @@ async def _resolve_el_scope(
             )
             # Fall through to agent_id lookup
 
-    # Step 2 — provider_connections lookup by agent_id
-    try:
-        rows = await supabase_select(
-            table="provider_connections",
-            filters={"provider": "elevenlabs", "external_account_id": agent_id},
-            limit=1,
-        )
-    except SupabaseClientError as exc:
-        raise IngestionError(
-            f"provider_connections query failed: {exc.detail}",
-            code="PROVIDER_CONNECTIONS_UNAVAILABLE",
-            status_code=503,
-        ) from exc
+    # Step 2 — fallback lookup by agent_id against tenant_phone_numbers.
+    # The legacy provider_connections table doesn't exist in this Supabase
+    # project; the canonical mapping lives on tenant_phone_numbers.
+    # attached_to_agent_id (set when an agent is wired to a phone number).
+    if agent_id:
+        try:
+            rows = await supabase_select(
+                table="tenant_phone_numbers",
+                filters={"attached_to_agent_id": agent_id, "status": "active"},
+                limit=1,
+            )
+            if rows:
+                row = rows[0]
+                return ScopedIdentity(
+                    tenant_id=UUID(row["tenant_id"]),
+                    suite_id=UUID(row["suite_id"]),
+                    office_id=UUID(row["office_id"]),
+                )
+        except SupabaseClientError as exc:
+            logger.warning(
+                "el_scope_agent_lookup_failed agent_id=%s error=%s",
+                agent_id,
+                exc.detail,
+            )
 
-    if not rows:
-        raise IngestionError(
-            f"ElevenLabs agent {agent_id} not linked to any tenant "
-            f"(called_number={called_number!r})",
-            code="UNKNOWN_AGENT_OR_NUMBER",
-            status_code=404,
-        )
-
-    row = rows[0]
-    return ScopedIdentity(
-        tenant_id=UUID(row["tenant_id"]),
-        suite_id=UUID(row["suite_id"]),
-        office_id=UUID(row["office_id"]),
+    raise IngestionError(
+        f"ElevenLabs agent {agent_id!r} not linked to any tenant "
+        f"(called_number={called_number!r})",
+        code="UNKNOWN_AGENT_OR_NUMBER",
+        status_code=404,
     )
 
 
@@ -199,11 +202,24 @@ class ElevenLabsIngestionAdapter(BaseIngestionAdapter):
         return verify_elevenlabs(body, sig, settings.elevenlabs_webhook_secret)
 
     async def resolve_scope(self, payload: dict[str, Any]) -> ScopedIdentity:
-        """Resolve tenant from called_number (primary) or agent_id (fallback)."""
+        """Resolve tenant from called_number (primary) or agent_id (fallback).
+
+        EL post-call payload shape varies by phone provider:
+          - Twilio inbound: `metadata.phone_call.agent_number` is the dialed
+            (Aspire) number; `external_number` is the caller.
+          - SIP / generic:  `metadata.phone_call.to_number` is the called.
+          - Older shape:    `metadata.called_number` at the top level.
+        Try all three so we handle every provider.
+        """
         data = payload.get("data", {})
         agent_id: str = data.get("agent_id", "")
-        metadata = data.get("metadata", {})
-        called_number: str | None = metadata.get("called_number")
+        metadata = data.get("metadata", {}) or {}
+        phone_call = metadata.get("phone_call", {}) or {}
+        called_number: str | None = (
+            phone_call.get("agent_number")
+            or phone_call.get("to_number")
+            or metadata.get("called_number")
+        )
         return await _resolve_el_scope(called_number, agent_id)
 
     async def build_envelope(
@@ -266,8 +282,22 @@ class ElevenLabsIngestionAdapter(BaseIngestionAdapter):
             .get("dynamic_variables", {})
         )
         transcript_turns: list[dict[str, Any]] = data.get("transcript", [])
-        duration_secs: int = int(metadata.get("duration_secs", 0))
-        called_number: str | None = metadata.get("called_number")
+        # EL Twilio post-call payloads nest call data under metadata.phone_call.
+        # Twilio uses `agent_number` (dialed) + `external_number` (caller).
+        # SIP / generic uses `to_number` / `from_number`. Top-level
+        # metadata.called_number is the legacy shape. Try them all.
+        phone_call_meta_top: dict[str, Any] = metadata.get("phone_call", {}) or {}
+        duration_secs: int = int(
+            metadata.get("duration_secs")
+            or metadata.get("call_duration_secs")
+            or phone_call_meta_top.get("call_duration_secs")
+            or 0
+        )
+        called_number: str | None = (
+            phone_call_meta_top.get("agent_number")
+            or phone_call_meta_top.get("to_number")
+            or metadata.get("called_number")
+        )
         summary_text: str = analysis.get("transcript_summary", "") or ""
         intents_detected: list[Any] = analysis.get("intents_detected", []) or []
 
@@ -277,8 +307,12 @@ class ElevenLabsIngestionAdapter(BaseIngestionAdapter):
         event_at = datetime.now(timezone.utc)
 
         # Law #9: truncate transcript to 80 chars at DEBUG only
+        # `t.get("message", "")` only catches MISSING keys, not None values —
+        # EL silent turns ("agent: None") have an explicit None message which
+        # crashed " ".join() with TypeError ("sequence item N: expected str
+        # instance, NoneType found"). Coerce defensively.
         transcript_flat = " ".join(
-            t.get("message", "") for t in transcript_turns
+            str(t.get("message") or "") for t in transcript_turns
         )
         preview = (transcript_flat[:80] + "…") if len(transcript_flat) > 80 else transcript_flat
         logger.debug(
@@ -396,6 +430,160 @@ class ElevenLabsIngestionAdapter(BaseIngestionAdapter):
             summary_memory.memory_id,
             str(scope.tenant_id),
         )
+
+        # ── Caller Memory enrichment (W5/W6, migration 110) ──────────────────
+        # After memory_objects are persisted, enrich the structured frontdesk
+        # tables: upsert contact, log call_session, optionally write voicemail
+        # and notify owner. Failures here are logged but do NOT raise — the
+        # memory_objects writes above are the authoritative trail per Law #2,
+        # and the post-call webhook MUST return 200 to avoid EL retries.
+        try:
+            from aspire_orchestrator.services import (
+                contact_writer,
+                call_logger,
+                voicemail_writer,
+                voicemail_notifier,
+            )
+
+            phone_call_meta: dict[str, Any] = metadata.get("phone_call", {}) or {}
+            # Twilio: external_number is the caller. SIP/generic: from_number.
+            # Legacy: caller_id at top level.
+            caller_id = (
+                phone_call_meta.get("external_number")
+                or phone_call_meta.get("from_number")
+                or metadata.get("caller_id")
+                or ""
+            )
+            recording_url = (
+                phone_call_meta.get("recording_url")
+                or metadata.get("recording_url")
+                or ""
+            )
+            data_collection_results: dict[str, Any] = (
+                analysis.get("data_collection_results") or {}
+            )
+            start_unix = metadata.get("start_time_unix_secs")
+            end_unix = metadata.get("end_time_unix_secs")
+            started_at = (
+                datetime.fromtimestamp(start_unix, tz=timezone.utc)
+                if start_unix
+                else None
+            )
+            ended_at = (
+                datetime.fromtimestamp(end_unix, tz=timezone.utc)
+                if end_unix
+                else None
+            )
+
+            # Upsert contact (only when caller_id is known — anonymous calls skip)
+            contact_id: str | None = None
+            if caller_id and str(scope.suite_id):
+                # Pull the category Tiffany classified the caller into during the call.
+                # Field comes from data_collection.category (lead | client | vendor |
+                # friend | other | unknown). The shape may be flat ('lead') or nested
+                # ({'value': 'lead', 'reasoning': '...'}) — handle both.
+                _cat_raw = data_collection_results.get("category")
+                if isinstance(_cat_raw, dict):
+                    contact_category = str(_cat_raw.get("value", "") or "").strip().lower()
+                else:
+                    contact_category = str(_cat_raw or "").strip().lower()
+                contact_id = await contact_writer.upsert_contact_from_call(
+                    suite_id=str(scope.suite_id),
+                    tenant_id=str(scope.tenant_id),
+                    office_id=str(scope.office_id),
+                    phone_e164=caller_id,
+                    caller_name=str(
+                        (data_collection_results.get("caller_name") or {}).get("value", "")
+                        if isinstance(data_collection_results.get("caller_name"), dict)
+                        else (data_collection_results.get("caller_name") or "")
+                    ),
+                    call_summary=summary_text or transcript_summary or "",
+                    conversation_id=conversation_id,
+                    category=contact_category or None,
+                    trace_id=trace_id,
+                    correlation_id=correlation_id,
+                )
+
+            # Log call_session (always — even anonymous calls)
+            call_session_id = await call_logger.log_call_session(
+                suite_id=str(scope.suite_id),
+                tenant_id=str(scope.tenant_id),
+                office_id=str(scope.office_id),
+                contact_id=contact_id,
+                conversation_id=conversation_id,
+                from_number=caller_id,
+                to_number=called_number or "",
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_seconds=duration_secs,
+                transcript_summary=summary_text or transcript_summary or "",
+                recording_url=recording_url,
+                data_collection_json=data_collection_results or None,
+                trace_id=trace_id,
+                correlation_id=correlation_id,
+            )
+
+            # Voicemail: only if a callback_number was captured AND a reason was
+            # given. This is the gate that distinguishes "agent took a message"
+            # from "agent transferred / answered FAQ / call dropped early."
+            def _dc_value(field: str) -> str:
+                raw = data_collection_results.get(field)
+                if isinstance(raw, dict):
+                    return str(raw.get("value", "") or "")
+                return str(raw or "")
+
+            callback_number = _dc_value("callback_number").strip()
+            call_reason = _dc_value("call_reason").strip()
+            took_message = bool(callback_number and call_reason)
+
+            if took_message:
+                voicemail_id = await voicemail_writer.write_voicemail(
+                    suite_id=str(scope.suite_id),
+                    tenant_id=str(scope.tenant_id),
+                    office_id=str(scope.office_id),
+                    contact_id=contact_id,
+                    call_session_id=call_session_id,
+                    from_e164=caller_id,
+                    to_e164=called_number or "",
+                    duration_seconds=duration_secs,
+                    recording_uri=recording_url,
+                    transcript_text=transcript_flat,
+                    data_collection_results=data_collection_results,
+                    conversation_id=conversation_id,
+                    trace_id=trace_id,
+                    correlation_id=correlation_id,
+                )
+                # Notify owner — email always, SMS only on high urgency
+                voicemail_payload = {
+                    **data_collection_results,
+                    "recording_uri": recording_url,
+                    "transcript_text": transcript_flat,
+                }
+                try:
+                    await voicemail_notifier.notify_owner(
+                        suite_id=str(scope.suite_id),
+                        tenant_id=str(scope.tenant_id),
+                        office_id=str(scope.office_id),
+                        voicemail_id=voicemail_id,
+                        voicemail_data=voicemail_payload,
+                        trace_id=trace_id,
+                        correlation_id=correlation_id,
+                    )
+                except Exception as notify_exc:  # noqa: BLE001
+                    logger.warning(
+                        "el_voicemail_notify_failed conversation_id=%s err=%s",
+                        conversation_id,
+                        notify_exc,
+                    )
+        except Exception as enrich_exc:  # noqa: BLE001
+            # Enrichment failures must NEVER fail the webhook — the
+            # memory_objects writes above already cut receipts (Law #2).
+            logger.warning(
+                "el_caller_memory_enrichment_failed conversation_id=%s err=%s",
+                conversation_id,
+                enrich_exc,
+            )
+
         return IngestionResult(memory=summary_memory, deduplicated=False)
 
 
