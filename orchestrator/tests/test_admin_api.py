@@ -485,18 +485,18 @@ class TestProviderCallsEndpoint:
     def test_list_with_status_filter(self, client, admin_headers) -> None:
         """Provider calls can be filtered by status."""
         register_provider_call(_make_provider_call(status="success"))
-        register_provider_call(_make_provider_call(status="error"))
+        register_provider_call(_make_provider_call(status="failed"))
         register_provider_call(_make_provider_call(status="success"))
 
         response = client.get(
             "/admin/ops/provider-calls",
             headers=admin_headers,
-            params={"status": "error"},
+            params={"status": "failed"},
         )
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
-        assert data["items"][0]["status"] == "error"
+        assert data["items"][0]["status"] == "failed"
 
     def test_payload_preview_is_redacted(self, client, admin_headers) -> None:
         """Provider call payload preview is always present and truncated (Law #9)."""
