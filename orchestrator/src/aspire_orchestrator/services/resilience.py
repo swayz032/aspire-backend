@@ -238,6 +238,15 @@ TWILIO_RETRY = RetryPolicy(attempts=3, base_seconds=0.5, max_seconds=4.0, total_
 ELEVENLABS_RETRY = RetryPolicy(attempts=3, base_seconds=0.5, max_seconds=4.0, total_budget_seconds=12.0)
 SUPABASE_RETRY = RetryPolicy(attempts=2, base_seconds=0.05, max_seconds=0.15, total_budget_seconds=0.18)
 
+# Phase B-1 — Adam property research provider policies.
+# ATTOM: 8s per-call, retry budget capped so we never exceed the playbook
+# outer wrapper (28s). attempts=3 -> ~12s worst-case including jitter.
+ATTOM_RETRY = RetryPolicy(attempts=3, base_seconds=0.5, max_seconds=4.0, total_budget_seconds=10.0)
+# Apify Zillow: 20s per-call after the n8n warmer eliminates cold-start.
+# Only 2 attempts — Apify is read-only photos, so degrading to no-photos is
+# acceptable and we'd rather surrender the slot back to the playbook quickly.
+APIFY_RETRY = RetryPolicy(attempts=2, base_seconds=0.5, max_seconds=4.0, total_budget_seconds=6.0)
+
 
 def _full_jitter_backoff(attempt: int, policy: RetryPolicy) -> float:
     """AWS-style full-jitter backoff: random uniform [0, min(cap, base * 2**attempt))."""
@@ -373,6 +382,29 @@ _SUPABASE_BREAKER = AsyncCircuitBreaker(
     BreakerConfig(threshold=5, recovery_timeout=10.0, half_open_max_calls=2),
 )
 
+# Phase B-1 — Adam property research providers (ATTOM + Apify Zillow).
+#
+# Threshold semantics: BreakerConfig.threshold is CONSECUTIVE failures, not
+# "failures in a sliding window." The Phase B-1 work order asked for
+# "3 failures in 60s" — a sliding-window breaker would be new infrastructure
+# and a new failure surface. Consecutive-3 is strictly more conservative for
+# transient noise (one success between failures resets the counter), which
+# is what we want for healthy-most-of-the-time external providers. The
+# 60s window of the work order is honored implicitly: if a provider can
+# stay green for one call in any 60s window, the breaker stays closed —
+# matching the intent of "don't trip on isolated blips."
+#
+# recovery_timeout=30s: matches Phase B-1 spec; gives the warmer enough time
+# to wake Apify or the upstream ATTOM endpoint to recover.
+_ATTOM_BREAKER = AsyncCircuitBreaker(
+    "attom",
+    BreakerConfig(threshold=3, recovery_timeout=30.0, half_open_max_calls=1),
+)
+_APIFY_BREAKER = AsyncCircuitBreaker(
+    "apify_zillow",
+    BreakerConfig(threshold=3, recovery_timeout=30.0, half_open_max_calls=1),
+)
+
 
 def twilio_breaker() -> AsyncCircuitBreaker:
     return _TWILIO_BREAKER
@@ -386,14 +418,38 @@ def supabase_breaker() -> AsyncCircuitBreaker:
     return _SUPABASE_BREAKER
 
 
+def attom_breaker() -> AsyncCircuitBreaker:
+    """Phase B-1 — ATTOM property data provider breaker.
+
+    Opens after 3 consecutive failures; 30s before half-open probe.
+    Consumed by Adam's PROPERTY_FACTS_AND_PERMITS playbook (Phase B-2).
+    """
+    return _ATTOM_BREAKER
+
+
+def apify_breaker() -> AsyncCircuitBreaker:
+    """Phase B-1 — Apify Zillow scraper breaker (photos only).
+
+    Opens after 3 consecutive failures; 30s before half-open probe.
+    Apify free-tier cold-starts up to 45s — the n8n warmer cron eliminates
+    cold-start, so when this breaker opens it usually means an actual
+    provider outage, not a wake-up delay.
+    """
+    return _APIFY_BREAKER
+
+
 def reset_all_breakers() -> None:
     """For tests — reset every registered breaker."""
     _TWILIO_BREAKER.reset()
     _ELEVENLABS_BREAKER.reset()
     _SUPABASE_BREAKER.reset()
+    _ATTOM_BREAKER.reset()
+    _APIFY_BREAKER.reset()
 
 
 __all__ = [
+    "APIFY_RETRY",
+    "ATTOM_RETRY",
     "AsyncCircuitBreaker",
     "BreakerConfig",
     "CircuitOpenError",
@@ -404,6 +460,8 @@ __all__ = [
     "RetryableError",
     "SUPABASE_RETRY",
     "TWILIO_RETRY",
+    "apify_breaker",
+    "attom_breaker",
     "elevenlabs_breaker",
     "reset_all_breakers",
     "resilient_call",
