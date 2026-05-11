@@ -1741,9 +1741,10 @@ async def execute_attom_poi_search(
     # entirely — V4 ignores it and we're now V4-only.
     params["radius"] = str(payload.get("radius") or 5)
     params["pageSize"] = str(payload.get("pageSize") or 50)
-    # Sort by distance ascending so closest POIs are first — guarantees a
-    # useful "near me" UX regardless of ATTOM's default ordering.
-    params["orderBy"] = str(payload.get("orderby") or "DISTANCE")
+    # ATTOM v4 /neighborhood/poi rejects `orderBy` as an invalid parameter
+    # (verified 2026-05-11: 200 OK without it, 400 "Invalid Parameter(s)
+    # in Request - ORDERBY" when included). v4 already returns POIs in
+    # distance order by default.
 
     # Default category whitelist drops 4 of the 14 ATTOM POI categories
     # (FARM-RANCH, AUTOMOTIVE SERVICES, PET SERVICES, ORGANIZATIONS-
