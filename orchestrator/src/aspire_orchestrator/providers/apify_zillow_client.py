@@ -12,7 +12,12 @@ Endpoint: POST /v2/acts/maxcopell~zillow-detail-scraper/run-sync-get-dataset-ite
 Body:    { "addresses": [<address>], "propertyStatus": "FOR_SALE" }
 Response: list[dict] — one entry per address with responsivePhotos / photos arrays
 
-Cold-start: Apify actors can take 10s+ to start. Timeout configured at 15s.
+Cold-start: Apify actors can take 10s+ to start. Phase B-1 (2026-05-11):
+HTTP client timeout is 20s now that the n8n warmer cron ("Adam Apify Zillow
+Warmer", */4 * * * *) keeps the actor container hot. 20s comfortably covers
+a warm-path round-trip; deeper cold-starts are handled by per-call retries
+(resilient_call + RetryPolicy APIFY_RETRY) and the apify_breaker, not by
+stretching this per-call timeout.
 Free plan: ~1,388 lookups/month at $5/mo (talismatic_labyrinth user).
 
 Fail-closed (Law #3): Apify failure does NOT block ATTOM facts. The playbook
@@ -55,13 +60,23 @@ class ApifyZillowClient(BaseProviderClient):
 
     provider_id = "apify_zillow"
     base_url = "https://api.apify.com/v2"
-    # 90s HTTP wallclock — Apify Zillow actor cold-starts can hit 30-45s
-    # before returning the first byte; 15s was rejecting valid responses
-    # with TIMEOUT (verified in production logs 2026-05-10). The Apify run
-    # itself is server-bounded by _APIFY_RUN_TIMEOUT_SECONDS=120 query param,
-    # so the client just needs enough headroom to outlast cold start.
-    timeout_seconds = 90.0
-    max_retries = 1
+    # Phase B-1 (2026-05-11): lowered from 90.0 -> 20.0.
+    # Rationale: a 90s HTTP wallclock undermined the playbook outer wrapper
+    # (28s after B-1) — a single Apify cold-start could discard 12
+    # already-successful ATTOM responses with PLAYBOOK_TIMEOUT. The n8n
+    # warmer cron keeps the actor container hot so warm-path p95 ~2-4s and
+    # 20s covers it comfortably. Cold-start scenarios are now handled by
+    # the resilient_call wrapper (RetryPolicy=APIFY_RETRY) + apify_breaker
+    # at the playbook layer (Phase B-2) — not by stretching this timeout.
+    # In-client retries removed (max_retries=0); the resilient_call wrapper
+    # owns retry policy so the breaker observes every attempt and the
+    # retry budget is bounded across the whole playbook, not duplicated
+    # at the client layer.
+    # NB: _APIFY_RUN_TIMEOUT_SECONDS (Apify actor server-side cap, still
+    # 120s) is intentionally not lowered in B-1 — Phase B-2 will tighten
+    # it to ~18s alongside the playbook refactor that consumes the breaker.
+    timeout_seconds = 20.0
+    max_retries = 0
     idempotency_support = False
 
     async def _authenticate_headers(

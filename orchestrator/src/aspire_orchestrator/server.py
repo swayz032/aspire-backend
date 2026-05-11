@@ -1899,7 +1899,14 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                             ctx=adam_ctx,
                             **extra_kwargs,
                         ),
-                        timeout=45.0,  # 45s — leaves 10s margin within ElevenLabs 55s tool timeout
+                        # Phase B-1 (2026-05-11): 45.0 -> 28.0.
+                        # Tighter wrapper forces per-leg timeout discipline at the
+                        # playbook layer (Phase B-2) instead of allowing one slow
+                        # provider (typically Apify cold-start) to discard 12
+                        # already-successful ATTOM responses with PLAYBOOK_TIMEOUT.
+                        # 28s leaves 27s of headroom under the ElevenLabs 55s tool
+                        # budget (55 - 28 = 27s) for network + envelope work.
+                        timeout=28.0,
                     )
 
                     # Strip PII from records before sending to client (Law #9)
@@ -2028,14 +2035,27 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 except _asyncio.TimeoutError:
                     logger.error("Adam playbook %s timed out for: %s", playbook.name, full_task[:80])
                     # F-CRIT-2: emit a failure receipt for timeout (Law #2 — every
-                    # outcome generates a receipt, and 45s of LLM-blocking work
+                    # outcome generates a receipt, and 28s of LLM-blocking work
                     # was a state-changing event from the audit perspective).
+                    # Phase B-1 (2026-05-11): reason_code distinguishes the outer
+                    # wrapper timeout (this branch — entire playbook over budget)
+                    # from the per-provider timeouts that Phase B-2 will introduce
+                    # at the playbook layer ("PROVIDER_TIMEOUT_ATTOM",
+                    # "PROVIDER_TIMEOUT_APIFY"). Receipt readers that match on the
+                    # legacy "PLAYBOOK_TIMEOUT" should add "PLAYBOOK_WRAPPER_TIMEOUT"
+                    # as an alias. The envelope-level error string stays
+                    # "PLAYBOOK_TIMEOUT" so the existing desktop client keeps
+                    # working until Phase C ships the degraded-providers handler.
                     timeout_receipt = _adam_receipt(
                         action_type="adam.research_timeout",
                         outcome="failed",
-                        reason_code="PLAYBOOK_TIMEOUT",
+                        reason_code="PLAYBOOK_WRAPPER_TIMEOUT",
                         tool_used=f"adam.playbook.{playbook.name}",
-                        redacted_outputs={"playbook": playbook.name, "timeout_seconds": 45.0},
+                        redacted_outputs={
+                            "playbook": playbook.name,
+                            "timeout_seconds": 28.0,
+                            "timeout_kind": "wrapper",
+                        },
                     )
                     try:
                         store_receipts([timeout_receipt])
