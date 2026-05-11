@@ -207,6 +207,20 @@ class PropertyRecord:
     sources: list[SourceAttribution] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
+    # Phase B-1 (2026-05-11) — degraded-provider surface for the desktop card.
+    # The Phase B-2 playbook refactor will populate these:
+    #   status: 'ok'      — every provider succeeded (default)
+    #           'partial' — >=1 provider succeeded, >=1 was degraded/timeout
+    #           'failed'  — no provider succeeded (record will be ~empty)
+    # degraded_providers: provider IDs that did NOT contribute facts/photos
+    #   ("attom", "apify_zillow"). Empty list when status='ok'.
+    # Typed as `str` / `list[str]` (not `Literal[...]`) to match the rest of
+    # this dataclass — the file deliberately avoids typing.Literal imports.
+    # The allowed values are documented here and validated upstream when the
+    # playbook constructs the record.
+    status: str = "ok"
+    degraded_providers: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
         for k, v in self.__dict__.items():

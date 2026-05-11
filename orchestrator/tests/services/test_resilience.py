@@ -277,3 +277,146 @@ async def test_resilient_call_custom_classifier() -> None:
     )
     assert result == "ok"
     assert state["calls"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase B-1 — attom_breaker() + apify_breaker() factories
+# ---------------------------------------------------------------------------
+#
+# These cover the contract the Phase B-2 playbook refactor relies on:
+#   threshold=3 (consecutive failures), recovery_timeout=30s.
+# We avoid sleeping 30s in tests by verifying the CONFIG independently of
+# verifying recovery BEHAVIOR (recovery is already covered by the existing
+# test_breaker_open_to_half_open_after_recovery test). This split keeps the
+# suite fast while still asserting both halves of the contract.
+
+from aspire_orchestrator.services.resilience import (  # noqa: E402
+    APIFY_RETRY,
+    ATTOM_RETRY,
+    apify_breaker,
+    attom_breaker,
+    reset_all_breakers,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_breakers_around_factory_tests():
+    """Adam breakers are module-level singletons; reset before AND after each
+    test in this file's factory section so leftover failure counts from one
+    test never contaminate the next. The autouse fixture applies to every
+    test in this module but is idempotent for the earlier tests which use
+    locally-constructed AsyncCircuitBreaker instances.
+    """
+    reset_all_breakers()
+    yield
+    reset_all_breakers()
+
+
+def test_attom_breaker_is_singleton() -> None:
+    """Factory returns the same instance every call (module-level singleton)."""
+    a = attom_breaker()
+    b = attom_breaker()
+    assert a is b
+    assert a.name == "attom"
+
+
+def test_apify_breaker_is_singleton() -> None:
+    a = apify_breaker()
+    b = apify_breaker()
+    assert a is b
+    assert a.name == "apify_zillow"
+
+
+def test_attom_breaker_config_matches_phase_b1_spec() -> None:
+    """Phase B-1 spec: threshold=3, recovery_timeout=30.0, half_open=1."""
+    b = attom_breaker()
+    assert b.config.threshold == 3
+    assert b.config.recovery_timeout == 30.0
+    assert b.config.half_open_max_calls == 1
+
+
+def test_apify_breaker_config_matches_phase_b1_spec() -> None:
+    b = apify_breaker()
+    assert b.config.threshold == 3
+    assert b.config.recovery_timeout == 30.0
+    assert b.config.half_open_max_calls == 1
+
+
+def test_attom_breaker_opens_after_3_consecutive_failures() -> None:
+    b = attom_breaker()
+    assert b.state == CircuitState.CLOSED
+    b.record_failure()
+    b.record_failure()
+    assert b.state == CircuitState.CLOSED  # not yet at threshold
+    b.record_failure()
+    assert b.state == CircuitState.OPEN
+
+
+def test_apify_breaker_opens_after_3_consecutive_failures() -> None:
+    b = apify_breaker()
+    assert b.state == CircuitState.CLOSED
+    for _ in range(3):
+        b.record_failure()
+    assert b.state == CircuitState.OPEN
+
+
+def test_attom_breaker_success_resets_failure_counter() -> None:
+    """One success between failures must reset the consecutive-failure count
+    so isolated blips don't open the breaker."""
+    b = attom_breaker()
+    b.record_failure()
+    b.record_failure()
+    b.record_success()
+    b.record_failure()
+    b.record_failure()
+    assert b.state == CircuitState.CLOSED  # counter reset by the success
+
+
+def test_apify_breaker_success_resets_failure_counter() -> None:
+    b = apify_breaker()
+    b.record_failure()
+    b.record_failure()
+    b.record_success()
+    b.record_failure()
+    b.record_failure()
+    assert b.state == CircuitState.CLOSED
+
+
+def test_attom_and_apify_breakers_are_independent() -> None:
+    """Failures on ATTOM must not open the Apify breaker (and vice versa)."""
+    a = attom_breaker()
+    p = apify_breaker()
+    for _ in range(3):
+        a.record_failure()
+    assert a.state == CircuitState.OPEN
+    assert p.state == CircuitState.CLOSED
+
+
+def test_reset_all_breakers_resets_new_adam_breakers() -> None:
+    """Verify reset_all_breakers() was wired up for the new factories so
+    test suites that rely on it don't leak state across tests."""
+    a = attom_breaker()
+    p = apify_breaker()
+    for _ in range(3):
+        a.record_failure()
+        p.record_failure()
+    assert a.state == CircuitState.OPEN
+    assert p.state == CircuitState.OPEN
+    reset_all_breakers()
+    assert a.state == CircuitState.CLOSED
+    assert p.state == CircuitState.CLOSED
+
+
+def test_attom_retry_policy_bounded_for_28s_wrapper() -> None:
+    """ATTOM_RETRY total_budget_seconds must fit comfortably under the
+    Phase B-1 outer wrapper (28s) so a single bad ATTOM call cannot
+    exhaust the playbook budget."""
+    assert ATTOM_RETRY.total_budget_seconds <= 12.0
+    assert ATTOM_RETRY.attempts >= 2
+
+
+def test_apify_retry_policy_bounded_for_28s_wrapper() -> None:
+    """APIFY_RETRY must be tighter than ATTOM (photos are nice-to-have,
+    facts are not). Total budget must leave room for ATTOM in parallel."""
+    assert APIFY_RETRY.total_budget_seconds <= 10.0
+    assert APIFY_RETRY.attempts >= 2

@@ -228,6 +228,116 @@ def emit_response_completed(
 
 
 # ---------------------------------------------------------------------------
+# Phase B-1 emitters — structured timing + outcome (consumed by Phase B-2).
+# ---------------------------------------------------------------------------
+#
+# These two emitters are the contract the playbook refactor (B-2) will use to
+# surface per-provider timing and overall playbook outcome to Grafana / Sentry.
+# They reuse the existing TelemetryEvent dataclass — `extra` carries the new
+# structured fields. The log line emitted by emit_event already prints
+# provider/playbook/cost/latency/status, so a downstream log-based metric
+# pipeline (Loki/Promtail or Sentry breadcrumbs) can scrape these directly.
+
+# Threshold (seconds) above which a single provider call is classified as a
+# probable cold-start. Tunable: Apify warm p95 is ~2-4s; >5s strongly suggests
+# the actor container was cold.
+_COLD_START_THRESHOLD_SECONDS = 5.0
+
+
+def emit_provider_call_timed(
+    *,
+    tenant_hash: str = "",
+    provider: str,
+    playbook: str,
+    duration_ms: float,
+    outcome: str,
+    cold_start_detected: bool | None = None,
+    error_type: str = "",
+) -> None:
+    """Phase B-1 — emit a provider call with explicit duration + cold-start flag.
+
+    Field names match the Phase B-1 spec exactly:
+      - adam.<provider>.duration_ms
+      - adam.<provider>.cold_start_detected
+      - adam.<provider>.outcome
+
+    Args:
+      provider: provider id (e.g., "attom", "apify_zillow"). The field-name
+        prefix `adam.<provider>.*` is derived from this value.
+      playbook: playbook name (e.g., "PROPERTY_FACTS_AND_PERMITS").
+      duration_ms: wall-clock time for the single call, in milliseconds.
+      outcome: one of "success", "unavailable", "failed", "circuit_open",
+        "timeout". The playbook (Phase B-2) maps provider results to this.
+      cold_start_detected: bool. If None, auto-derived from
+        `duration_ms > _COLD_START_THRESHOLD_SECONDS * 1000` AND outcome=="success"
+        (a failed call is never classified as cold-start).
+      error_type: optional exception class name when outcome != "success".
+
+    Law #9: no PII in any field — `tenant_hash` is a one-way hash, never the
+    raw suite/office ID.
+    """
+    if cold_start_detected is None:
+        cold_start_detected = (
+            outcome == "success" and duration_ms > (_COLD_START_THRESHOLD_SECONDS * 1000)
+        )
+    emit_event(TelemetryEvent(
+        event_type="adam_provider_call_timed",
+        tenant_hash=tenant_hash,
+        provider=provider,
+        playbook=playbook,
+        latency_ms=duration_ms,
+        status=outcome,
+        error_type=error_type,
+        extra={
+            # Mirror the spec'd structured-log field names so they appear
+            # verbatim in the log line under `extra` and any log-shipper can
+            # turn them into Prometheus/Loki metrics with no transform layer.
+            f"adam.{provider}.duration_ms": duration_ms,
+            f"adam.{provider}.cold_start_detected": cold_start_detected,
+            f"adam.{provider}.outcome": outcome,
+        },
+    ))
+
+
+def emit_playbook_outcome(
+    *,
+    tenant_hash: str = "",
+    playbook: str,
+    outcome: str,
+    total_latency_ms: float,
+    providers_called: list[str],
+    degraded_providers: list[str] | None = None,
+) -> None:
+    """Phase B-1 — emit terminal playbook outcome with degraded-provider list.
+
+    Field names match the Phase B-1 spec:
+      - adam.playbook.outcome
+      - adam.playbook.degraded_providers
+
+    Args:
+      playbook: playbook name.
+      outcome: "success" | "partial" | "failed" | "wrapper_timeout".
+      total_latency_ms: end-to-end wall-clock for the playbook.
+      providers_called: every provider the playbook tried (success OR fail).
+      degraded_providers: providers that did NOT contribute (timeout, breaker
+        open, malformed response). Empty/None when outcome="success".
+    """
+    degraded = list(degraded_providers or [])
+    emit_event(TelemetryEvent(
+        event_type="adam_playbook_outcome",
+        tenant_hash=tenant_hash,
+        playbook=playbook,
+        latency_ms=total_latency_ms,
+        status=outcome,
+        extra={
+            "adam.playbook.outcome": outcome,
+            "adam.playbook.degraded_providers": degraded,
+            "adam.playbook.providers_called": list(providers_called),
+        },
+    ))
+
+
+# ---------------------------------------------------------------------------
 # Cost calculation helpers
 # ---------------------------------------------------------------------------
 
