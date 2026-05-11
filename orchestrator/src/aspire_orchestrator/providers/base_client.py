@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -299,10 +300,17 @@ class BaseProviderClient(ABC):
         # Build URL
         url = f"{self.base_url.rstrip('/')}{request.path}"
         if request.query_params:
-            qs = "&".join(
-                f"{k}={v}" for k, v in sorted(request.query_params.items())
-            )
-            url = f"{url}?{qs}"
+            # CRITICAL: use urlencode() to percent-encode spaces, commas, and
+            # other reserved characters in parameter values. The previous
+            # raw f-string concatenation produced URLs like
+            #   ...?address1=4863 Price St&address2=Forest Park, GA 30297
+            # which ATTOM (and most strict gateways) reject with HTTP 400
+            # INPUT_INVALID_FORMAT. urlencode() emits
+            #   ...?address1=4863+Price+St&address2=Forest+Park%2C+GA+30297
+            # which parses correctly. Verified end-to-end against ATTOM
+            # assessment/detail: unencoded → 400; encoded → 200 with full
+            # property record. Sorted for deterministic cache keys.
+            url = f"{url}?{urlencode(sorted(request.query_params.items()))}"
 
         # Get auth headers
         try:
