@@ -1586,7 +1586,7 @@ async def get_trace(request: Request, correlation_id: str) -> JSONResponse:
 async def list_provider_calls(
     request: Request,
     provider: str | None = Query(None, description="Filter by provider"),
-    status: str | None = Query(None, description="Filter by status (success/error)"),
+    status: str | None = Query(None, description="Filter by status (success/failed)"),
     correlation_id_filter: str | None = Query(
         None, alias="correlation_id", description="Filter by correlation_id"
     ),
@@ -1624,10 +1624,10 @@ async def list_provider_calls(
     if provider:
         all_calls = [c for c in all_calls if c.get("provider") == provider]
     if status:
-        if status not in ("success", "error"):
+        if status not in ("success", "failed"):
             return _ops_error(
                 code="VALIDATION_ERROR",
-                message=f"Invalid status filter: {status}. Valid: success, error",
+                message=f"Invalid status filter: {status}. Valid: success, failed",
                 correlation_id=correlation_id,
                 status_code=400,
             )

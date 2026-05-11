@@ -68,7 +68,7 @@ class TestProviderCallLogger:
         )
         calls = self.logger.query_calls(provider="pandadoc")
         assert len(calls) == 1
-        assert calls[0]["status"] == "error"
+        assert calls[0]["status"] == "failed"
         assert calls[0]["error_code"] == "VENDOR_5XX"
 
     def test_log_call_all_fields_present(self):
@@ -110,7 +110,7 @@ class TestProviderCallLogger:
         self.logger.log_call(provider="a", action="x", correlation_id="c1", success=True)
         self.logger.log_call(provider="b", action="y", correlation_id="c2", success=False, error_code="TIMEOUT")
 
-        results = self.logger.query_calls(status="error")
+        results = self.logger.query_calls(status="failed")
         assert len(results) == 1
         assert results[0]["error_code"] == "TIMEOUT"
 

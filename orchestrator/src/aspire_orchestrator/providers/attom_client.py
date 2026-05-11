@@ -796,7 +796,7 @@ async def execute_attom_sale_snapshot_zip(
             "maxsaleamt": str(max_price),
             "propertytype": property_type,
             "pagesize": str(page_size),
-            "orderby": "saleSearchDate desc",
+            "orderBy": "saleSearchDate desc",
         },
         tool_id=tool_id,
         correlation_id=correlation_id,
@@ -1743,7 +1743,7 @@ async def execute_attom_poi_search(
     params["pageSize"] = str(payload.get("pageSize") or 50)
     # Sort by distance ascending so closest POIs are first — guarantees a
     # useful "near me" UX regardless of ATTOM's default ordering.
-    params["orderby"] = str(payload.get("orderby") or "DISTANCE")
+    params["orderBy"] = str(payload.get("orderby") or "DISTANCE")
 
     # Default category whitelist drops 4 of the 14 ATTOM POI categories
     # (FARM-RANCH, AUTOMOTIVE SERVICES, PET SERVICES, ORGANIZATIONS-
