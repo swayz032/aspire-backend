@@ -1734,12 +1734,20 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 The result is small enough for the LLM to process fast (~3-5KB)
                 while keeping all owner/mortgage/tax/equity/sale scalar data
                 that the PropertyCard sections need.
-                Photos kept (first 3 URLs) for card hero images.
+
+                Photos: keep up to 50 — covers any realistic Zillow listing
+                (typical max ~30 responsivePhotos). The earlier [:3] cap was
+                tuned for LLM-context payload size, but this same dict ALSO
+                ships back in the HTTP response that powers Estimate Studio's
+                Visuals tab Interior/Exterior/Roof lanes. Truncating to 3
+                meant only one photo could populate each lane after
+                heuristic categorization. 50 is a safe upper bound: ~1.5KB
+                per photo entry × 50 = 75KB worst case per record, well
+                inside the LLM's 200K token window.
                 """
                 slimmed = {k: v for k, v in record.items() if k not in _HEAVY_STRIP_FIELDS}
-                # Keep first 3 photo URLs for card hero images
                 if "photos" in slimmed and isinstance(slimmed["photos"], list):
-                    slimmed["photos"] = slimmed["photos"][:3]
+                    slimmed["photos"] = slimmed["photos"][:50]
                 # Cap amenities list
                 if "amenities" in slimmed and isinstance(slimmed["amenities"], list):
                     slimmed["amenities"] = slimmed["amenities"][:5]
