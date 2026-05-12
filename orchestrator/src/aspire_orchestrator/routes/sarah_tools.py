@@ -367,7 +367,12 @@ async def _upsert_frontdesk_contact(
     category: str,
     message: str,
 ) -> None:
-    """UPSERT into frontdesk_contacts on (phone_e164, office_id).
+    """UPSERT into frontdesk_contacts on (suite_id, phone_e164).
+
+    NOTE: The DB unique constraint is `(suite_id, phone_e164)` —
+    `frontdesk_contacts_suite_id_phone_e164_key`. Lookup MUST use suite_id
+    (not office_id) or we get duplicate-key errors on concurrent captures
+    when two offices in the same suite log the same caller.
 
     - display_name: only written when non-empty AND no existing name
     - last_call_summary: always updated (truncated to 300 chars)
@@ -421,7 +426,7 @@ async def _upsert_frontdesk_contact(
     try:
         existing_rows = await supabase_select(
             "frontdesk_contacts",
-            {"phone_e164": caller_phone, "office_id": scope["office_id"]},
+            {"phone_e164": caller_phone, "suite_id": scope["suite_id"]},
             limit=1,
         )
     except SupabaseClientError as exc:
