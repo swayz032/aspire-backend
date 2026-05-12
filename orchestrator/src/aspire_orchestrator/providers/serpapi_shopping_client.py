@@ -127,6 +127,27 @@ async def execute_serpapi_shopping_search(
             receipt_data=receipt,
         )
 
+    # Fix 7 — query length cap (security R-004). Must run BEFORE select_account()
+    # so a malformed query never burns a budget slot.
+    if len(query) > 500:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.INPUT_INVALID_FORMAT.value,
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="query exceeds 500 character limit",
+            receipt_data=receipt,
+        )
+
     # --- Dual-account budget gate (Pass A) ---
     _counts = current_counts()
     account_id = select_account()
@@ -249,11 +270,71 @@ async def execute_serpapi_shopping_search(
         )
     )
     if _is_quota:
+        # Fix 4 — emit intermediate receipt for the 429 event on the exhausted account
+        # BEFORE attempting failover (Law #2: every failure gets a receipt).
+        _pre_counts = current_counts()
+        rate_receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.RATE_LIMITED.value,
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        rate_receipt["redacted_outputs"] = {
+            "engine": "shopping",
+            "account_id": account_id,
+            "cached": False,
+            "budget_remaining_a": max(0, 240 - _pre_counts.get("A", 0)),
+            "budget_remaining_b": max(0, 240 - _pre_counts.get("B", 0)),
+            "query_normalized": query[:100],
+            "store_id": None,
+            "http_status": response.status_code,
+        }
+        try:
+            from aspire_orchestrator.services.receipt_store import store_receipts
+            store_receipts([rate_receipt])
+        except Exception:
+            pass
         mark_account_exhausted(account_id, reason=f"HTTP {response.status_code}")
+        # Fix 6 — validate key BEFORE incrementing to avoid burning a budget slot (R-003).
         other_account = "B" if account_id == "A" else "A"
+        try:
+            other_key = get_api_key(other_account)
+        except (ValueError, KeyError):
+            # No key for other account — return failure without incrementing.
+            _counts_post = current_counts()
+            no_key_receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id=tool_id,
+                risk_tier=risk_tier,
+                outcome=Outcome.FAILED,
+                reason_code=InternalErrorCode.AUTH_INVALID_KEY.value,
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            no_key_receipt["redacted_outputs"] = {
+                "engine": "shopping",
+                "account_id": None,
+                "cached": False,
+                "budget_remaining_a": max(0, 240 - _counts_post.get("A", 0)),
+                "budget_remaining_b": max(0, 240 - _counts_post.get("B", 0)),
+                "query_normalized": query[:100],
+                "store_id": None,
+            }
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id=tool_id,
+                error=f"SerpApi account {other_account} key not configured",
+                receipt_data=no_key_receipt,
+            )
         if try_increment(other_account):
             try:
-                other_key = get_api_key(other_account)
                 query_params["api_key"] = other_key
                 response = await client._request(
                     ProviderRequest(
@@ -266,7 +347,7 @@ async def execute_serpapi_shopping_search(
                     )
                 )
                 account_id = other_account
-            except KeyError:
+            except Exception:
                 pass
 
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
@@ -287,10 +368,19 @@ async def execute_serpapi_shopping_search(
         capability_token_hash=capability_token_hash,
         provider_response=response,
     )
-    # Augment receipt with budget state for audit trail (Law #2)
-    receipt["budget_account_id"] = account_id
-    receipt["budget_remaining_a"] = max(0, 240 - _post_counts.get("A", 0))
-    receipt["budget_remaining_b"] = max(0, 240 - _post_counts.get("B", 0))
+    # Fix 2 — assemble full redacted_outputs envelope (architect spec).
+    receipt["redacted_outputs"] = {
+        "engine": "shopping",
+        "account_id": account_id,
+        "cached": False,
+        "budget_remaining_a": max(0, 240 - _post_counts.get("A", 0)),
+        "budget_remaining_b": max(0, 240 - _post_counts.get("B", 0)),
+        "query_normalized": query[:100],
+        "store_id": None,
+    }
+    receipt.pop("budget_account_id", None)
+    receipt.pop("budget_remaining_a", None)
+    receipt.pop("budget_remaining_b", None)
 
     if response.success:
         raw_results = response.body.get("shopping_results", [])
