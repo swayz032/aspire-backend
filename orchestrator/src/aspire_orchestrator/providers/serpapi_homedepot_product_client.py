@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.base_client import (
     BaseProviderClient,
@@ -28,6 +27,14 @@ from aspire_orchestrator.providers.base_client import (
     ProviderRequest,
 )
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
+from aspire_orchestrator.services.adam.serpapi_budget import (
+    BudgetExhaustedError,
+    current_counts,
+    get_api_key,
+    mark_account_exhausted,
+    select_account,
+    try_increment,
+)
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
 logger = logging.getLogger(__name__)
@@ -47,12 +54,8 @@ class SerpApiHomeDepotProductClient(BaseProviderClient):
     async def _authenticate_headers(
         self, request: ProviderRequest
     ) -> dict[str, str]:
-        if not settings.serpapi_api_key:
-            raise ProviderError(
-                code=InternalErrorCode.AUTH_INVALID_KEY,
-                message="SerpApi API key not configured (ASPIRE_SERPAPI_API_KEY)",
-                provider_id=self.provider_id,
-            )
+        # SerpApi authenticates via query param, not headers.
+        # Key is injected into query_params in fetch_product_details.
         return {}
 
     def _parse_error(
@@ -162,8 +165,54 @@ async def fetch_product_details(
             receipt_data=receipt,
         )
 
-    api_key = settings.serpapi_api_key
-    if not api_key:
+    # --- Dual-account budget gate (Pass A) ---
+    _counts = current_counts()
+    account_id = select_account()
+    if account_id is None:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="SERPAPI_BUDGET_EXHAUSTED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=str(BudgetExhaustedError(_counts)),
+            receipt_data=receipt,
+        )
+
+    if not try_increment(account_id):
+        other = "B" if account_id == "A" else "A"
+        if not try_increment(other):
+            _counts = current_counts()
+            receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id=tool_id,
+                risk_tier=risk_tier,
+                outcome=Outcome.FAILED,
+                reason_code="SERPAPI_BUDGET_EXHAUSTED",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id=tool_id,
+                error=str(BudgetExhaustedError(_counts)),
+                receipt_data=receipt,
+            )
+        account_id = other
+
+    try:
+        api_key = get_api_key(account_id)
+    except KeyError:
         receipt = client.make_receipt_data(
             correlation_id=correlation_id,
             suite_id=suite_id,
@@ -178,7 +227,7 @@ async def fetch_product_details(
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id=tool_id,
-            error="SerpApi API key not configured",
+            error=f"SerpApi account {account_id} key not configured",
             receipt_data=receipt,
         )
 
@@ -201,11 +250,45 @@ async def fetch_product_details(
         )
     )
 
+    # --- 429 / quota-body exhaustion detection (Pass A) ---
+    _is_quota = (
+        response.status_code == 429
+        or (
+            not response.success
+            and response.error_message is not None
+            and any(
+                kw in response.error_message.lower()
+                for kw in ("quota", "plan", "limit exceeded", "searches/month")
+            )
+        )
+    )
+    if _is_quota:
+        mark_account_exhausted(account_id, reason=f"HTTP {response.status_code}")
+        other_account = "B" if account_id == "A" else "A"
+        if try_increment(other_account):
+            try:
+                other_key = get_api_key(other_account)
+                query_params["api_key"] = other_key
+                response = await client._request(
+                    ProviderRequest(
+                        method="GET",
+                        path="/search",
+                        query_params=query_params,
+                        correlation_id=correlation_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
+                    )
+                )
+                account_id = other_account
+            except KeyError:
+                pass
+
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
     reason = "EXECUTED" if response.success else (
         response.error_code.value if response.error_code else "FAILED"
     )
 
+    _post_counts = current_counts()
     receipt = client.make_receipt_data(
         correlation_id=correlation_id,
         suite_id=suite_id,
@@ -218,6 +301,10 @@ async def fetch_product_details(
         capability_token_hash=capability_token_hash,
         provider_response=response,
     )
+    # Augment receipt with budget state for audit trail (Law #2)
+    receipt["budget_account_id"] = account_id
+    receipt["budget_remaining_a"] = max(0, 240 - _post_counts.get("A", 0))
+    receipt["budget_remaining_b"] = max(0, 240 - _post_counts.get("B", 0))
 
     if not response.success:
         return ToolExecutionResult(
