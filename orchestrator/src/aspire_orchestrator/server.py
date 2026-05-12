@@ -1717,13 +1717,13 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             _HEAVY_STRIP_FIELDS = {
                 # Nested arrays — these are the SIZE killers (5-20 items each)
                 "sale_history", "foreclosure_records", "nearby_comps",
-                "nearby_schools", "permit_signals",
+                "nearby_schools",
                 # Heavy nested objects
                 "rating_breakdown", "trip_types", "sources",
                 "description", "styles", "geo_hierarchy",
                 # Low-value fields the LLM/cards don't need
                 "census_tract", "census_block_group", "zcta",
-                "avm_fsd", "avm_date", "_quality_score",
+                "_quality_score",
                 # Internal fields
                 "extra", "assessment_context", "school_context",
             }
@@ -1744,6 +1744,15 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 heuristic categorization. 50 is a safe upper bound: ~1.5KB
                 per photo entry × 50 = 75KB worst case per record, well
                 inside the LLM's 200K token window.
+
+                Permits: keep up to 20 — typical residential property has
+                3-10 permits over its lifetime, 20 covers heavy renovation
+                history. Estimator UI surfaces the first 8 and totals the
+                rest; ~200 bytes per entry × 20 = 4KB worst case. Adding
+                permits, avm_fsd, and avm_date back to the slim payload
+                so the desktop Context tab can render them — they were
+                stripped for LLM-context size reasons that no longer apply
+                under the 200K context window.
                 """
                 slimmed = {k: v for k, v in record.items() if k not in _HEAVY_STRIP_FIELDS}
                 if "photos" in slimmed and isinstance(slimmed["photos"], list):
@@ -1751,6 +1760,10 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 # Cap amenities list
                 if "amenities" in slimmed and isinstance(slimmed["amenities"], list):
                     slimmed["amenities"] = slimmed["amenities"][:5]
+                # Cap permit_signals — full lifetime permit history can run
+                # very long for commercial / heavily renovated parcels.
+                if "permit_signals" in slimmed and isinstance(slimmed["permit_signals"], list):
+                    slimmed["permit_signals"] = slimmed["permit_signals"][:20]
                 return slimmed
 
             # Wave A.5: office coordinates power haversine-based store
