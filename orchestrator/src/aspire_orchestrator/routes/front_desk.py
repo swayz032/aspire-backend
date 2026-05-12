@@ -1025,3 +1025,151 @@ async def get_forwarding_instructions(
         "aspire_forward_target": aspire_forward_target,
         "receipt_id": receipt_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/front-desk/inbox  — Unified chronological feed (Pass G)
+# ---------------------------------------------------------------------------
+# Merges call_sessions + frontdesk_voicemails + sms_messages + callback_promises
+# into a single chronological feed for the TodayFeed widget.
+# Each item gets a `kind` discriminator: 'call' | 'voicemail' | 'sms' | 'callback'.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/inbox")
+async def get_front_desk_inbox(
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+    x_tenant_id: str | None = Header(None, alias="x-tenant-id"),
+    x_suite_id: str | None = Header(None, alias="x-suite-id"),
+    x_office_id: str | None = Header(None, alias="x-office-id"),
+) -> dict[str, Any]:
+    """Chronological merged feed of front-desk activity for the caller's suite.
+
+    Returns items sorted by event_at desc. Max 100 items per request.
+    Use since/until (ISO 8601) to paginate by time window.
+    """
+    scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
+    suite_id = str(scope.suite_id)
+
+    # Build time filter segments
+    time_filter = ""
+    if since:
+        time_filter += f"&created_at=gte.{since}"
+    if until:
+        time_filter += f"&created_at=lte.{until}"
+
+    capped_limit = min(limit, 200)
+    items: list[dict[str, Any]] = []
+
+    # ── Calls ────────────────────────────────────────────────────────────────
+    try:
+        call_rows = await supabase_select(
+            "call_sessions",
+            f"suite_id=eq.{suite_id}{time_filter}",
+            order_by="created_at.desc",
+            limit=capped_limit,
+        )
+        for r in (call_rows or []):
+            items.append({
+                "kind": "call",
+                "id": r.get("id"),
+                "event_at": r.get("started_at") or r.get("created_at"),
+                "contact_phone": r.get("caller_id") or r.get("phone"),
+                "contact_name": r.get("contact_name"),
+                "direction": r.get("direction", "inbound"),
+                "duration_seconds": r.get("duration_seconds"),
+                "status": r.get("status"),
+                "suite_id": suite_id,
+                "raw": r,
+            })
+    except SupabaseClientError as exc:
+        logger.warning("inbox_calls_fetch_failed suite_id=%s: %s", suite_id, exc)
+
+    # ── Voicemails ────────────────────────────────────────────────────────────
+    try:
+        vm_filter = f"suite_id=eq.{suite_id}{time_filter}"
+        vm_rows = await supabase_select(
+            "frontdesk_voicemails",
+            vm_filter,
+            order_by="created_at.desc",
+            limit=capped_limit,
+        )
+        for r in (vm_rows or []):
+            items.append({
+                "kind": "voicemail",
+                "id": r.get("id"),
+                "event_at": r.get("created_at"),
+                "contact_phone": r.get("caller_phone") or r.get("from_number"),
+                "contact_name": r.get("contact_name"),
+                "duration_seconds": r.get("duration_seconds"),
+                "reviewed": r.get("reviewed", False),
+                "transcription": r.get("transcription"),
+                "suite_id": suite_id,
+                "raw": r,
+            })
+    except SupabaseClientError as exc:
+        logger.warning("inbox_voicemails_fetch_failed suite_id=%s: %s", suite_id, exc)
+
+    # ── SMS ───────────────────────────────────────────────────────────────────
+    try:
+        sms_filter = f"suite_id=eq.{suite_id}{time_filter}"
+        sms_rows = await supabase_select(
+            "sms_messages",
+            sms_filter,
+            order_by="created_at.desc",
+            limit=capped_limit,
+        )
+        for r in (sms_rows or []):
+            items.append({
+                "kind": "sms",
+                "id": r.get("id"),
+                "event_at": r.get("created_at"),
+                "contact_phone": r.get("from_number") or r.get("to_number"),
+                "contact_name": r.get("contact_name"),
+                "body_preview": (r.get("body") or "")[:120],
+                "direction": r.get("direction", "inbound"),
+                "status": r.get("status"),
+                "suite_id": suite_id,
+                "raw": r,
+            })
+    except SupabaseClientError as exc:
+        logger.warning("inbox_sms_fetch_failed suite_id=%s: %s", suite_id, exc)
+
+    # ── Callbacks ─────────────────────────────────────────────────────────────
+    try:
+        cb_filter = f"suite_id=eq.{suite_id}{time_filter}&status=neq.completed"
+        cb_rows = await supabase_select(
+            "callback_promises",
+            cb_filter,
+            order_by="due_at.asc",
+            limit=capped_limit,
+        )
+        for r in (cb_rows or []):
+            items.append({
+                "kind": "callback",
+                "id": r.get("id"),
+                "event_at": r.get("due_at") or r.get("created_at"),
+                "contact_phone": r.get("contact_phone"),
+                "contact_name": r.get("contact_name"),
+                "promise_context": r.get("promise_context"),
+                "status": r.get("status"),
+                "due_at": r.get("due_at"),
+                "suite_id": suite_id,
+                "raw": r,
+            })
+    except SupabaseClientError as exc:
+        logger.warning("inbox_callbacks_fetch_failed suite_id=%s: %s", suite_id, exc)
+
+    # Sort by event_at desc (most recent first); None sorts last
+    items.sort(key=lambda x: x.get("event_at") or "", reverse=True)
+    items = items[:capped_limit]
+
+    return {
+        "items": items,
+        "count": len(items),
+        "suite_id": suite_id,
+        "since": since,
+        "until": until,
+    }
