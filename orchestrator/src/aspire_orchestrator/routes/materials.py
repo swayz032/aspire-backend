@@ -2,7 +2,7 @@
 
 Law compliance:
   Law #2 — receipt cut on every outcome (success, cached, denied, error).
-  Law #3 — fail closed: missing headers → 401, PII query → 400, no token → 401.
+  Law #3 — fail closed: missing headers -> 401, PII query -> 400, no token -> 401.
   Law #4 — GREEN tier: read-only search, no state change.
   Law #5 — capability token validated server-side before execution.
   Law #6 — tenant isolation: suite_id/office_id enforced on every cache key.
@@ -49,6 +49,12 @@ from aspire_orchestrator.services.supabase_client import (
     supabase_select,
 )
 from aspire_orchestrator.services.token_service import validate_token
+# Module-level imports for patch targets in tests (lazy imports inside function body
+# are not patchable via the module path).
+from aspire_orchestrator.services.adam.serpapi_budget import select_account  # noqa: F401
+from aspire_orchestrator.services.adam.playbooks.trades import (  # noqa: F401
+    execute_tool_material_price_check,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +167,7 @@ async def search_materials(
     Returns 200 with `is_cached_only_mode: true` when both SerpApi accounts
     are exhausted.
     """
-    # ── 1. Scope resolution (Law #6) ─────────────────────────────────────
+    # -- 1. Scope resolution (Law #6) ------------------------------------
     scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
     suite_id = str(scope.suite_id)
     office_id = str(scope.office_id)
@@ -169,7 +175,7 @@ async def search_materials(
     correlation_id = get_correlation_id() or str(uuid.uuid4())
     trace_id = get_trace_id() or correlation_id
 
-    # ── 2. Capability token validation (Law #5) ───────────────────────────
+    # -- 2. Capability token validation (Law #5) -------------------------
     cap_token_dict: dict[str, Any] | None = None
     if capability_token:
         import json
@@ -213,7 +219,7 @@ async def search_materials(
 
     cap_token_id = _cap_token_id(cap_token_dict)
 
-    # ── 3. Query normalisation + PII rejection ────────────────────────────
+    # -- 3. Query normalisation + PII rejection --------------------------
     normalised = normalize_query(q)
     if isinstance(normalised, NormalizeRejection):
         receipt_id = _emit_receipt(
@@ -234,7 +240,7 @@ async def search_materials(
             },
         )
 
-    # ── 4. Idempotency check ─────────────────────────────────────────────
+    # -- 4. Idempotency check --------------------------------------------
     if idempotency_key:
         try:
             existing = await supabase_select(
@@ -251,13 +257,11 @@ async def search_materials(
                 receipt_id = _emit_receipt(
                     receipt_type="materials_search_cached",
                     suite_id=suite_id, office_id=office_id, tenant_id=tenant_id,
-                    outcome="success",
-                    reason_code="IDEMPOTENCY_REPLAY",
+                    outcome="success", reason_code="IDEMPOTENCY_REPLAY",
                     correlation_id=correlation_id, trace_id=trace_id,
                     capability_token_id=cap_token_id,
                     redacted_outputs={
-                        "cached": True,
-                        "query_normalized": normalised,
+                        "cached": True, "query_normalized": normalised,
                         "product_count": row.get("product_count", 0),
                         "specialty_count": row.get("specialty_count", 0),
                     },
@@ -276,7 +280,7 @@ async def search_materials(
         except SupabaseClientError as exc:
             logger.warning("materials_search idempotency check failed: %s", exc)
 
-    # ── 5. In-memory cache hit ────────────────────────────────────────────
+    # -- 5. In-memory cache hit ------------------------------------------
     cache_params = {"zip": zip_code or "", "store": store_id or "", "shopping": include_shopping}
     cached_result = cache_get(
         tenant_id=suite_id,  # Law #6: use suite_id as isolation key
@@ -294,12 +298,10 @@ async def search_materials(
             correlation_id=correlation_id, trace_id=trace_id,
             capability_token_id=cap_token_id,
             redacted_outputs={
-                "engine": "home_depot",
-                "cached": True,
+                "engine": "home_depot", "cached": True,
                 "budget_remaining_a": max(0, 240 - _counts.get("A", 0)),
                 "budget_remaining_b": max(0, 240 - _counts.get("B", 0)),
-                "query_normalized": normalised,
-                "store_id": store_id,
+                "query_normalized": normalised, "store_id": store_id,
                 "product_count": len(cached_result.get("products", [])),
                 "specialty_count": len(cached_result.get("specialty_suppliers", [])),
             },
@@ -313,8 +315,7 @@ async def search_materials(
             "query_normalized": normalised,
         }
 
-    # ── 6. Budget check — fail gracefully with cached-only mode ──────────
-    from aspire_orchestrator.services.adam.serpapi_budget import select_account
+    # -- 6. Budget check — fail gracefully with cached-only mode ---------
     account_id = select_account()
     _counts = current_counts()
 
@@ -326,41 +327,26 @@ async def search_materials(
             correlation_id=correlation_id, trace_id=trace_id,
             capability_token_id=cap_token_id,
             redacted_outputs={
-                "engine": "home_depot",
-                "cached": False,
-                "budget_remaining_a": 0,
-                "budget_remaining_b": 0,
-                "query_normalized": normalised,
-                "store_id": store_id,
-                "product_count": 0,
-                "specialty_count": 0,
+                "engine": "home_depot", "cached": False,
+                "budget_remaining_a": 0, "budget_remaining_b": 0,
+                "query_normalized": normalised, "store_id": store_id,
+                "product_count": 0, "specialty_count": 0,
             },
         )
         return {
-            "success": True,
-            "products": [],
-            "specialty_suppliers": [],
-            "filters": {},
-            "addon_suggestions": [],
-            "is_cached_only_mode": True,
-            "from_cache": False,
-            "receipt_id": receipt_id,
-            "query_normalized": normalised,
+            "success": True, "products": [], "specialty_suppliers": [],
+            "filters": {}, "addon_suggestions": [],
+            "is_cached_only_mode": True, "from_cache": False,
+            "receipt_id": receipt_id, "query_normalized": normalised,
         }
 
-    # ── 7. Build PlaybookContext + execute HD search ───────────────────────
+    # -- 7. Build PlaybookContext + execute HD search ---------------------
     ctx = PlaybookContext(
-        suite_id=suite_id,
-        office_id=office_id,
-        tenant_id=tenant_id,
-        correlation_id=correlation_id,
-        capability_token_id=cap_token_id,
+        suite_id=suite_id, office_id=office_id, tenant_id=tenant_id,
+        correlation_id=correlation_id, capability_token_id=cap_token_id,
     )
 
     import asyncio
-    from aspire_orchestrator.services.adam.playbooks.trades import (
-        execute_tool_material_price_check,
-    )
 
     try:
         research_result = await asyncio.wait_for(
@@ -382,15 +368,11 @@ async def search_materials(
             correlation_id=correlation_id, trace_id=trace_id,
             capability_token_id=cap_token_id,
             redacted_outputs={
-                "engine": "home_depot",
-                "account_id": account_id,
-                "cached": False,
+                "engine": "home_depot", "account_id": account_id, "cached": False,
                 "budget_remaining_a": max(0, 240 - _counts_post.get("A", 0)),
                 "budget_remaining_b": max(0, 240 - _counts_post.get("B", 0)),
-                "query_normalized": normalised,
-                "store_id": store_id,
-                "product_count": 0,
-                "specialty_count": 0,
+                "query_normalized": normalised, "store_id": store_id,
+                "product_count": 0, "specialty_count": 0,
             },
         )
         raise HTTPException(
@@ -406,14 +388,10 @@ async def search_materials(
             correlation_id=correlation_id, trace_id=trace_id,
             capability_token_id=cap_token_id,
             redacted_outputs={
-                "engine": "home_depot",
-                "cached": False,
-                "budget_remaining_a": 0,
-                "budget_remaining_b": 0,
-                "query_normalized": normalised,
-                "store_id": store_id,
-                "product_count": 0,
-                "specialty_count": 0,
+                "engine": "home_depot", "cached": False,
+                "budget_remaining_a": 0, "budget_remaining_b": 0,
+                "query_normalized": normalised, "store_id": store_id,
+                "product_count": 0, "specialty_count": 0,
             },
         )
         raise HTTPException(
@@ -430,14 +408,11 @@ async def search_materials(
             correlation_id=correlation_id, trace_id=trace_id,
             capability_token_id=cap_token_id,
             redacted_outputs={
-                "engine": "home_depot",
-                "cached": False,
+                "engine": "home_depot", "cached": False,
                 "budget_remaining_a": max(0, 240 - _counts_post.get("A", 0)),
                 "budget_remaining_b": max(0, 240 - _counts_post.get("B", 0)),
-                "query_normalized": normalised,
-                "store_id": store_id,
-                "product_count": 0,
-                "specialty_count": 0,
+                "query_normalized": normalised, "store_id": store_id,
+                "product_count": 0, "specialty_count": 0,
             },
         )
         raise HTTPException(
@@ -445,7 +420,7 @@ async def search_materials(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── 8. Extract products from research_result ─────────────────────────
+    # -- 8. Extract products from research_result ------------------------
     products: list[dict[str, Any]] = []
     records = getattr(research_result, "records", None) or []
     for rec in records:
@@ -454,23 +429,19 @@ async def search_materials(
             raw_products = rec.products or []
         elif isinstance(rec, dict):
             raw_products = rec.get("products") or rec.get("results") or []
-        # Normalise records to dicts
         for p in raw_products:
             products.append(p if isinstance(p, dict) else (p.__dict__ if hasattr(p, "__dict__") else {}))
 
-    # Also check top-level extra dict
     extra = getattr(research_result, "extra", {}) or {}
     if not products and extra.get("results"):
         for item in extra["results"]:
             products.append(item if isinstance(item, dict) else {})
 
-    # ── 9. Specialty fallback (ATTOM POI) when < 3 products ─────────────
+    # -- 9. Specialty fallback (ATTOM POI) when < 3 products -------------
     specialty_suppliers: list[dict[str, Any]] = []
     if len(products) < 3 and zip_code:
         try:
-            from aspire_orchestrator.providers.attom_client import (
-                execute_attom_poi_search,
-            )
+            from aspire_orchestrator.providers.attom_client import execute_attom_poi_search
             poi_result = await asyncio.wait_for(
                 execute_attom_poi_search(
                     payload={
@@ -499,14 +470,14 @@ async def search_materials(
         except Exception as poi_exc:
             logger.warning("materials_search attom_poi fallback failed: %s", poi_exc)
 
-    # ── 10. Derive filters + add-ons ─────────────────────────────────────
+    # -- 10. Derive filters + add-ons ------------------------------------
     filters = derive_filters(products)
     addon_suggestions = get_predictive_addons(normalised)
 
-    # ── 11. Sanitize before cache write (Law #9) ─────────────────────────
+    # -- 11. Sanitize before cache write (Law #9) ------------------------
     sanitized_products = sanitize_product_list(products)
 
-    # ── 12. Write to in-memory cache (tenant-isolated key, Law #6) ───────
+    # -- 12. Write to in-memory cache (tenant-isolated key, Law #6) ------
     result_payload: dict[str, Any] = {
         "products": sanitized_products,
         "specialty_suppliers": specialty_suppliers,
@@ -523,7 +494,7 @@ async def search_materials(
         ttl_override=_HD_TTL_SECONDS,
     )
 
-    # ── 13. Persist idempotency record to Supabase ────────────────────────
+    # -- 13. Persist idempotency record to Supabase ----------------------
     if idempotency_key:
         try:
             await supabase_insert(
@@ -531,14 +502,11 @@ async def search_materials(
                 {
                     "id": str(uuid.uuid4()),
                     "idempotency_key": idempotency_key,
-                    "suite_id": suite_id,
-                    "office_id": office_id,
-                    "tenant_id": tenant_id,
+                    "suite_id": suite_id, "office_id": office_id, "tenant_id": tenant_id,
                     "query_normalized": normalised,
                     "products": sanitized_products,
                     "specialty_suppliers": specialty_suppliers,
-                    "filters": filters,
-                    "addon_suggestions": addon_suggestions,
+                    "filters": filters, "addon_suggestions": addon_suggestions,
                     "product_count": len(sanitized_products),
                     "specialty_count": len(specialty_suppliers),
                     "created_at": _now_iso(),
@@ -547,7 +515,7 @@ async def search_materials(
         except SupabaseClientError as exc:
             logger.warning("materials_search idempotency persist failed: %s", exc)
 
-    # ── 14. Success receipt ───────────────────────────────────────────────
+    # -- 14. Success receipt ---------------------------------------------
     _counts_final = current_counts()
     receipt_id = _emit_receipt(
         receipt_type="materials_search_success",
@@ -556,13 +524,10 @@ async def search_materials(
         correlation_id=correlation_id, trace_id=trace_id,
         capability_token_id=cap_token_id,
         redacted_outputs={
-            "engine": "home_depot",
-            "account_id": account_id,
-            "cached": False,
+            "engine": "home_depot", "account_id": account_id, "cached": False,
             "budget_remaining_a": max(0, 240 - _counts_final.get("A", 0)),
             "budget_remaining_b": max(0, 240 - _counts_final.get("B", 0)),
-            "query_normalized": normalised,
-            "store_id": store_id,
+            "query_normalized": normalised, "store_id": store_id,
             "product_count": len(sanitized_products),
             "specialty_count": len(specialty_suppliers),
         },
