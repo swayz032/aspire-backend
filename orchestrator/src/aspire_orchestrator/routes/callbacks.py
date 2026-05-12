@@ -284,12 +284,27 @@ async def complete_callback(
         )
 
     row = rows[0]
+
+    # P0 #5 — idempotency guard: if already completed, return 409 rather than
+    # silently overwriting completed_at. Orchestrator decides whether to treat
+    # this as a success replay or a true conflict.
+    if row.get("status") == "completed":
+        existing_completed_at = row.get("completed_at", "")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "IDEMPOTENCY_CONFLICT",
+                "message": "Callback is already completed.",
+                "completed_at": existing_completed_at,
+            },
+        )
+
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
         await supabase_update(
             "callback_promises",
-            f"id=eq.{callback_id}&suite_id=eq.{scope.suite_id}",
+            f"id=eq.{callback_id}&suite_id=eq.{scope.suite_id}&status=neq.completed",
             {"status": "completed", "completed_at": now_iso},
         )
     except SupabaseClientError as exc:

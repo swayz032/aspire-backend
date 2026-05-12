@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     pandadoc_webhook_secret: str = ""
     stripe_webhook_secret: str = ""
     elevenlabs_webhook_secret: str = ""
+    # ElevenLabs workspace tool endpoints — SEPARATE from the personalization secret
+    # so they can be rotated independently. Env var: ASPIRE_ELEVENLABS_TOOL_WEBHOOK_SECRET
+    # Missing/empty → fail-closed (HTTP 503) per Law #3.
+    elevenlabs_tool_webhook_secret: str = ""
     personalization_webhook_secret: str = ""
     anam_webhook_secret: str = ""
     zoom_webhook_secret: str = ""

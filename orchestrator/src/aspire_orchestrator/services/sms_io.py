@@ -271,6 +271,31 @@ async def send_sms(
             detail_str = err.get("message", detail_str)
         except Exception:
             pass
+        # Pass I Law #2 fix: cut sms_failed receipt before re-raising so every
+        # outbound attempt has a receipt regardless of outcome.
+        to_prefix_fail = (to_number or "")[:6] + "..." if to_number else ""
+        receipt_store.store_receipts([{
+            "id": str(uuid.uuid4()),
+            "receipt_type": "sms_failed",
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "tenant_id": tenant_id,
+            "outcome": "failed",
+            "action_type": "sms_send",
+            "tool_used": "sms_io",
+            "risk_tier": "yellow",
+            "reason_code": "TWILIO_SEND_FAILED",
+            "redacted_inputs": {
+                "thread_memory_id": thread_memory_id,
+                "to_prefix": to_prefix_fail,
+                "body_length": len(body),
+            },
+            "redacted_outputs": {"twilio_status": resp.status_code},
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
+            "capability_token_id": capability_token_id or None,
+            "created_at": now,
+        }])
         raise SmsIoError(
             "TWILIO_SEND_FAILED",
             f"Twilio Messages.create failed: {detail_str}",
