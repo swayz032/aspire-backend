@@ -414,9 +414,10 @@ def _strip_internal_fields(dyn_vars: dict[str, Any]) -> dict[str, Any]:
 # the call drops loudly rather than silently introducing the wrong persona.
 # Agent IDs are CASE-SENSITIVE (EL workspace canonical IDs, lower-hex).
 _AGENT_DISPLAY_NAME: dict[str, str] = {
-    "agent_4801kqtapvsre2gb0gyb1ng631qr": "Tiffany",
-    "agent_6501kp71h69jfqysgd055hemqhrq": "Sarah",
-    "agent_8901kmqdjnrte7psp6en4f85m4kt": "Sarah",
+    "agent_4801kqtapvsre2gb0gyb1ng631qr": "Tiffany",  # External Twilio receptionist (DO NOT MODIFY)
+    "agent_6501kp71h69jfqysgd055hemqhrq": "Sarah",     # Sarah Receptionist (external/Twilio/Workflow)
+    "agent_8901kmqdjnrte7psp6en4f85m4kt": "Sarah",     # Sarah Front Desk (internal/owner-facing)
+    "agent_3001krdqazc6fg4v85gbvbshzzzd": "Tiffany",   # Tiffany Front Desk (internal/owner-facing, cloned 2026-05-12)
 }
 
 
