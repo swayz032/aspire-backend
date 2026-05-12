@@ -127,6 +127,7 @@ from aspire_orchestrator.routes.elevenlabs_tools import router as elevenlabs_too
 from aspire_orchestrator.routes.voicemails import router as voicemails_router
 from aspire_orchestrator.routes.contacts import router as contacts_router
 from aspire_orchestrator.routes.materials import router as materials_router  # Pass C
+from aspire_orchestrator.routes.materials_bundles import router as materials_bundles_router  # Pass D
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -303,6 +304,7 @@ app.include_router(elevenlabs_tools_router)  # /v1/elevenlabs/tools/* — Pass G
 app.include_router(voicemails_router)   # /v1/voicemails/* — Pass I (mark-reviewed, soft-delete)
 app.include_router(contacts_router)     # /v1/contacts    — Tiffany-captured contact records
 app.include_router(materials_router)    # /v1/materials/search - Pass C cache-first materials search
+app.include_router(materials_bundles_router)  # /v1/materials/bundles/* - Pass D bundle CRUD + push-to-estimate
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
