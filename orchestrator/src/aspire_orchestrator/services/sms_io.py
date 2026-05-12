@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -484,8 +485,211 @@ async def update_sms_status(
         logger.debug("sms_status update sid=%s status=%s", twilio_message_sid, new_status)
 
 
+_E164_RE_10 = re.compile(r"^\d{10}$")
+_E164_RE_11 = re.compile(r"^1\d{10}$")
+
+
+def _normalize_to_e164(raw: str) -> str:
+    """Normalize an inbound phone number to E.164 (+1XXXXXXXXXX for US/CA).
+
+    Accepts:
+      - 10-digit strings (US local): '9175550200' -> '+19175550200'
+      - 11-digit strings starting with '1': '19175550200' -> '+19175550200'
+      - Already-formatted E.164: '+19175550200' -> '+19175550200' (pass-through)
+
+    Raises SmsIoError(INVALID_TO_PHONE, ..., 422) for anything else.
+    Law #3: fail closed — never guess or silently coerce an ambiguous number.
+    """
+    # Strip all non-digit characters except a leading '+' (which we handle separately)
+    stripped = re.sub(r"[^\d+]", "", raw.strip())
+
+    # Pass-through: already E.164 (must start with '+' and have digits only after)
+    if stripped.startswith("+"):
+        digits_only = stripped[1:]
+        if digits_only.isdigit() and len(digits_only) >= 7:
+            return stripped
+        raise SmsIoError(
+            "INVALID_TO_PHONE",
+            f"Phone number '{raw[:20]}' has a '+' prefix but invalid digit sequence.",
+            422,
+        )
+
+    digits = stripped
+    if _E164_RE_10.match(digits):
+        return f"+1{digits}"
+    if _E164_RE_11.match(digits):
+        return f"+{digits}"
+
+    raise SmsIoError(
+        "INVALID_TO_PHONE",
+        f"Cannot normalize '{raw[:20]}' to E.164. "
+        "Provide a 10-digit US number, 11-digit (1+10), or full E.164 (+1...).",
+        422,
+    )
+
+
+async def send_sms_new(
+    to_phone: str,
+    body: str,
+    *,
+    scope: ScopedIdentity,
+    capability_token: str,
+    idempotency_key: str,
+    trace_id: str = "",
+    correlation_id: str = "",
+    capability_token_id: str = "",
+) -> dict[str, Any]:
+    """Yellow-tier: send an outbound SMS to a NEW (no existing thread) recipient.
+
+    Steps:
+      1. Normalize to_phone to E.164 (fail closed on bad input).
+      2. Run A2P 10DLC gate — same block as send_sms (Law #3).
+      3. Resolve from_number via tenant_phone_numbers.
+      4. INSERT a new memory_objects thread row (kind=sms_thread, origin=compose).
+      5. Delegate to send_sms(thread_memory_id=<new_uuid>) — all downstream
+         invariants (sms_messages insert, receipt, append-only memory log) are
+         handled there exactly once.  We do NOT cut a second receipt.
+      6. Return send_sms result PLUS thread_memory_id.
+
+    Law #4: Yellow tier — capability_token validated upstream (route layer).
+    Law #6: suite_id/office_id/tenant_id sourced ONLY from scope, never payload.
+    Law #9: phone number truncated in logs; body_preview <= 80 chars.
+    """
+    import re as _re  # already imported at module level; local alias for readability
+
+    # ── Normalize to_phone (fail closed) ──────────────────────────────────
+    to_phone_e164 = _normalize_to_e164(to_phone)
+
+    account_sid, auth_token = _twilio_auth()
+    suite_id = str(scope.suite_id)
+    office_id = str(scope.office_id)
+    tenant_id = str(scope.tenant_id)
+    now = datetime.now(timezone.utc).isoformat()
+
+    # ── A2P 10DLC gate (verbatim from send_sms — Law #3 fail closed) ──────
+    a2p_rows = await supabase_select(
+        "tenant_a2p_registrations",
+        f"tenant_id=eq.{tenant_id}",
+        limit=1,
+    )
+    if a2p_rows:
+        row_tenant = str(a2p_rows[0].get("tenant_id") or "")
+        if row_tenant != tenant_id:
+            logger.error(
+                "sms_io a2p_row_tenant_mismatch scope_tenant=%s row_tenant=%s — denying",
+                tenant_id,
+                row_tenant,
+            )
+            a2p_rows = []
+    a2p_status = (a2p_rows[0].get("status") if a2p_rows else None) or "unregistered"
+    if a2p_status != "registered":
+        receipt_id_a2p = str(uuid.uuid4())
+        receipt_store.store_receipts([{
+            "id": receipt_id_a2p,
+            "receipt_type": "sms_send_blocked_a2p",
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "tenant_id": tenant_id,
+            "outcome": "denied",
+            "action_type": "sms_send_new",
+            "tool_used": "sms_io",
+            "risk_tier": "yellow",
+            "reason_code": "a2p_not_registered",
+            "redacted_inputs": {
+                "to_prefix": (to_phone_e164 or "")[:6] + "...",
+                "body_length": len(body),
+                "a2p_status": a2p_status,
+            },
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
+            "capability_token_id": capability_token_id or None,
+            "created_at": now,
+        }])
+        logger.warning(
+            "sms_send_new blocked tenant=%s a2p_status=%s",
+            tenant_id,
+            a2p_status,
+        )
+        raise SmsIoError(
+            "A2P_NOT_REGISTERED",
+            f"Outbound SMS blocked: tenant A2P registration status is '{a2p_status}'. "
+            "Complete A2P 10DLC registration to enable SMS.",
+            403,
+        )
+
+    # ── Resolve from_number ───────────────────────────────────────────────
+    from_rows = await supabase_select(
+        "tenant_phone_numbers",
+        f"office_id=eq.{office_id}&sms_enabled=eq.true&status=eq.active",
+        limit=1,
+    )
+    if not from_rows:
+        raise SmsIoError(
+            "NO_SMS_NUMBER",
+            f"No active SMS-enabled number found for office_id={office_id}",
+            422,
+        )
+    from_number = from_rows[0]["phone_number"]
+
+    # ── Create new thread row in memory_objects ───────────────────────────
+    # Law #6: all tenant fields from scope only.
+    # detail.origin='compose' lets inbox feed distinguish compose-originated
+    # threads from inbound-originated ones.
+    thread_memory_id = str(uuid.uuid4())
+    thread_row: dict[str, Any] = {
+        "memory_id": thread_memory_id,
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "tenant_id": tenant_id,
+        "kind": "sms_thread",
+        "detail": {
+            "from": to_phone_e164,   # external contact (inbound convention)
+            "to": from_number,       # our number
+            "channel": "sms",
+            "origin": "compose",
+        },
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        await supabase_insert("memory_objects", thread_row)
+    except SupabaseClientError as exc:
+        logger.error("sms_send_new: thread memory_object insert failed: %s", exc)
+        raise SmsIoError(
+            "THREAD_CREATE_FAILED",
+            f"Failed to create SMS thread record: {exc}",
+            500,
+        ) from exc
+
+    # ── Delegate to send_sms ──────────────────────────────────────────────
+    # send_sms resolves to_number from thread detail.from (which we just set
+    # to to_phone_e164), sends via Twilio, inserts sms_messages, appends
+    # outbound memory_object, and cuts the receipt.  No duplicate receipt here.
+    result = await send_sms(
+        thread_memory_id=thread_memory_id,
+        body=body,
+        scope=scope,
+        capability_token=capability_token,
+        idempotency_key=idempotency_key,
+        trace_id=trace_id,
+        correlation_id=correlation_id,
+        capability_token_id=capability_token_id,
+    )
+
+    to_prefix = (to_phone_e164 or "")[:6] + "..."
+    logger.info(
+        "sms_send_new success to=%s thread_memory_id=%s sid=%s",
+        to_prefix,
+        thread_memory_id,
+        result.get("message_sid", ""),
+    )
+
+    return {**result, "thread_memory_id": thread_memory_id}
+
+
 __all__ = [
     "SmsIoError",
     "send_sms",
+    "send_sms_new",
     "update_sms_status",
 ]

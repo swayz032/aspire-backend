@@ -165,8 +165,13 @@ async def test_send_sms_idempotency_key_in_twilio_header(scoped_identity):
     assert sms_row["idempotency_key"] == IDEM_KEY
 
 
-async def test_send_sms_twilio_4xx_raises_no_receipt(scoped_identity):
-    """Twilio returns 400 -> SmsIoError raised, no receipt cut."""
+async def test_send_sms_twilio_4xx_raises_sms_failed_receipt(scoped_identity):
+    """Twilio returns 400 -> SmsIoError raised AND sms_failed receipt cut (Pass I Law #2 fix).
+
+    The receipt ensures 100% coverage of Law #2 — every outbound attempt has a
+    receipt regardless of outcome.  The old test expectation (assert_not_called)
+    was written before this fix was merged and is now incorrect.
+    """
     err_resp = MagicMock()
     err_resp.status_code = 400
     err_resp.json.return_value = {"message": "Phone number is not SMS-capable", "code": 21606}
@@ -191,7 +196,12 @@ async def test_send_sms_twilio_4xx_raises_no_receipt(scoped_identity):
             )
 
     assert exc_info.value.code == "TWILIO_SEND_FAILED"
-    mock_receipt.assert_not_called()
+    # Law #2: sms_failed receipt IS cut on 4xx (Pass I fix)
+    mock_receipt.assert_called_once()
+    receipt = mock_receipt.call_args[0][0][0]
+    assert receipt["receipt_type"] == "sms_failed"
+    assert receipt["outcome"] == "failed"
+    assert receipt["reason_code"] == "TWILIO_SEND_FAILED"
 
 
 async def test_send_sms_no_from_number_for_office_fails_closed(scoped_identity):

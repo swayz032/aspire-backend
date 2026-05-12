@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.schemas.memory_v1 import ScopedIdentity
-from aspire_orchestrator.services.sms_io import SmsIoError, send_sms
+from aspire_orchestrator.services.sms_io import SmsIoError, send_sms, send_sms_new
 from aspire_orchestrator.services.token_service import validate_token
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,13 @@ router = APIRouter(prefix="/v1/sms", tags=["sms"])
 
 class SmsSendRequest(BaseModel):
     thread_memory_id: str = Field(..., min_length=10, max_length=128)
+    body: str = Field(..., min_length=1, max_length=1600)
+    idempotency_key: str = Field(..., min_length=10, max_length=128)
+    capability_token: dict[str, Any] | None = None
+
+
+class SmsSendNewRequest(BaseModel):
+    to_phone: str = Field(..., min_length=8, max_length=20)
     body: str = Field(..., min_length=1, max_length=1600)
     idempotency_key: str = Field(..., min_length=10, max_length=128)
     capability_token: dict[str, Any] | None = None
@@ -156,4 +163,54 @@ async def sms_send(
         "message_sid": result["message_sid"],
         "status": result["status"],
         "receipt_id": result["receipt_id"],
+    }
+
+
+@router.post("/send-new")
+async def sms_send_new(
+    req: SmsSendNewRequest,
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-Id"),
+    x_suite_id: str | None = Header(None, alias="X-Suite-Id"),
+    x_office_id: str | None = Header(None, alias="X-Office-Id"),
+) -> dict[str, Any]:
+    """Yellow tier: send an outbound SMS to a new (no existing thread) recipient.
+
+    Creates a fresh sms_thread memory_object, then delegates to send_sms so
+    all downstream invariants (receipt, sms_messages insert, Law #2) are preserved.
+    Returns the same fields as /send PLUS thread_memory_id.
+
+    Requires capability token with scope=telephony:sms_send.
+    """
+    scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
+    _validate_cap_token(req.capability_token, scope, "telephony:sms_send")
+
+    try:
+        result = await send_sms_new(
+            to_phone=req.to_phone,
+            body=req.body,
+            scope=scope,
+            capability_token=str(req.capability_token),
+            idempotency_key=req.idempotency_key,
+            trace_id=get_trace_id(),
+            correlation_id=get_correlation_id(),
+            capability_token_id=_cap_token_id(req.capability_token),
+        )
+    except SmsIoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY
+            if exc.status_code >= 500
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+            if exc.status_code == 422
+            else status.HTTP_403_FORBIDDEN
+            if exc.status_code == 403
+            else status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": exc.code, "message": str(exc)},
+        ) from exc
+
+    return {
+        "success": True,
+        "message_sid": result["message_sid"],
+        "status": result["status"],
+        "receipt_id": result["receipt_id"],
+        "thread_memory_id": result["thread_memory_id"],
     }
