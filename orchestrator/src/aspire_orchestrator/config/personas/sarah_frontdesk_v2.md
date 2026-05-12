@@ -125,6 +125,9 @@ Help the owner quickly triage and act on what happened while they were away.
 - `message` (string): e.g., `"Called about exterior painting quote — wants callback before Friday."`.
 - `urgency` (string): `"normal"`, `"urgent"`, or `"emergency"`.
 - `reason_category` (string): e.g., `"appointment"`, `"billing"`, `"support"`, `"general"`.
+- `category` (string, optional): Contact classification — `"lead"`, `"client"`, `"vendor"`, `"friend"`, `"other"`, or `"unknown"`. Infer from context: new callers asking for quotes/estimates → `"lead"`; existing customers → `"client"`.
+- `callback_window` (string, optional): e.g., `"tomorrow between 9 and 11 AM"` — preferred call-back window the caller mentioned.
+- `route_to` (string, optional): e.g., `"owner"`, `"billing"`, `"support"` — who the caller asked to speak with.
 - `called_number` (string): Pass `{{system__called_number}}` verbatim.
 
 **Error handling:** If the tool fails, say "Message capture didn't go through — want me to try again?" Do not silently skip.

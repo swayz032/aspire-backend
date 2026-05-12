@@ -44,6 +44,7 @@ from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
     supabase_insert,
     supabase_select,
+    supabase_update,
 )
 
 logger = logging.getLogger(__name__)
@@ -212,6 +213,10 @@ class CaptureMessageReq(_BaseToolReq):
     message: str = ""
     urgency: str = "normal"
     reason_category: str = "other"
+    # New fields — previously silently dropped. Tiffany's prompt sends these.
+    category: str | None = None       # lead|client|vendor|friend|other|unknown
+    callback_window: str | None = None
+    route_to: str | None = None
 
 
 class TransferReq(_BaseToolReq):
@@ -338,17 +343,154 @@ async def get_business_context(req: GetBusinessContextReq) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_contact_category(req: CaptureMessageReq) -> str:
+    """Resolve category from explicit field or reason_category heuristic."""
+    _VALID_CATEGORIES = {"lead", "client", "vendor", "friend", "other", "unknown"}
+    if req.category and req.category.lower() in _VALID_CATEGORIES:
+        return req.category.lower()
+    # Heuristic from reason_category
+    _LEAD_REASONS = {"quote", "estimate", "new_inquiry", "inquiry", "new_lead"}
+    _CLIENT_REASONS = {"existing_job", "invoice", "followup", "follow_up", "support", "billing"}
+    rc = (req.reason_category or "").lower()
+    if rc in _LEAD_REASONS:
+        return "lead"
+    if rc in _CLIENT_REASONS:
+        return "client"
+    return "unknown"
+
+
+async def _upsert_frontdesk_contact(
+    *,
+    scope: dict[str, str],
+    caller_phone: str,
+    caller_name: str,
+    category: str,
+    message: str,
+) -> None:
+    """UPSERT into frontdesk_contacts on (phone_e164, office_id).
+
+    - display_name: only written when non-empty AND no existing name
+    - last_call_summary: always updated (truncated to 300 chars)
+    - notes: appended per-capture (ISO date + message[:120])
+    - total_calls: incremented in DB (Postgres total_calls + 1)
+    - last_seen_at: NOW()
+    - On insert: first_seen_at = NOW(), total_calls = 1, status = 'active'
+
+    Failures are logged but not re-raised — the memory_objects insert already
+    succeeded; a contact upsert failure degrades gracefully (receipt covers it).
+    """
+    if not caller_phone or not _E164.match(caller_phone):
+        logger.debug(
+            "sarah_tools _upsert_frontdesk_contact skipped: phone='%s' not E.164",
+            _redact_phone(caller_phone),
+        )
+        return
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    note_line = f"\n[{now_iso[:10]}] {message[:120]}" if message else ""
+    summary_snippet = message[:300] if message else ""
+
+    # Build the upsert row for INSERT path (all fields)
+    insert_row: dict[str, Any] = {
+        "phone_e164": caller_phone,
+        "office_id": scope["office_id"],
+        "suite_id": scope["suite_id"],
+        "tenant_id": scope["tenant_id"],
+        "category": category,
+        "last_call_summary": summary_snippet,
+        "last_seen_at": now_iso,
+        "first_seen_at": now_iso,
+        "total_calls": 1,
+        "status": "active",
+        "notes": note_line.lstrip("\n") if note_line else None,
+    }
+    if caller_name:
+        insert_row["display_name"] = caller_name
+
+    # ON CONFLICT (phone_e164, office_id) DO UPDATE — use Supabase upsert.
+    # We pass prefer="merge-duplicates" via the on_conflict option so Supabase
+    # applies the UPDATE clause on conflict rather than erroring.
+    # Supabase PostgREST upsert with on_conflict produces:
+    #   INSERT ... ON CONFLICT (phone_e164, office_id) DO UPDATE SET ...
+    # Fields that must NOT overwrite on conflict: display_name (only if name is
+    # present AND existing is null — handled below via a conditional update).
+    # We rely on the backend to do the atomic increment via raw SQL; since
+    # supabase_insert doesn't support expressions, we handle total_calls via
+    # the upsert returning mechanism and a follow-up if needed. For simplicity,
+    # use supabase_select + conditional insert-or-update via two-step approach.
+    try:
+        existing_rows = await supabase_select(
+            "frontdesk_contacts",
+            {"phone_e164": caller_phone, "office_id": scope["office_id"]},
+            limit=1,
+        )
+    except SupabaseClientError as exc:
+        logger.warning("sarah_tools contact_lookup_failed: %s", exc)
+        return
+
+    if not existing_rows:
+        # New contact — insert
+        try:
+            await supabase_insert("frontdesk_contacts", insert_row)
+        except SupabaseClientError as exc:
+            logger.error("sarah_tools contact_insert_failed: %s", exc)
+        return
+
+    # Existing contact — build UPDATE payload
+    existing = existing_rows[0]
+    update_row: dict[str, Any] = {
+        "last_call_summary": summary_snippet,
+        "last_seen_at": now_iso,
+        "category": category,
+        # Increment total_calls — read from existing + 1 (atomic enough for
+        # voice captures which are inherently sequential per call)
+        "total_calls": (existing.get("total_calls") or 0) + 1,
+    }
+    # Append note line to existing notes (accumulate per-call captures)
+    if note_line:
+        existing_notes = existing.get("notes") or ""
+        update_row["notes"] = (existing_notes + note_line)[:4000]  # cap at 4k
+    # Only overwrite display_name if existing is null/empty and we have one
+    if caller_name and not (existing.get("display_name") or "").strip():
+        update_row["display_name"] = caller_name
+
+    contact_id = existing.get("contact_id") or existing.get("id")
+    if not contact_id:
+        logger.warning("sarah_tools contact_update_skipped: no contact_id in row")
+        return
+    try:
+        await supabase_update(
+            "frontdesk_contacts",
+            f"contact_id=eq.{contact_id}",
+            update_row,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("sarah_tools contact_update_failed contact_id=%s: %s", contact_id, exc)
+
+
 @router.post("/capture-message")
 async def capture_message(req: CaptureMessageReq) -> dict[str, Any]:
-    """Record a caller message for the office (after-hours + take_message)."""
+    """Record a caller message for the office (after-hours + take_message).
+
+    Flow:
+      1. Resolve tenant scope from called_number.
+      2. Insert memory_objects row with ALL fields (including new category /
+         callback_window / route_to — previously silently dropped).
+      3. UPSERT frontdesk_contacts on (phone_e164, office_id) so Tiffany's
+         captured name + reason flows into the contact card.
+      4. Cut contact_captured receipt (Green tier, Law #2).
+    """
     scope = await _resolve_tenant_from_called_number(req.called_number)
     if not scope:
         return {"success": False, "reason": "unknown_number"}
 
     caller_label = req.caller_name or "caller"
+    resolved_category = _resolve_contact_category(req)
+
+    # ── Step 1: memory_objects insert ─────────────────────────────────────────
     try:
         memory_id = await _insert_memory_object(
-            memory_type="call",  # CHECK constraint allowed value (was 'voicemail_capture' — invalid)
+            memory_type="call",  # CHECK constraint allowed value
             scope=scope,
             summary=(
                 f"Message from {caller_label}: {req.message[:120]}"
@@ -360,36 +502,49 @@ async def capture_message(req: CaptureMessageReq) -> dict[str, Any]:
                 "urgency": req.urgency,
                 "reason_category": req.reason_category,
                 "message": req.message,
+                # New fields — no longer silently dropped
+                "category": req.category,
+                "callback_window": req.callback_window,
+                "route_to": req.route_to,
                 "captured_at": datetime.now(timezone.utc).isoformat(),
             },
             title=f"Message — {caller_label}",
             source_agent="sarah",
             channel="voice",
         )
-        receipt_outcome = "success"
+        memory_outcome = "success"
     except SupabaseClientError as exc:
         logger.error(
             "sarah_tools capture_message memory_insert_failed: %s", exc
         )
         memory_id = ""
-        receipt_outcome = "failed"
+        memory_outcome = "failed"
 
+    # ── Step 2: frontdesk_contacts upsert (best-effort, non-blocking) ────────
+    if memory_outcome == "success" and req.caller_phone:
+        await _upsert_frontdesk_contact(
+            scope=scope,
+            caller_phone=req.caller_phone,
+            caller_name=req.caller_name,
+            category=resolved_category,
+            message=req.message,
+        )
+
+    # ── Step 3: receipt (Law #2) ───────────────────────────────────────────────
     _cut_receipt(
-        receipt_type="sarah_tool_capture_message",
+        receipt_type="contact_captured",
         scope=scope,
-        outcome=receipt_outcome,
+        outcome=memory_outcome,
+        risk_tier="green",
         redacted_inputs={
-            "caller_phone": _redact_phone(req.caller_phone),
+            "caller_phone_prefix": _redact_phone(req.caller_phone),
+            "category": resolved_category,
             "urgency": req.urgency,
-            "category": req.reason_category,
         },
         redacted_outputs={"memory_id": memory_id},
     )
 
     if not memory_id:
-        # Insert failed — DO NOT lie to the agent. Return failure so the EL
-        # agent + caller-side fallback can react. Receipt was already emitted
-        # with outcome="failed".
         return {
             "success": False,
             "message_id": "",

@@ -1162,6 +1162,34 @@ async def get_front_desk_inbox(
     except SupabaseClientError as exc:
         logger.warning("inbox_callbacks_fetch_failed suite_id=%s: %s", suite_id, exc)
 
+    # ── Captured messages (memory_objects where memory_type='call') ──────────
+    # These are Tiffany/Sarah capture_message tool outputs — text-like captures
+    # that surface as 'sms' kind in the feed (text-message-like, no audio).
+    try:
+        cap_filter = f"suite_id=eq.{suite_id}&memory_type=eq.call{time_filter}"
+        cap_rows = await supabase_select(
+            "memory_objects",
+            cap_filter,
+            order_by="created_at.desc",
+            limit=capped_limit,
+        )
+        for r in (cap_rows or []):
+            detail = r.get("detail") or {}
+            items.append({
+                "kind": "capture",
+                "id": str(r.get("memory_id") or r.get("id") or ""),
+                "event_at": r.get("created_at"),
+                "contact_phone": detail.get("caller_phone") or "",
+                "contact_name": detail.get("caller_name") or "",
+                "body_preview": (r.get("summary") or "")[:120],
+                "urgency": detail.get("urgency"),
+                "reason_category": detail.get("reason_category"),
+                "category": detail.get("category"),
+                "suite_id": suite_id,
+            })
+    except SupabaseClientError as exc:
+        logger.warning("inbox_captures_fetch_failed suite_id=%s: %s", suite_id, exc)
+
     # Sort by event_at desc (most recent first); None sorts last
     items.sort(key=lambda x: x.get("event_at") or "", reverse=True)
     items = items[:capped_limit]
