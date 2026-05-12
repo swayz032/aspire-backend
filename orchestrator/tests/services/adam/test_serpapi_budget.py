@@ -170,3 +170,35 @@ def test_try_increment_falls_back_to_in_memory_on_db_error():
     month = budget_module._current_month()
     with budget_module._in_memory_lock:
         assert budget_module._in_memory_counts.get(month, {}).get("A", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 12 (budget unit): mark_account_exhausted emits receipt (Fix 1 — Law #2)
+# ---------------------------------------------------------------------------
+
+def test_mark_account_exhausted_emits_receipt():
+    """mark_account_exhausted must emit a receipt with the correct shape (Law #2)."""
+    captured: list[list[dict]] = []
+
+    def fake_store(receipts: list[dict]) -> None:
+        captured.append(receipts)
+
+    # Patch at the receipt_store module level — mark_account_exhausted does a
+    # local import of store_receipts, so patching the source module is correct.
+    with patch(
+        "aspire_orchestrator.services.receipt_store.store_receipts",
+        side_effect=fake_store,
+    ):
+        budget_module.mark_account_exhausted("A", "http_429")
+
+    assert len(captured) >= 1, "store_receipts was not called"
+    receipt = captured[0][0]
+    assert receipt["action_type"] == "external_api.budget.exhausted"
+    assert receipt["outcome"] == "failed"
+    assert receipt["reason_code"] == "SERPAPI_ACCOUNT_EXHAUSTED"
+    assert receipt["redacted_outputs"]["account_id"] == "A"
+    assert receipt["redacted_outputs"]["reason"] == "http_429"
+    # Law #9: no API key material in receipt
+    receipt_str = str(receipt)
+    for secret_kw in ("serpapi_api_key", "SERPAPI_API_KEY", "api_key="):
+        assert secret_kw not in receipt_str
