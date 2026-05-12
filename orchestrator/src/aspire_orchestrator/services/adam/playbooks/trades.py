@@ -1094,13 +1094,21 @@ async def execute_tool_material_price_check(
                 hd_payload["store_id"] = resolved_store_id
             if zip_code:
                 hd_payload["delivery_zip"] = zip_code
-            return await execute_serpapi_homedepot_search(
+            hd_result_inner = await execute_serpapi_homedepot_search(
                 payload=hd_payload,
                 correlation_id=ctx.correlation_id,
                 suite_id=ctx.suite_id,
                 office_id=ctx.office_id,
                 timeout=hd_timeout,
             )
+            # Fix 3 — persist adapter receipt immediately (Law #2).
+            if hd_result_inner.receipt_data:
+                try:
+                    from aspire_orchestrator.services.receipt_store import store_receipts
+                    store_receipts([hd_result_inner.receipt_data])
+                except Exception:
+                    pass  # Receipt write failure must never block the playbook
+            return hd_result_inner
 
         # Round 7 A.2 — SerpApi shopping with exponential backoff + jitter on 429.
         # Max 2 retries (3 total attempts), then graceful degrade to None so the
@@ -1121,6 +1129,13 @@ async def execute_tool_material_price_check(
                 except Exception as exc:  # noqa: BLE001
                     last_result = exc
                     break
+                # Fix 3 — persist adapter receipt immediately (Law #2).
+                if hasattr(res, "receipt_data") and res.receipt_data:
+                    try:
+                        from aspire_orchestrator.services.receipt_store import store_receipts
+                        store_receipts([res.receipt_data])
+                    except Exception:
+                        pass  # Receipt write failure must never block the playbook
                 last_result = res
                 # Detect 429 / RATE_LIMITED in the structured error string.
                 err_str = ""

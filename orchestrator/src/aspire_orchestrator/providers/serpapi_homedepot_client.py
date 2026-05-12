@@ -127,6 +127,27 @@ async def execute_serpapi_homedepot_search(
             receipt_data=receipt,
         )
 
+    # Fix 7 — query length cap (security R-004). Must run BEFORE select_account()
+    # so a malformed query never burns a budget slot.
+    if len(query) > 500:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.INPUT_INVALID_FORMAT.value,
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error="query exceeds 500 character limit",
+            receipt_data=receipt,
+        )
+
     # --- Dual-account budget gate (Pass A) ---
     # State machine: select_account → try_increment → get_api_key.
     # On 429/quota: mark_account_exhausted → retry other account once.
@@ -263,12 +284,72 @@ async def execute_serpapi_homedepot_search(
         )
     )
     if _is_quota:
+        # Fix 4 — emit intermediate receipt for the 429 event on the exhausted account
+        # BEFORE attempting failover (Law #2: every failure gets a receipt).
+        _pre_counts = current_counts()
+        rate_receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.RATE_LIMITED.value,
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        rate_receipt["redacted_outputs"] = {
+            "engine": "home_depot",
+            "account_id": account_id,
+            "cached": False,
+            "budget_remaining_a": max(0, 240 - _pre_counts.get("A", 0)),
+            "budget_remaining_b": max(0, 240 - _pre_counts.get("B", 0)),
+            "query_normalized": query[:100],
+            "store_id": payload.get("store_id"),
+            "http_status": response.status_code,
+        }
+        try:
+            from aspire_orchestrator.services.receipt_store import store_receipts
+            store_receipts([rate_receipt])
+        except Exception:
+            pass
         mark_account_exhausted(account_id, reason=f"HTTP {response.status_code}")
         # Retry on the other account (single attempt — Law #1: no autonomous retry loops)
+        # Fix 6 — validate key BEFORE incrementing to avoid burning a budget slot (R-003).
         other_account = "B" if account_id == "A" else "A"
+        try:
+            other_key = get_api_key(other_account)
+        except (ValueError, KeyError):
+            # No key available for the other account — return failure without incrementing.
+            _counts_post = current_counts()
+            no_key_receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id=tool_id,
+                risk_tier=risk_tier,
+                outcome=Outcome.FAILED,
+                reason_code=InternalErrorCode.AUTH_INVALID_KEY.value,
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            no_key_receipt["redacted_outputs"] = {
+                "engine": "home_depot",
+                "account_id": None,
+                "cached": False,
+                "budget_remaining_a": max(0, 240 - _counts_post.get("A", 0)),
+                "budget_remaining_b": max(0, 240 - _counts_post.get("B", 0)),
+                "query_normalized": query[:100],
+                "store_id": payload.get("store_id"),
+            }
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id=tool_id,
+                error=f"SerpApi account {other_account} key not configured",
+                receipt_data=no_key_receipt,
+            )
         if try_increment(other_account):
             try:
-                other_key = get_api_key(other_account)
                 query_params["api_key"] = other_key
                 request2 = ProviderRequest(
                     method="GET",
@@ -282,7 +363,7 @@ async def execute_serpapi_homedepot_search(
                     client._request(request2), timeout=timeout
                 )
                 account_id = other_account
-            except (KeyError, asyncio.TimeoutError):
+            except asyncio.TimeoutError:
                 pass  # Fall through to failure path below
 
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
@@ -303,10 +384,21 @@ async def execute_serpapi_homedepot_search(
         capability_token_hash=capability_token_hash,
         provider_response=response,
     )
-    # Augment receipt with budget state for audit trail (Law #2)
-    receipt["budget_account_id"] = account_id
-    receipt["budget_remaining_a"] = max(0, 240 - _post_counts.get("A", 0))
-    receipt["budget_remaining_b"] = max(0, 240 - _post_counts.get("B", 0))
+    # Fix 2 — assemble full redacted_outputs envelope (architect spec).
+    # Budget fields moved from top-level into redacted_outputs so _map_receipt_to_row
+    # preserves them. Top-level budget_* fields were silently dropped.
+    receipt["redacted_outputs"] = {
+        "engine": "home_depot",
+        "account_id": account_id,
+        "cached": False,
+        "budget_remaining_a": max(0, 240 - _post_counts.get("A", 0)),
+        "budget_remaining_b": max(0, 240 - _post_counts.get("B", 0)),
+        "query_normalized": query[:100],
+        "store_id": payload.get("store_id"),
+    }
+    receipt.pop("budget_account_id", None)
+    receipt.pop("budget_remaining_a", None)
+    receipt.pop("budget_remaining_b", None)
 
     if response.success:
         raw_products = response.body.get("products", [])
@@ -421,22 +513,35 @@ async def execute_serpapi_homedepot_search(
                         "price_was": p.get("price_was"),
                         "price_saving": p.get("price_saving"),
                         "percentage_off": p.get("percentage_off"),
+                        # CA-specific: SerpAPI returns "33%" string here.
                         "percent_off": p.get("percent_off"),
+                        # SerpAPI HD price highlight chip ("Special-Buy", "New-Lower-Price").
                         "price_badge": p.get("price_badge"),
+                        # Currency: explicit when SerpAPI returns it (CA = "CAD"),
+                        # else inferred downstream by the normalizer from URL host.
                         "currency": p.get("currency"),
+                        # Pricing unit ("case", "package", "piece") — surfaced as
+                        # "$99.97 / case" on the card price line when present.
                         "unit": p.get("unit") or "",
                         "rating": p.get("rating"),
                         "reviews": p.get("reviews"),
+                        # Social proof — favorite count from HD ("10,293 saved").
                         "favorite": p.get("favorite"),
+                        # Collection page URL (e.g. DEWALT 20V Collection).
                         "collection": p.get("collection") or "",
+                        # CA-only stock dict (general_stock, store_stock_status).
                         "stock_information": p.get("stock_information") or {},
+                        # Forward the raw nested pickup object (per-product local store).
                         "pickup": p.get("pickup") or {},
                         "delivery": p.get("delivery"),
                         "link": p.get("link"),
+                        # Direct lazy-enrich URL — preferred over rebuilt path
+                        # because it carries any tier-specific routing flags.
                         "serpapi_link": p.get("serpapi_link") or "",
                         "thumbnail": _pick_image(p),
                         "thumbnails": p.get("thumbnails") or [],
                         "badges": p.get("badges", []),
+                        # Extended fields surfaced for richer card rendering.
                         "description": p.get("description") or p.get("highlights") or "",
                         "specifications": p.get("specifications") or {},
                         "dimensions": p.get("dimensions") or {},
@@ -449,6 +554,10 @@ async def execute_serpapi_homedepot_search(
                 "query": query,
                 "result_count": len(raw_products),
                 "store": store_info,
+                # Search-level metadata for refinable sessions and breadcrumbs.
+                # taxonomy = category trail ("Tools > Power Tools > Drills").
+                # filters = facets with hd_filter_tokens for "show only Milwaukee
+                # under $200" follow-ups. related_products = query suggestions.
                 "taxonomy": response.body.get("taxonomy") or [],
                 "filters": response.body.get("filters") or [],
                 "related_products": response.body.get("related_products")
