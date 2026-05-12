@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
@@ -245,6 +245,15 @@ class CallbackRequestReq(_BaseToolReq):
     caller_phone: str = ""
     preferred_window: str = ""
     reason: str = ""
+    # Slot-validated flow: ISO 8601 datetime the caller accepted from get_owner_availability
+    selected_slot_iso: str | None = Field(
+        None,
+        description=(
+            "ISO 8601 datetime with tz offset for the slot the caller accepted. "
+            "When provided, the backend re-validates availability before writing. "
+            "If the slot is now taken, returns slot_conflict with alternatives."
+        ),
+    )
 
 
 class CallSummaryReq(_BaseToolReq):
@@ -812,12 +821,163 @@ async def faq(req: FaqReq) -> dict[str, Any]:
 
 @router.post("/callback-request")
 async def callback_request(req: CallbackRequestReq) -> dict[str, Any]:
-    """Save a callback window request (after-hours / busy_mode)."""
+    """Save a callback window request (after-hours / busy_mode).
+
+    When `selected_slot_iso` is provided (slot-validated flow from get_owner_availability):
+      1. Re-validates the slot is still free (race-condition guard).
+      2. If free  → writes callback_promises row with due_at = selected_slot_iso.
+      3. If taken → returns slot_conflict + next 3 alternatives so the agent can re-offer.
+
+    When `selected_slot_iso` is absent (legacy free-text flow):
+      Falls back to the original memory_objects / followup_task write.
+    """
     scope = await _resolve_tenant_from_called_number(req.called_number)
     if not scope:
         return {"success": False, "reason": "unknown_number"}
 
     caller_label = req.caller_name or "caller"
+
+    # ------------------------------------------------------------------
+    # Slot-validated path — selected_slot_iso provided
+    # ------------------------------------------------------------------
+    if req.selected_slot_iso:
+        try:
+            slot_dt = datetime.fromisoformat(req.selected_slot_iso.replace("Z", "+00:00"))
+        except ValueError:
+            _cut_receipt(
+                receipt_type="callback_promise_created",
+                scope=scope,
+                outcome="failed",
+                risk_tier="yellow",
+                redacted_inputs={"caller_phone": _redact_phone(req.caller_phone)},
+                redacted_outputs={"error": "invalid_slot_iso"},
+            )
+            return {"success": False, "reason": "invalid_slot_iso"}
+
+        suite_id = scope.get("suite_id", "")
+        slot_end_dt = slot_dt + timedelta(minutes=30)  # default 30-min check window
+
+        # Re-validate: check if any calendar event overlaps the slot
+        conflict_events: list[dict[str, Any]] = []
+        if suite_id:
+            try:
+                conflict_events = await supabase_select(
+                    "calendar_events",
+                    f"suite_id=eq.{suite_id}"
+                    f"&start_time=lt.{slot_end_dt.isoformat()}"
+                    f"&end_time=gt.{slot_dt.isoformat()}"
+                    f"&status=in.(pending,confirmed)",
+                    limit=1,
+                ) or []
+            except SupabaseClientError as exc:
+                logger.warning("callback_request slot_revalidate_failed: %s", exc)
+
+        if conflict_events:
+            # Slot is now taken — find next 3 alternatives after the conflict
+            alternatives: list[dict[str, Any]] = []
+            if suite_id:
+                try:
+                    next_events = await supabase_select(
+                        "calendar_events",
+                        f"suite_id=eq.{suite_id}"
+                        f"&start_time=gte.{slot_end_dt.isoformat()}"
+                        f"&status=in.(pending,confirmed)",
+                        order_by="start_time.asc",
+                        limit=10,
+                    ) or []
+                    # Offer the 3 next free 30-min windows after the conflict end
+                    conflict_end_str = (conflict_events[0].get("end_time") or slot_end_dt.isoformat()).replace("Z", "+00:00")
+                    try:
+                        after_dt = datetime.fromisoformat(conflict_end_str)
+                    except ValueError:
+                        after_dt = slot_end_dt
+
+                    candidate = after_dt.replace(minute=(after_dt.minute // 30) * 30, second=0, microsecond=0)
+                    if candidate <= after_dt:
+                        candidate += timedelta(minutes=30)
+
+                    busy_pairs = []
+                    for ev in next_events:
+                        try:
+                            es = datetime.fromisoformat((ev.get("start_time") or "").replace("Z", "+00:00"))
+                            ee = datetime.fromisoformat((ev.get("end_time") or "").replace("Z", "+00:00"))
+                            busy_pairs.append((es, ee))
+                        except ValueError:
+                            pass
+
+                    attempts = 0
+                    while len(alternatives) < 3 and attempts < 96:  # max 48h look-ahead
+                        cand_end = candidate + timedelta(minutes=30)
+                        overlaps = any(bs < cand_end and be > candidate for bs, be in busy_pairs)
+                        if not overlaps:
+                            alternatives.append({"start_iso": candidate.isoformat(), "end_iso": cand_end.isoformat()})
+                        candidate += timedelta(minutes=30)
+                        attempts += 1
+                except SupabaseClientError as exc:
+                    logger.warning("callback_request alternatives_lookup_failed: %s", exc)
+
+            _cut_receipt(
+                receipt_type="callback_promise_created",
+                scope=scope,
+                outcome="conflict",
+                risk_tier="yellow",
+                redacted_inputs={
+                    "caller_phone": _redact_phone(req.caller_phone),
+                    "slot": req.selected_slot_iso[:16],
+                },
+                redacted_outputs={"conflict": True, "alternatives_count": len(alternatives)},
+            )
+            return {
+                "success": False,
+                "slot_conflict": True,
+                "message": "That time slot was just taken. Please offer one of the alternatives.",
+                "alternatives": alternatives,
+            }
+
+        # Slot still free — write callback_promises
+        promise_id = str(uuid.uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+        promise_row: dict[str, Any] = {
+            "id": promise_id,
+            "suite_id": suite_id,
+            "office_id": scope.get("office_id", "") or None,
+            "caller_name": caller_label,
+            "caller_phone": req.caller_phone or None,
+            "due_at": slot_dt.isoformat(),
+            "reason": req.reason or None,
+            "status": "scheduled",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        try:
+            await supabase_insert("callback_promises", promise_row)
+            receipt_outcome = "success"
+            callback_id = promise_id
+        except SupabaseClientError as exc:
+            logger.error("callback_request promise_insert_failed: %s", exc)
+            receipt_outcome = "failed"
+            callback_id = ""
+
+        _cut_receipt(
+            receipt_type="callback_promise_created",
+            scope=scope,
+            outcome=receipt_outcome,
+            risk_tier="yellow",
+            redacted_inputs={"caller_phone": _redact_phone(req.caller_phone)},
+            redacted_outputs={"callback_id": callback_id, "due_at": req.selected_slot_iso[:16]},
+        )
+
+        slot_label = slot_dt.strftime("%A %b %d at %I:%M %p").replace(" 0", " ").lstrip("0")
+        return {
+            "success": receipt_outcome == "success",
+            "callback_id": callback_id,
+            "due_at": slot_dt.isoformat(),
+            "confirmation": f"Locked in — callback scheduled for {slot_label}.",
+        }
+
+    # ------------------------------------------------------------------
+    # Legacy free-text path — no selected_slot_iso
+    # ------------------------------------------------------------------
     try:
         memory_id = await _insert_memory_object(
             memory_type="followup_task",  # CHECK constraint allowed value (was 'callback_request' — invalid)
