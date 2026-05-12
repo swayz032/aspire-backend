@@ -139,32 +139,71 @@ def _current_month() -> str:
 
 
 def serpapi_get_count() -> int:
-    """Get current month's SerpApi call count."""
-    return _serpapi_counter.get(_current_month(), 0)
+    """[DEPRECATED] Get current month's SerpApi call count.
+
+    Delegates to serpapi_budget.current_counts() for account A.
+    Use serpapi_budget.current_counts() directly for dual-account awareness.
+    """
+    import warnings
+    from aspire_orchestrator.services.adam.serpapi_budget import current_counts
+    warnings.warn(
+        "cache.serpapi_get_count() is deprecated — use serpapi_budget.current_counts()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return current_counts().get("A", 0)
 
 
 def serpapi_increment() -> int:
-    """Increment SerpApi counter. Returns new count."""
-    month = _current_month()
-    _serpapi_counter[month] = _serpapi_counter.get(month, 0) + 1
-    count = _serpapi_counter[month]
-    if count >= SERPAPI_MONTHLY_LIMIT:
-        logger.warning("SerpApi budget EXHAUSTED: %d/%d calls this month", count, SERPAPI_MONTHLY_LIMIT)
-    elif count >= 200:
-        logger.warning("SerpApi budget WARNING: %d/%d calls this month", count, SERPAPI_MONTHLY_LIMIT)
-    return count
+    """[DEPRECATED] Increment SerpApi counter. Returns new count.
+
+    Delegates to serpapi_budget.try_increment() for account A.
+    Use serpapi_budget.select_account() + try_increment() for dual-account budget gate.
+    """
+    import warnings
+    from aspire_orchestrator.services.adam.serpapi_budget import try_increment, current_counts
+    warnings.warn(
+        "cache.serpapi_increment() is deprecated — use serpapi_budget.try_increment()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    try_increment("A")
+    return current_counts().get("A", 0)
 
 
 def serpapi_check_budget() -> bool:
-    """Check if SerpApi budget allows another call. Returns False if exhausted."""
-    return serpapi_get_count() < SERPAPI_MONTHLY_LIMIT
+    """[DEPRECATED] Check if SerpApi budget allows another call.
+
+    Delegates to serpapi_budget.select_account() — returns True if any account has budget.
+    Use serpapi_budget.select_account() directly for dual-account awareness.
+    """
+    import warnings
+    from aspire_orchestrator.services.adam.serpapi_budget import select_account
+    warnings.warn(
+        "cache.serpapi_check_budget() is deprecated — use serpapi_budget.select_account()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return select_account() is not None
 
 
 def serpapi_budget_error_message() -> str:
-    """Build user-facing error message for budget exhaustion."""
-    count = serpapi_get_count()
+    """[DEPRECATED] Build user-facing error message for budget exhaustion.
+
+    Use serpapi_budget.BudgetExhaustedError(current_counts()) directly.
+    """
+    import warnings
+    from aspire_orchestrator.services.adam.serpapi_budget import current_counts, DEFAULT_CAP
+    warnings.warn(
+        "cache.serpapi_budget_error_message() is deprecated — use BudgetExhaustedError",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    counts = current_counts()
+    total = sum(counts.values())
+    total_cap = DEFAULT_CAP * len(counts)
     return (
-        f"SerpApi monthly research budget exhausted ({count}/{SERPAPI_MONTHLY_LIMIT} searches used). "
+        f"SerpApi monthly research budget exhausted ({total}/{total_cap} searches used across all accounts). "
         f"Product pricing searches will resume next month. "
         f"Web search alternatives (Brave, Exa) are still available for general pricing research."
     )

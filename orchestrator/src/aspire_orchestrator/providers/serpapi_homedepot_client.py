@@ -5,9 +5,10 @@ Auth: Query parameter api_key
 Risk tier: GREEN (read-only search)
 Idempotency: N/A (read-only)
 
-Budget note: SerpApi free tier is 250 searches/month. no_cache defaults to False so
-cached results are returned when available — cached searches do not count against the
-monthly quota.
+Budget note: SerpApi free tier is 250 searches/month across two accounts (A+B, 240 cap each).
+Dual-account budget gate: select_account() → try_increment() → get_api_key(). On HTTP 429 /
+quota body error, mark_account_exhausted() forces the account to cap, then the other account
+is tried once. Adapter never retries autonomously — orchestrator owns retry logic (Law #1).
 
 Tools:
   - serpapi_home_depot.search: Search Home Depot product catalog via SerpApi
@@ -19,7 +20,6 @@ import asyncio
 import logging
 from typing import Any
 
-from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.base_client import (
     BaseProviderClient,
@@ -28,6 +28,14 @@ from aspire_orchestrator.providers.base_client import (
     ProviderResponse,
 )
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
+from aspire_orchestrator.services.adam.serpapi_budget import (
+    BudgetExhaustedError,
+    current_counts,
+    get_api_key,
+    mark_account_exhausted,
+    select_account,
+    try_increment,
+)
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
 
 logger = logging.getLogger(__name__)
@@ -46,13 +54,7 @@ class SerpApiHomeDepotClient(BaseProviderClient):
         self, request: ProviderRequest
     ) -> dict[str, str]:
         # SerpApi authenticates via query param, not headers.
-        # Validate key is present; injection happens in query_params.
-        if not settings.serpapi_api_key:
-            raise ProviderError(
-                code=InternalErrorCode.AUTH_INVALID_KEY,
-                message="SerpApi API key not configured (ASPIRE_SERPAPI_API_KEY)",
-                provider_id=self.provider_id,
-            )
+        # Key is injected into query_params in execute_serpapi_homedepot_search.
         return {}
 
     def _parse_error(
@@ -125,8 +127,57 @@ async def execute_serpapi_homedepot_search(
             receipt_data=receipt,
         )
 
-    api_key = settings.serpapi_api_key
-    if not api_key:
+    # --- Dual-account budget gate (Pass A) ---
+    # State machine: select_account → try_increment → get_api_key.
+    # On 429/quota: mark_account_exhausted → retry other account once.
+    _counts = current_counts()
+    account_id = select_account()
+    if account_id is None:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            tool_id=tool_id,
+            risk_tier=risk_tier,
+            outcome=Outcome.FAILED,
+            reason_code="SERPAPI_BUDGET_EXHAUSTED",
+            capability_token_id=capability_token_id,
+            capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED,
+            tool_id=tool_id,
+            error=str(BudgetExhaustedError(_counts)),
+            receipt_data=receipt,
+        )
+
+    if not try_increment(account_id):
+        # Race: another request consumed the last slot between select and increment
+        other = "B" if account_id == "A" else "A"
+        if not try_increment(other):
+            _counts = current_counts()
+            receipt = client.make_receipt_data(
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                tool_id=tool_id,
+                risk_tier=risk_tier,
+                outcome=Outcome.FAILED,
+                reason_code="SERPAPI_BUDGET_EXHAUSTED",
+                capability_token_id=capability_token_id,
+                capability_token_hash=capability_token_hash,
+            )
+            return ToolExecutionResult(
+                outcome=Outcome.FAILED,
+                tool_id=tool_id,
+                error=str(BudgetExhaustedError(_counts)),
+                receipt_data=receipt,
+            )
+        account_id = other
+
+    try:
+        api_key = get_api_key(account_id)
+    except KeyError as exc:
         receipt = client.make_receipt_data(
             correlation_id=correlation_id,
             suite_id=suite_id,
@@ -141,7 +192,7 @@ async def execute_serpapi_homedepot_search(
         return ToolExecutionResult(
             outcome=Outcome.FAILED,
             tool_id=tool_id,
-            error="SerpApi API key not configured",
+            error=f"SerpApi account {account_id} key not configured",
             receipt_data=receipt,
         )
 
@@ -196,11 +247,50 @@ async def execute_serpapi_homedepot_search(
             receipt_data=receipt,
         )
 
+    # --- 429 / quota-body exhaustion detection (Pass A) ---
+    # SerpApi returns HTTP 429 for rate limiting and HTTP 200 with an error
+    # body containing "quota" or "plan" when the monthly limit is hit. Either
+    # signal means this account is exhausted — mark it and try the other once.
+    _is_quota = (
+        response.status_code == 429
+        or (
+            not response.success
+            and response.error_message is not None
+            and any(
+                kw in response.error_message.lower()
+                for kw in ("quota", "plan", "limit exceeded", "searches/month")
+            )
+        )
+    )
+    if _is_quota:
+        mark_account_exhausted(account_id, reason=f"HTTP {response.status_code}")
+        # Retry on the other account (single attempt — Law #1: no autonomous retry loops)
+        other_account = "B" if account_id == "A" else "A"
+        if try_increment(other_account):
+            try:
+                other_key = get_api_key(other_account)
+                query_params["api_key"] = other_key
+                request2 = ProviderRequest(
+                    method="GET",
+                    path="/search",
+                    query_params=query_params,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                )
+                response = await asyncio.wait_for(
+                    client._request(request2), timeout=timeout
+                )
+                account_id = other_account
+            except (KeyError, asyncio.TimeoutError):
+                pass  # Fall through to failure path below
+
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
     reason = "EXECUTED" if response.success else (
         response.error_code.value if response.error_code else "FAILED"
     )
 
+    _post_counts = current_counts()
     receipt = client.make_receipt_data(
         correlation_id=correlation_id,
         suite_id=suite_id,
@@ -213,6 +303,10 @@ async def execute_serpapi_homedepot_search(
         capability_token_hash=capability_token_hash,
         provider_response=response,
     )
+    # Augment receipt with budget state for audit trail (Law #2)
+    receipt["budget_account_id"] = account_id
+    receipt["budget_remaining_a"] = max(0, 240 - _post_counts.get("A", 0))
+    receipt["budget_remaining_b"] = max(0, 240 - _post_counts.get("B", 0))
 
     if response.success:
         raw_products = response.body.get("products", [])
@@ -327,35 +421,22 @@ async def execute_serpapi_homedepot_search(
                         "price_was": p.get("price_was"),
                         "price_saving": p.get("price_saving"),
                         "percentage_off": p.get("percentage_off"),
-                        # CA-specific: SerpAPI returns "33%" string here.
                         "percent_off": p.get("percent_off"),
-                        # SerpAPI HD price highlight chip ("Special-Buy", "New-Lower-Price").
                         "price_badge": p.get("price_badge"),
-                        # Currency: explicit when SerpAPI returns it (CA = "CAD"),
-                        # else inferred downstream by the normalizer from URL host.
                         "currency": p.get("currency"),
-                        # Pricing unit ("case", "package", "piece") — surfaced as
-                        # "$99.97 / case" on the card price line when present.
                         "unit": p.get("unit") or "",
                         "rating": p.get("rating"),
                         "reviews": p.get("reviews"),
-                        # Social proof — favorite count from HD ("10,293 saved").
                         "favorite": p.get("favorite"),
-                        # Collection page URL (e.g. DEWALT 20V Collection).
                         "collection": p.get("collection") or "",
-                        # CA-only stock dict (general_stock, store_stock_status).
                         "stock_information": p.get("stock_information") or {},
-                        # Forward the raw nested pickup object (per-product local store).
                         "pickup": p.get("pickup") or {},
                         "delivery": p.get("delivery"),
                         "link": p.get("link"),
-                        # Direct lazy-enrich URL — preferred over rebuilt path
-                        # because it carries any tier-specific routing flags.
                         "serpapi_link": p.get("serpapi_link") or "",
                         "thumbnail": _pick_image(p),
                         "thumbnails": p.get("thumbnails") or [],
                         "badges": p.get("badges", []),
-                        # Extended fields surfaced for richer card rendering.
                         "description": p.get("description") or p.get("highlights") or "",
                         "specifications": p.get("specifications") or {},
                         "dimensions": p.get("dimensions") or {},
@@ -368,10 +449,6 @@ async def execute_serpapi_homedepot_search(
                 "query": query,
                 "result_count": len(raw_products),
                 "store": store_info,
-                # Search-level metadata for refinable sessions and breadcrumbs.
-                # taxonomy = category trail ("Tools > Power Tools > Drills").
-                # filters = facets with hd_filter_tokens for "show only Milwaukee
-                # under $200" follow-ups. related_products = query suggestions.
                 "taxonomy": response.body.get("taxonomy") or [],
                 "filters": response.body.get("filters") or [],
                 "related_products": response.body.get("related_products")
