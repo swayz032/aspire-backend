@@ -125,6 +125,7 @@ from aspire_orchestrator.routes.calls import router as calls_router
 from aspire_orchestrator.routes.callbacks import router as callbacks_router
 from aspire_orchestrator.routes.elevenlabs_tools import router as elevenlabs_tools_router
 from aspire_orchestrator.routes.voicemails import router as voicemails_router
+from aspire_orchestrator.routes.contacts import router as contacts_router
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -299,6 +300,7 @@ app.include_router(calls_router)        # /v1/calls/*     — Pass 19 Lane B
 app.include_router(callbacks_router)    # /v1/callbacks/* — Pass G (Front Desk Hub)
 app.include_router(elevenlabs_tools_router)  # /v1/elevenlabs/tools/* — Pass G webhook tools
 app.include_router(voicemails_router)   # /v1/voicemails/* — Pass I (mark-reviewed, soft-delete)
+app.include_router(contacts_router)     # /v1/contacts    — Tiffany-captured contact records
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
