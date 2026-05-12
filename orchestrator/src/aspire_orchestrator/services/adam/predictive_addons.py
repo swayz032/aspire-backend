@@ -15,14 +15,13 @@ from typing import Any
 
 # ---------------------------------------------------------------------------
 # Add-on catalogue keyed by detected category
-# Each entry is a list of minimal product stub dicts the FE renders as chips.
 # ---------------------------------------------------------------------------
 
 ADDONS_BY_CATEGORY: dict[str, list[dict[str, Any]]] = {
     "paint": [
         {"title": "9-in Roller Cover", "category": "paint", "reason": "recommended with paint"},
         {"title": "Canvas Drop Cloth 9x12", "category": "paint", "reason": "floor protection"},
-        {"title": "Painter\'s Tape 1.5-in", "category": "paint", "reason": "clean edge lines"},
+        {"title": "Painter's Tape 1.5-in", "category": "paint", "reason": "clean edge lines"},
         {"title": "Paint Tray + Liner 2pk", "category": "paint", "reason": "required with roller"},
     ],
     "drywall": [
@@ -75,10 +74,6 @@ ADDONS_BY_CATEGORY: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
-# ---------------------------------------------------------------------------
-# Category detection via regex (query → category key)
-# ---------------------------------------------------------------------------
-
 _CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("paint", re.compile(r"paint|primer|roller|brush|latex|enamel|stain|sealant", re.I)),
     ("drywall", re.compile(r"drywall|sheetrock|joint|mud|gypsum|plaster", re.I)),
@@ -87,7 +82,7 @@ _CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("plumbing", re.compile(r"plumb|pipe|drain|faucet|valve|pvc|cpvc|pex|fitting", re.I)),
     ("flooring", re.compile(r"floor|tile|vinyl|lvp|laminate|hardwood|grout|underlayment", re.I)),
     ("concrete", re.compile(r"concrete|cement|mortar|grout|rebar|block|masonry|footing", re.I)),
-    ("hvac", re.compile(r"hvac|duct|furnace|air\s*handler|compressor|refrigerant|insulation", re.I)),
+    ("hvac", re.compile(r"\bhvac\b|\bduct\b|\bfurnace\b|air\s*handler|\bcompressor\b|\brefrigerant\b|\binsulation\b", re.I)),
     ("tools", re.compile(r"drill|saw|hammer|screwdriver|wrench|level|nailer|tool\b", re.I)),
 ]
 
