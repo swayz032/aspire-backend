@@ -937,14 +937,16 @@ async def callback_request(req: CallbackRequestReq) -> dict[str, Any]:
         # Slot still free — write callback_promises
         promise_id = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
+        # Schema columns are contact_*/promise_context, not caller_*/reason.
+        # Migration 20260512094531_create_callback_promises_table.
         promise_row: dict[str, Any] = {
             "id": promise_id,
             "suite_id": suite_id,
             "office_id": scope.get("office_id", "") or None,
-            "caller_name": caller_label,
-            "caller_phone": req.caller_phone or None,
+            "contact_name": caller_label,
+            "contact_phone": req.caller_phone or None,
             "due_at": slot_dt.isoformat(),
-            "reason": req.reason or None,
+            "promise_context": req.reason or None,
             "status": "scheduled",
             "created_at": now_iso,
             "updated_at": now_iso,
