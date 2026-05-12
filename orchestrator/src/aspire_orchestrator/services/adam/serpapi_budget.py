@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -287,6 +288,30 @@ def mark_account_exhausted(account_id: str, reason: str) -> None:
                 "SerpApiBudget: failed to mark account %s exhausted: %s",
                 account_id, exc,
             )
+
+    # Law #2: emit immutable receipt for every account exhaustion event.
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "action_type": "external_api.budget.exhausted",
+            "tool_used": "serpapi_budget",
+            "outcome": "failed",
+            "reason_code": "SERPAPI_ACCOUNT_EXHAUSTED",
+            "actor_type": "SYSTEM",
+            "actor_id": "serpapi-budget-module",
+            "risk_tier": "green",
+            "receipt_type": "orchestrator",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "redacted_outputs": {
+                "account_id": account_id,
+                "reason": reason,
+                "month": month,
+            },
+            "receipt_hash": "",
+        }])
+    except Exception:
+        pass  # Receipt failure must never block the budget mutation
 
     # Mirror in in-memory fallback regardless
     with _in_memory_lock:
