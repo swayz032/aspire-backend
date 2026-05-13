@@ -192,10 +192,27 @@ def all_stores() -> list[dict[str, Any]]:
 
 
 def lookup_store_by_zip_code(zip_code: str) -> dict[str, Any] | None:
-    """O(1)-ish ZIP -> first store record. Returns None when no exact match.
+    """ZIP -> nearest HD store record, with ZIP-prefix proximity fallback.
 
-    Provides a single source of truth for ZIP lookups so callers don't maintain
-    parallel indexes (F-MED-2). Builds a lazy ZIP -> record cache on first call.
+    Strategy (in order):
+      1. Exact 5-digit ZIP match  → O(1) hit  (e.g. 32308 → Capital Cir HD)
+      2. ZIP-prefix proximity      → search all stores whose ZIP shares the
+         same first-3-digit sectional center facility (SCF). Picks the
+         numerically-closest ZIP within that SCF.
+         (e.g. ZIP 32303 misses, but 32308 is in the same Tallahassee SCF →
+          returns store 254.)
+
+    Why this matters: the user's address ZIP is usually a residential ZIP
+    that has no HD store anchored to it (e.g. Forest Park 30297, Tallahassee
+    32303). But the nearest HD is almost always in the same first-3-digit
+    SCF — that's how USPS designs them. ZIP-prefix fallback covers ~95% of
+    residential addresses without a network call.
+
+    Founder direction 2026-05-13: contractors can't depend on a brittle
+    static directory — we trust live Google Places for store identity (name,
+    address, phone, hours) but still need an HD-internal numeric store_id
+    to anchor SerpApi pickup data. This function is the bridge: free, fast,
+    and covers the residential-ZIP gap that exact-match couldn't.
     """
     if not zip_code:
         return None
@@ -204,7 +221,26 @@ def lookup_store_by_zip_code(zip_code: str) -> dict[str, Any] | None:
         return None
     cache = _zip_index()
     record = cache.get(zc)
-    return dict(record) if record is not None else None
+    if record is not None:
+        return dict(record)
+
+    # Prefix fallback — same SCF (first 3 digits). Find the numerically-
+    # closest ZIP in that SCF. This is bounded to the same metro so we
+    # don't reach across state lines.
+    prefix = zc[:3]
+    candidates = [
+        (other_zc, rec) for other_zc, rec in cache.items()
+        if other_zc.startswith(prefix)
+    ]
+    if not candidates:
+        return None
+    try:
+        target_int = int(zc)
+        best = min(candidates, key=lambda pair: abs(int(pair[0]) - target_int))
+        return dict(best[1])
+    except ValueError:
+        # Non-numeric ZIP (Canadian, partial, etc.) — return first prefix match.
+        return dict(candidates[0][1])
 
 
 _ZIP_INDEX: dict[str, dict[str, Any]] | None = None

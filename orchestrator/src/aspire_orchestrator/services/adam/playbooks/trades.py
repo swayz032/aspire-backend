@@ -398,7 +398,7 @@ async def execute_tool_material_price_check(
                 and not query_has_city
             )
 
-    # Round 4 — PRIMARY path: nearest HD by user_address.
+    # Round 4 — PRIMARY path: nearest HD by user_address (Google Places live).
     nearest_store: NearestStore | None = None
     if user_address and user_address.strip():
         nearest_store = await find_nearest_home_depot_by_address(
@@ -406,19 +406,36 @@ async def execute_tool_material_price_check(
             timeout=3.0,
         )
         if nearest_store is not None:
+            logger.info(
+                "Round 4 (Places): nearest_store name=%r postal_code=%r lat=%s lng=%s",
+                nearest_store.name, nearest_store.postal_code,
+                nearest_store.lat, nearest_store.lng,
+            )
             zip_code = nearest_store.postal_code or zip_code
-            # CRITICAL: also derive the Home Depot store_id from the resolved
-            # postal_code via our static directory. SerpApi accepts delivery_zip
-            # but defaults pickup data to its account store (Bangor 2414) when
-            # store_id isn't pinned — so contractors see "in stock at Bangor"
-            # for a job site in GA. Pinning store_id makes pickup data anchor
-            # to the real local HD (e.g. zip 30354 → store 123 Jonesboro GA).
-            # The whole route-map + drive_minutes + pickup-in-stock UX depends
-            # on this — never strip pickup, always pin store_id.
+            # Map Places-resolved postal_code → HD store_id via directory
+            # (with ZIP-prefix proximity fallback for residential ZIPs).
+            # SerpApi NEEDS a numeric store_id to anchor pickup data; without
+            # it pickup defaults to the account store (Bangor 2414) even when
+            # the products themselves are correct for the delivery_zip.
             if not store_id and zip_code:
                 _hd_record = lookup_store_by_zip_code(zip_code)
                 if _hd_record:
                     store_id = str(_hd_record.get("store_id", "")) or store_id
+                    logger.info(
+                        "Round 4: derived store_id=%s from postal_code=%s",
+                        store_id, zip_code,
+                    )
+                else:
+                    logger.warning(
+                        "Round 4: postal_code=%s missed directory (even with "
+                        "prefix fallback) — SerpApi will fall back to Bangor",
+                        zip_code,
+                    )
+        else:
+            logger.warning(
+                "Round 4 (Places): find_nearest_home_depot_by_address returned None "
+                "for user_address — Places searchText found no Home Depot match"
+            )
 
     if not zip_code:
         zip_match = _ZIP_IN_QUERY_RE.search(query)
