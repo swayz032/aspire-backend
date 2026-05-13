@@ -66,6 +66,13 @@ from aspire_orchestrator.providers.serpapi_yelp_client import (
     execute_serpapi_yelp_search,
 )
 
+# Pass E (upgrade): Google Places primary supplier engine — imported at module
+# level so tests can patch via
+# `aspire_orchestrator.routes.materials.search_suppliers_via_places`
+from aspire_orchestrator.services.adam.google_places_supplier_search import (
+    search_suppliers_via_places,
+)
+
 # Pass C: HD playbook — same rationale
 from aspire_orchestrator.services.adam.playbooks.trades import (
     execute_tool_material_price_check,
@@ -940,59 +947,140 @@ async def _search_suppliers(
     trace_id: str,
     cap_token_id: str | None,
 ) -> dict[str, Any]:
-    """Execute supplier search via SerpApi Yelp engine.
+    """Execute supplier search — Google Places PRIMARY, Yelp SerpApi FALLBACK.
 
-    Cache key: (query_normalized, 'yelp', location_key).
-    Cache TTL: 4 hours (supplier hours/availability changes faster than HD pricing).
-    Budget: same dual-account pool as tool mode.
-    Fail closed (Law #3): exhausted budget → {suppliers: [], mode: 'cached_only'}.
+    Engine selection (Law #1 — orchestrator, not adapter, decides fallback):
+      1. Try Google Places searchText. If it returns >=2 suppliers → use them,
+         engine='google_places'.
+      2. If Places returns 0-1 OR raises → fall back to Yelp SerpApi,
+         engine='yelp'.
+      3. If BOTH fail → return empty suppliers + receipt reason_code
+         'BOTH_PROVIDERS_FAILED' (Law #3 fail-closed).
+
+    Cache key: (query_normalized, 'google_places'|'yelp', location_key).
+    Cache TTL: 4 hours (supplier availability changes faster than HD pricing).
+    Budget: Yelp fallback still uses the dual-account SerpApi pool.
+    Receipt: redacted_outputs.engine reveals which source served each search
+             so we can audit Google Places adoption over time.
     """
     import asyncio
 
     location_key = location.strip().lower() if location else ""
 
     # ── S1. In-memory cache hit ────────────────────────────────────
-    supplier_cache_params = {"location": location_key}
-    cached_supplier = cache_get(
-        tenant_id=suite_id,
-        provider="serpapi_yelp",
-        playbook="supplier_search",
-        query=q,
-        params=supplier_cache_params,
-    )
-    if cached_supplier is not None:
-        _counts = current_counts()
-        receipt_id = _emit_receipt(
-            receipt_type="materials_supplier_search_cached",
-            suite_id=suite_id, office_id=office_id, tenant_id=tenant_id,
-            outcome="success", reason_code="CACHE_HIT",
-            correlation_id=correlation_id, trace_id=trace_id,
-            capability_token_id=cap_token_id,
-            redacted_outputs={
-                "engine": "yelp",
-                "cached": True,
-                "budget_remaining_a": max(0, 240 - _counts.get("A", 0)),
-                "budget_remaining_b": max(0, 240 - _counts.get("B", 0)),
-                "query_normalized": q,
-                "find_loc": location_key,
-                "supplier_count": len(cached_supplier.get("suppliers", [])),
-            },
+    # Cache is keyed on provider string — Places and Yelp results are cached
+    # separately so a Places cache hit doesn't prevent a Yelp live call when
+    # Places quota is exhausted (and vice versa).
+    for _cache_provider in ("google_places", "serpapi_yelp"):
+        supplier_cache_params = {"location": location_key}
+        cached_supplier = cache_get(
+            tenant_id=suite_id,
+            provider=_cache_provider,
+            playbook="supplier_search",
+            query=q,
+            params=supplier_cache_params,
         )
-        return {
-            "success": True,
-            **cached_supplier,
-            "from_cache": True,
-            "is_cached_only_mode": False,
-            "receipt_id": receipt_id,
-            "query_normalized": q,
-            "mode": "supplier",
-        }
+        if cached_supplier is not None:
+            _counts = current_counts()
+            _cached_engine = "google_places" if _cache_provider == "google_places" else "yelp"
+            receipt_id = _emit_receipt(
+                receipt_type="materials_supplier_search_cached",
+                suite_id=suite_id, office_id=office_id, tenant_id=tenant_id,
+                outcome="success", reason_code="CACHE_HIT",
+                correlation_id=correlation_id, trace_id=trace_id,
+                capability_token_id=cap_token_id,
+                redacted_outputs={
+                    "engine": _cached_engine,
+                    "cached": True,
+                    "budget_remaining_a": max(0, 240 - _counts.get("A", 0)),
+                    "budget_remaining_b": max(0, 240 - _counts.get("B", 0)),
+                    "query_normalized": q,
+                    "find_loc": location_key,
+                    "supplier_count": len(cached_supplier.get("suppliers", [])),
+                },
+            )
+            return {
+                "success": True,
+                **cached_supplier,
+                "from_cache": True,
+                "is_cached_only_mode": False,
+                "receipt_id": receipt_id,
+                "query_normalized": q,
+                "mode": "supplier",
+            }
 
-    # ── S2. Budget check — fail gracefully (Law #3) ───────────────────
+    # ── S2. Try Google Places PRIMARY ─────────────────────────────
+    places_suppliers: list[dict[str, Any]] = []
+    places_error: bool = False
+    try:
+        places_suppliers = await asyncio.wait_for(
+            search_suppliers_via_places(
+                q,
+                location=location or "",
+                max_results=10,
+                timeout=5.0,
+            ),
+            timeout=6.0,  # outer guard — slightly wider than inner 5s
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "materials supplier_search: Places timed out for query=%s — falling back to Yelp",
+            q[:60],
+        )
+        places_error = True
+    except Exception as exc:
+        logger.warning(
+            "materials supplier_search: Places error for query=%s: %s — falling back to Yelp",
+            q[:60], exc,
+        )
+        places_error = True
+
+    # Use Places result if it returned >=2 suppliers.
+    # With <2 results we fall through to Yelp — a single result is often a
+    # GCP geocoding miss (e.g. "store" type matches something irrelevant).
+    if not places_error and len(places_suppliers) >= 2:
+        suppliers = places_suppliers
+        engine_used = "google_places"
+        logger.info(
+            "materials supplier_search: Places returned %d suppliers (primary) suite_id=%s query=%s",
+            len(suppliers), suite_id, q[:60],
+        )
+        # Cache under google_places key
+        cache_set(
+            tenant_id=suite_id,
+            provider="google_places",
+            playbook="supplier_search",
+            query=q,
+            params={"location": location_key},
+            value={"suppliers": suppliers},
+            ttl_override=_YELP_TTL_SECONDS,
+        )
+        return await _finalize_supplier_response(
+            suppliers=suppliers,
+            engine_used=engine_used,
+            q=q,
+            location_key=location_key,
+            idempotency_key=idempotency_key,
+            suite_id=suite_id,
+            office_id=office_id,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+            trace_id=trace_id,
+            cap_token_id=cap_token_id,
+        )
+
+    # ── S3. Yelp fallback — budget check ─────────────────────────────
+    if not places_error and len(places_suppliers) < 2:
+        logger.info(
+            "materials supplier_search: Places returned %d supplier(s) (<2) — falling back to Yelp query=%s",
+            len(places_suppliers), q[:60],
+        )
+
     account_id = select_account()
     _counts = current_counts()
 
     if account_id is None:
+        # Both Places (insufficient) AND Yelp budget exhausted — fail closed.
         receipt_id = _emit_receipt(
             receipt_type="materials_supplier_search_budget_exhausted",
             suite_id=suite_id, office_id=office_id, tenant_id=tenant_id,
@@ -1020,7 +1108,7 @@ async def _search_suppliers(
             "message": "Daily supplier-lookup quota reached",
         }
 
-    # ── S3. Execute Yelp search ───────────────────────────────────
+    # ── S4. Execute Yelp search ───────────────────────────────────
     try:
         yelp_result = await asyncio.wait_for(
             execute_serpapi_yelp_search(
@@ -1082,7 +1170,7 @@ async def _search_suppliers(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── S4. Check for budget exhaustion in adapter result ─────────────────
+    # ── S5. Check for budget exhaustion in Yelp adapter result ─────────────────
     if yelp_result.outcome and str(yelp_result.outcome).lower() in ("failed", "error"):
         error_str = yelp_result.error or ""
         is_budget_exhausted = "budget exhausted" in error_str.lower() or "SERPAPI_BUDGET_EXHAUSTED" in error_str
@@ -1114,11 +1202,11 @@ async def _search_suppliers(
                 "query_normalized": q,
                 "message": "Daily supplier-lookup quota reached",
             }
-        # Other adapter failure — re-emit receipt with adapter receipt_id context
+        # Other Yelp adapter failure — fail closed (Law #3).
         receipt_id = _emit_receipt(
             receipt_type="materials_supplier_search_error",
             suite_id=suite_id, office_id=office_id, tenant_id=tenant_id,
-            outcome="failed", reason_code="PROVIDER_INTERNAL_ERROR",
+            outcome="failed", reason_code="BOTH_PROVIDERS_FAILED",
             correlation_id=correlation_id, trace_id=trace_id,
             capability_token_id=cap_token_id,
             redacted_outputs={
@@ -1133,25 +1221,67 @@ async def _search_suppliers(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
+            detail={"error": "BOTH_PROVIDERS_FAILED", "receipt_id": receipt_id},
         )
 
-    # ── S5. Extract suppliers ───────────────────────────────────
-    suppliers: list[dict[str, Any]] = (yelp_result.data or {}).get("suppliers", [])
+    # ── S6. Extract Yelp suppliers ───────────────────────────────────
+    suppliers = list((yelp_result.data or {}).get("suppliers", []))
+    engine_used = "yelp"
 
-    # ── S6. Write to in-memory cache ────────────────────────────────
-    supplier_payload: dict[str, Any] = {"suppliers": suppliers}
+    logger.info(
+        "materials supplier_search: Yelp fallback returned %d suppliers suite_id=%s query=%s",
+        len(suppliers), suite_id, q[:60],
+    )
+
+    # Cache under serpapi_yelp key
     cache_set(
         tenant_id=suite_id,
         provider="serpapi_yelp",
         playbook="supplier_search",
         query=q,
-        params=supplier_cache_params,
-        value=supplier_payload,
+        params={"location": location_key},
+        value={"suppliers": suppliers},
         ttl_override=_YELP_TTL_SECONDS,
     )
 
-    # ── S7. Persist idempotency record ──────────────────────────────
+    return await _finalize_supplier_response(
+        suppliers=suppliers,
+        engine_used=engine_used,
+        q=q,
+        location_key=location_key,
+        idempotency_key=idempotency_key,
+        suite_id=suite_id,
+        office_id=office_id,
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        trace_id=trace_id,
+        cap_token_id=cap_token_id,
+        account_id=account_id,
+    )
+
+
+async def _finalize_supplier_response(
+    *,
+    suppliers: list[dict[str, Any]],
+    engine_used: str,
+    q: str,
+    location_key: str,
+    idempotency_key: str | None,
+    suite_id: str,
+    office_id: str,
+    tenant_id: str,
+    correlation_id: str,
+    trace_id: str,
+    cap_token_id: str | None,
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist idempotency record and emit success receipt for supplier results.
+
+    Shared by both the Google Places path and the Yelp fallback path so that
+    receipt format is identical regardless of which engine served the request.
+    The engine is surfaced in redacted_outputs.engine for auditing.
+    """
+    # ── F1. Persist idempotency record ──────────────────────────────
     if idempotency_key:
         try:
             await supabase_insert(
@@ -1163,7 +1293,7 @@ async def _search_suppliers(
                     "office_id": office_id,
                     "tenant_id": tenant_id,
                     "query_normalized": q,
-                    "engine": "yelp",
+                    "engine": engine_used,
                     "suppliers": suppliers,
                     "product_count": 0,
                     "specialty_count": 0,
@@ -1172,9 +1302,12 @@ async def _search_suppliers(
                 },
             )
         except SupabaseClientError as exc:
-            logger.warning("materials_supplier_search idempotency persist failed: %s", exc)
+            logger.warning(
+                "materials_supplier_search idempotency persist failed (engine=%s): %s",
+                engine_used, exc,
+            )
 
-    # ── S8. Success receipt ───────────────────────────────────
+    # ── F2. Success receipt (Law #2) ──────────────────────────────────────
     _counts_final = current_counts()
     receipt_id = _emit_receipt(
         receipt_type="materials_supplier_search_success",
@@ -1183,7 +1316,10 @@ async def _search_suppliers(
         correlation_id=correlation_id, trace_id=trace_id,
         capability_token_id=cap_token_id,
         redacted_outputs={
-            "engine": "yelp",
+            # engine is the audit trail field — reveals Places vs Yelp per search.
+            # Phone/address are in the supplier payload (public retail data per
+            # Law #9 carve-out) — NOT here in redacted_outputs.
+            "engine": engine_used,
             "account_id": account_id,
             "cached": False,
             "budget_remaining_a": max(0, 240 - _counts_final.get("A", 0)),
@@ -1195,8 +1331,8 @@ async def _search_suppliers(
     )
 
     logger.info(
-        "materials_supplier_search success suite_id=%s query=%s suppliers=%d",
-        suite_id, q[:60], len(suppliers),
+        "materials_supplier_search success engine=%s suite_id=%s query=%s suppliers=%d",
+        engine_used, suite_id, q[:60], len(suppliers),
     )
 
     return {
