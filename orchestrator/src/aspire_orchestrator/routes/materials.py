@@ -234,7 +234,7 @@ async def search_materials(
     keywords, the response includes suggested_mode='supplier'. Client decides
     whether to flip — the server never auto-flips mode.
     """
-    # ── 1. Scope resolution (Law #6) ──────────────────────────────────────────────
+    # ── 1. Scope resolution (Law #6) ────────────────────────────────────
     scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
     suite_id = str(scope.suite_id)
     office_id = str(scope.office_id)
@@ -242,7 +242,7 @@ async def search_materials(
     correlation_id = get_correlation_id() or str(uuid.uuid4())
     trace_id = get_trace_id() or correlation_id
 
-    # ── 2. Capability token validation (Law #5) ──────────────────────────────────────────
+    # ── 2. Capability token validation (Law #5) ───────────────────────────────────
     cap_token_dict: dict[str, Any] | None = None
     if capability_token:
         import json
@@ -286,7 +286,7 @@ async def search_materials(
 
     cap_token_id = _cap_token_id(cap_token_dict)
 
-    # ── 3. Query normalisation + PII rejection ────────────────────────────────────────────
+    # ── 3. Query normalisation + PII rejection ──────────────────────────────────
     normalised = normalize_query(q)
     if isinstance(normalised, NormalizeRejection):
         receipt_id = _emit_receipt(
@@ -307,7 +307,7 @@ async def search_materials(
             },
         )
 
-    # ── 4. Mode validation + supplier-mode dispatch (Pass E) ───────────────────────
+    # ── 4. Mode validation + supplier-mode dispatch (Pass E) ─────────────────
     #
     # Validate mode param (fail-closed: unknown modes are rejected, not silently
     # downgraded to tool mode — that would mask client bugs, Law #3).
@@ -348,7 +348,7 @@ async def search_materials(
             cap_token_id=cap_token_id,
         )
 
-    # ── 5. Idempotency check (tool mode) ─────────────────────────────────────
+    # ── 5. Idempotency check (tool mode) ─────────────────────────────
     if idempotency_key:
         try:
             existing = await supabase_select(
@@ -393,7 +393,7 @@ async def search_materials(
         except SupabaseClientError as exc:
             logger.warning("materials_search idempotency check failed: %s", exc)
 
-    # ── 5a. Resolve address → nearest HD store (tool mode only) ─────────────────
+    # ── 5a. Resolve address → nearest HD store (tool mode only) ─────────────
     # When the client sends the full project address and no explicit store_id,
     # extract the ZIP from the address string and resolve to the nearest HD
     # store via the O(1) static directory. This prevents SerpApi from defaulting
@@ -445,7 +445,7 @@ async def search_materials(
                 # Tool mode will still return results without closest_store.
                 logger.warning("materials_search hd_store address lookup failed: %s", _exc)
 
-    # ── 5. In-memory cache hit ────────────────────────────────────────────────────
+    # ── 5. In-memory cache hit ───────────────────────────────────────
     # Include resolved_store_id/resolved_zip so two addresses that resolve to
     # different HD stores don't share a cache row (Law #6 — tenant isolation
     # within the same suite extends to store-level result isolation).
@@ -493,7 +493,7 @@ async def search_materials(
             "suggested_mode": suggested_mode,
         }
 
-    # ── 6. Budget check — fail gracefully with cached-only mode ────────────
+    # ── 6. Budget check — fail gracefully with cached-only mode ──────────
     account_id = select_account()
     _counts = current_counts()
 
@@ -531,7 +531,7 @@ async def search_materials(
             "suggested_mode": suggested_mode,
         }
 
-    # ── 7. Build PlaybookContext + execute HD search ──────────────────────────────────────
+    # ── 7. Build PlaybookContext + execute HD search ───────────────────────────
     ctx = PlaybookContext(
         suite_id=suite_id,
         office_id=office_id,
@@ -550,6 +550,18 @@ async def search_materials(
                 zip_code=resolved_zip or "",
                 store_id=resolved_store_id or "",
                 voice_path=False,  # R1: text-mode path, 3-attempt loop
+                # Bug fix: pass the raw project address so the playbook can
+                # run its Round-4 Geocode + Places PRIMARY path (Task #43).
+                # When user_address is set, the playbook resolves the actual
+                # nearest HD to the job-site address via Google Places
+                # searchNearby, pins delivery_zip from the resolved store's
+                # postal_code, and skips the city→zip fallback entirely.
+                # Without this, ZIP 30297 (and any ZIP absent from our static
+                # directory) produced products=0 because the static-directory
+                # miss set resolved_store_id=None, leaving the playbook with
+                # only a raw zip_code — which SerpApi accepted but whose
+                # response failed the complete_products completeness gate.
+                user_address=address or "",
             ),
             timeout=_ROUTE_TIMEOUT_SECONDS,
         )
@@ -628,26 +640,91 @@ async def search_materials(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── 8. Extract products from research_result ───────────────────────────────────────
+    # ── 8. Extract products from research_result ────────────────────────────
+    # The playbook (execute_tool_material_price_check) packages its results as a
+    # ResearchResponse with:
+    #   records = [store_summary_dict, product_dict, product_dict, ...]
+    #             (card_kind="store_summary" for the first record)
+    #   extra   = {"store_summary": {...}, "taxonomy": [...], ...}
+    #
+    # When the user_address PRIMARY path runs (Round 4), the playbook resolves
+    # the nearest HD via Google Places and stores the resolved store info in
+    # extra["store_summary"]. We prefer that over the static-directory lookup
+    # done earlier in this route.
+    #
+    # Debug logging — grep for "materials_extract" to trace any future failure.
+    _extra = getattr(research_result, "extra", {}) or {}
+    _records = getattr(research_result, "records", None) or []
+    logger.info(
+        "materials_extract playbook result: type=%s records=%d extra_keys=%s",
+        type(research_result).__name__,
+        len(_records),
+        list(_extra.keys()) if isinstance(_extra, dict) else str(type(_extra)),
+    )
+
     products: list[dict[str, Any]] = []
-    records = getattr(research_result, "records", None) or []
-    for rec in records:
-        raw_products = []
-        if hasattr(rec, "products"):
-            raw_products = rec.products or []
-        elif isinstance(rec, dict):
-            raw_products = rec.get("products") or rec.get("results") or []
-        # Normalise records to dicts
-        for p in raw_products:
-            products.append(p if isinstance(p, dict) else (p.__dict__ if hasattr(p, "__dict__") else {}))
+    # Primary extraction path: records is a flat list of dicts.
+    # store_summary records have card_kind="store_summary" — skip them here.
+    for rec in _records:
+        if isinstance(rec, dict):
+            if rec.get("card_kind") in ("store_summary", "store_candidate"):
+                continue  # store cards are not products
+            products.append(rec)
+        elif hasattr(rec, "__dict__"):
+            d = rec.__dict__
+            if d.get("card_kind") in ("store_summary", "store_candidate"):
+                continue
+            products.append(d)
+        # Legacy: rec has a .products attribute (older schema)
+        elif hasattr(rec, "products"):
+            for p in (rec.products or []):
+                products.append(p if isinstance(p, dict) else (p.__dict__ if hasattr(p, "__dict__") else {}))
 
-    # Also check top-level extra dict
-    extra = getattr(research_result, "extra", {}) or {}
-    if not products and extra.get("results"):
-        for item in extra["results"]:
+    logger.info(
+        "materials_extract from records: %d products (skipped store_summary cards)",
+        len(products),
+    )
+
+    # Fallback: top-level extra["results"] (used by legacy path when records is empty)
+    if not products and _extra.get("results"):
+        for item in _extra["results"]:
             products.append(item if isinstance(item, dict) else {})
+        logger.info(
+            "materials_extract from extra.results: %d products",
+            len(products),
+        )
 
-    # ── 9. Specialty fallback (ATTOM POI) when < 3 products ─────────────────────
+    # Bug fix (Bug 3): prefer the playbook's resolved store info over the
+    # static-directory lookup done above. When the Round-4 user_address path
+    # ran successfully, extra["store_summary"] contains Google-verified
+    # store name / address / postal_code for the actual nearest HD to the
+    # job site. We use that in preference to closest_store_info (which was
+    # derived from the static directory and may be null for ZIPs not in the
+    # directory, e.g. 30297 Forest Park GA).
+    _playbook_store: dict[str, Any] | None = None
+    if isinstance(_extra, dict) and isinstance(_extra.get("store_summary"), dict):
+        _ps = _extra["store_summary"]
+        # Only use it if it has a meaningful store name (not a blank/default).
+        if _ps.get("store_name") or _ps.get("name"):
+            _playbook_store = {
+                "id": str(_ps.get("store_id", "")),
+                "name": _ps.get("store_name") or _ps.get("name") or "Home Depot",
+                "address": _ps.get("address", ""),
+                "city": _ps.get("city", ""),
+                "state": _ps.get("state", ""),
+                "zip": str(_ps.get("postal_code", "")).zfill(5) if _ps.get("postal_code") else "",
+            }
+            logger.info(
+                "materials_extract closest_store from playbook store_summary: %s (id=%s zip=%s)",
+                _playbook_store["name"], _playbook_store["id"], _playbook_store["zip"],
+            )
+
+    # Merge: playbook-resolved store wins; static-directory lookup is fallback.
+    closest_store_info = _playbook_store or closest_store_info
+    if closest_store_info is None:
+        logger.info("materials_extract closest_store: none resolved (no address or all lookups failed)")
+
+    # ── 9. Specialty fallback (ATTOM POI) when < 3 products ─────────────────
     specialty_suppliers: list[dict[str, Any]] = []
     if len(products) < 3 and (resolved_zip or zip_code):
         try:
@@ -682,14 +759,14 @@ async def search_materials(
         except Exception as poi_exc:
             logger.warning("materials_search attom_poi fallback failed: %s", poi_exc)
 
-    # ── 10. Derive filters + add-ons ───────────────────────────────────────────────
+    # ── 10. Derive filters + add-ons ───────────────────────────────────
     filters = derive_filters(products)
     addon_suggestions = get_predictive_addons(normalised)
 
-    # ── 11. Sanitize before cache write (Law #9) ────────────────────────────────────
+    # ── 11. Sanitize before cache write (Law #9) ──────────────────────────
     sanitized_products = sanitize_product_list(products)
 
-    # ── 12. Write to in-memory cache (tenant-isolated key, Law #6) ──────────────
+    # ── 12. Write to in-memory cache (tenant-isolated key, Law #6) ──────────
     result_payload: dict[str, Any] = {
         "products": sanitized_products,
         "specialty_suppliers": specialty_suppliers,
@@ -706,7 +783,7 @@ async def search_materials(
         ttl_override=_HD_TTL_SECONDS,
     )
 
-    # ── 13. Persist idempotency record to Supabase ─────────────────────────────────────
+    # ── 13. Persist idempotency record to Supabase ──────────────────────────
     if idempotency_key:
         try:
             await supabase_insert(
@@ -730,7 +807,7 @@ async def search_materials(
         except SupabaseClientError as exc:
             logger.warning("materials_search idempotency persist failed: %s", exc)
 
-    # ── 14. Success receipt ─────────────────────────────────────────────────────────
+    # ── 14. Success receipt ─────────────────────────────────────────
     _counts_final = current_counts()
     receipt_id = _emit_receipt(
         receipt_type="materials_search_success",
@@ -753,8 +830,11 @@ async def search_materials(
     )
 
     logger.info(
-        "materials_search success suite_id=%s query=%s products=%d specialty=%d",
+        "materials_search success suite_id=%s query=%s products=%d specialty=%d "
+        "closest_store=%s closest_store_source=%s",
         suite_id, normalised[:60], len(sanitized_products), len(specialty_suppliers),
+        closest_store_info.get("name") if closest_store_info else "none",
+        "playbook" if _playbook_store else ("static-directory" if closest_store_info else "none"),
     )
 
     return {
@@ -801,7 +881,7 @@ async def _search_suppliers(
 
     location_key = location.strip().lower() if location else ""
 
-    # ── S1. In-memory cache hit ────────────────────────────────────────────────────
+    # ── S1. In-memory cache hit ────────────────────────────────────
     supplier_cache_params = {"location": location_key}
     cached_supplier = cache_get(
         tenant_id=suite_id,
@@ -838,7 +918,7 @@ async def _search_suppliers(
             "mode": "supplier",
         }
 
-    # ── S2. Budget check — fail gracefully (Law #3) ───────────────────────────────
+    # ── S2. Budget check — fail gracefully (Law #3) ───────────────────
     account_id = select_account()
     _counts = current_counts()
 
@@ -870,7 +950,7 @@ async def _search_suppliers(
             "message": "Daily supplier-lookup quota reached",
         }
 
-    # ── S3. Execute Yelp search ───────────────────────────────────────────────────
+    # ── S3. Execute Yelp search ───────────────────────────────────
     try:
         yelp_result = await asyncio.wait_for(
             execute_serpapi_yelp_search(
@@ -932,7 +1012,7 @@ async def _search_suppliers(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── S4. Check for budget exhaustion in adapter result ───────────────────────
+    # ── S4. Check for budget exhaustion in adapter result ─────────────────
     if yelp_result.outcome and str(yelp_result.outcome).lower() in ("failed", "error"):
         error_str = yelp_result.error or ""
         is_budget_exhausted = "budget exhausted" in error_str.lower() or "SERPAPI_BUDGET_EXHAUSTED" in error_str
@@ -986,10 +1066,10 @@ async def _search_suppliers(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── S5. Extract suppliers ───────────────────────────────────────────────────
+    # ── S5. Extract suppliers ───────────────────────────────────
     suppliers: list[dict[str, Any]] = (yelp_result.data or {}).get("suppliers", [])
 
-    # ── S6. Write to in-memory cache ─────────────────────────────────────────────────
+    # ── S6. Write to in-memory cache ────────────────────────────────
     supplier_payload: dict[str, Any] = {"suppliers": suppliers}
     cache_set(
         tenant_id=suite_id,
@@ -1001,7 +1081,7 @@ async def _search_suppliers(
         ttl_override=_YELP_TTL_SECONDS,
     )
 
-    # ── S7. Persist idempotency record ──────────────────────────────────────────────
+    # ── S7. Persist idempotency record ──────────────────────────────
     if idempotency_key:
         try:
             await supabase_insert(
@@ -1024,7 +1104,7 @@ async def _search_suppliers(
         except SupabaseClientError as exc:
             logger.warning("materials_supplier_search idempotency persist failed: %s", exc)
 
-    # ── S8. Success receipt ────────────────────────────────────────────────────────
+    # ── S8. Success receipt ───────────────────────────────────
     _counts_final = current_counts()
     receipt_id = _emit_receipt(
         receipt_type="materials_supplier_search_success",
