@@ -6,6 +6,8 @@ Covers:
                     cross-tenant block, idempotent dedup.
   EVIL-01 to EVIL-04: SQL injection, prompt injection, oversized address, serpapi key not cached.
   ADR-01 to ADR-09: address → HD store resolution wiring (PR fix/materials-address-wiring).
+  FIX-01 to FIX-05: user_address forwarding, product extraction from flat records list,
+                    closest_store from playbook store_summary (fix/materials-tool-extraction).
 """
 from __future__ import annotations
 
@@ -732,3 +734,300 @@ def test_adr09_hd_lookup_exception_fails_soft_returns_200(
     data = resp.json()
     assert data["success"] is True
     assert data.get("closest_store") is None
+
+
+# ---------------------------------------------------------------------------
+# FIX tests — Bug 1: user_address passed to playbook + Bug 2/3: product
+# extraction and closest_store resolution via playbook store_summary
+# (fix/materials-tool-extraction)
+# ---------------------------------------------------------------------------
+
+# Fixture: what execute_tool_material_price_check returns on the user_address
+# PRIMARY path (Round 4) when Google Places resolves a real nearest HD.
+# records = [store_summary_card, product_dict_1, ...] (flat list of dicts,
+# matching the actual playbook output at trades.py:1554).
+_FOREST_PARK_RESOLVED_STORE_SUMMARY = {
+    "card_kind": "store_summary",
+    "store_id": "0559",
+    "store_name": "The Home Depot",
+    "name": "The Home Depot",
+    "address": "5765 Old Dixie Hwy",
+    "city": "Forest Park",
+    "state": "GA",
+    "postal_code": "30297",
+    "phone": "",
+    "website": "",
+    "image_url": "",
+    "open_now": None,
+    "rating": None,
+    "retailer": "Home Depot",
+}
+
+# Products returned by the playbook (already normalized dicts via product.to_dict()).
+_KILZ_PRODUCT = {
+    "product_name": "KILZ 2 ALL PURPOSE 5 gal. Primer",
+    "brand": "KILZ",
+    "model": "L200200",
+    "sku": "100697436",
+    "retailer": "Home Depot",
+    "price": 29.98,
+    "currency": "USD",
+    "availability": "in_stock",
+    "in_store_stock": 12,
+    "store_id": "0559",
+    "store_name": "The Home Depot",
+    "url": "https://www.homedepot.com/p/100697436",
+    "image_url": "https://images.thdstatic.com/productImages/100697436_1000.jpg",
+    "rating": 4.7,
+    "reviews": 1842,
+    "delivery_info": "Free delivery",
+    "sources": [],
+}
+
+_BEHR_PRODUCT = {
+    "product_name": "BEHR PREMIUM PLUS 5 gal. Ultra Pure White",
+    "brand": "BEHR",
+    "model": "105005",
+    "sku": "100689944",
+    "retailer": "Home Depot",
+    "price": 59.98,
+    "currency": "USD",
+    "availability": "in_stock",
+    "in_store_stock": 6,
+    "store_id": "0559",
+    "store_name": "The Home Depot",
+    "url": "https://www.homedepot.com/p/100689944",
+    "image_url": "https://images.thdstatic.com/productImages/100689944_1000.jpg",
+    "rating": 4.5,
+    "reviews": 988,
+    "delivery_info": "Free delivery",
+    "sources": [],
+}
+
+
+def _make_user_address_research_result() -> MagicMock:
+    """Fixture matching the actual ResearchResponse shape from the user_address
+    PRIMARY path.  records is a flat list of dicts (store_summary + products).
+    extra["store_summary"] holds the playbook's resolved store info."""
+    result = MagicMock()
+    result.records = [
+        _FOREST_PARK_RESOLVED_STORE_SUMMARY,
+        _KILZ_PRODUCT,
+        _BEHR_PRODUCT,
+    ]
+    result.extra = {
+        "store_summary": _FOREST_PARK_RESOLVED_STORE_SUMMARY,
+        "cards_version": "v1",
+        "taxonomy": [],
+        "filters": [],
+        "related_products": [],
+        "pagination": {},
+        "nearest_store_distance_miles": 1.4,
+        "hd_too_far": False,
+        "hd_has_stock": True,
+        "include_other_stores": False,
+    }
+    return result
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=None,  # ZIP 30297 NOT in static directory (the real-world bug condition)
+)
+def test_fix01_user_address_passed_to_playbook(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Bug 1: user_address must be forwarded to execute_tool_material_price_check.
+
+    When address=... is supplied and ZIP 30297 is absent from the static directory,
+    the route previously called the playbook WITHOUT user_address, leaving it with
+    only an unresolvable zip and no store_id.  The fix must pass user_address so the
+    playbook can run its Round-4 Google Places PRIMARY path.
+    """
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _make_user_address_research_result()
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "4863 Price St, Forest Park, GA 30297, USA", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+
+    call_kwargs = mock_execute.call_args.kwargs
+    assert call_kwargs.get("user_address") == "4863 Price St, Forest Park, GA 30297, USA", (
+        "user_address must be forwarded to the playbook"
+    )
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=None,  # ZIP 30297 NOT in static directory
+)
+def test_fix02_products_extracted_from_records_flat_list(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Bug 2: products must be extracted from the flat records list.
+
+    The playbook packs results as records=[store_summary, product, product, ...].
+    Store_summary cards (card_kind='store_summary') must be skipped; product dicts
+    must be collected.  For the Forest Park / ZIP 30297 scenario that was returning
+    products=0 in production, this verifies >=1 product is extracted.
+    """
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _make_user_address_research_result()
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "4863 Price St, Forest Park, GA 30297, USA", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert len(data["products"]) >= 1, (
+        f"Expected >=1 product but got {len(data['products'])}. "
+        "Check that store_summary cards are skipped and product dicts are collected."
+    )
+    # Verify the KILZ product made it through
+    names = [p.get("product_name", "") for p in data["products"]]
+    assert any("KILZ" in n for n in names), f"KILZ product missing from {names}"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=None,  # ZIP 30297 NOT in static directory
+)
+def test_fix03_closest_store_from_playbook_store_summary(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Bug 3: closest_store must be populated from the playbook's extra.store_summary
+    when the static directory has no entry for the ZIP (e.g. ZIP 30297, Forest Park GA).
+
+    Previously closest_store was always null in this scenario because it depended
+    exclusively on the static-directory lookup.  The fix prefers the playbook's
+    resolved store info, which is ground-truth (Google Places verified).
+    """
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _make_user_address_research_result()
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "4863 Price St, Forest Park, GA 30297, USA", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+
+    cs = data.get("closest_store")
+    assert cs is not None, "closest_store must be populated from playbook store_summary"
+    assert cs["name"] == "The Home Depot", f"wrong name: {cs['name']}"
+    assert cs["id"] == "0559", f"wrong store_id: {cs['id']}"
+    assert cs["zip"] == "30297", f"wrong ZIP: {cs['zip']}"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=_FOREST_PARK_STORE,
+)
+def test_fix04_static_directory_closest_store_still_works(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Regression: when static directory DOES have the store and the playbook returns
+    no store_summary, closest_store must still come from static directory lookup.
+    This confirms the fallback logic is not broken by the Bug 3 fix.
+    """
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    # Playbook returns no extra.store_summary (e.g. minimal/error path)
+    result = MagicMock()
+    result.records = [_KILZ_PRODUCT]
+    result.extra = {}
+    mock_execute.return_value = result
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "5765 Old Dixie Hwy, Forest Park, GA 30297", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # static-directory closest_store must still appear
+    cs = data.get("closest_store")
+    assert cs is not None, "closest_store must fall back to static-directory when playbook has no store_summary"
+    assert cs["name"] == "The Home Depot"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=None,
+)
+def test_fix05_receipt_emitted_on_user_address_path(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Law #2: a success receipt must be emitted even when the user_address path runs.
+    Confirms the receipt covers the new code path introduced by the Bug 1 fix.
+    """
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _make_user_address_research_result()
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "4863 Price St, Forest Park, GA 30297, USA", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    assert mock_store.called, "receipt_store.store_receipts must be called (Law #2)"
+    receipts = mock_store.call_args[0][0]
+    assert len(receipts) >= 1
+    r = receipts[0]
+    assert r["outcome"] == "success"
+    assert r["action_type"] == "materials.search"
+    assert r.get("receipt_id") or r.get("id"), "receipt must have an id"
+    ro = r.get("redacted_outputs", {})
+    assert ro.get("address_provided") is True
