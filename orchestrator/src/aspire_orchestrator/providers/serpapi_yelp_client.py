@@ -192,6 +192,11 @@ def _normalize_business(
     # Stable ID: Yelp place_id preferred, else positional fallback
     biz_id = str(biz.get("place_id") or biz.get("serpapi_link") or f"yelp_{position}").strip()
 
+    # Thumbnail — Yelp returns a Yelp-CDN URL on each business. Public CDN, OK
+    # to surface client-side (Law #9: public retail data). Used by the supplier
+    # card to render a photo at the top of the tile.
+    thumbnail = str(biz.get("thumbnail") or "").strip()
+
     return {
         "id": biz_id,
         "name": str(biz.get("title") or "").strip(),
@@ -201,6 +206,7 @@ def _normalize_business(
         "zip": str(biz.get("zip_code") or "").strip(),
         "phone": phone,
         "website": website,
+        "thumbnail": thumbnail,
         "rating": rating,
         "review_count": review_count,
         "distance_miles": distance_miles,
