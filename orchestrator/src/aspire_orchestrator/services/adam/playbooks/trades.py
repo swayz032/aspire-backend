@@ -36,6 +36,12 @@ HD_TOO_FAR_MILES = 25.0
 _SHOPPING_RETRY_MAX_ATTEMPTS = 2
 _SHOPPING_RETRY_BASE_MS = (250, 500)
 
+# Pass F — HD pagination threshold. When page 1 returns >= this many results,
+# fire page 2 concurrently (start=24). This signals a high-coverage SKU set
+# worth paginating. Cap final merged list at HD_PAGE2_MAX_PRODUCTS.
+_HD_PAGE2_THRESHOLD = 18
+_HD_PAGE2_MAX_PRODUCTS = 60
+
 # ZIP code regex used for voice-path detection and address parsing.
 # Tightened from \d{5} to require word boundaries to avoid false-positives
 # from 5-digit quantities in product queries.
@@ -337,6 +343,13 @@ async def execute_tool_material_price_check(
         2. Fall back to haversine via ctx.office_lat/office_lng. Pick closest within 50km.
         3. Otherwise return artifact_type="StoreDisambiguation" with candidate list.
       - When `store_id` is set explicitly: skip city -> zip; use that store directly.
+
+    Pass F — HD Pagination:
+      - When page 1 returns >= _HD_PAGE2_THRESHOLD (18) results, fire page 2 concurrently
+        using start=24. Both pages run with asyncio.gather (same dual-budget gate;
+        each page costs 1 SerpApi tick). Results are merged + deduped by sku/product_id.
+        Final list is capped at _HD_PAGE2_MAX_PRODUCTS (60). If page 2 fails,
+        page 1 results are used as-is (fail-soft, Law #3).
     """
     import re as _re
     from aspire_orchestrator.providers.serpapi_shopping_client import execute_serpapi_shopping_search
@@ -363,38 +376,16 @@ async def execute_tool_material_price_check(
     )
 
     # F-CRIT-1: voice_path MUST be decided from caller-supplied signals BEFORE
-    # the nearest-store resolver runs. The resolver pins zip_code from the
-    # Google Places result, which would otherwise flip voice_path to False
-    # mid-request (`not zip_code` → False) and route every Anam call into the
-    # 3-attempt × 8s text loop (24s) inside the 5s voice budget.
-    #
-    # Inputs that count as "voice context": NO zip_code, NO store_id, NO city
-    # at the public entry point. user_address by itself is a voice-friendly
-    # signal (Anam's dynamic variable) so it does NOT flip voice_path off.
+    # the nearest-store resolver runs.
     if voice_path is None:
-        # F-MED-6: tighter ZIP regex used here so a 5-digit product quantity
-        # (e.g. "10000 ft of pipe") doesn't pre-populate zip_code and break
-        # voice-path detection.
         query_zip_match = _ZIP_IN_QUERY_RE.search(query)
         query_has_zip = bool(query_zip_match)
-        # Tightened from `\bin\s+([A-Za-z]+...)` which false-positived on
-        # phrases like "in stock", "in store", "in house". A real city
-        # reference must be followed by a 2-letter US state code (e.g.
-        # "in Tallahassee, FL") or an explicit state name. Without that
-        # discriminator, "show paint in stock at Home Depot" was flipping
-        # voice_path to False, which re-enabled Google Shopping merging
-        # — surfacing IMAGE-UNAVAILABLE Google Shopping cards alongside
-        # real Home Depot inventory (May 4 user report).
         query_has_city = bool(
             _re.search(
                 r"\bin\s+[A-Za-z][A-Za-z\s]+,\s*[A-Za-z]{2}\b",
                 query,
             )
         )
-        # user_address by itself is voice-friendly (Anam's dynamic variable)
-        # and must NOT flip voice_path off. Even when user_address embeds a
-        # zip we treat the request as voice path because the entry signal is
-        # a single-line address from a voice session.
         if user_address and user_address.strip():
             voice_path = True
         else:
@@ -406,32 +397,15 @@ async def execute_tool_material_price_check(
                 and not query_has_city
             )
 
-    # Round 4 — PRIMARY path: nearest HD by user_address. When this resolves
-    # successfully we pin delivery_zip from the resolved store's postal_code
-    # and skip the city -> zip lookup entirely. On any failure we fall through
-    # to Wave A.5 (city -> zip + multi-store disambiguation).
-    #
-    # The resolved NearestStore carries Google's formattedAddress + photo + a
-    # haversine distance. Those override the static-directory fields in the
-    # final store_summary because the user is at a job site — the Google
-    # address is what they recognize, and distance_miles is hero data.
+    # Round 4 — PRIMARY path: nearest HD by user_address.
     nearest_store: NearestStore | None = None
     if user_address and user_address.strip():
         nearest_store = await find_nearest_home_depot_by_address(
             user_address.strip(),
-            # Outer caller guard. Helper enforces an internal asyncio.wait_for
-            # at the same value — keeping the boundary single-owned simplifies
-            # cancellation semantics. Voice path budget is 5s end-to-end;
-            # 3s here leaves 2s for SerpApi.
             timeout=3.0,
         )
         if nearest_store is not None:
-            # Pin zip BEFORE the city/store_id branches below run.
             zip_code = nearest_store.postal_code or zip_code
-            # Note: place_id is Google's, not a Home Depot store_id — we do
-            # NOT set store_id from place_id (SerpApi rejects unknown ids).
-            # The static directory still gets a chance to resolve store_id
-            # from pickup.store_id in the SerpApi response below.
 
     if not zip_code:
         zip_match = _ZIP_IN_QUERY_RE.search(query)
@@ -446,16 +420,14 @@ async def execute_tool_material_price_check(
         if city_match:
             location_hint = city_match.group(1).strip(" .,")
 
-    # Wave A.5: explicit store_id beats city/zip — use the directory record directly.
+    # Wave A.5: explicit store_id beats city/zip.
     if store_id:
         directory_record = lookup_store_by_id(store_id)
         if directory_record:
             zip_code = zip_code or directory_record.get("postal_code", "")
     elif city:
-        # Wave A.5: multi-store disambiguation in a city.
         candidates = find_stores_in_city(city, state or None)
         if len(candidates) > 1:
-            # (a) fuzzy address-hint auto-pick
             hint_lower = location_hint.lower()
             for cand in candidates:
                 cand_addr = (cand.get("address") or "").lower()
@@ -465,7 +437,6 @@ async def execute_tool_material_price_check(
                     store_id = str(cand.get("store_id", ""))
                     zip_code = zip_code or str(cand.get("postal_code", ""))
                     break
-            # (b) haversine fallback (placeholder — office lat/lng not in ctx yet)
             if not store_id and candidates:
                 store_id = str(candidates[0].get("store_id", ""))
                 zip_code = zip_code or str(candidates[0].get("postal_code", ""))
@@ -473,7 +444,6 @@ async def execute_tool_material_price_check(
             store_id = str(candidates[0].get("store_id", ""))
             zip_code = zip_code or str(candidates[0].get("postal_code", ""))
         elif not zip_code:
-            # City→zip lookup (Wave A.2). Single primary path. No fallback chain.
             looked_up = lookup_zip_by_city(city, state or None)
             if looked_up:
                 zip_code = looked_up
@@ -487,10 +457,6 @@ async def execute_tool_material_price_check(
         return missing
 
     def _store_missing_fields(store: dict[str, Any]) -> list[str]:
-        # Irreducible contract: store_name. Without a name the card has no
-        # identity worth showing. Everything else (address, phone, website) is
-        # supplementary metadata — present when populated, omitted gracefully
-        # when not.
         missing: list[str] = []
         for field in ("store_name",):
             v = store.get(field)
@@ -503,27 +469,28 @@ async def execute_tool_material_price_check(
     final_records: list[dict[str, Any]] = []
     final_sources: list[SourceAttribution] = []
     final_store_summary: dict[str, Any] = {}
-    # Search-level metadata captured from SerpAPI for refinable carousels
     final_taxonomy: list[dict[str, Any]] = []
     final_filters: list[dict[str, Any]] = []
     final_related_products: list[dict[str, Any]] = []
     final_pagination: dict[str, Any] = {}
+    # Pass F: track pagination metadata for receipt
+    _pages_fetched: int = 1
+    _total_after_dedup: int = 0
 
     max_attempts = 1 if voice_path else 3
     hd_timeout = 4.0 if voice_path else 8.0
 
-    async def _run_hd_search(attempt_query: str) -> Any:
-        """Inner HD search helper. Returns ToolExecutionResult or Exception."""
+    async def _run_hd_search(attempt_query: str, start: int = 0) -> Any:
+        """Inner HD search helper. Returns ToolExecutionResult or None/Exception.
+
+        Pass F: `start` param enables page 2 (start=24). Both page 1 and
+        page 2 use the same budget gate (each costs 1 SerpApi tick).
+        """
         nonlocal providers_called
 
-        # Guard: refuse to run when no store identity is resolvable (prevents
-        # Bangor default-fallback poisoning the result with Maine inventory).
         resolved_store_id = store_id or ""
 
         if not resolved_store_id and not zip_code:
-            # No store context at all — the SerpApi result will be poisoned
-            # with the account-default Bangor/ME store. Refuse and let the
-            # caller ask Ava to get the user's location.
             logger.warning(
                 "TOOL_MATERIAL_PRICE_CHECK: no store_id or zip_code, refusing to run "
                 "to avoid Bangor default-fallback (attempt_query=%s)",
@@ -532,15 +499,19 @@ async def execute_tool_material_price_check(
             providers_called.append("store_unresolved")
             return None
 
-        # Bug D fix: request the full SerpApi HD page size (24 products max).
-        # Without this, SerpApi defaults to ~12 results. The completeness gate
-        # (_product_missing_fields) then has 24 candidates to filter instead
-        # of 12, raising the actual product count delivered to the frontend.
-        hd_payload: dict[str, Any] = {"query": attempt_query, "hd_sort": "best_match", "num": "24"}
+        hd_payload: dict[str, Any] = {
+            "query": attempt_query,
+            "hd_sort": "best_match",
+            "num": "24",
+        }
         if resolved_store_id:
             hd_payload["store_id"] = resolved_store_id
         if zip_code:
             hd_payload["delivery_zip"] = zip_code
+        # Pass F: page 2 uses start=24 offset
+        if start > 0:
+            hd_payload["start"] = str(start)
+
         hd_result_inner = await execute_serpapi_homedepot_search(
             payload=hd_payload,
             correlation_id=ctx.correlation_id,
@@ -548,23 +519,18 @@ async def execute_tool_material_price_check(
             office_id=ctx.office_id,
             timeout=hd_timeout,
         )
-        # Fix 3 — persist adapter receipt immediately (Law #2).
         if hd_result_inner.receipt_data:
             try:
                 from aspire_orchestrator.services.receipt_store import store_receipts
                 store_receipts([hd_result_inner.receipt_data])
             except Exception:
-                pass  # Receipt write failure must never block the playbook
+                pass
         return hd_result_inner
 
-    # Round 7 A.2 — SerpApi shopping with exponential backoff + jitter on 429.
-    # Max 2 retries (3 total attempts), then graceful degrade to None so the
-    # HD result still carries the response. Receipt for the rate-limited
-    # outcome is emitted by the SerpApi adapter itself (Fix 4).
     async def _run_shopping_search(attempt_query: str) -> Any:
         """Inner Google Shopping search helper with retry. Returns result or None."""
         if voice_path:
-            return None  # Voice path skips Shopping to stay within 5s budget
+            return None
         for attempt in range(_SHOPPING_RETRY_MAX_ATTEMPTS + 1):
             try:
                 result = await execute_serpapi_shopping_search(
@@ -579,7 +545,6 @@ async def execute_tool_material_price_check(
                         store_receipts([result.receipt_data])
                     except Exception:
                         pass
-                # On 429 at intermediate attempts, backoff + retry.
                 if (
                     not result.outcome.value == "success"
                     and attempt < _SHOPPING_RETRY_MAX_ATTEMPTS
@@ -599,27 +564,45 @@ async def execute_tool_material_price_check(
                 return None
         return None
 
+    def _dedup_products(
+        page1_items: list[dict[str, Any]],
+        page2_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Merge two pages of raw SerpApi product dicts, deduplicate by sku/product_id.
+
+        Pass F: deduplication boundary so products appearing on both pages
+        (HD reorders results between requests occasionally) are not doubled.
+        """
+        seen: set[str] = set()
+        merged: list[dict[str, Any]] = []
+        for item in page1_items + page2_items:
+            key = str(item.get("sku") or item.get("product_id") or item.get("item_id") or "")
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            merged.append(item)
+            if len(merged) >= _HD_PAGE2_MAX_PRODUCTS:
+                break
+        return merged
+
     for attempt_idx in range(max_attempts):
         if attempt_idx == 0:
             attempt_query = query
         elif attempt_idx == 1:
-            # Tighten: strip parentheticals, trailing qualifiers
             attempt_query = re.sub(r"\s*\([^)]*\)", "", query).strip()
             attempt_query = re.sub(r"\s+(for|with|to|and|or)\s+.*$", "", attempt_query, flags=re.IGNORECASE).strip()
         else:
-            # Further tighten: first 3 words only
             words = query.split()
             attempt_query = " ".join(words[:3]) if len(words) > 3 else query
 
-        # Run HD + Shopping concurrently (Shopping is None on voice path).
+        # Run HD page 1 + Shopping concurrently.
         hd_result, shopping_result = await asyncio.gather(
-            _run_hd_search(attempt_query),
+            _run_hd_search(attempt_query, start=0),
             _run_shopping_search(attempt_query),
             return_exceptions=True,
         )
 
-        # If _run_hd_search returned None (store_unresolved guard fired),
-        # break out immediately — no products, no store.
         if hd_result is None:
             break
 
@@ -636,7 +619,6 @@ async def execute_tool_material_price_check(
 
         providers_called.append("serpapi_home_depot")
 
-        # Detect 429 on HD — don't log as provider error, surface via flag.
         hd_rate_limited = (
             hd_result.error is not None
             and "rate_limited" in str(hd_result.error).lower()
@@ -644,9 +626,10 @@ async def execute_tool_material_price_check(
         if hd_rate_limited:
             providers_called.append("serpapi_home_depot_rate_limited")
 
-        # Check for SerpAPI account-default Bangor fallback poison
         hd_store_info: dict[str, Any] = {}
         hd_data: dict[str, Any] = {}
+        page1_raw_results: list[dict[str, Any]] = []
+
         if hd_result.outcome.value == "success" and hd_result.data:
             hd_data = hd_result.data
             store_data = hd_data.get("store", {})
@@ -659,7 +642,6 @@ async def execute_tool_material_price_check(
                 )
                 continue
 
-            # Build hd_store_info from SerpAPI search_information
             hd_store_info = {
                 "store_id": store_data.get("store_id", ""),
                 "store_name": store_data.get("store_name", ""),
@@ -675,7 +657,6 @@ async def execute_tool_material_price_check(
                 "rating": None,
             }
 
-            # Enrich from static directory when we have a store_id
             if hd_store_info["store_id"]:
                 dir_record = lookup_store_by_id(hd_store_info["store_id"])
                 if dir_record:
@@ -688,18 +669,51 @@ async def execute_tool_material_price_check(
                         "website": dir_record.get("website", ""),
                     })
 
+            page1_raw_results = list(hd_data.get("results") or [])
+
+        # Pass F: page-2 pagination — only when page 1 has sufficient coverage.
+        # Both pages are fired concurrently; page 2 failure is fail-soft.
+        page2_raw_results: list[dict[str, Any]] = []
+        pages_fetched = 1
+        if (
+            hd_result.outcome.value == "success"
+            and len(page1_raw_results) >= _HD_PAGE2_THRESHOLD
+        ):
+            try:
+                hd_result_p2 = await _run_hd_search(attempt_query, start=24)
+                if (
+                    hd_result_p2 is not None
+                    and not isinstance(hd_result_p2, Exception)
+                    and hd_result_p2.outcome.value == "success"
+                    and hd_result_p2.data
+                ):
+                    page2_raw_results = list(hd_result_p2.data.get("results") or [])
+                    providers_called.append("serpapi_home_depot_page2")
+                    pages_fetched = 2
+            except Exception as p2_exc:
+                # Page 2 failure is completely fail-soft — page 1 suffices.
+                logger.warning(
+                    "TOOL_MATERIAL_PRICE_CHECK page2 fail-soft (attempt=%d): %s",
+                    attempt_idx, p2_exc,
+                )
+
+        # Merge + dedup pages
+        all_raw_results = _dedup_products(page1_raw_results, page2_raw_results)
+        _pages_fetched = pages_fetched
+        _total_after_dedup = len(all_raw_results)
+
         # Normalize products
         records: list[dict[str, Any]] = []
         sources: list[SourceAttribution] = []
 
-        if hd_result.outcome.value == "success" and hd_data.get("results"):
-            for item in hd_data["results"]:
-                product = normalize_from_serpapi_homedepot(item)
-                records.append(product.to_dict())
-                sources.extend(product.sources)
+        for item in all_raw_results:
+            product = normalize_from_serpapi_homedepot(item)
+            records.append(product.to_dict())
+            sources.extend(product.sources)
+        if records:
             providers_called.append("serpapi_home_depot_success")
 
-        # Google Shopping merge (text path only, skip on voice_path)
+        # Google Shopping merge (text path only)
         if (
             not voice_path
             and shopping_result is not None
@@ -766,8 +780,10 @@ async def execute_tool_material_price_check(
         })
 
         logger.info(
-            "TOOL_MATERIAL_PRICE_CHECK attempt=%s hd_products=%s complete_hd_products=%s store_missing=%s",
-            attempt_idx, len(hd_products), len(complete_products), store_missing,
+            "TOOL_MATERIAL_PRICE_CHECK attempt=%s hd_products=%s complete_hd_products=%s "
+            "pages_fetched=%s total_after_dedup=%s store_missing=%s",
+            attempt_idx, len(hd_products), len(complete_products),
+            _pages_fetched, _total_after_dedup, store_missing,
         )
 
         if complete_products and not store_missing:
@@ -849,6 +865,8 @@ async def execute_tool_material_price_check(
                 "providers_called": providers_called,
                 "missing_fields": last_missing_fields,
                 "decision_flags": decision_flags,
+                "pages_fetched": _pages_fetched,
+                "total_after_dedup": _total_after_dedup,
             },
         )
         return ResearchResponse(
@@ -867,6 +885,8 @@ async def execute_tool_material_price_check(
                 "filters": final_filters,
                 "related_products": final_related_products,
                 "pagination": final_pagination,
+                "pages_fetched": _pages_fetched,
+                "total_after_dedup": _total_after_dedup,
             },
         )
 
@@ -879,6 +899,9 @@ async def execute_tool_material_price_check(
             "providers_called": providers_called,
             "product_count": len(final_records) - 1,  # exclude store_summary
             "decision_flags": decision_flags,
+            # Pass F: pagination metadata in receipt (Law #2)
+            "pages_fetched": _pages_fetched,
+            "total_after_dedup": _total_after_dedup,
         },
     )
 
@@ -898,6 +921,8 @@ async def execute_tool_material_price_check(
             "filters": final_filters,
             "related_products": final_related_products,
             "pagination": final_pagination,
+            "pages_fetched": _pages_fetched,
+            "total_after_dedup": _total_after_dedup,
         },
     )
 
@@ -1051,7 +1076,6 @@ async def execute_territory_opportunity_scan(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # Exa for market intelligence
     exa_result = await execute_exa_search(
         payload={
             "query": f"market opportunity {query} {geo_scope}",
