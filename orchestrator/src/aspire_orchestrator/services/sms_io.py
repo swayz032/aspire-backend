@@ -361,7 +361,7 @@ async def send_sms(
             "source_record_id": message_sid,
             "visibility_scope": "office",
             "idempotency_key": f"sms-outbound:{message_sid}",
-            "linked_memory_ids": [thread_memory_id],
+            "thread_id": thread_memory_id,  # schema column for linking to thread row
             "created_at": now,
         }
         await supabase_insert("memory_objects", outbound_memory)
@@ -587,19 +587,26 @@ async def send_sms_new(
     # Note: detail.to (our from_number) is intentionally omitted here — send_sms
     # writes the outbound sms_messages row with the resolved from_number.
     thread_memory_id = str(uuid.uuid4())
+    # Schema-correct memory_objects insert. Founder fix 2026-05-13: previous
+    # version used 'kind' (does not exist — PGRST204) and 'updated_at' (does
+    # not exist; use 'last_activity_at'). Column names verified against live
+    # schema: memory_id, suite_id, office_id, tenant_id, memory_type, channel,
+    # detail (jsonb), created_at, last_activity_at, status.
     thread_row: dict[str, Any] = {
         "memory_id": thread_memory_id,
         "suite_id": suite_id,
         "office_id": office_id,
         "tenant_id": tenant_id,
-        "kind": "sms_thread",
+        "memory_type": "sms_thread",
+        "channel": "sms",
+        "status": "active",
         "detail": {
             "from": to_phone_e164,   # external contact (inbound convention)
             "channel": "sms",
             "origin": "compose",
         },
         "created_at": now,
-        "updated_at": now,
+        "last_activity_at": now,
     }
     try:
         await supabase_insert("memory_objects", thread_row)
