@@ -18,7 +18,8 @@ Auto-mode-detect (server-side defensive layer):
 
 Receipt envelope spec (redacted_outputs):
   engine, account_id, cached, budget_remaining_a, budget_remaining_b,
-  query_normalized, store_id / find_loc, product_count / supplier_count, specialty_count.
+  query_normalized, store_id / find_loc, product_count / supplier_count, specialty_count,
+  drive_minutes_resolved (bool, tool mode only).
 """
 
 from __future__ import annotations
@@ -68,6 +69,13 @@ from aspire_orchestrator.providers.serpapi_yelp_client import (
 # Pass C: HD playbook — same rationale
 from aspire_orchestrator.services.adam.playbooks.trades import (
     execute_tool_material_price_check,
+)
+
+# Bug B/C fix: Distance Matrix client for drive_minutes enrichment.
+# Import is lazy (inside the function) so tests can patch without side-effects,
+# but the module-level import keeps it explicit for static analysis.
+from aspire_orchestrator.providers.google_distance_matrix_client import (
+    resolve_drive_minutes,
 )
 
 logger = logging.getLogger(__name__)
@@ -375,6 +383,7 @@ async def search_materials(
                         "query_normalized": normalised,
                         "product_count": row.get("product_count", 0),
                         "specialty_count": row.get("specialty_count", 0),
+                        "drive_minutes_resolved": False,
                     },
                 )
                 return {
@@ -479,6 +488,7 @@ async def search_materials(
                 "address_provided": bool(address),
                 "product_count": len(cached_result.get("products", [])),
                 "specialty_count": len(cached_result.get("specialty_suppliers", [])),
+                "drive_minutes_resolved": False,
             },
         )
         return {
@@ -514,6 +524,7 @@ async def search_materials(
                 "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
+                "drive_minutes_resolved": False,
             },
         )
         return {
@@ -584,6 +595,7 @@ async def search_materials(
                 "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
+                "drive_minutes_resolved": False,
             },
         )
         raise HTTPException(
@@ -608,6 +620,7 @@ async def search_materials(
                 "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
+                "drive_minutes_resolved": False,
             },
         )
         raise HTTPException(
@@ -633,6 +646,7 @@ async def search_materials(
                 "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
+                "drive_minutes_resolved": False,
             },
         )
         raise HTTPException(
@@ -723,6 +737,59 @@ async def search_materials(
     closest_store_info = _playbook_store or closest_store_info
     if closest_store_info is None:
         logger.info("materials_extract closest_store: none resolved (no address or all lookups failed)")
+
+    # ── 8a. Distance Matrix — enrich closest_store with drive_minutes (Bug B/C) ────
+    # Fail-soft: any error leaves drive_minutes as None; the UI renders "—".
+    # Law #3: never 502 from this path.
+    # Law #9: cache keyed on ZIP + store_id only (no full address).
+    drive_minutes_resolved = False
+    if closest_store_info and address:
+        dest_address = closest_store_info.get("address", "")
+        dest_store_id = closest_store_info.get("id", "")
+        if dest_address:
+            try:
+                dm_result = await asyncio.wait_for(
+                    resolve_drive_minutes(
+                        origin_address=address,
+                        destination_address=dest_address,
+                        destination_store_id=dest_store_id,
+                    ),
+                    timeout=3.5,  # hard outer guard (client has its own 3s)
+                )
+                if dm_result is not None:
+                    drive_minutes_val, in_traffic_val = dm_result
+                    closest_store_info["drive_minutes"] = drive_minutes_val
+                    closest_store_info["in_traffic"] = in_traffic_val
+                    drive_minutes_resolved = True
+                    logger.info(
+                        "materials_search drive_minutes resolved: %d min (traffic=%s) store=%s",
+                        drive_minutes_val, in_traffic_val,
+                        closest_store_info.get("name", "?"),
+                    )
+                    # Bug C fix: backfill pickup.drive_minutes on products at the same store.
+                    # Only for products whose pickup.store_id matches the resolved store.
+                    # Products at other stores (cross-fulfillment edge case) get null.
+                    resolved_store_id_for_backfill = dest_store_id or ""
+                    for prod in products:
+                        prod_pickup = prod.get("pickup")
+                        if isinstance(prod_pickup, dict):
+                            prod_store_id = str(prod_pickup.get("store_id") or "").strip()
+                            if (
+                                prod_store_id
+                                and resolved_store_id_for_backfill
+                                and prod_store_id == resolved_store_id_for_backfill
+                            ):
+                                prod_pickup["drive_minutes"] = drive_minutes_val
+                        # Also check top-level store_id for legacy products without
+                        # a pickup wrapper (may exist in cache-replayed results).
+                        elif resolved_store_id_for_backfill:
+                            prod_top_store_id = str(prod.get("store_id") or "").strip()
+                            if prod_top_store_id == resolved_store_id_for_backfill:
+                                prod.setdefault("pickup", {})["drive_minutes"] = drive_minutes_val
+            except asyncio.TimeoutError:
+                logger.warning("materials_search drive_minutes timeout (>3.5s) — leaving null")
+            except Exception as _dm_exc:
+                logger.warning("materials_search drive_minutes error: %s", _dm_exc)
 
     # ── 9. Specialty fallback (ATTOM POI) when < 3 products ─────────────────
     specialty_suppliers: list[dict[str, Any]] = []
@@ -826,15 +893,18 @@ async def search_materials(
             "address_provided": bool(address),
             "product_count": len(sanitized_products),
             "specialty_count": len(specialty_suppliers),
+            # Bug B/C audit trail: was Distance Matrix successfully resolved?
+            "drive_minutes_resolved": drive_minutes_resolved,
         },
     )
 
     logger.info(
         "materials_search success suite_id=%s query=%s products=%d specialty=%d "
-        "closest_store=%s closest_store_source=%s",
+        "closest_store=%s closest_store_source=%s drive_minutes_resolved=%s",
         suite_id, normalised[:60], len(sanitized_products), len(specialty_suppliers),
         closest_store_info.get("name") if closest_store_info else "none",
         "playbook" if _playbook_store else ("static-directory" if closest_store_info else "none"),
+        drive_minutes_resolved,
     )
 
     return {

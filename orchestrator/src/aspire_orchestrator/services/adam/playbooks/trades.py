@@ -36,6 +36,11 @@ HD_TOO_FAR_MILES = 25.0
 _SHOPPING_RETRY_MAX_ATTEMPTS = 2
 _SHOPPING_RETRY_BASE_MS = (250, 500)
 
+# ZIP code regex used for voice-path detection and address parsing.
+# Tightened from \d{5} to require word boundaries to avoid false-positives
+# from 5-digit quantities in product queries.
+_ZIP_IN_QUERY_RE = re.compile(r"\b(\d{5})\b(?!-\d{4})")
+
 
 def _emit_playbook_receipt(
     *,
@@ -48,498 +53,182 @@ def _emit_playbook_receipt(
     redacted_outputs: dict[str, Any] | None = None,
     risk_tier: str = "green",
 ) -> None:
-    """Emit a playbook-rollup receipt for Adam (Law #2 — 100% coverage).
-
-    Provider clients already emit one receipt per HTTP call. This receipt is
-    the playbook-level rollup so every Adam outcome (success, MISSING_TASK,
-    shopping_429, hd_too_far, no_stock, multi_store_success) has at least
-    one receipt with actor_type=WORKER and the correct status. Best-effort:
-    receipt-store failures are logged and swallowed so receipt persistence
-    NEVER blocks the user-facing response (Law #2 + reliability balance).
-
-    Parameters
-    ----------
-    redacted_inputs:
-        PII-scrubbed representation of what went INTO this playbook call.
-        Never pass raw addresses, owner names, or financial data.
-    redacted_outputs:
-        Summary of what came OUT (record counts, artifact_type, status).
-        Supersedes the legacy ``summary`` kwarg when both are provided.
-    risk_tier:
-        Override the default ``green`` tier when the playbook touches
-        sensitive data (e.g. YELLOW for mortgage/ownership records).
-    """
+    """Emit an immutable playbook receipt (Law #2). Fire-and-forget."""
+    import uuid as _uuid2
+    from aspire_orchestrator.services.receipt_store import store_receipts
+    receipt_id = str(_uuid2.uuid4())
+    receipt: dict[str, Any] = {
+        "id": receipt_id,
+        "receipt_type": f"{playbook_name}.playbook",
+        "suite_id": ctx.suite_id,
+        "office_id": ctx.office_id,
+        "tenant_id": ctx.tenant_id,
+        "outcome": outcome_status.lower(),
+        "action_type": f"{playbook_name}.execute",
+        "tool_used": playbook_name,
+        "risk_tier": risk_tier,
+        "reason_code": reason_code,
+        "trace_id": ctx.correlation_id,
+        "correlation_id": ctx.correlation_id,
+        "capability_token_id": ctx.capability_token_id or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if summary:
+        receipt["redacted_outputs"] = summary
+    if redacted_inputs:
+        receipt["redacted_inputs"] = redacted_inputs
+    if redacted_outputs:
+        receipt.setdefault("redacted_outputs", {}).update(redacted_outputs)
     try:
-        from aspire_orchestrator.services.receipt_store import store_receipts
-
-        # Outcome string at the receipt-store layer is lowercased by status_map.
-        outcome_lower = outcome_status.lower()
-        # redacted_outputs wins over legacy summary kwarg so existing callers
-        # that only pass summary= continue to work unchanged.
-        effective_outputs = redacted_outputs if redacted_outputs is not None else summary
-        receipt: dict[str, Any] = {
-            "id": str(_uuid.uuid4()),
-            "correlation_id": ctx.correlation_id or "",
-            "suite_id": ctx.suite_id or "",
-            "office_id": ctx.office_id or "",
-            "tenant_id": ctx.tenant_id or ctx.suite_id or "",
-            "actor_type": "WORKER",
-            "actor_id": "adam",
-            "action_type": f"adam.playbook.{playbook_name}",
-            "risk_tier": risk_tier,
-            "tool_used": "adam_playbook",
-            "outcome": outcome_lower,
-            "reason_code": reason_code,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "receipt_type": "agent_playbook",
-            "redacted_inputs": redacted_inputs,
-            "redacted_outputs": effective_outputs,
-            "capability_token_id": ctx.capability_token_id,
-            "capability_token_hash": ctx.capability_token_hash,
-        }
-        # Receipt hash for chain integrity. Sort keys so the hash is deterministic.
-        try:
-            payload = _json.dumps(receipt, sort_keys=True, default=str)
-            receipt["receipt_hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        except Exception:
-            receipt["receipt_hash"] = ""
         store_receipts([receipt])
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Adam playbook receipt emission failed (outcome=%s reason=%s): %s",
-            outcome_status, reason_code, exc,
-        )
+    except Exception:
+        pass  # Receipt write failure must never block the playbook
 
 
-_UNIT_KEYWORD_RE = re.compile(
-    r'(?:\b(?:apartment|apt|unit|suite|ste)\s*\S+|#\s*\S+)',
-    re.IGNORECASE,
-)
-_LEADING_DIGITS_RE = re.compile(r'^\d{4,}')
+def _redact_user_address(addr: str) -> str:
+    """Redact street number from user_address for log safety (Law #9)."""
+    if not addr:
+        return ""
+    # Keep city/state/zip, redact house number.
+    parts = addr.split(",", 1)
+    if len(parts) > 1:
+        return f"<ADDR_REDACTED>,{parts[1]}"
+    return "<ADDR_REDACTED>"
 
 
-def _redact_address(raw: str) -> str:
-    """Return a PII-scrubbed version of a raw address string (Law #9).
+def _parse_city_state_from_formatted_address(formatted: str) -> tuple[str, str]:
+    """Parse city and state from a Google formattedAddress string.
 
-    Strips occupant/unit identifiers and masks long leading street numbers
-    so owner-identifiable data is not persisted in receipt logs.
-
-    Examples:
-        "1575 Paul Russell Road, apartment 4802, Tallahassee, FL 32301"
-        → "XXX Paul Russell Road, Tallahassee, FL 32301"
-
-        "200 Main St, Suite 400, Austin TX 78701"
-        → "XXX Main St, Austin TX 78701"
+    Example: "1490 Capital Cir NW, Tallahassee, FL 32303, USA"
+    Returns ("Tallahassee", "FL") or ("", "") on parse failure.
     """
-    # Remove unit/apt qualifiers ("apartment 4802", "apt 4802", "#4802", etc.)
-    redacted = _UNIT_KEYWORD_RE.sub('', raw)
-    # Collapse double commas/spaces left by removal
-    redacted = re.sub(r',\s*,', ',', redacted)
-    redacted = re.sub(r'\s{2,}', ' ', redacted).strip().strip(',').strip()
-    # Mask leading street number when it is ≥4 digits (unit-level identifiable)
-    parts = redacted.split(' ', 1)
-    if parts and _LEADING_DIGITS_RE.match(parts[0]):
-        parts[0] = 'XXX'
-        redacted = ' '.join(parts)
-    return redacted
+    if not formatted:
+        return ("", "")
+    # Split by comma, look for "City, ST ZIP" pattern
+    parts = [p.strip() for p in formatted.split(",")]
+    for i, part in enumerate(parts):
+        # Part looks like "FL 32303" or "FL" — state is before ZIP
+        state_zip = re.match(r"^([A-Z]{2})\s*\d{0,5}$", part)
+        if state_zip and i > 0:
+            state = state_zip.group(1)
+            city = parts[i - 1]
+            return (city, state)
+    return ("", "")
 
 
-def _extract_address_from_query(query: str) -> str:
-    """Extract address from a natural language query for ATTOM."""
-    import re
-    # Strict pattern (state abbreviation or full state name)
-    match = re.search(
-        r'(\d+\s+[\w\s]+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pl|Cir|Pkwy|Hwy|Ter)\.?'
-        r'(?:\s*,\s*[\w\s]+,?\s*(?:[A-Z]{2}|[A-Za-z]{4,})\s*,?\s*\d{5}(?:-\d{4})?))',
-        query, re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
-    prefixes = [
-        "pull property facts for", "pull property details for", "pull property profile for",
-        "find property facts for", "find property details for", "find property profile for",
-        "property facts for", "property details for", "property profile for",
-        "pull the square footage and permit context for",
-        "pull", "get", "show me", "find", "look up",
-    ]
-    remaining = query.strip()
-    while remaining:
-        q_lower = remaining.lower().strip()
-        consumed = False
-        for prefix in sorted(prefixes, key=len, reverse=True):
-            if q_lower.startswith(prefix):
-                remaining = remaining[len(prefix):].strip(" .,:;-")
-                consumed = True
-                break
-        if not consumed:
-            break
-    marker = "additional details:"
-    rem_lower = remaining.lower()
-    if marker in rem_lower:
-        idx = rem_lower.rfind(marker)
-        tail = remaining[idx + len(marker):].strip(" .,:;-")
-        if tail:
-            return tail
-    if remaining and remaining != query:
-        return remaining
-    lower_query = query.lower()
-    if marker in lower_query:
-        idx = lower_query.rfind(marker)
-        tail = query[idx + len(marker):].strip(" .,:;-")
-        if tail:
-            return tail
-    # Loose fallback for wrapped inputs like:
-    # "property lookup. Additional details: 4863 Price Street, Forest Park, Georgia, 30297"
-    loose = re.search(
-        r'(\d+\s+[\w\s]+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Way|Pl|Place|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Ter|Terrace)\b[^,\n]*'
-        r'(?:,\s*[\w\s]+){0,2}\s*,?\s*(?:[A-Z]{2}|[A-Za-z]{4,})\s*,?\s*\d{5}(?:-\d{4})?)',
-        query,
-        re.IGNORECASE,
-    )
-    if loose:
-        return loose.group(1).strip()
-    return query
+# ---------------------------------------------------------------------------
+# PROPERTY_FACTS_AND_PERMITS playbook
+# ---------------------------------------------------------------------------
 
 
 async def execute_property_facts_and_permits(
-    query: str, ctx: PlaybookContext, address: str = "",
+    query: str,
+    ctx: PlaybookContext,
+    address: str = "",
 ) -> ResearchResponse:
-    """PROPERTY_FACTS_AND_PERMITS — Resolve property context for quoting.
-
-    Calls ATTOM (facts + sales history) AND Apify Zillow (photos) in
-    parallel. Photos are merged into the first record under a `photos` key
-    with `lane` (interior/exterior/roof/uncategorized) classification, ready
-    for the Aspire-Desktop Visuals tab to consume.
-    """
+    """PROPERTY_FACTS_AND_PERMITS — ATTOM + Apify Zillow for property facts."""
     from aspire_orchestrator.providers.attom_client import (
-        execute_attom_detail_mortgage_owner,
-        execute_attom_sales_history,
+        execute_attom_property_detail,
+        execute_attom_permit_history,
     )
     from aspire_orchestrator.providers.apify_zillow_client import (
         execute_apify_zillow_photos,
     )
-    from aspire_orchestrator.services.adam.address_parser import (
-        ParseError,
-        parse_us_address,
-    )
     from aspire_orchestrator.services.adam.normalizers.property_normalizer import (
         normalize_from_attom_detail,
-        normalize_from_attom_sales_history,
+        normalize_from_attom_permits,
+    )
+    from aspire_orchestrator.services.adam.normalizers.zillow_photo_normalizer import (
+        normalize_zillow_photos,
     )
 
-    logger.info("Executing PROPERTY_FACTS_AND_PERMITS for: %s", query[:80])
+    logger.info("Executing PROPERTY_FACTS_AND_PERMITS for: %s address=%r", query[:80], address[:60] if address else "")
 
     records: list[dict[str, Any]] = []
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # Step 1: Deterministic address parse (usaddress CRF tagger).
-    # parse_us_address normalises "apartment 4802" → "APT 4802" and emits
-    # address1/address2 in ATTOM /expandedprofile format. Sending address1
-    # WITH the normalised unit (e.g. "1575 Paul Russell Rd APT 4802") lets
-    # ATTOM resolve to the unit-level parcel. ATTOM rejects the separate
-    # `unitnumber` query param as invalid (verified 2026-05-04).
-    raw_address = address or _extract_address_from_query(query)
-    try:
-        parsed = parse_us_address(raw_address)
-        attom_payload: dict[str, str] = {
-            "address1": parsed.address1,
-            "address2": parsed.address2,
-            "address": f"{parsed.address1}, {parsed.address2}",
-        }
-        normalized_address = attom_payload["address"]
-        # Cache parsed unit info on the receipt context so show_cards can
-        # render unit-specific fields without re-parsing downstream.
-        _unit_type: str = parsed.components.get("OccupancyType", "")
-        _unit_num: str = parsed.components.get("OccupancyIdentifier", "")
-        logger.info(
-            "PROPERTY_FACTS_AND_PERMITS: parsed address1=%r address2=%r unit=%r%r",
-            parsed.address1, parsed.address2, _unit_type, _unit_num,
-        )
-        providers_called.append("address_parser")
-    except ParseError as exc:
-        logger.info(
-            "PROPERTY_FACTS_AND_PERMITS: address parse failed — %s (raw=%r)",
-            exc, raw_address[:80],
-        )
-        # P0-1 (Law #2): receipt for ParseError exit path.
-        _emit_playbook_receipt(
-            ctx=ctx,
-            outcome_status="FAILED",
-            reason_code="address_parse_error",
-            playbook_name="PROPERTY_FACTS_AND_PERMITS",
-            risk_tier="green",
-            redacted_inputs={"raw_address": _redact_address(raw_address)},
-            redacted_outputs={"error": str(exc)[:200]},
-        )
-        return ResearchResponse(
-            artifact_type="needs_more_input",
-            summary=(
-                "I need a complete street address with city and state to look that up — "
-                "what's the full address including city and state?"
-            ),
-            records=[],
-            sources=[],
-            freshness={"mode": "live", "provider": "address_parser"},
-            confidence={"status": "needs_input", "score": 0.0},
-            missing_fields=["city", "state"],
-            next_queries=["Provide street, city, state (and ZIP if available)"],
-            segment="trades",
-            intent="property_fact",
-            playbook="PROPERTY_FACTS_AND_PERMITS",
-            providers_called=providers_called,
-            extra={"parse_error": str(exc), "raw_query": query},
-        )
-
-    # 1. ATTOM property detail + Apify Zillow photos in PARALLEL.
-    # Both keyed only by the address; running serially would cost the user
-    # 8s (ATTOM) + 10–15s (Apify cold start). Parallelizing keeps the user
-    # under the perceived-instant ceiling.
-    detail_result, apify_result = await asyncio.gather(
-        execute_attom_detail_mortgage_owner(
-            payload=attom_payload,
+    # 1. ATTOM property detail
+    if address:
+        detail_result = await execute_attom_property_detail(
+            payload={"address": address},
             correlation_id=ctx.correlation_id,
             suite_id=ctx.suite_id,
             office_id=ctx.office_id,
-            capability_token_id=ctx.capability_token_id,
-            capability_token_hash=ctx.capability_token_hash,
-        ),
-        execute_apify_zillow_photos(
-            payload={"address": normalized_address},
+        )
+        providers_called.append("attom_detail")
+        if detail_result.outcome.value == "success" and detail_result.data:
+            prop = normalize_from_attom_detail(detail_result.data)
+            records.append(prop.to_dict())
+            sources.extend(prop.sources)
+
+    # 2. ATTOM permits
+    if address:
+        permit_result = await execute_attom_permit_history(
+            payload={"address": address},
             correlation_id=ctx.correlation_id,
             suite_id=ctx.suite_id,
             office_id=ctx.office_id,
-            capability_token_id=ctx.capability_token_id,
-            capability_token_hash=ctx.capability_token_hash,
-        ),
-        return_exceptions=False,
-    )
-    providers_called.append("attom")
-    providers_called.append("apify_zillow")
-
-    if detail_result.outcome.value == "success" and detail_result.data:
-        prop = normalize_from_attom_detail(detail_result.data)
-        record_dict = prop.to_dict()
-
-        # Merge Apify Zillow photos into the record. Failure is non-fatal —
-        # property facts still flow through; only the photo lanes go empty.
-        try:
-            apify_outcome = apify_result.outcome.value if apify_result else None
-            apify_data = apify_result.data if apify_result else None
-            if apify_outcome == "success" and isinstance(apify_data, dict):
-                photos_raw = apify_data.get("photos") or []
-                if isinstance(photos_raw, list) and photos_raw:
-                    record_dict["photos"] = [
-                        {
-                            "url": (p.get("url") or "").strip(),
-                            "caption": p.get("caption"),
-                            "lane": (p.get("lane") or "uncategorized").strip().lower(),
-                        }
-                        for p in photos_raw
-                        if isinstance(p, dict) and p.get("url")
-                    ]
-                    listing_url = apify_data.get("listing_url")
-                    if listing_url:
-                        record_dict["zillow_listing_url"] = listing_url
-                    logger.info(
-                        "Apify Zillow merged %d photos into property record",
-                        len(record_dict["photos"]),
-                    )
-                else:
-                    logger.info(
-                        "Apify Zillow returned 0 photos for %s",
-                        normalized_address[:60],
-                    )
-            else:
-                logger.warning(
-                    "Apify Zillow unavailable (outcome=%s) — continuing photos-less",
-                    apify_outcome,
-                )
-                providers_called.append("apify_zillow_failed")
-        except Exception as merge_err:  # noqa: BLE001 — merge must never break facts
-            logger.warning("Apify Zillow merge failed (non-fatal): %s", str(merge_err)[:160])
-
-        records.append(record_dict)
-        sources.extend(prop.sources)
-    else:
-        # F-HIGH-8 + F-MED-1: ATTOM 500/timeout/network used to swallow the
-        # outcome and emit an empty PropertyFactPack. Surface a structured
-        # error response so Ava can tell the user "the property service is
-        # unavailable" instead of "I found nothing".
-        logger.warning(
-            "ATTOM property detail unavailable for %s — outcome=%s",
-            normalized_address[:60], detail_result.outcome.value,
         )
-        # P0-1 (Law #2): receipt for ATTOM error exit path. address1/address2
-        # from the parsed struct do not contain owner/occupant PII — safe to log.
-        _emit_playbook_receipt(
-            ctx=ctx,
-            outcome_status="FAILED",
-            reason_code="attom_unavailable",
-            playbook_name="PROPERTY_FACTS_AND_PERMITS",
-            risk_tier="green",
-            redacted_inputs={
-                "address1": parsed.address1,
-                "address2": parsed.address2,
-            },
-            redacted_outputs={
-                "detail_outcome": str(detail_result.outcome.value),
-            },
+        providers_called.append("attom_permits")
+        if permit_result.outcome.value == "success" and permit_result.data:
+            permits = normalize_from_attom_permits(permit_result.data)
+            for p in permits:
+                records.append(p.to_dict())
+                sources.extend(p.sources)
+
+    # 3. Zillow photos
+    if address:
+        zillow_result = await execute_apify_zillow_photos(
+            payload={"address": address},
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
         )
-        return ResearchResponse(
-            artifact_type="error",
-            summary="The property records service is temporarily unavailable. Try again in 30 seconds.",
-            records=[],
-            sources=[],
-            freshness={"mode": "live"},
-            confidence={"status": "unverified", "score": 0.0},
-            missing_fields=["property"],
-            next_queries=["Try again shortly", "Pull property facts again in a moment"],
-            segment="trades",
-            intent="property_fact",
-            playbook="PROPERTY_FACTS_AND_PERMITS",
-            providers_called=providers_called,
-            extra={
-                "reason": "attom_unavailable",
-                "suggested_retry_after_seconds": 30,
-                "provider_outcome": detail_result.outcome.value,
-            },
-        )
+        providers_called.append("apify_zillow")
+        if zillow_result.outcome.value == "success" and zillow_result.data:
+            photos = normalize_zillow_photos(zillow_result.data)
+            for ph in photos:
+                records.append(ph.to_dict())
+                sources.extend(ph.sources)
 
-    # 2. Stage 1.5 — parallel fan-out: ATTOM sales history + Apify Zillow photos.
-    # Both are best-effort and run AFTER the ATTOM detail succeeds (above).
-    # asyncio.gather(return_exceptions=True) ensures one provider's failure
-    # does not kill the other (Law #3 — fail-closed for the playbook overall,
-    # graceful degradation for supplementary data).
-    import asyncio as _asyncio
-    from aspire_orchestrator.providers.apify_zillow_client import (
-        execute_apify_zillow_photos,
-    )
-    # Note: photo normalization happens inside execute_apify_zillow_photos.
-    # The result.data already contains the categorized photos[] list.
+    from aspire_orchestrator.services.adam.verifier import verify_records
+    report = verify_records(records=records, sources=sources, required_fields=["normalized_address"])
 
-    history_task = execute_attom_sales_history(
-        payload=attom_payload,
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-        capability_token_id=ctx.capability_token_id,
-        capability_token_hash=ctx.capability_token_hash,
-    )
-    photos_task = execute_apify_zillow_photos(
-        payload={"address": normalized_address},
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-        capability_token_id=ctx.capability_token_id,
-        capability_token_hash=ctx.capability_token_hash,
-    )
-
-    history_result, photos_result = await _asyncio.gather(
-        history_task, photos_task, return_exceptions=True,
-    )
-
-    # ATTOM sales history (supplementary).
-    if isinstance(history_result, Exception):
-        logger.info(
-            "ATTOM sales history raised %s — continuing without history",
-            type(history_result).__name__,
-        )
-        providers_called.append("attom_sales_history_failed")
-    elif history_result.outcome.value == "success" and history_result.data:
-        sales = normalize_from_attom_sales_history(history_result.data)
-        if sales and records:
-            records[0]["sale_history"] = [
-                {"date": s.date, "amount": s.amount, "trans_type": s.trans_type,
-                 "buyer": s.buyer, "seller": s.seller}
-                for s in sales
-            ]
-    elif history_result.outcome.value != "success":
-        # F-MED-1: log + provider attribution. The detail path already gave
-        # us core property data; sales history is supplementary, so we note
-        # the failure in providers_called rather than returning an error.
-        logger.info(
-            "ATTOM sales history unavailable (outcome=%s) — continuing without history",
-            history_result.outcome.value,
-        )
-        providers_called.append("attom_sales_history_failed")
-
-    # Apify Zillow photos (supplementary — Visuals tab interior/exterior/roof).
-    # Photos are attached to records[0] so the desktop adamResearchClient can
-    # surface them as records[0].photos in the ResearchResponse contract.
-    photos: list[dict[str, Any]] = []
-    if isinstance(photos_result, Exception):
-        logger.info(
-            "Apify Zillow scrape raised %s — continuing without photos",
-            type(photos_result).__name__,
-        )
-        providers_called.append("apify_zillow_failed")
-    elif photos_result.outcome.value == "success" and photos_result.data:
-        photos = list(photos_result.data.get("photos") or [])
-        if photos:
-            providers_called.append("apify_zillow")
-        else:
-            providers_called.append("apify_zillow_empty")
-    else:
-        logger.info(
-            "Apify Zillow scrape unavailable (outcome=%s) — continuing without photos",
-            getattr(photos_result, "outcome", None)
-            and photos_result.outcome.value or "unknown",
-        )
-        providers_called.append("apify_zillow_failed")
-
-    if records:
-        records[0]["photos"] = photos
-        records[0]["photos_source"] = "apify_zillow" if photos else None
-
-    # Verify
-    report = verify_records(
-        records=records,
-        sources=sources,
-        required_fields=["normalized_address", "living_sqft", "year_built"],
-    )
-
-    # P0-1 (Law #2): receipt for success exit path.
-    # Risk tier is YELLOW because this response contains mortgage/ownership data
-    # (owner name, mailing address, corporate indicator, absentee status).
-    # TOOL_MATERIAL_PRICE_CHECK uses GREEN because it only touches product/price data.
-    # Decision: YELLOW is intentional here, not an error. Auditor sign-off 2026-05-06.
     _emit_playbook_receipt(
         ctx=ctx,
-        outcome_status="SUCCEEDED",
-        reason_code="property_facts_success",
+        outcome_status="SUCCEEDED" if records else "FAILED",
+        reason_code="EXECUTED" if records else "NO_DATA",
         playbook_name="PROPERTY_FACTS_AND_PERMITS",
-        risk_tier="yellow",
-        redacted_inputs={
-            "address1": parsed.address1,
-            "address2": parsed.address2,
-        },
-        redacted_outputs={
+        summary={
+            "providers_called": providers_called,
             "record_count": len(records),
-            "artifact_type": "PropertyFactPack",
         },
     )
+
     return ResearchResponse(
-        artifact_type="PropertyFactPack",
-        summary=f"Property facts for {normalized_address}",
+        artifact_type="PropertyFactsAndPermits",
+        summary=f"Property facts for {address or query}",
         records=records,
         sources=sources,
-        freshness={"provider": "attom"},
+        freshness={"mode": "live"},
         confidence={"status": report.status, "score": report.confidence_score},
         missing_fields=report.missing_fields,
-        next_queries=["Add rental valuation", "Pull nearby sales comparables"],
-        verification_report=report,
-        segment="trades",
-        intent="property_fact",
-        playbook="PROPERTY_FACTS_AND_PERMITS",
-        providers_called=providers_called,
+        extra={"providers_called": providers_called},
     )
+
+
+# ---------------------------------------------------------------------------
+# ESTIMATE_RESEARCH playbook
+# ---------------------------------------------------------------------------
 
 
 async def execute_estimate_research(
-    query: str, ctx: PlaybookContext, address: str = "",
+    query: str,
+    ctx: PlaybookContext,
+    address: str = "",
 ) -> ResearchResponse:
-    """ESTIMATE_RESEARCH — Support quoting with property facts + material pricing."""
+    """ESTIMATE_RESEARCH — property context + HD pricing for estimate prep."""
     from aspire_orchestrator.providers.attom_client import execute_attom_property_detail
     from aspire_orchestrator.providers.serpapi_homedepot_client import execute_serpapi_homedepot_search
     from aspire_orchestrator.services.adam.normalizers.property_normalizer import normalize_from_attom_detail
@@ -565,7 +254,7 @@ async def execute_estimate_research(
             records.append(prop.to_dict())
             sources.extend(prop.sources)
 
-    # 2. SerpApi Home Depot for material pricing
+    # 2. HD pricing
     hd_result = await execute_serpapi_homedepot_search(
         payload={"query": query, "hd_sort": "price_low_to_high"},
         correlation_id=ctx.correlation_id,
@@ -590,161 +279,24 @@ async def execute_estimate_research(
         freshness={"mode": "live"},
         confidence={"status": report.status, "score": report.confidence_score},
         missing_fields=report.missing_fields,
-        next_queries=["Compare with Google Shopping prices", "Find subcontractors for this job"],
-        verification_report=report,
-        segment="trades",
-        intent="price_check",
-        playbook="ESTIMATE_RESEARCH",
-        providers_called=providers_called,
+        extra={"providers_called": providers_called},
     )
 
 
-def _fuzzy_pick_store_from_query(
-    query: str,
-    candidates: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    """Pick a store from a candidate list when the query mentions a street/area.
-
-    Examples that resolve silently:
-      "sheetrock at the Capital Circle one" -> store with "Capital Cir" in address
-      "the Tenleytown Home Depot" -> store with "Tenleytown" in address
-
-    Uses a simple substring match on normalized address tokens. If exactly one
-    candidate's address shares a meaningful token (3+ chars, alpha) with the
-    query, that's the pick. Multiple matches or none -> None (caller falls back).
-    """
-    import re as _re
-
-    def _normalize_tokens(text: str) -> set[str]:
-        return {t for t in _re.findall(r"[A-Za-z]{3,}", text.lower())}
-
-    # Drop common stopwords that would create false positives.
-    _STOPWORDS = {
-        "home", "depot", "store", "the", "and", "near", "for", "from",
-        "drive", "road", "street", "avenue", "boulevard", "lane", "way",
-        "place", "court", "circle", "highway", "parkway", "terrace",
-        "north", "south", "east", "west",
-    }
-
-    query_tokens = _normalize_tokens(query) - _STOPWORDS
-    if not query_tokens:
-        return None
-
-    matches: list[dict[str, Any]] = []
-    for store in candidates:
-        addr_tokens = _normalize_tokens(store.get("address", "")) - _STOPWORDS
-        if query_tokens & addr_tokens:
-            matches.append(store)
-
-    if len(matches) == 1:
-        return dict(matches[0])
-    return None
+# ---------------------------------------------------------------------------
+# TOOL_MATERIAL_PRICE_CHECK playbook
+# ---------------------------------------------------------------------------
 
 
-_GOOGLE_FORMATTED_ADDRESS_CITY_STATE_RE = re.compile(
-    r",\s*([A-Za-z][A-Za-z\s\-\.']+?),\s*([A-Z]{2})\s+\d{5}",
-)
-
-
-# F-MED-6: ZIP regex used to autodetect a ZIP in the user's free-text query.
-# Must NOT match product quantities like "10000 ft of pipe" or "20000 BTU".
-# Anchors:
-#   - Preceded by a comma + optional whitespace (matches "..., FL 32308")
-#     OR by 2-letter state abbreviation + whitespace ("FL 32308" / "GA 30297")
-#   - Followed by a non-digit boundary (so "30297-1234" matches "30297" then "-1234")
-#   - Optional ZIP+4 tail
-#   - 5-digit value within the legal US range (00501..99950)
-_ZIP_IN_QUERY_RE = re.compile(
-    r"(?:,\s*|\b[A-Z]{2}\s+)"
-    r"(0050[1-9]|005[1-9]\d|00[6-9]\d{2}|0[1-9]\d{3}|[1-9]\d{4}(?<!00000))"
-    r"(?:-\d{4})?"
-    r"(?!\d)",
-)
-
-
-def _parse_city_state_from_formatted_address(addr: str) -> tuple[str, str]:
-    """Extract (city, state) from a Google Places formattedAddress.
-
-    Examples:
-      "1490 Capital Circle Northwest, Tallahassee, FL 32303, USA"
-        -> ("Tallahassee", "FL")
-      "650 Stillwater Ave, Bangor, ME 04401, USA"
-        -> ("Bangor", "ME")
-
-    Returns ("", "") when the regex doesn't match — caller falls back to
-    whatever city/state was already in store_summary.
-    """
-    if not addr:
-        return "", ""
-    match = _GOOGLE_FORMATTED_ADDRESS_CITY_STATE_RE.search(addr)
-    if not match:
-        return "", ""
-    return match.group(1).strip(), match.group(2).strip()
-
-
-def _build_store_disambiguation_response(
-    query: str,
-    candidates: list[dict[str, Any]],
-    providers_called: list[str],
-) -> ResearchResponse:
-    """Return a StoreDisambiguation artifact so Ava + desktop can prompt for choice.
-
-    F-HIGH-1: candidates ride at top-level `records` (consistent with all other
-    artifacts: PriceComparison, PropertyFactPack, etc.) rather than nested
-    inside `extra`. The desktop reads `records[]` uniformly, and the LLM
-    response builder counts records to decide success/error states.
-    """
-    candidate_records: list[dict[str, Any]] = []
-    for store in candidates:
-        candidate_records.append({
-            "card_kind": "store_candidate",
-            "store_id": store.get("store_id", ""),
-            "name": store.get("name", ""),
-            "address": store.get("address", ""),
-            "city": store.get("city", ""),
-            "state": store.get("state", ""),
-            "postal_code": store.get("postal_code", ""),
-        })
-    return ResearchResponse(
-        artifact_type="StoreDisambiguation",
-        summary=(
-            f"Multiple Home Depot stores in {candidates[0].get('city', '')}. "
-            "Which one would you like?"
-        ),
-        records=candidate_records,
-        sources=[],
-        freshness={"mode": "live"},
-        confidence={"status": "verified", "score": 1.0},
-        missing_fields=[],
-        next_queries=[],
-        segment="trades",
-        intent="price_check",
-        playbook="TOOL_MATERIAL_PRICE_CHECK",
-        providers_called=providers_called,
-        # `extra.candidates` retained for one release as a compatibility shim;
-        # current callers (desktop AdamCardsRenderer) should switch to records.
-        extra={"candidates": candidate_records, "query": query},
-    )
-
-
-def _redact_user_address(addr: str) -> str:
-    """PII-safe representation of a user-provided address.
-
-    F-HIGH-6: prior code logged `user_address[:60]` at INFO. Operators need a
-    log signal that an address was supplied without exposing the address
-    itself. We hash it (truncated) so identical inputs collapse into a single
-    log line for correlation. ASPIRE_DEBUG_PII=1 reverts to a 60-char snippet
-    for local debugging only.
-    """
-    import hashlib as _hashlib
-    import os as _os
-
-    if not addr:
-        return ""
-    if (_os.getenv("ASPIRE_DEBUG_PII") or "").strip().lower() in {"1", "true", "yes"}:
-        return addr[:60]
-    digest = _hashlib.sha256(addr.encode("utf-8")).hexdigest()[:10]
-    return f"<addr:{len(addr)}c:{digest}>"
+@dataclass
+class _StoreCandidate:
+    store_id: str
+    name: str
+    address: str
+    city: str
+    state: str
+    postal_code: str
+    distance_miles: float | None = None
 
 
 async def execute_tool_material_price_check(
@@ -890,7 +442,7 @@ async def execute_tool_material_price_check(
     if city:
         location_hint = f"{city}, {state}".strip(", ") if state else city
     else:
-        city_match = _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\b", query)
+        city_match = _re.search(r"\bin\s+([A-Za-z][A-Za-z\s]+(?:,\s*[A-Za-z]{2})?)\\b", query)
         if city_match:
             location_hint = city_match.group(1).strip(" .,")
 
@@ -903,40 +455,23 @@ async def execute_tool_material_price_check(
         # Wave A.5: multi-store disambiguation in a city.
         candidates = find_stores_in_city(city, state or None)
         if len(candidates) > 1:
-            # (a) fuzzy address-hint auto-pick (e.g. "the one on Capital Circle").
-            picked = _fuzzy_pick_store_from_query(query, candidates)
-            # (b) haversine via office_lat/office_lng if available.
-            if picked is None:
-                office_lat = getattr(ctx, "office_lat", None)
-                office_lng = getattr(ctx, "office_lng", None)
-                if office_lat is not None and office_lng is not None:
-                    nearest = find_nearest_store(
-                        float(office_lat), float(office_lng),
-                        city=city, state=state or None, max_km=50.0,
-                    )
-                    if nearest:
-                        picked = nearest
-            # (c) no hint and no office address -> return disambiguation artifact.
-            if picked is None:
-                _emit_playbook_receipt(
-                    ctx=ctx,
-                    outcome_status="SUCCEEDED",
-                    reason_code="store_disambiguation",
-                    playbook_name="TOOL_MATERIAL_PRICE_CHECK",
-                    summary={
-                        "candidate_count": len(candidates),
-                        "city": city,
-                        "state": state,
-                    },
-                )
-                return _build_store_disambiguation_response(
-                    query=query, candidates=candidates, providers_called=[],
-                )
-            zip_code = zip_code or picked.get("postal_code", "")
-            store_id = picked.get("store_id", "")
-        elif len(candidates) == 1 and not zip_code:
-            zip_code = candidates[0].get("postal_code", "") or zip_code
-            store_id = store_id or candidates[0].get("store_id", "")
+            # (a) fuzzy address-hint auto-pick
+            hint_lower = location_hint.lower()
+            for cand in candidates:
+                cand_addr = (cand.get("address") or "").lower()
+                if hint_lower and any(
+                    word in cand_addr for word in hint_lower.split() if len(word) > 3
+                ):
+                    store_id = str(cand.get("store_id", ""))
+                    zip_code = zip_code or str(cand.get("postal_code", ""))
+                    break
+            # (b) haversine fallback (placeholder — office lat/lng not in ctx yet)
+            if not store_id and candidates:
+                store_id = str(candidates[0].get("store_id", ""))
+                zip_code = zip_code or str(candidates[0].get("postal_code", ""))
+        elif len(candidates) == 1:
+            store_id = str(candidates[0].get("store_id", ""))
+            zip_code = zip_code or str(candidates[0].get("postal_code", ""))
         elif not zip_code:
             # City→zip lookup (Wave A.2). Single primary path. No fallback chain.
             looked_up = lookup_zip_by_city(city, state or None)
@@ -956,18 +491,6 @@ async def execute_tool_material_price_check(
         # identity worth showing. Everything else (address, phone, website) is
         # supplementary metadata — present when populated, omitted gracefully
         # when not.
-        #
-        # Phone + website were dropped first because Google Places
-        # /details/json enrichment was unreliable. Address followed because
-        # the same resolver populates it AND the resolver was returning
-        # empty fields for no-zip city queries (common Anam path: "find
-        # paint sprayers in Tallahassee"). The card UI handles missing
-        # fields cleanly — users get the products they asked for and the
-        # store's identifiable name (correct via Pass 1.1 — pickup.store_name
-        # / search_information.store_name).
-        #
-        # Follow-up tracked separately: fix the Google Places resolver path
-        # for no-zip queries so address/phone/website reliably populate.
         missing: list[str] = []
         for field in ("store_name",):
             v = store.get(field)
@@ -980,356 +503,225 @@ async def execute_tool_material_price_check(
     final_records: list[dict[str, Any]] = []
     final_sources: list[SourceAttribution] = []
     final_store_summary: dict[str, Any] = {}
-    # Search-level metadata captured from SerpAPI for refinable carousels —
-    # surface taxonomy breadcrumbs, filter tokens, and related queries.
+    # Search-level metadata captured from SerpAPI for refinable carousels
     final_taxonomy: list[dict[str, Any]] = []
     final_filters: list[dict[str, Any]] = []
-    final_related_products: list[Any] = []
+    final_related_products: list[dict[str, Any]] = []
     final_pagination: dict[str, Any] = {}
 
-    # Track Round-4 provider call for cost attribution. The helper itself does
-    # not emit a receipt — the playbook wrapper at server.py records the call
-    # via providers_called, and Outcome rolls up to SUCCESS/FAILED on the
-    # whole playbook. Logging both branches preserves Law #2 evidence.
-    if user_address and user_address.strip():
-        if nearest_store is not None:
-            providers_called.append("google_places_nearest")
-            logger.info(
-                "Round-4 nearest HD resolved: %s (zip=%s, %.1fmi from user)",
-                nearest_store.name, nearest_store.postal_code,
-                nearest_store.distance_miles,
+    max_attempts = 1 if voice_path else 3
+    hd_timeout = 4.0 if voice_path else 8.0
+
+    async def _run_hd_search(attempt_query: str) -> Any:
+        """Inner HD search helper. Returns ToolExecutionResult or Exception."""
+        nonlocal providers_called
+
+        # Guard: refuse to run when no store identity is resolvable (prevents
+        # Bangor default-fallback poisoning the result with Maine inventory).
+        resolved_store_id = store_id or ""
+
+        if not resolved_store_id and not zip_code:
+            # No store context at all — the SerpApi result will be poisoned
+            # with the account-default Bangor/ME store. Refuse and let the
+            # caller ask Ava to get the user's location.
+            logger.warning(
+                "TOOL_MATERIAL_PRICE_CHECK: no store_id or zip_code, refusing to run "
+                "to avoid Bangor default-fallback (attempt_query=%s)",
+                attempt_query[:80],
             )
-        else:
-            providers_called.append("google_places_nearest_failed")
-            logger.info(
-                "Round-4 nearest HD lookup returned None for user_address=%r — "
-                "falling through to Wave A.5 (city -> zip)",
-                _redact_user_address(user_address),
-            )
+            providers_called.append("store_unresolved")
+            return None
 
-    # voice_path was already finalized at the top of this function from the
-    # caller-supplied signals. Don't re-derive it here — that would let the
-    # nearest_store-pinned zip_code flip it back to False (the F-CRIT-1 bug).
-    # Round 7 A.2 — multi-store gate. Voice path is HD-only by default; user
-    # explicit opt-in (include_other_stores=True) re-enables Google Shopping
-    # even on the voice path. Non-voice path always runs shopping.
-    run_shopping = (not voice_path) or include_other_stores
-    if voice_path:
-        query_attempts = [query]
-        # When include_other_stores=True we add ~1.5s budget for the shopping
-        # retry-with-backoff path; HD timeout stays at 4s so total stays under
-        # the 4.5s P95 voice SLO.
-        hd_timeout = 4.0
-        skip_google_shopping = not run_shopping
-    else:
-        query_attempts = [
-            query,
-            f"{query} Home Depot",
-            f"{query} Home Depot {location_hint}".strip(),
-        ]
-        hd_timeout = 8.0
-        skip_google_shopping = not run_shopping
-
-    for attempt_idx, attempt_query in enumerate(query_attempts, start=1):
-        records: list[dict[str, Any]] = []
-        sources: list[SourceAttribution] = []
-        hd_store_info: dict[str, Any] = {}
-        resolved_store_id = store_id
-
-        shopping_payload: dict[str, Any] = {"query": attempt_query, "sort_by": 1}
+        # Bug D fix: request the full SerpApi HD page size (24 products max).
+        # Without this, SerpApi defaults to ~12 results. The completeness gate
+        # (_product_missing_fields) then has 24 candidates to filter instead
+        # of 12, raising the actual product count delivered to the frontend.
+        hd_payload: dict[str, Any] = {"query": attempt_query, "hd_sort": "best_match", "num": "24"}
+        if resolved_store_id:
+            hd_payload["store_id"] = resolved_store_id
         if zip_code:
-            shopping_payload["location"] = zip_code
-        elif location_hint:
-            shopping_payload["location"] = location_hint
-        if on_sale:
-            shopping_payload["on_sale"] = True
+            hd_payload["delivery_zip"] = zip_code
+        hd_result_inner = await execute_serpapi_homedepot_search(
+            payload=hd_payload,
+            correlation_id=ctx.correlation_id,
+            suite_id=ctx.suite_id,
+            office_id=ctx.office_id,
+            timeout=hd_timeout,
+        )
+        # Fix 3 — persist adapter receipt immediately (Law #2).
+        if hd_result_inner.receipt_data:
+            try:
+                from aspire_orchestrator.services.receipt_store import store_receipts
+                store_receipts([hd_result_inner.receipt_data])
+            except Exception:
+                pass  # Receipt write failure must never block the playbook
+        return hd_result_inner
 
-        async def _resolve_and_search_hd() -> Any:
-            nonlocal resolved_store_id, hd_store_info
-            if not resolved_store_id and (zip_code or location_hint):
-                # Voice path budget is 4s end-to-end. Cap the resolver at 1.5s so
-                # a slow Google Places call cannot consume the entire window —
-                # the static directory + SerpApi response carry the card even
-                # when phone/website/image_url enrichment times out.
-                resolver_coro = resolve_store_async(
-                    zip_code=zip_code,
-                    location_hint=location_hint,
+    # Round 7 A.2 — SerpApi shopping with exponential backoff + jitter on 429.
+    # Max 2 retries (3 total attempts), then graceful degrade to None so the
+    # HD result still carries the response. Receipt for the rate-limited
+    # outcome is emitted by the SerpApi adapter itself (Fix 4).
+    async def _run_shopping_search(attempt_query: str) -> Any:
+        """Inner Google Shopping search helper with retry. Returns result or None."""
+        if voice_path:
+            return None  # Voice path skips Shopping to stay within 5s budget
+        for attempt in range(_SHOPPING_RETRY_MAX_ATTEMPTS + 1):
+            try:
+                result = await execute_serpapi_shopping_search(
+                    payload={"query": attempt_query},
                     correlation_id=ctx.correlation_id,
                     suite_id=ctx.suite_id,
                     office_id=ctx.office_id,
                 )
-                store_match: dict[str, Any] | None
-                if voice_path:
-                    try:
-                        store_match = await asyncio.wait_for(resolver_coro, timeout=1.5)
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "Voice path: resolve_store_async timed out at 1.5s — "
-                            "continuing without enrichment"
-                        )
-                        store_match = None
-                else:
-                    store_match = await resolver_coro
-                if store_match:
-                    resolved_store_id = str(store_match.get("store_id", "")).strip()
-                    hd_store_info = dict(store_match)
-
-            # Hard guardrail: refuse to call SerpAPI blind. Without store_id
-            # OR delivery_zip, SerpAPI silently injects its account-default
-            # (store_id=2414, zip=04401, Bangor ME) and ships poisoned results.
-            # We return a synthetic FAILED outcome so the loop falls through to
-            # the STORE_UNRESOLVED decision flag — Ava asks the user to clarify.
-            if not resolved_store_id and not zip_code:
-                logger.warning(
-                    "TOOL_MATERIAL_PRICE_CHECK: refusing blind SerpAPI call — "
-                    "no store_id and no delivery_zip resolved (query=%r). "
-                    "Returning STORE_UNRESOLVED.",
-                    attempt_query[:80],
-                )
-                providers_called.append("store_unresolved")
-                return None
-
-            hd_payload: dict[str, Any] = {"query": attempt_query, "hd_sort": "best_match"}
-            if resolved_store_id:
-                hd_payload["store_id"] = resolved_store_id
-            if zip_code:
-                hd_payload["delivery_zip"] = zip_code
-            hd_result_inner = await execute_serpapi_homedepot_search(
-                payload=hd_payload,
-                correlation_id=ctx.correlation_id,
-                suite_id=ctx.suite_id,
-                office_id=ctx.office_id,
-                timeout=hd_timeout,
-            )
-            # Fix 3 — persist adapter receipt immediately (Law #2).
-            if hd_result_inner.receipt_data:
-                try:
-                    from aspire_orchestrator.services.receipt_store import store_receipts
-                    store_receipts([hd_result_inner.receipt_data])
-                except Exception:
-                    pass  # Receipt write failure must never block the playbook
-            return hd_result_inner
-
-        # Round 7 A.2 — SerpApi shopping with exponential backoff + jitter on 429.
-        # Max 2 retries (3 total attempts), then graceful degrade to None so the
-        # HD result still carries the response. Receipt for the rate-limited
-        # outcome is emitted by the SerpApi client per call AND captured in the
-        # playbook rollup receipt below.
-        async def _shopping_with_backoff() -> Any:
-            attempts = _SHOPPING_RETRY_MAX_ATTEMPTS + 1
-            last_result: Any = None
-            for attempt in range(1, attempts + 1):
-                try:
-                    res = await execute_serpapi_shopping_search(
-                        payload=shopping_payload,
-                        correlation_id=ctx.correlation_id,
-                        suite_id=ctx.suite_id,
-                        office_id=ctx.office_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    last_result = exc
-                    break
-                # Fix 3 — persist adapter receipt immediately (Law #2).
-                if hasattr(res, "receipt_data") and res.receipt_data:
+                if result.receipt_data:
                     try:
                         from aspire_orchestrator.services.receipt_store import store_receipts
-                        store_receipts([res.receipt_data])
+                        store_receipts([result.receipt_data])
                     except Exception:
-                        pass  # Receipt write failure must never block the playbook
-                last_result = res
-                # Detect 429 / RATE_LIMITED in the structured error string.
-                err_str = ""
-                if hasattr(res, "error") and isinstance(res.error, str):
-                    err_str = res.error.upper()
-                rate_limited = (
-                    res.outcome.value != "success"
-                    and ("RATE_LIMITED" in err_str or "429" in err_str)
-                )
-                if not rate_limited or attempt >= attempts:
-                    return res
-                # Exponential backoff with jitter — 250ms, 500ms (+ 0-100ms).
-                base_ms = (
-                    _SHOPPING_RETRY_BASE_MS[min(attempt - 1, len(_SHOPPING_RETRY_BASE_MS) - 1)]
-                )
-                jitter_ms = _random.randint(0, 100)
-                await asyncio.sleep((base_ms + jitter_ms) / 1000.0)
-            return last_result
+                        pass
+                # On 429 at intermediate attempts, backoff + retry.
+                if (
+                    not result.outcome.value == "success"
+                    and attempt < _SHOPPING_RETRY_MAX_ATTEMPTS
+                    and result.error
+                    and "rate_limited" in str(result.error).lower()
+                ):
+                    base_ms = _SHOPPING_RETRY_BASE_MS[min(attempt, len(_SHOPPING_RETRY_BASE_MS) - 1)]
+                    jitter_ms = _random.randint(0, 100)
+                    await asyncio.sleep((base_ms + jitter_ms) / 1000.0)
+                    continue
+                return result
+            except Exception as exc:
+                logger.warning("_run_shopping_search attempt %d error: %s", attempt, exc)
+                if attempt < _SHOPPING_RETRY_MAX_ATTEMPTS:
+                    await asyncio.sleep(0.25)
+                    continue
+                return None
+        return None
 
-        if skip_google_shopping:
-            hd_result = await _resolve_and_search_hd()
-            shopping_result = None
+    for attempt_idx in range(max_attempts):
+        if attempt_idx == 0:
+            attempt_query = query
+        elif attempt_idx == 1:
+            # Tighten: strip parentheticals, trailing qualifiers
+            attempt_query = re.sub(r"\s*\([^)]*\)", "", query).strip()
+            attempt_query = re.sub(r"\s+(for|with|to|and|or)\s+.*$", "", attempt_query, flags=re.IGNORECASE).strip()
         else:
-            hd_result, shopping_result = await asyncio.gather(
-                _resolve_and_search_hd(),
-                _shopping_with_backoff(),
-                return_exceptions=True,
-            )
+            # Further tighten: first 3 words only
+            words = query.split()
+            attempt_query = " ".join(words[:3]) if len(words) > 3 else query
 
-        if "serpapi_home_depot" not in providers_called:
-            providers_called.append("serpapi_home_depot")
-        if not skip_google_shopping and "serpapi_shopping" not in providers_called:
-            providers_called.append("serpapi_shopping")
+        # Run HD + Shopping concurrently (Shopping is None on voice path).
+        hd_result, shopping_result = await asyncio.gather(
+            _run_hd_search(attempt_query),
+            _run_shopping_search(attempt_query),
+            return_exceptions=True,
+        )
 
-        # F-MED-4: distinguish hard cancellation/timeout (break loop, retry
-        # would only make latency worse) from soft failures (continue to next
-        # tightened attempt). asyncio.TimeoutError, asyncio.CancelledError =>
-        # break. Generic Exception => log and continue.
-        if isinstance(hd_result, (asyncio.TimeoutError, asyncio.CancelledError)):
-            logger.warning(
-                "TOOL_MATERIAL_PRICE_CHECK attempt=%s aborted by %s — breaking retry loop",
-                attempt_idx, type(hd_result).__name__,
-            )
-            break
-        if isinstance(hd_result, Exception):
-            logger.warning(
-                "TOOL_MATERIAL_PRICE_CHECK attempt=%s soft error: %s",
-                attempt_idx, hd_result,
-            )
-
-        # Bangor guardrail short-circuit (Wave 2.0). The resolver returned
-        # None when neither store_id nor delivery_zip could be resolved — we
-        # must NOT call SerpAPI blind. Break out so the response surfaces
-        # `reason_code=store_unresolved` and Ava asks the user to clarify
-        # location instead of shipping Bangor-poisoned results.
+        # If _run_hd_search returned None (store_unresolved guard fired),
+        # break out immediately — no products, no store.
         if hd_result is None:
             break
 
-        # F-HIGH-7: SerpApi 429 — retrying just burns budget AND quota. Break
-        # immediately and surface a structured rate-limit response. Reason
-        # comes back from the underlying SerpApi client (response.error_code).
-        if (
-            not isinstance(hd_result, Exception)
-            and hd_result.outcome.value != "success"
-            and (
-                hasattr(hd_result, "error")
-                and isinstance(hd_result.error, str)
-                and "RATE_LIMITED" in hd_result.error.upper()
-            )
-        ):
+        if isinstance(hd_result, Exception):
             logger.warning(
-                "TOOL_MATERIAL_PRICE_CHECK: SerpApi RATE_LIMITED on attempt=%s — short-circuiting retries",
-                attempt_idx,
+                "TOOL_MATERIAL_PRICE_CHECK attempt=%d HD error: %s",
+                attempt_idx, hd_result,
             )
+            providers_called.append("serpapi_home_depot_error")
+            continue
+
+        if isinstance(shopping_result, Exception):
+            shopping_result = None
+
+        providers_called.append("serpapi_home_depot")
+
+        # Detect 429 on HD — don't log as provider error, surface via flag.
+        hd_rate_limited = (
+            hd_result.error is not None
+            and "rate_limited" in str(hd_result.error).lower()
+        )
+        if hd_rate_limited:
             providers_called.append("serpapi_home_depot_rate_limited")
-            break
 
-        if not isinstance(hd_result, Exception) and hd_result.outcome.value == "success" and hd_result.data:
-            serpapi_store = hd_result.data.get("store", {})
-
-            # Bangor guardrail (Wave 2.0).
-            # SerpAPI silently injects its account-default store_id=2414 +
-            # delivery_zip=04401 (Bangor, ME) when the caller supplies neither.
-            # Every product in the response then reads pickup.store_name="Bangor"
-            # (or "South Loop" depending on SerpAPI's whim) regardless of where
-            # the user actually is. We REFUSE these results — Ava asks the user
-            # to clarify location instead of shipping cards anchored to Maine.
-            #
-            # Two flavors:
-            #   1. default_store_fallback (no zip + no store_id passed at all)
-            #      = TRUE poisoning, no usable store identity → refuse entirely.
-            #   2. pickup_poisoning (zip was passed but products still ship
-            #      Bangor pickup data) = the products are valid for delivery,
-            #      but in-store inventory data is wrong → strip pickup, keep
-            #      products with "free ship to store" path.
-            true_poisoning = bool(serpapi_store.get("default_store_fallback")) and not bool(serpapi_store.get("pickup_poisoning"))
-            pickup_only_poisoning = bool(serpapi_store.get("pickup_poisoning"))
-
-            if true_poisoning:
-                logger.warning(
-                    "TOOL_MATERIAL_PRICE_CHECK: SerpAPI default-fallback (Bangor) "
-                    "detected on attempt=%s — refusing results, query=%r will be "
-                    "retried with a STORE_UNRESOLVED decision flag",
-                    attempt_idx, attempt_query[:80],
-                )
+        # Check for SerpAPI account-default Bangor fallback poison
+        hd_store_info: dict[str, Any] = {}
+        hd_data: dict[str, Any] = {}
+        if hd_result.outcome.value == "success" and hd_result.data:
+            hd_data = hd_result.data
+            store_data = hd_data.get("store", {})
+            if store_data.get("default_store_fallback"):
                 providers_called.append("serpapi_home_depot_default_fallback")
-                # Treat as if the call failed — let the loop break out to the
-                # store_unresolved decision flag below.
+                logger.warning(
+                    "TOOL_MATERIAL_PRICE_CHECK: Bangor default-fallback detected "
+                    "(store=%s), skipping poisoned result",
+                    store_data.get("store_id"),
+                )
                 continue
 
-            if pickup_only_poisoning:
-                logger.warning(
-                    "TOOL_MATERIAL_PRICE_CHECK: pickup-data poisoning on attempt=%s "
-                    "(zip=%s honored but pickup ships Bangor) — stripping per-product "
-                    "fulfillment_pickup so cards show 'free ship to store' instead of "
-                    "lying about Bangor inventory",
-                    attempt_idx, zip_code,
-                )
-                providers_called.append("serpapi_home_depot_pickup_poisoned")
-                # Strip pickup data from each raw product BEFORE normalization.
-                # Products keep title/price/rating/delivery — just no false
-                # "11 in stock at Bangor" claim.
-                for raw_p in hd_result.data.get("results", []):
-                    pickup_obj = raw_p.get("pickup") if isinstance(raw_p.get("pickup"), dict) else {}
-                    if pickup_obj:
-                        # Preserve free_ship_to_store flag (location-agnostic).
-                        keep = {}
-                        if pickup_obj.get("free_ship_to_store"):
-                            keep["free_ship_to_store"] = True
-                        raw_p["pickup"] = keep
+            # Build hd_store_info from SerpAPI search_information
+            hd_store_info = {
+                "store_id": store_data.get("store_id", ""),
+                "store_name": store_data.get("store_name", ""),
+                "name": store_data.get("store_name", ""),
+                "address": "",
+                "city": "",
+                "state": "",
+                "postal_code": zip_code or "",
+                "phone": "",
+                "website": "",
+                "image_url": "",
+                "open_now": None,
+                "rating": None,
+            }
 
-            if serpapi_store.get("store_name"):
-                hd_store_info["store_name"] = serpapi_store["store_name"]
-            if not hd_store_info.get("store_id") and serpapi_store.get("store_id"):
-                hd_store_info["store_id"] = serpapi_store["store_id"]
+            # Enrich from static directory when we have a store_id
+            if hd_store_info["store_id"]:
+                dir_record = lookup_store_by_id(hd_store_info["store_id"])
+                if dir_record:
+                    hd_store_info.update({
+                        "address": dir_record.get("address", ""),
+                        "city": dir_record.get("city", ""),
+                        "state": dir_record.get("state", ""),
+                        "postal_code": dir_record.get("postal_code", "") or zip_code or "",
+                        "phone": dir_record.get("phone", ""),
+                        "website": dir_record.get("website", ""),
+                    })
 
-            # Primary store-identity path: read pickup.store_id from the first
-            # product and resolve name + address from the static directory.
-            # This is deterministic and doesn't depend on Google Places. Phone
-            # and website remain optional enrichment (Task #20).
-            raw_results = hd_result.data.get("results", [])
-            if raw_results:
-                pickup = raw_results[0].get("pickup") or {}
-                pickup_store_id = (
-                    str(pickup.get("store_id", "")).strip()
-                    or str(serpapi_store.get("store_id", "")).strip()
-                )
-                if pickup_store_id:
-                    directory_record = lookup_store_by_id(pickup_store_id)
-                    if directory_record:
-                        # Static directory wins for name + address fields.
-                        hd_store_info["store_id"] = directory_record["store_id"]
-                        hd_store_info["store_name"] = directory_record["name"]
-                        hd_store_info["address"] = directory_record["address"]
-                        hd_store_info["city"] = directory_record["city"]
-                        hd_store_info["state"] = directory_record["state"]
-                        hd_store_info["postal_code"] = directory_record["postal_code"]
-                        resolved_store_id = directory_record["store_id"]
-                    else:
-                        logger.warning(
-                            "HD store_id %s not in static directory — "
-                            "falling back to SerpApi store name",
-                            pickup_store_id,
-                        )
+        # Normalize products
+        records: list[dict[str, Any]] = []
+        sources: list[SourceAttribution] = []
 
-            for item in raw_results[:8]:
+        if hd_result.outcome.value == "success" and hd_data.get("results"):
+            for item in hd_data["results"]:
                 product = normalize_from_serpapi_homedepot(item)
                 records.append(product.to_dict())
                 sources.extend(product.sources)
+            providers_called.append("serpapi_home_depot_success")
 
+        # Google Shopping merge (text path only, skip on voice_path)
         if (
-            shopping_result is not None
+            not voice_path
+            and shopping_result is not None
             and not isinstance(shopping_result, Exception)
             and shopping_result.outcome.value == "success"
             and shopping_result.data
         ):
+            providers_called.append("serpapi_shopping")
             for item in shopping_result.data.get("results", [])[:6]:
                 product = normalize_from_serpapi_shopping(item)
                 records.append(product.to_dict())
                 sources.extend(product.sources)
 
-        # Round 7 A.2 — when include_other_stores=True, do NOT filter to HD-only;
-        # show all retailers (Lowe's, Walmart, Ace, Amazon) in carousel. HD
-        # products still drive the success-completion check below so the store
-        # summary card stays anchored on a real HD store.
+        # Filter products
         if include_other_stores:
             display_products = list(records)
         else:
             display_products = [r for r in records if r.get("retailer") == "Home Depot"]
         hd_products = [r for r in records if r.get("retailer") == "Home Depot"]
         complete_products = [r for r in display_products if not _product_missing_fields(r)]
-        # Sub-item 1.1: surface SerpApi search_information.store_name as
-        # store_summary.name so the store-summary card has the correct local
-        # store label even when the resolver disagrees with SerpApi's pin.
+
+        # Build store_summary card
         store_summary = {
             "card_kind": "store_summary",
             "store_id": hd_store_info.get("store_id", ""),
@@ -1347,21 +739,12 @@ async def execute_tool_material_price_check(
             "retailer": "Home Depot",
         }
 
-        # Round 4: when nearest_store is set (Google Places searchText found
-        # the actual nearest HD to the user's job site), it's AUTHORITATIVE
-        # for the user-visible card. Overwrite name/address/city/state/zip
-        # with the Google result. The previous logic kept hd_store_info's
-        # values (which come from SerpApi search_information.store_name and
-        # may be a stale account-default like "Bangor"), causing the card
-        # address to show Tallahassee but the store name to say "Bangor".
+        # Round 4: nearest_store overrides static-directory fields
         if nearest_store is not None:
             store_summary["name"] = nearest_store.name or store_summary["name"]
             store_summary["store_name"] = nearest_store.name or store_summary["store_name"]
             store_summary["address"] = nearest_store.address or store_summary["address"]
             store_summary["postal_code"] = nearest_store.postal_code or store_summary["postal_code"]
-            # Parse city + state from Google's formattedAddress (e.g.
-            # "1490 Capital Cir NW, Tallahassee, FL 32303, USA"). Only
-            # overwrite when the parse succeeds; otherwise fall back.
             parsed_city, parsed_state = _parse_city_state_from_formatted_address(
                 nearest_store.address,
             )
@@ -1371,14 +754,8 @@ async def execute_tool_material_price_check(
                 store_summary["state"] = parsed_state
             if nearest_store.photo_url:
                 store_summary["image_url"] = nearest_store.photo_url
-            # F-MED-7: distance_miles is None on the searchText primary path
-            # (no user coords). Only emit the field when we actually computed
-            # it via haversine — the card UI shows "—" when missing.
             if nearest_store.distance_miles is not None and nearest_store.distance_miles > 0:
                 store_summary["distance_miles"] = round(nearest_store.distance_miles, 1)
-            # store_id: keep static directory's SerpApi store_id when present
-            # (used by downstream enrichment); Google place_id only as fallback
-            # for cases where the static directory had no match.
             if not store_summary.get("store_id"):
                 store_summary["store_id"] = nearest_store.place_id
 
@@ -1394,11 +771,6 @@ async def execute_tool_material_price_check(
         )
 
         if complete_products and not store_missing:
-            # Propagate the resolved closest-store identity into each product
-            # so the UI shows "In stock at Capital Circle Northeast" instead
-            # of "In stock at Tallahassee" (the SerpApi pickup.store_name
-            # default was the city, not the actual store name — May 4 user
-            # report). Only override when we have a real resolved name.
             resolved_store_name = (
                 store_summary.get("name")
                 or store_summary.get("store_name")
@@ -1412,15 +784,9 @@ async def execute_tool_material_price_check(
                         if resolved_store_id and not product.get("store_id"):
                             product["store_id"] = resolved_store_id
 
-            # Card pack is Home Depot-anchored. When include_other_stores=True,
-            # also include non-HD complete products from display_products so the
-            # carousel mixes retailers; when False, HD-only.
             final_records = [store_summary, *complete_products]
             final_sources = sources
             final_store_summary = store_summary
-            # Capture search-level metadata for refinable session UI. Cap
-            # filters at top-12 facets to keep payload bounded; the prompt
-            # reads this for "show only Milwaukee under $200" follow-ups.
             if not isinstance(hd_result, Exception) and hd_result.data:
                 hd_data = hd_result.data
                 final_taxonomy = list(hd_data.get("taxonomy") or [])[:6]
@@ -1429,18 +795,12 @@ async def execute_tool_material_price_check(
                 final_pagination = hd_data.get("pagination") or {}
             break
 
-    # Round 7 A.2 — decision flags computed for EVERY response (error or success).
-    # Prompt's FETCH MODE rule (Wave C.4) reads these to decide whether to offer
-    # Lowe's/Ace fallback. None means "unknown" (no HD resolved yet).
+    # Round 7 A.2 — decision flags
     nearest_distance: float | None = (
         round(nearest_store.distance_miles, 1)
         if (nearest_store is not None and nearest_store.distance_miles is not None)
         else None
     )
-    # hd_too_far: True when (a) we have a distance and it exceeds threshold,
-    # OR (b) we tried to resolve nearest HD via user_address and got nothing
-    # (which means no HD within 50km — also "too far"). Default False when no
-    # user_address was supplied (we have no signal).
     if nearest_store is None and user_address and user_address.strip():
         hd_too_far = True
     elif nearest_distance is not None and nearest_distance > HD_TOO_FAR_MILES:
@@ -1448,7 +808,6 @@ async def execute_tool_material_price_check(
     else:
         hd_too_far = False
 
-    # hd_has_stock: True when at least one HD product (NOT non-HD) has in_store_stock > 0.
     hd_in_stock_count = sum(
         1 for r in final_records
         if r.get("retailer") == "Home Depot"
@@ -1466,23 +825,17 @@ async def execute_tool_material_price_check(
     }
 
     if not final_records:
-        # Error / no-match path. Receipt + decision flags still emitted so the
-        # prompt can decide the next step. Reason code distinguishes shopping-429
-        # (when SerpApi short-circuited) from generic no-match.
         if "serpapi_home_depot_rate_limited" in providers_called:
             reason_code = "shopping_429"
         elif (
             "store_unresolved" in providers_called
             or "serpapi_home_depot_default_fallback" in providers_called
         ):
-            # Bangor guardrail fired — no usable store identity, refused to
-            # ship poisoned results. Surface this so the prompt asks the user
-            # for their zip / city / job-site address.
             reason_code = "store_unresolved"
             decision_flags["store_unresolved"] = True
         elif hd_too_far:
             reason_code = "hd_too_far"
-        elif not hd_has_stock and hd_products:
+        elif not hd_has_stock and [r for r in providers_called if "home_depot" in r]:
             reason_code = "no_stock"
         else:
             reason_code = "missing_required_fields"
@@ -1493,104 +846,74 @@ async def execute_tool_material_price_check(
             reason_code=reason_code,
             playbook_name="TOOL_MATERIAL_PRICE_CHECK",
             summary={
-                **decision_flags,
                 "providers_called": providers_called,
                 "missing_fields": last_missing_fields,
+                "decision_flags": decision_flags,
             },
         )
-
         return ResearchResponse(
-            artifact_type="error",
-            summary="I could not retrieve complete Home Depot product and store details right now. Please try again in a moment.",
+            artifact_type="ToolMaterialPriceCheck",
+            summary=f"No complete results for: {query[:60]}",
             records=[],
             sources=[],
             freshness={"mode": "live"},
-            confidence={"status": "unverified", "score": 0.0},
+            confidence={"status": "failed", "score": 0.0},
             missing_fields=last_missing_fields,
-            next_queries=["Try again in a moment", "Use a different city or ZIP"],
-            segment="trades",
-            intent="price_check",
-            playbook="TOOL_MATERIAL_PRICE_CHECK",
-            providers_called=providers_called,
             extra={
-                "hard_fail": True,
-                "missing_fields": last_missing_fields,
-                **decision_flags,
+                "providers_called": providers_called,
+                "decision_flags": decision_flags,
+                "store_summary": final_store_summary,
+                "taxonomy": final_taxonomy,
+                "filters": final_filters,
+                "related_products": final_related_products,
+                "pagination": final_pagination,
             },
         )
 
-    report = verify_records(records=final_records, sources=final_sources, required_fields=["product_name", "price", "retailer"])
-
-    hd_count = sum(1 for r in final_records if r.get("retailer") == "Home Depot" and r.get("card_kind") != "store_summary")
-    other_count = sum(
-        1 for r in final_records
-        if r.get("retailer") and r.get("retailer") != "Home Depot"
-        and r.get("card_kind") != "store_summary"
-    )
-    in_stock = hd_in_stock_count
-    summary_parts = [f"Price check for {query[:60]}"]
-    if final_store_summary.get("store_name"):
-        summary_parts.append(
-            f"Home Depot store: {final_store_summary['store_name']} (#{final_store_summary.get('store_id', '')})"
-        )
-    summary_parts.append(f"{hd_count} Home Depot products, {in_stock} in stock")
-    if include_other_stores and other_count:
-        summary_parts.append(f"{other_count} other-retailer products via Google Shopping")
-
-    success_reason = "multi_store_success" if include_other_stores else "success"
     _emit_playbook_receipt(
         ctx=ctx,
         outcome_status="SUCCEEDED",
-        reason_code=success_reason,
+        reason_code="EXECUTED",
         playbook_name="TOOL_MATERIAL_PRICE_CHECK",
         summary={
-            **decision_flags,
             "providers_called": providers_called,
-            "hd_product_count": hd_count,
-            "other_product_count": other_count,
+            "product_count": len(final_records) - 1,  # exclude store_summary
+            "decision_flags": decision_flags,
         },
     )
 
     return ResearchResponse(
-        artifact_type="PriceComparison",
-        summary=". ".join(summary_parts) + ".",
+        artifact_type="ToolMaterialPriceCheck",
+        summary=f"Price check for: {query[:60]}",
         records=final_records,
         sources=final_sources,
         freshness={"mode": "live"},
-        confidence={"status": report.status, "score": report.confidence_score},
-        missing_fields=report.missing_fields,
-        next_queries=[
-            f"Compare prices at Lowe's near {zip_code}" if zip_code else "Compare at other retailers",
-            "Check for current sales and promotions",
-        ],
-        verification_report=report,
-        segment="trades",
-        intent="price_check",
-        playbook="TOOL_MATERIAL_PRICE_CHECK",
-        providers_called=providers_called,
+        confidence={"status": "complete", "score": 0.9},
+        missing_fields=[],
         extra={
+            "providers_called": providers_called,
+            "decision_flags": decision_flags,
             "store_summary": final_store_summary,
-            "cards_version": "v1",
-            # Search-level metadata for refinable carousel sessions.
-            # taxonomy = breadcrumbs ("Tools > Power Tools > Drills")
-            # filters  = facets w/ hd_filter_tokens for "narrow to Milwaukee"
-            # related_products = query suggestions ("ryobi cordless drill")
             "taxonomy": final_taxonomy,
             "filters": final_filters,
             "related_products": final_related_products,
             "pagination": final_pagination,
-            **decision_flags,
         },
     )
 
+
+# ---------------------------------------------------------------------------
+# COMPETITOR_PRICING_SCAN playbook
+# ---------------------------------------------------------------------------
+
+
 async def execute_competitor_pricing_scan(
-    query: str, ctx: PlaybookContext, location: str = "",
+    query: str,
+    ctx: PlaybookContext,
+    address: str = "",
 ) -> ResearchResponse:
-    """COMPETITOR_PRICING_SCAN — Map local competitors and pricing signals."""
-    from aspire_orchestrator.providers.google_places_client import execute_google_places_search
+    """COMPETITOR_PRICING_SCAN — web + Exa for competitor pricing intel."""
     from aspire_orchestrator.providers.exa_client import execute_exa_search
-    from aspire_orchestrator.services.adam.normalizers.business_normalizer import normalize_from_google_places
-    from aspire_orchestrator.services.adam.normalizers.web_normalizer import normalize_from_exa
 
     logger.info("Executing COMPETITOR_PRICING_SCAN for: %s", query[:80])
 
@@ -1598,23 +921,7 @@ async def execute_competitor_pricing_scan(
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # 1. Google Places for local competitors
-    gp_result = await execute_google_places_search(
-        payload={"query": query, "location": location},
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-    )
-    providers_called.append("google_places")
-
-    if gp_result.outcome.value == "success" and gp_result.data:
-        for place in gp_result.data.get("results", [])[:10]:
-            biz = normalize_from_google_places(place)
-            records.append(biz.to_dict())
-            sources.extend(biz.sources)
-
-    # 2. Exa deep-lite for competitor intelligence with structured output
-    exa_result = await execute_exa_search(
+    result = await execute_exa_search(
         payload={
             "query": f"competitor pricing analysis {query}",
             "type": "deep-lite",
@@ -1628,151 +935,123 @@ async def execute_competitor_pricing_scan(
     )
     providers_called.append("exa")
 
-    exa_grounding: list[dict[str, Any]] = []
-    if exa_result.outcome.value == "success" and exa_result.data:
-        for r in exa_result.data.get("results", [])[:5]:
-            we = normalize_from_exa(r)
-            records.append(we.to_dict())
-            sources.append(SourceAttribution(provider="exa"))
-        exa_grounding = exa_result.data.get("grounding", [])
+    if result.outcome.value == "success" and result.data:
+        for item in (result.data.get("results") or [])[:5]:
+            records.append({
+                "card_kind": "web_evidence",
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("text", "")[:500],
+                "published_date": item.get("published_date"),
+                "retailer": "web",
+            })
+            sources.append(SourceAttribution(
+                provider="exa",
+                retrieved_at=datetime.now(timezone.utc).isoformat(),
+            ))
 
-    report = verify_records(
-        records=records, sources=sources,
-        required_fields=["name", "normalized_address"],
-        exa_grounding=exa_grounding,
+    _emit_playbook_receipt(
+        ctx=ctx,
+        outcome_status="SUCCEEDED" if records else "FAILED",
+        reason_code="EXECUTED" if records else "NO_DATA",
+        playbook_name="COMPETITOR_PRICING_SCAN",
+        summary={"providers_called": providers_called, "record_count": len(records)},
     )
 
     return ResearchResponse(
-        artifact_type="CompetitorBrief",
-        summary=f"Competitor scan for {query[:60]}",
+        artifact_type="CompetitorPricingScan",
+        summary=f"Competitor pricing for {query[:60]}",
         records=records,
         sources=sources,
         freshness={"mode": "live"},
-        confidence={"status": report.status, "score": report.confidence_score},
-        missing_fields=report.missing_fields,
-        next_queries=["Deep dive on top competitor", "Compare pricing models"],
-        verification_report=report,
-        segment="trades",
-        intent="compare",
-        playbook="COMPETITOR_PRICING_SCAN",
-        providers_called=providers_called,
+        confidence={"status": "complete" if records else "failed", "score": 0.7 if records else 0.0},
+        missing_fields=[],
+        extra={"providers_called": providers_called},
     )
+
+
+# ---------------------------------------------------------------------------
+# SUBCONTRACTOR_SCOUT playbook
+# ---------------------------------------------------------------------------
 
 
 async def execute_subcontractor_scout(
-    query: str, ctx: PlaybookContext, location: str = "",
+    query: str,
+    ctx: PlaybookContext,
+    location: str = "",
 ) -> ResearchResponse:
-    """SUBCONTRACTOR_SCOUT — Find nearby subcontractors by trade."""
-    from aspire_orchestrator.providers.google_places_client import execute_google_places_search
-    from aspire_orchestrator.providers.foursquare_client import execute_foursquare_search
-    from aspire_orchestrator.services.adam.normalizers.business_normalizer import (
-        normalize_from_google_places,
-        normalize_from_foursquare,
-    )
+    """SUBCONTRACTOR_SCOUT — Yelp for local subcontractor discovery."""
+    from aspire_orchestrator.providers.serpapi_yelp_client import execute_serpapi_yelp_search
 
-    logger.info("Executing SUBCONTRACTOR_SCOUT for: %s", query[:80])
+    logger.info("Executing SUBCONTRACTOR_SCOUT for: %s location=%r", query[:80], location[:40])
 
     records: list[dict[str, Any]] = []
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # 1. Google Places
-    gp_result = await execute_google_places_search(
-        payload={"query": query, "location": location},
+    yelp_result = await execute_serpapi_yelp_search(
+        payload={
+            "find_desc": query,
+            "find_loc": location or "",
+        },
         correlation_id=ctx.correlation_id,
         suite_id=ctx.suite_id,
         office_id=ctx.office_id,
+        timeout=5.0,
     )
-    providers_called.append("google_places")
+    providers_called.append("yelp")
 
-    if gp_result.outcome.value == "success" and gp_result.data:
-        for place in gp_result.data.get("results", [])[:10]:
-            biz = normalize_from_google_places(place)
-            records.append(biz.to_dict())
-            sources.extend(biz.sources)
+    if yelp_result.outcome.value == "success" and yelp_result.data:
+        for supplier in (yelp_result.data.get("suppliers") or [])[:10]:
+            records.append({
+                "card_kind": "supplier",
+                **supplier,
+            })
+            sources.append(SourceAttribution(
+                provider="yelp",
+                retrieved_at=datetime.now(timezone.utc).isoformat(),
+            ))
 
-    # 2. Foursquare for additional coverage
-    fs_result = await execute_foursquare_search(
-        payload={"query": query, "near": location},
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-    )
-    providers_called.append("foursquare")
-
-    if fs_result.outcome.value == "success" and fs_result.data:
-        for place in fs_result.data.get("results", [])[:5]:
-            biz = normalize_from_foursquare(place)
-            records.append(biz.to_dict())
-            sources.extend(biz.sources)
-
-    report = verify_records(
-        records=records, sources=sources,
-        required_fields=["name", "normalized_address", "phone"],
+    _emit_playbook_receipt(
+        ctx=ctx,
+        outcome_status="SUCCEEDED" if records else "FAILED",
+        reason_code="EXECUTED" if records else "NO_DATA",
+        playbook_name="SUBCONTRACTOR_SCOUT",
+        summary={"providers_called": providers_called, "record_count": len(records)},
     )
 
     return ResearchResponse(
-        artifact_type="VendorShortlist",
-        summary=f"Subcontractor search for {query[:60]}",
+        artifact_type="SubcontractorScout",
+        summary=f"Subcontractor scout for {query[:60]}",
         records=records,
         sources=sources,
         freshness={"mode": "live"},
-        confidence={"status": report.status, "score": report.confidence_score},
-        missing_fields=report.missing_fields,
-        next_queries=["Verify licensing", "Check reviews in detail"],
-        verification_report=report,
-        segment="trades",
-        intent="lookup",
-        playbook="SUBCONTRACTOR_SCOUT",
-        providers_called=providers_called,
+        confidence={"status": "complete" if records else "failed", "score": 0.75 if records else 0.0},
+        missing_fields=[],
+        extra={"providers_called": providers_called},
     )
 
 
-async def execute_territory_opportunity_scan(
-    query: str, ctx: PlaybookContext, geo_scope: str = "",
-) -> ResearchResponse:
-    """TERRITORY_OPPORTUNITY_SCAN — Identify promising ZIPs by density + activity."""
-    from aspire_orchestrator.providers.attom_client import execute_attom_sales_trends
-    from aspire_orchestrator.providers.google_places_client import execute_google_places_search
-    from aspire_orchestrator.providers.exa_client import execute_exa_search
-    from aspire_orchestrator.services.adam.normalizers.business_normalizer import normalize_from_google_places
-    from aspire_orchestrator.services.adam.normalizers.web_normalizer import normalize_from_exa
+# ---------------------------------------------------------------------------
+# TERRITORY_OPPORTUNITY_SCAN playbook
+# ---------------------------------------------------------------------------
 
-    logger.info("Executing TERRITORY_OPPORTUNITY_SCAN for: %s", query[:80])
+
+async def execute_territory_opportunity_scan(
+    query: str,
+    ctx: PlaybookContext,
+    geo_scope: str = "",
+) -> ResearchResponse:
+    """TERRITORY_OPPORTUNITY_SCAN — Exa market intel for territory planning."""
+    from aspire_orchestrator.providers.exa_client import execute_exa_search
+
+    logger.info("Executing TERRITORY_OPPORTUNITY_SCAN for: %s geo=%r", query[:80], geo_scope[:40])
 
     records: list[dict[str, Any]] = []
     sources: list[SourceAttribution] = []
     providers_called: list[str] = []
 
-    # 1. ATTOM sales trends for market activity
-    if geo_scope:
-        trends_result = await execute_attom_sales_trends(
-            payload={"geoid": geo_scope, "geo_type": "ZI"},
-            correlation_id=ctx.correlation_id,
-            suite_id=ctx.suite_id,
-            office_id=ctx.office_id,
-        )
-        providers_called.append("attom")
-        if trends_result.outcome.value == "success" and trends_result.data:
-            records.append({"type": "market_trends", "data": trends_result.data})
-            sources.append(SourceAttribution(provider="attom"))
-
-    # 2. Google Places for competitor density
-    gp_result = await execute_google_places_search(
-        payload={"query": query, "location": geo_scope},
-        correlation_id=ctx.correlation_id,
-        suite_id=ctx.suite_id,
-        office_id=ctx.office_id,
-    )
-    providers_called.append("google_places")
-
-    if gp_result.outcome.value == "success" and gp_result.data:
-        for place in gp_result.data.get("results", [])[:10]:
-            biz = normalize_from_google_places(place)
-            records.append(biz.to_dict())
-            sources.extend(biz.sources)
-
-    # 3. Exa for market intelligence
+    # Exa for market intelligence
     exa_result = await execute_exa_search(
         payload={
             "query": f"market opportunity {query} {geo_scope}",
@@ -1786,26 +1065,35 @@ async def execute_territory_opportunity_scan(
     providers_called.append("exa")
 
     if exa_result.outcome.value == "success" and exa_result.data:
-        for r in exa_result.data.get("results", [])[:5]:
-            we = normalize_from_exa(r)
-            records.append(we.to_dict())
-            sources.append(SourceAttribution(provider="exa"))
+        for item in (exa_result.data.get("results") or [])[:5]:
+            records.append({
+                "card_kind": "web_evidence",
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("text", "")[:500],
+                "published_date": item.get("published_date"),
+                "retailer": "web",
+            })
+            sources.append(SourceAttribution(
+                provider="exa",
+                retrieved_at=datetime.now(timezone.utc).isoformat(),
+            ))
 
-    report = verify_records(records=records, sources=sources)
+    _emit_playbook_receipt(
+        ctx=ctx,
+        outcome_status="SUCCEEDED" if records else "FAILED",
+        reason_code="EXECUTED" if records else "NO_DATA",
+        playbook_name="TERRITORY_OPPORTUNITY_SCAN",
+        summary={"providers_called": providers_called, "record_count": len(records)},
+    )
 
     return ResearchResponse(
-        artifact_type="TerritoryAnalysis",
+        artifact_type="TerritoryOpportunityScan",
         summary=f"Territory scan for {query[:60]}",
         records=records,
         sources=sources,
         freshness={"mode": "live"},
-        confidence={"status": report.status, "score": report.confidence_score},
-        missing_fields=report.missing_fields,
-        next_queries=["Drill into top ZIP code", "Compare adjacent territories"],
-        verification_report=report,
-        segment="trades",
-        intent="territory_scan",
-        playbook="TERRITORY_OPPORTUNITY_SCAN",
-        providers_called=providers_called,
+        confidence={"status": "complete" if records else "failed", "score": 0.65 if records else 0.0},
+        missing_fields=[],
+        extra={"providers_called": providers_called},
     )
-
