@@ -360,6 +360,7 @@ async def execute_tool_material_price_check(
     )
     from aspire_orchestrator.services.adam.hd_store_directory import (
         lookup_store_by_id,
+        lookup_store_by_zip_code,
         lookup_zip_by_city,
         find_stores_in_city,
         find_nearest_store,
@@ -406,6 +407,18 @@ async def execute_tool_material_price_check(
         )
         if nearest_store is not None:
             zip_code = nearest_store.postal_code or zip_code
+            # CRITICAL: also derive the Home Depot store_id from the resolved
+            # postal_code via our static directory. SerpApi accepts delivery_zip
+            # but defaults pickup data to its account store (Bangor 2414) when
+            # store_id isn't pinned — so contractors see "in stock at Bangor"
+            # for a job site in GA. Pinning store_id makes pickup data anchor
+            # to the real local HD (e.g. zip 30354 → store 123 Jonesboro GA).
+            # The whole route-map + drive_minutes + pickup-in-stock UX depends
+            # on this — never strip pickup, always pin store_id.
+            if not store_id and zip_code:
+                _hd_record = lookup_store_by_zip_code(zip_code)
+                if _hd_record:
+                    store_id = str(_hd_record.get("store_id", "")) or store_id
 
     if not zip_code:
         zip_match = _ZIP_IN_QUERY_RE.search(query)
