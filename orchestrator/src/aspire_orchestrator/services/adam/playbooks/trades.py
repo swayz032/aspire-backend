@@ -634,13 +634,41 @@ async def execute_tool_material_price_check(
             hd_data = hd_result.data
             store_data = hd_data.get("store", {})
             if store_data.get("default_store_fallback"):
-                providers_called.append("serpapi_home_depot_default_fallback")
-                logger.warning(
-                    "TOOL_MATERIAL_PRICE_CHECK: Bangor default-fallback detected "
-                    "(store=%s), skipping poisoned result",
-                    store_data.get("store_id"),
-                )
-                continue
+                # Two flavors of "default-fallback" — the client OR-merges them
+                # but the playbook MUST distinguish:
+                #   1. TRUE poisoning  — no zip + no store anchor passed; SerpApi
+                #      defaulted to its account default (Bangor 2414). Products
+                #      are anchored to the wrong location → skip.
+                #   2. PICKUP-only      — zip was honored (real Atlanta-area
+                #      results returned at zip=30354), but each product's
+                #      `pickup` block still references Bangor. Products are
+                #      valid for delivery; only in-store inventory is wrong.
+                #      → strip pickup, keep products. nearest_store override at
+                #      line ~756 will replace the Bangor store_summary with the
+                #      real Atlanta HD from find_nearest_home_depot_by_address.
+                pickup_only_poisoning = bool(store_data.get("pickup_poisoning")) and bool(zip_code)
+                if pickup_only_poisoning:
+                    providers_called.append("serpapi_home_depot_pickup_poisoned")
+                    logger.info(
+                        "TOOL_MATERIAL_PRICE_CHECK: pickup-only poisoning "
+                        "(store=%s) — stripping pickup from products, keeping "
+                        "delivery results (requested zip=%s honored)",
+                        store_data.get("store_id"), zip_code,
+                    )
+                    # Strip pickup from each raw product so cards render
+                    # "free ship to store" instead of lying about Bangor stock.
+                    for raw_p in hd_data.get("results", []) or []:
+                        if isinstance(raw_p, dict) and isinstance(raw_p.get("pickup"), dict):
+                            raw_p["pickup"] = {"free_ship_to_store": True}
+                    # Fall through to normal processing — DO NOT continue.
+                else:
+                    providers_called.append("serpapi_home_depot_default_fallback")
+                    logger.warning(
+                        "TOOL_MATERIAL_PRICE_CHECK: Bangor default-fallback detected "
+                        "(store=%s), skipping poisoned result",
+                        store_data.get("store_id"),
+                    )
+                    continue
 
             hd_store_info = {
                 "store_id": store_data.get("store_id", ""),
