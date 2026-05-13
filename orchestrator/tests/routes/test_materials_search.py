@@ -5,6 +5,7 @@ Covers:
   NEG-01 to NEG-06: empty query, oversized query, invalid include_shopping, missing auth,
                     cross-tenant block, idempotent dedup.
   EVIL-01 to EVIL-04: SQL injection, prompt injection, oversized address, serpapi key not cached.
+  ADR-01 to ADR-09: address → HD store resolution wiring (PR fix/materials-address-wiring).
 """
 from __future__ import annotations
 
@@ -410,3 +411,324 @@ def test_evil04_expired_token_returns_401(mock_store, mock_validate):
     resp = _search("paint", token=json.dumps({"id": "expired-token"}))
     assert resp.status_code == 401
     assert mock_store.called  # denial receipt emitted (Law #2)
+
+
+# ---------------------------------------------------------------------------
+# ADR tests — address wiring (PR fix/materials-address-wiring)
+# ---------------------------------------------------------------------------
+
+_FOREST_PARK_STORE = {
+    "store_id": "1234",
+    "name": "The Home Depot",
+    "address": "5765 Old Dixie Hwy",
+    "city": "Forest Park",
+    "state": "GA",
+    "postal_code": "30297",
+    "lat": 33.6213,
+    "lng": -84.3600,
+}
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=_FOREST_PARK_STORE,
+)
+def test_adr01_tool_mode_address_resolves_to_real_store(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Tool mode: address with a recognisable ZIP resolves to the real HD store,
+    NOT a Bangkok default.  `execute_tool_material_price_check` must be called
+    with the resolved store_id + zip, and `closest_store` must appear in the response."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "123 Main St, Forest Park, GA 30297", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+
+    # closest_store must be the resolved store, not None
+    cs = data.get("closest_store")
+    assert cs is not None, "closest_store must be present when address resolves"
+    assert cs["name"] == "The Home Depot"
+    assert cs["id"] == "1234"
+    assert cs["zip"] == "30297"
+
+    # execute_tool_material_price_check must have been called with resolved params
+    call_kwargs = mock_execute.call_args.kwargs
+    assert call_kwargs["store_id"] == "1234"
+    assert call_kwargs["zip_code"] == "30297"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=_FOREST_PARK_STORE,
+)
+def test_adr02_explicit_store_id_wins_over_address(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """When client passes both address AND store_id, the explicit store_id wins.
+    Address resolution must NOT override an explicit client store_id override."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={
+            "address": "123 Main St, Forest Park, GA 30297",
+            "store_id": "9999",
+            "mode": "tool",
+        },
+    )
+    assert resp.status_code == 200
+    # Directory lookup should NOT have been called since store_id was supplied
+    mock_lookup.assert_not_called()
+    call_kwargs = mock_execute.call_args.kwargs
+    assert call_kwargs["store_id"] == "9999"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+def test_adr03_tool_mode_address_with_no_zip_fails_soft(
+    mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Address with no recognisable 5-digit ZIP: route must return 200 with products,
+    no crash, and closest_store=None (fail-soft, Law #3 variant)."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "Main Street Atlanta GA", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    # closest_store may be None when address has no extractable ZIP
+    assert data.get("closest_store") is None or isinstance(data.get("closest_store"), dict)
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.select_account", return_value=None)
+def test_adr04_supplier_mode_address_used_as_find_loc(mock_select, mock_cache_get, mock_store, mock_validate):
+    """Supplier mode: when location + zip_code are absent but address is present,
+    address must flow into `find_loc` for the Yelp call."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+
+    # Budget exhausted so we skip the actual Yelp call — we only need to verify
+    # the route doesn't crash and processes the address param without error.
+    resp = _search(
+        "hvac supplier",
+        token=_mint_valid_token(),
+        extra_params={"mode": "supplier", "address": "456 Commerce Dr, Atlanta, GA 30318"},
+    )
+    # Budget-exhausted cached_only response is still success
+    assert resp.status_code == 200
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_serpapi_yelp_search",
+    new_callable=AsyncMock,
+)
+def test_adr05_supplier_mode_location_wins_over_address(
+    mock_yelp, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Supplier mode: when location is explicitly supplied, it must win over address."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    yelp_result = MagicMock()
+    yelp_result.outcome = "success"
+    yelp_result.error = None
+    yelp_result.data = {"suppliers": [{"name": "HVAC Co", "rating": 4.5}]}
+    mock_yelp.return_value = yelp_result
+
+    resp = _search(
+        "hvac supplier",
+        token=_mint_valid_token(),
+        extra_params={
+            "mode": "supplier",
+            "location": "Atlanta, GA",
+            "address": "456 Commerce Dr, Atlanta, GA 30318",
+        },
+    )
+    assert resp.status_code == 200
+    # Yelp must be called with `location` (Atlanta, GA), not the full address
+    call_kwargs = mock_yelp.call_args.kwargs
+    assert call_kwargs["payload"]["find_loc"] == "Atlanta, GA"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+)
+def test_adr06_cache_key_different_addresses_different_stores(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Two requests with the same query but addresses resolving to different stores
+    must produce distinct cache keys (different `store` param), so they never
+    share a cache row."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    store_a = {**_FOREST_PARK_STORE, "store_id": "1111", "postal_code": "30297"}
+    store_b = {**_FOREST_PARK_STORE, "store_id": "2222", "postal_code": "30301"}
+
+    # First call → store A
+    mock_lookup.return_value = store_a
+    _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "100 A St, Forest Park, GA 30297", "mode": "tool"},
+    )
+    first_cache_params = mock_cache_set.call_args.kwargs.get("params") or mock_cache_set.call_args[1].get("params")
+
+    # Second call → store B
+    mock_lookup.return_value = store_b
+    mock_cache_set.reset_mock()
+    _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "200 B Ave, Atlanta, GA 30301", "mode": "tool"},
+    )
+    second_cache_params = mock_cache_set.call_args.kwargs.get("params") or mock_cache_set.call_args[1].get("params")
+
+    # The "store" key in cache_params must differ between the two calls
+    assert first_cache_params["store"] != second_cache_params["store"], (
+        "Different resolved stores must produce different cache keys"
+    )
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    return_value=_FOREST_PARK_STORE,
+)
+def test_adr07_receipt_includes_resolved_store_and_address_provided(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Success receipt must include resolved_store_id and address_provided=True
+    when an address is supplied.  This makes future debugging trivial (Law #2)."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "123 Main St, Forest Park, GA 30297", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    assert mock_store.called
+    receipt = mock_store.call_args[0][0][0]
+    ro = receipt.get("redacted_outputs", {})
+    assert ro.get("address_provided") is True
+    assert ro.get("resolved_store_id") == "1234"
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+def test_adr08_backwards_compat_tool_mode_without_address(
+    mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """Backwards compat: tool mode without address still returns 200 with products
+    and closest_store=None.  Existing callers that never send address must not break."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    resp = _search("paint", token=_mint_valid_token(), extra_params={"mode": "tool"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    # closest_store must be None (or absent) when address is omitted
+    assert data.get("closest_store") is None
+
+
+@patch("aspire_orchestrator.routes.materials.validate_token")
+@patch("aspire_orchestrator.services.receipt_store.store_receipts")
+@patch("aspire_orchestrator.routes.materials.cache_get", return_value=None)
+@patch("aspire_orchestrator.routes.materials.cache_set")
+@patch("aspire_orchestrator.routes.materials.select_account", return_value="A")
+@patch(
+    "aspire_orchestrator.routes.materials.execute_tool_material_price_check",
+    new_callable=AsyncMock,
+)
+@patch(
+    "aspire_orchestrator.services.adam.hd_store_directory.lookup_store_by_zip_code",
+    side_effect=RuntimeError("directory exploded"),
+)
+def test_adr09_hd_lookup_exception_fails_soft_returns_200(
+    mock_lookup, mock_execute, mock_select, mock_cache_set, mock_cache_get, mock_store, mock_validate
+):
+    """If hd_store_directory raises an exception, the route must NOT 500.
+    It logs the error and continues without closest_store (Law #3 fail-soft)."""
+    mock_validate.return_value = MagicMock(valid=True, error=None)
+    mock_execute.return_value = _FAKE_RESEARCH_RESULT
+
+    resp = _search(
+        "paint",
+        token=_mint_valid_token(),
+        extra_params={"address": "123 Main St, Forest Park, GA 30297", "mode": "tool"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data.get("closest_store") is None

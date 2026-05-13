@@ -210,6 +210,7 @@ def _detect_suggested_mode(query_lower: str) -> str | None:
 async def search_materials(
     q: str = Query(..., description="Material search query (max 500 chars, no PII)"),
     mode: str = Query("tool", description="Search mode: 'tool' (Home Depot) or 'supplier' (Yelp)"),
+    address: str | None = Query(None, description="Full project address (street + city + state + ZIP). Tool mode: resolved to nearest HD store via static directory. Supplier mode: used as Yelp find_loc fallback when location/zip_code absent."),
     zip_code: str | None = Query(None, description="ZIP code for local store lookup / Yelp location"),
     location: str | None = Query(None, description="Location string for Yelp supplier search (city, state, or address)"),
     store_id: str | None = Query(None, description="Home Depot store ID override (tool mode only)"),
@@ -233,7 +234,7 @@ async def search_materials(
     keywords, the response includes suggested_mode='supplier'. Client decides
     whether to flip — the server never auto-flips mode.
     """
-    # ── 1. Scope resolution (Law #6) ──────────────────────────────────────
+    # ── 1. Scope resolution (Law #6) ──────────────────────────────────────────────
     scope = _resolve_scope(x_tenant_id, x_suite_id, x_office_id)
     suite_id = str(scope.suite_id)
     office_id = str(scope.office_id)
@@ -241,7 +242,7 @@ async def search_materials(
     correlation_id = get_correlation_id() or str(uuid.uuid4())
     trace_id = get_trace_id() or correlation_id
 
-    # ── 2. Capability token validation (Law #5) ─────────────────────────────────
+    # ── 2. Capability token validation (Law #5) ──────────────────────────────────────────
     cap_token_dict: dict[str, Any] | None = None
     if capability_token:
         import json
@@ -285,7 +286,7 @@ async def search_materials(
 
     cap_token_id = _cap_token_id(cap_token_dict)
 
-    # ── 3. Query normalisation + PII rejection ────────────────────────────────
+    # ── 3. Query normalisation + PII rejection ────────────────────────────────────────────
     normalised = normalize_query(q)
     if isinstance(normalised, NormalizeRejection):
         receipt_id = _emit_receipt(
@@ -306,7 +307,7 @@ async def search_materials(
             },
         )
 
-    # ── 4. Mode validation + supplier-mode dispatch (Pass E) ─────────────────
+    # ── 4. Mode validation + supplier-mode dispatch (Pass E) ───────────────────────
     #
     # Validate mode param (fail-closed: unknown modes are rejected, not silently
     # downgraded to tool mode — that would mask client bugs, Law #3).
@@ -337,7 +338,7 @@ async def search_materials(
     if effective_mode == "supplier":
         return await _search_suppliers(
             q=normalised,
-            location=location or zip_code or "",
+            location=location or zip_code or address or "",
             idempotency_key=idempotency_key,
             suite_id=suite_id,
             office_id=office_id,
@@ -347,7 +348,7 @@ async def search_materials(
             cap_token_id=cap_token_id,
         )
 
-    # ── 5. Idempotency check (tool mode) ─────────────────────────────────
+    # ── 5. Idempotency check (tool mode) ─────────────────────────────────────
     if idempotency_key:
         try:
             existing = await supabase_select(
@@ -392,8 +393,67 @@ async def search_materials(
         except SupabaseClientError as exc:
             logger.warning("materials_search idempotency check failed: %s", exc)
 
-    # ── 5. In-memory cache hit ────────────────────────────────────────────
-    cache_params = {"zip": zip_code or "", "store": store_id or "", "shopping": include_shopping}
+    # ── 5a. Resolve address → nearest HD store (tool mode only) ─────────────────
+    # When the client sends the full project address and no explicit store_id,
+    # extract the ZIP from the address string and resolve to the nearest HD
+    # store via the O(1) static directory. This prevents SerpApi from defaulting
+    # to its built-in geolocation (which has historically returned Bangkok for
+    # US addresses when no ZIP/store_id is supplied).
+    #
+    # Strategy: extract a 5-digit ZIP from the address string using the same
+    # regex already used by hd_store_resolver._match_store_by_address. This
+    # avoids a geocoding round-trip and keeps the path synchronous + free.
+    # If address has no ZIP we still benefit from supplier-mode fallback (above).
+    resolved_store_id: str | None = store_id
+    resolved_zip: str | None = zip_code
+    closest_store_info: dict[str, Any] | None = None
+
+    if address and not store_id:
+        import re as _re
+        _zip_match = _re.search(r"\b(\d{5})\b", address)
+        if _zip_match:
+            _extracted_zip = _zip_match.group(1)
+            try:
+                from aspire_orchestrator.services.adam.hd_store_directory import (
+                    lookup_store_by_zip_code,
+                )
+                _nearest = lookup_store_by_zip_code(_extracted_zip)
+                if _nearest:
+                    resolved_store_id = str(_nearest.get("store_id", "")) or None
+                    resolved_zip = str(_nearest.get("postal_code", "")).zfill(5) or _extracted_zip
+                    closest_store_info = {
+                        "id": str(_nearest.get("store_id", "")),
+                        "name": _nearest.get("name", "Home Depot"),
+                        "address": _nearest.get("address", ""),
+                        "city": _nearest.get("city", ""),
+                        "state": _nearest.get("state", ""),
+                        "zip": str(_nearest.get("postal_code", "")).zfill(5),
+                    }
+                    logger.info(
+                        "materials_search address resolved store_id=%s zip=%s",
+                        resolved_store_id, resolved_zip,
+                    )
+                else:
+                    # ZIP found in address but not in directory — use extracted ZIP as fallback
+                    resolved_zip = _extracted_zip
+                    logger.info(
+                        "materials_search address ZIP %s not in directory, using as zip_code",
+                        _extracted_zip,
+                    )
+            except Exception as _exc:
+                # Fail-soft (Law #3 variant): log and continue with original params.
+                # Tool mode will still return results without closest_store.
+                logger.warning("materials_search hd_store address lookup failed: %s", _exc)
+
+    # ── 5. In-memory cache hit ────────────────────────────────────────────────────
+    # Include resolved_store_id/resolved_zip so two addresses that resolve to
+    # different HD stores don't share a cache row (Law #6 — tenant isolation
+    # within the same suite extends to store-level result isolation).
+    cache_params = {
+        "zip": resolved_zip or "",
+        "store": resolved_store_id or "",
+        "shopping": include_shopping,
+    }
     cached_result = cache_get(
         tenant_id=suite_id,  # Law #6: use suite_id as isolation key
         provider="serpapi_home_depot",
@@ -415,7 +475,8 @@ async def search_materials(
                 "budget_remaining_a": max(0, 240 - _counts.get("A", 0)),
                 "budget_remaining_b": max(0, 240 - _counts.get("B", 0)),
                 "query_normalized": normalised,
-                "store_id": store_id,
+                "resolved_store_id": resolved_store_id,
+                "address_provided": bool(address),
                 "product_count": len(cached_result.get("products", [])),
                 "specialty_count": len(cached_result.get("specialty_suppliers", [])),
             },
@@ -423,6 +484,7 @@ async def search_materials(
         return {
             "success": True,
             **cached_result,
+            "closest_store": closest_store_info,
             "is_cached_only_mode": False,
             "from_cache": True,
             "receipt_id": receipt_id,
@@ -448,7 +510,8 @@ async def search_materials(
                 "budget_remaining_a": 0,
                 "budget_remaining_b": 0,
                 "query_normalized": normalised,
-                "store_id": store_id,
+                "resolved_store_id": resolved_store_id,
+                "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
             },
@@ -459,6 +522,7 @@ async def search_materials(
             "specialty_suppliers": [],
             "filters": {},
             "addon_suggestions": [],
+            "closest_store": closest_store_info,
             "is_cached_only_mode": True,
             "from_cache": False,
             "receipt_id": receipt_id,
@@ -467,7 +531,7 @@ async def search_materials(
             "suggested_mode": suggested_mode,
         }
 
-    # ── 7. Build PlaybookContext + execute HD search ───────────────────────────
+    # ── 7. Build PlaybookContext + execute HD search ──────────────────────────────────────
     ctx = PlaybookContext(
         suite_id=suite_id,
         office_id=office_id,
@@ -483,8 +547,8 @@ async def search_materials(
             execute_tool_material_price_check(
                 query=normalised,
                 ctx=ctx,
-                zip_code=zip_code or "",
-                store_id=store_id or "",
+                zip_code=resolved_zip or "",
+                store_id=resolved_store_id or "",
                 voice_path=False,  # R1: text-mode path, 3-attempt loop
             ),
             timeout=_ROUTE_TIMEOUT_SECONDS,
@@ -504,7 +568,8 @@ async def search_materials(
                 "budget_remaining_a": max(0, 240 - _counts_post.get("A", 0)),
                 "budget_remaining_b": max(0, 240 - _counts_post.get("B", 0)),
                 "query_normalized": normalised,
-                "store_id": store_id,
+                "resolved_store_id": resolved_store_id,
+                "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
             },
@@ -527,7 +592,8 @@ async def search_materials(
                 "budget_remaining_a": 0,
                 "budget_remaining_b": 0,
                 "query_normalized": normalised,
-                "store_id": store_id,
+                "resolved_store_id": resolved_store_id,
+                "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
             },
@@ -551,7 +617,8 @@ async def search_materials(
                 "budget_remaining_a": max(0, 240 - _counts_post.get("A", 0)),
                 "budget_remaining_b": max(0, 240 - _counts_post.get("B", 0)),
                 "query_normalized": normalised,
-                "store_id": store_id,
+                "resolved_store_id": resolved_store_id,
+                "address_provided": bool(address),
                 "product_count": 0,
                 "specialty_count": 0,
             },
@@ -561,7 +628,7 @@ async def search_materials(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── 8. Extract products from research_result ─────────────────────────────
+    # ── 8. Extract products from research_result ───────────────────────────────────────
     products: list[dict[str, Any]] = []
     records = getattr(research_result, "records", None) or []
     for rec in records:
@@ -580,9 +647,9 @@ async def search_materials(
         for item in extra["results"]:
             products.append(item if isinstance(item, dict) else {})
 
-    # ── 9. Specialty fallback (ATTOM POI) when < 3 products ─────────────────
+    # ── 9. Specialty fallback (ATTOM POI) when < 3 products ─────────────────────
     specialty_suppliers: list[dict[str, Any]] = []
-    if len(products) < 3 and zip_code:
+    if len(products) < 3 and (resolved_zip or zip_code):
         try:
             from aspire_orchestrator.providers.attom_client import (
                 execute_attom_poi_search,
@@ -590,7 +657,7 @@ async def search_materials(
             poi_result = await asyncio.wait_for(
                 execute_attom_poi_search(
                     payload={
-                        "zipCode": zip_code,
+                        "zipCode": resolved_zip or zip_code,
                         "categoryName": "|".join(_HARDWARE_POI_CATEGORIES),
                         "useDefaultCategories": False,
                     },
@@ -615,14 +682,14 @@ async def search_materials(
         except Exception as poi_exc:
             logger.warning("materials_search attom_poi fallback failed: %s", poi_exc)
 
-    # ── 10. Derive filters + add-ons ───────────────────────────────────────
+    # ── 10. Derive filters + add-ons ───────────────────────────────────────────────
     filters = derive_filters(products)
     addon_suggestions = get_predictive_addons(normalised)
 
-    # ── 11. Sanitize before cache write (Law #9) ────────────────────────────
+    # ── 11. Sanitize before cache write (Law #9) ────────────────────────────────────
     sanitized_products = sanitize_product_list(products)
 
-    # ── 12. Write to in-memory cache (tenant-isolated key, Law #6) ──────────
+    # ── 12. Write to in-memory cache (tenant-isolated key, Law #6) ──────────────
     result_payload: dict[str, Any] = {
         "products": sanitized_products,
         "specialty_suppliers": specialty_suppliers,
@@ -639,7 +706,7 @@ async def search_materials(
         ttl_override=_HD_TTL_SECONDS,
     )
 
-    # ── 13. Persist idempotency record to Supabase ────────────────────────────
+    # ── 13. Persist idempotency record to Supabase ─────────────────────────────────────
     if idempotency_key:
         try:
             await supabase_insert(
@@ -663,7 +730,7 @@ async def search_materials(
         except SupabaseClientError as exc:
             logger.warning("materials_search idempotency persist failed: %s", exc)
 
-    # ── 14. Success receipt ───────────────────────────────────────────────
+    # ── 14. Success receipt ─────────────────────────────────────────────────────────
     _counts_final = current_counts()
     receipt_id = _emit_receipt(
         receipt_type="materials_search_success",
@@ -678,7 +745,8 @@ async def search_materials(
             "budget_remaining_a": max(0, 240 - _counts_final.get("A", 0)),
             "budget_remaining_b": max(0, 240 - _counts_final.get("B", 0)),
             "query_normalized": normalised,
-            "store_id": store_id,
+            "resolved_store_id": resolved_store_id,
+            "address_provided": bool(address),
             "product_count": len(sanitized_products),
             "specialty_count": len(specialty_suppliers),
         },
@@ -695,6 +763,7 @@ async def search_materials(
         "specialty_suppliers": specialty_suppliers,
         "filters": filters,
         "addon_suggestions": addon_suggestions,
+        "closest_store": closest_store_info,
         "is_cached_only_mode": False,
         "from_cache": False,
         "receipt_id": receipt_id,
@@ -732,7 +801,7 @@ async def _search_suppliers(
 
     location_key = location.strip().lower() if location else ""
 
-    # ── S1. In-memory cache hit ──────────────────────────────────────────
+    # ── S1. In-memory cache hit ────────────────────────────────────────────────────
     supplier_cache_params = {"location": location_key}
     cached_supplier = cache_get(
         tenant_id=suite_id,
@@ -769,7 +838,7 @@ async def _search_suppliers(
             "mode": "supplier",
         }
 
-    # ── S2. Budget check — fail gracefully (Law #3) ───────────────────────
+    # ── S2. Budget check — fail gracefully (Law #3) ───────────────────────────────
     account_id = select_account()
     _counts = current_counts()
 
@@ -801,7 +870,7 @@ async def _search_suppliers(
             "message": "Daily supplier-lookup quota reached",
         }
 
-    # ── S3. Execute Yelp search ─────────────────────────────────────────
+    # ── S3. Execute Yelp search ───────────────────────────────────────────────────
     try:
         yelp_result = await asyncio.wait_for(
             execute_serpapi_yelp_search(
@@ -863,7 +932,7 @@ async def _search_suppliers(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── S4. Check for budget exhaustion in adapter result ─────────────────
+    # ── S4. Check for budget exhaustion in adapter result ───────────────────────
     if yelp_result.outcome and str(yelp_result.outcome).lower() in ("failed", "error"):
         error_str = yelp_result.error or ""
         is_budget_exhausted = "budget exhausted" in error_str.lower() or "SERPAPI_BUDGET_EXHAUSTED" in error_str
@@ -917,10 +986,10 @@ async def _search_suppliers(
             detail={"error": "PROVIDER_INTERNAL_ERROR", "receipt_id": receipt_id},
         )
 
-    # ── S5. Extract suppliers ───────────────────────────────────────────
+    # ── S5. Extract suppliers ───────────────────────────────────────────────────
     suppliers: list[dict[str, Any]] = (yelp_result.data or {}).get("suppliers", [])
 
-    # ── S6. Write to in-memory cache ─────────────────────────────────────
+    # ── S6. Write to in-memory cache ─────────────────────────────────────────────────
     supplier_payload: dict[str, Any] = {"suppliers": suppliers}
     cache_set(
         tenant_id=suite_id,
@@ -932,7 +1001,7 @@ async def _search_suppliers(
         ttl_override=_YELP_TTL_SECONDS,
     )
 
-    # ── S7. Persist idempotency record ──────────────────────────────────
+    # ── S7. Persist idempotency record ──────────────────────────────────────────────
     if idempotency_key:
         try:
             await supabase_insert(
@@ -955,7 +1024,7 @@ async def _search_suppliers(
         except SupabaseClientError as exc:
             logger.warning("materials_supplier_search idempotency persist failed: %s", exc)
 
-    # ── S8. Success receipt ─────────────────────────────────────────────
+    # ── S8. Success receipt ────────────────────────────────────────────────────────
     _counts_final = current_counts()
     receipt_id = _emit_receipt(
         receipt_type="materials_supplier_search_success",
