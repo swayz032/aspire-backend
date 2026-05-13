@@ -192,7 +192,15 @@ async def send_sms(
             f"No active SMS-enabled number found for office_id={office_id}",
             422,
         )
-    from_number = from_rows[0]["phone_number"]
+    from_number = (from_rows[0].get("phone_number") or "").strip()
+    if not from_number:
+        # Defensive: row exists but phone_number column is null/empty.
+        # Never let an empty From reach Twilio (would return 21603).
+        raise SmsIoError(
+            "NO_SMS_NUMBER",
+            f"tenant_phone_numbers row for office_id={office_id} has empty phone_number",
+            422,
+        )
 
     # ── Resolve to_number from thread ────────────────────────────────────
     thread_rows = await supabase_select(
@@ -560,81 +568,24 @@ async def send_sms_new(
     # ── Normalize to_phone (fail closed) ──────────────────────────────────
     to_phone_e164 = _normalize_to_e164(to_phone)
 
-    account_sid, auth_token = _twilio_auth()
     suite_id = str(scope.suite_id)
     office_id = str(scope.office_id)
     tenant_id = str(scope.tenant_id)
     now = datetime.now(timezone.utc).isoformat()
 
-    # ── A2P 10DLC gate (verbatim from send_sms — Law #3 fail closed) ──────
-    a2p_rows = await supabase_select(
-        "tenant_a2p_registrations",
-        f"tenant_id=eq.{tenant_id}",
-        limit=1,
-    )
-    if a2p_rows:
-        row_tenant = str(a2p_rows[0].get("tenant_id") or "")
-        if row_tenant != tenant_id:
-            logger.error(
-                "sms_io a2p_row_tenant_mismatch scope_tenant=%s row_tenant=%s — denying",
-                tenant_id,
-                row_tenant,
-            )
-            a2p_rows = []
-    a2p_status = (a2p_rows[0].get("status") if a2p_rows else None) or "unregistered"
-    if a2p_status != "registered":
-        receipt_id_a2p = str(uuid.uuid4())
-        receipt_store.store_receipts([{
-            "id": receipt_id_a2p,
-            "receipt_type": "sms_send_blocked_a2p",
-            "suite_id": suite_id,
-            "office_id": office_id,
-            "tenant_id": tenant_id,
-            "outcome": "denied",
-            "action_type": "sms_send_new",
-            "tool_used": "sms_io",
-            "risk_tier": "yellow",
-            "reason_code": "a2p_not_registered",
-            "redacted_inputs": {
-                "to_prefix": (to_phone_e164 or "")[:6] + "...",
-                "body_length": len(body),
-                "a2p_status": a2p_status,
-            },
-            "trace_id": trace_id,
-            "correlation_id": correlation_id,
-            "capability_token_id": capability_token_id or None,
-            "created_at": now,
-        }])
-        logger.warning(
-            "sms_send_new blocked tenant=%s a2p_status=%s",
-            tenant_id,
-            a2p_status,
-        )
-        raise SmsIoError(
-            "A2P_NOT_REGISTERED",
-            f"Outbound SMS blocked: tenant A2P registration status is '{a2p_status}'. "
-            "Complete A2P 10DLC registration to enable SMS.",
-            403,
-        )
-
-    # ── Resolve from_number ───────────────────────────────────────────────
-    from_rows = await supabase_select(
-        "tenant_phone_numbers",
-        f"office_id=eq.{office_id}&sms_enabled=eq.true&status=eq.active",
-        limit=1,
-    )
-    if not from_rows:
-        raise SmsIoError(
-            "NO_SMS_NUMBER",
-            f"No active SMS-enabled number found for office_id={office_id}",
-            422,
-        )
-    from_number = from_rows[0]["phone_number"]
+    # Pass D perf fix 2026-05-13: removed the duplicate A2P gate + from_number
+    # resolve that were originally done here AND again inside send_sms().
+    # send_sms() runs the canonical A2P gate + from_number lookup exactly once.
+    # Duplicates were adding 2–4s upstream and contributing to 504s on
+    # /v1/sms/send-new.  We only need to: (1) create the thread row, (2)
+    # delegate.  send_sms resolves to_number from thread detail.from.
 
     # ── Create new thread row in memory_objects ───────────────────────────
     # Law #6: all tenant fields from scope only.
     # detail.origin='compose' lets inbox feed distinguish compose-originated
     # threads from inbound-originated ones.
+    # Note: detail.to (our from_number) is intentionally omitted here — send_sms
+    # writes the outbound sms_messages row with the resolved from_number.
     thread_memory_id = str(uuid.uuid4())
     thread_row: dict[str, Any] = {
         "memory_id": thread_memory_id,
@@ -644,7 +595,6 @@ async def send_sms_new(
         "kind": "sms_thread",
         "detail": {
             "from": to_phone_e164,   # external contact (inbound convention)
-            "to": from_number,       # our number
             "channel": "sms",
             "origin": "compose",
         },
