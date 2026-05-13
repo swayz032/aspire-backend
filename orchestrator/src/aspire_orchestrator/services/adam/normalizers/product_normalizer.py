@@ -143,6 +143,52 @@ def _safe_thumbnail(thumbnails: Any) -> str:
     return _extract(thumbnails)
 
 
+def _resolve_in_stock(raw: dict[str, Any]) -> bool:
+    """Derive a boolean in-stock signal from the raw SerpApi product dict.
+
+    Priority order (most reliable first):
+      1. fulfillment_pickup.available / fulfillment_pickup.eligible
+      2. pickup.quantity > 0 (already extracted by normalizer as in_store_stock)
+      3. extra["availability_text"] — parse "in stock" / "available" text
+      4. Default: False (fail-closed)
+
+    This is the single source of truth for pickup.in_stock emitted into the
+    serialized product dict that the frontend reads via p.pickup.in_stock.
+    """
+    # 1. fulfillment_pickup flags (most explicit)
+    fp = raw.get("fulfillment_pickup") or raw.get("pickup") or {}
+    if isinstance(fp, dict):
+        for flag in ("available", "eligible", "in_store"):
+            val = fp.get(flag)
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, int):
+                return bool(val)
+        # quantity > 0 also means in stock
+        qty = fp.get("quantity")
+        if isinstance(qty, (int, float)) and qty > 0:
+            return True
+
+    # 2. in_store_stock field on the record (already-extracted int from pickup.quantity)
+    stock = raw.get("in_store_stock")
+    if isinstance(stock, (int, float)) and stock > 0:
+        return True
+
+    # 3. availability_text / availability string
+    avail_text = (
+        str(raw.get("availability_text") or "")
+        + " "
+        + str(raw.get("availability") or "")
+    ).lower()
+    if any(kw in avail_text for kw in ("in stock", "in-stock", "available", "pick up today")):
+        return True
+    if any(kw in avail_text for kw in ("out of stock", "not available", "unavailable", "sold out")):
+        return False
+
+    # 4. Default false
+    return False
+
+
 def normalize_from_serpapi_shopping(data: dict[str, Any]) -> ProductRecord:
     """Normalize a SerpApi Google Shopping result to ProductRecord."""
     # Google Shopping: 'source' = retailer, brand may be in extensions or title
@@ -180,6 +226,13 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     flat `pickup_store` key from earlier provider shapes was mis-mapped and is
     no longer trusted. Image URLs are high-res-upgraded at the source so the
     UI does not need to rewrite them.
+
+    Bug A fix (2026-05-13): emit a top-level `pickup` dict in the `extra`
+    field so that ProductRecord.to_dict() includes it in the serialized
+    output. The frontend reads `p.pickup.in_stock`, `p.pickup.store_id`,
+    `p.pickup.store_name`, and `p.pickup.drive_minutes`. Without this wrapper,
+    those reads always returned undefined, causing every product to display
+    "OUT" and "0 MIN".
     """
     delivery = data.get("delivery") or {}
     pickup = data.get("pickup") if isinstance(data.get("pickup"), dict) else {}
@@ -315,6 +368,44 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
     description_short = description[:200] if description else ""
     description_full = description if description and len(description) > 200 else ""
 
+    # ------------------------------------------------------------------
+    # Bug A fix: derive in_stock bool and build the `pickup` wrapper dict
+    # that the frontend reads as p.pickup.in_stock / p.pickup.store_id etc.
+    #
+    # We build a temporary record-like dict so _resolve_in_stock() can
+    # read the fields it needs (in_store_stock, availability_text, etc.)
+    # from the same raw data that the ProductRecord fields below will use.
+    # drive_minutes is left None here; the materials route fills it in
+    # after calling Distance Matrix (Bug B/C fix).
+    # ------------------------------------------------------------------
+    _in_stock_probe: dict[str, Any] = {
+        "fulfillment_pickup": fulfillment_pickup,
+        "in_store_stock": int(stock) if isinstance(stock, (int, float)) and stock > 0 else None,
+        "availability_text": (
+            str(stock_info.get("store_stock_status") or "").strip()
+            or ("In stock" if stock and stock > 0 else "Check store")
+        ),
+        "availability": "in_stock" if stock and stock > 0 else "check_store",
+    }
+    in_stock: bool = _resolve_in_stock(_in_stock_probe)
+
+    # The `pickup` wrapper emitted in `extra` is what the frontend reads.
+    # Mirroring the shape the frontend's BackendProduct interface declares:
+    #   pickup?: { in_stock?: bool; store_id?: str; store_name?: str;
+    #              quantity?: int; drive_minutes?: int | null }
+    pickup_wrapper: dict[str, Any] = {
+        "store_id": str(store_id) if store_id else None,
+        "store_name": str(store_name) if store_name else None,
+        "store_address": pickup_store_address or None,
+        "in_stock": in_stock,
+        "quantity": int(stock) if isinstance(stock, (int, float)) and stock > 0 else None,
+        "delivery_zip": str(data.get("delivery_zip") or "").strip() or None,
+        # drive_minutes is intentionally null here; filled by the Distance
+        # Matrix call in routes/materials.py after the playbook returns
+        # (Bug C fix). Null means "not yet resolved" — UI shows "— min".
+        "drive_minutes": None,
+    }
+
     return ProductRecord(
         product_name=data.get("title", ""),
         brand=data.get("brand", ""),
@@ -359,16 +450,15 @@ def normalize_from_serpapi_homedepot(data: dict[str, Any]) -> ProductRecord:
             "thumbnail": image_url,
             "delivery": delivery_str,
             "badges": badges if isinstance(badges, list) else [],
-            "availability_text": (
-                # CA: SerpAPI ships "In Stock" / "Out Of Stock" / "No Longer Available".
-                str(stock_info.get("store_stock_status") or "").strip()
-                or ("In stock" if stock and stock > 0 else "Check store")
-            ),
+            "availability_text": _in_stock_probe["availability_text"],
             # Pickup store address surfaced for "Available at: <store name>
             # — <address>" rendering on cards when store_summary is missing.
             "pickup_store_address": pickup_store_address,
             # SerpAPI HD price_badge ("Special-Buy", "New-Lower-Price") — UI
             # renders this as an amber chip next to the savings line.
             "price_badge": str(data.get("price_badge") or ""),
+            # Bug A fix: top-level pickup wrapper the frontend reads as
+            # p.pickup.in_stock, p.pickup.store_id, etc.
+            "pickup": pickup_wrapper,
         },
     )
