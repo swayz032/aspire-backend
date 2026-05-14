@@ -660,10 +660,16 @@ async def send_sms_new(
         "office_id": office_id,
         "tenant_id": tenant_id,
         "memory_type": "sms_thread",
+        "title": f"SMS thread {to_phone_e164}",
+        "summary": f"Outbound SMS thread opened with {to_phone_e164}",
         "channel": "sms",
         "status": "active",
         "detail": {
             "from": to_phone_e164,   # external contact (inbound convention)
+            "contact_phone": to_phone_e164,
+            "last_message_preview": body[:140],
+            "last_drafter": "owner",
+            "unread_count": 0,
             "channel": "sms",
             "origin": "compose",
         },
