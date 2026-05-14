@@ -290,11 +290,15 @@ class RoutingContactCreate(BaseModel):
 
 
 class RoutingContactPatch(BaseModel):
+    role: str | None = None
     name: str | None = None
     label: str | None = None
     phone: str | None = Field(None, pattern=r"^\+\d{7,15}$")
     sip_uri: str | None = None
     email: str | None = None
+    transfer_allowed: bool | None = None
+    fallback_mode: str | None = None
+    sort_order: int | None = None
     capability_token: dict[str, Any] | None = None
 
     @property
@@ -637,12 +641,20 @@ async def update_routing_contact(
     new_name = req.display_name
     if new_name is not None:
         update_data["name"] = new_name
+    if req.role is not None:
+        update_data["role"] = req.role
     if req.phone is not None:
         update_data["phone"] = req.phone
     if req.sip_uri is not None:
         update_data["sip_uri"] = req.sip_uri
     if req.email is not None:
         update_data["email"] = req.email
+    if req.transfer_allowed is not None:
+        update_data["transfer_allowed"] = req.transfer_allowed
+    if req.fallback_mode is not None:
+        update_data["fallback_mode"] = req.fallback_mode
+    if req.sort_order is not None:
+        update_data["sort_order"] = req.sort_order
 
     updated = await supabase_update(
         "front_desk_routing_contacts", f"id=eq.{contact_id}&office_id=eq.{office_id}", update_data,
