@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections import OrderedDict
@@ -419,6 +420,23 @@ _AGENT_DISPLAY_NAME: dict[str, str] = {
     "agent_8901kmqdjnrte7psp6en4f85m4kt": "Sarah",     # Sarah Front Desk (internal/owner-facing)
     "agent_3001krdqazc6fg4v85gbvbshzzzd": "Tiffany",   # Tiffany Front Desk (internal/owner-facing, cloned 2026-05-12)
 }
+
+_LEGAL_SUFFIX_RE = re.compile(
+    r"\s*,?\s+(llc|l\.l\.c\.|inc|inc\.|incorporated|corp|corp\.|corporation|co|co\.|company|ltd|ltd\.|limited|pllc|p\.l\.l\.c\.)$",
+    re.IGNORECASE,
+)
+
+
+def _strip_legal_suffixes(name: str | None) -> str:
+    raw = (name or "").strip()
+    if not raw:
+        return ""
+    prev = ""
+    cur = raw
+    while cur != prev:
+        prev = cur
+        cur = _LEGAL_SUFFIX_RE.sub("", cur).strip().rstrip(",").strip()
+    return cur or raw
 
 
 class UnknownAgentError(Exception):
@@ -1170,7 +1188,7 @@ async def _resolve_personalization(
     # (receipts require correlation_id/trace_id from the request context).
     raw_biz_name = (profile_raw.get("business_name") or "").strip()
     business_name_was_blank = not raw_biz_name
-    biz_name = raw_biz_name if raw_biz_name else "your business"
+    biz_name = _strip_legal_suffixes(raw_biz_name) if raw_biz_name else "your business"
 
     owner_full = (profile_raw.get("owner_name") or "").strip()
     first_name, _, last_name = owner_full.partition(" ")
