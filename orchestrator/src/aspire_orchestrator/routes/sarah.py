@@ -239,7 +239,7 @@ _ROLE_TO_NAME_DYN_VAR: dict[str, str] = {
 # Default dynamic vars — ALL custom vars Sarah expects must be present
 # to avoid breaking the agent (EL requirement).
 # Pass 19 §3.5: extended with is_after_hours, tenant_id, office_id,
-# voicemail_email, caller_history_summary.
+# caller_history_summary.
 _DEFAULT_DYN_VARS: dict[str, Any] = {
     "business_name": "your business",
     "first_name": "",
@@ -289,7 +289,6 @@ _DEFAULT_DYN_VARS: dict[str, Any] = {
     "configured_roles": "",
     "tenant_id": "",                                 # Pass 19: scope identifiers for EL runtime
     "office_id": "",
-    "voicemail_email": "",                           # Pass 19: from office_profiles
     "caller_history_summary": "",                   # Pass 19: V1 = empty string; V2 = prior call digest
     # Caller Memory (migration 110) — populated when the inbound caller is a known contact.
     # Public to the LLM so it can greet known callers by first name.
@@ -357,18 +356,8 @@ def _is_open_now(
     so the take_message flow fires by default.
     """
     if not business_hours:
-    return False
+        return False
 
-
-def _normalize_public_number_mode_for_prompt(value: str | None) -> str:
-    normalized = (value or "").strip().lower()
-    if normalized in {"", "aspire_number", "aspire_new_number"}:
-        return "aspire_new_number"
-    if normalized in {"keep_current_number", "forward_existing"}:
-        return "forward_existing"
-    if normalized == "port_in":
-        return "port_in"
-    return normalized
 
     try:
         tz = ZoneInfo(tz_name)
@@ -403,17 +392,21 @@ def _normalize_public_number_mode_for_prompt(value: str | None) -> str:
     return start_t <= current_time <= end_t
 
 
+def _normalize_public_number_mode_for_prompt(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"", "aspire_number", "aspire_new_number"}:
+        return "aspire_new_number"
+    if normalized in {"keep_current_number", "forward_existing"}:
+        return "forward_existing"
+    if normalized == "port_in":
+        return "port_in"
+    return normalized
+
+
 # Internal-only fields that must NEVER appear in the agent's prompt context.
-# EL injects every dynamic_variable into the agent's system prompt — if these
-# are present, the LLM can verbalize them and trip EL's "no sharing personal/
-# internal info" guardrail (or worse, leak a tenant UUID / owner email to the
-# caller). Stripped at the response boundary, kept on backend for receipts +
-# tool-scope routing.
-_INTERNAL_DYN_VAR_KEYS: frozenset[str] = frozenset({
-    "tenant_id",
-    "office_id",
-    "voicemail_email",
-})
+# `tenant_id` / `office_id` are intentionally excluded because ElevenLabs tools
+# require them as dynamic variables at runtime.
+_INTERNAL_DYN_VAR_KEYS: frozenset[str] = frozenset()
 
 
 def _strip_internal_fields(dyn_vars: dict[str, Any]) -> dict[str, Any]:
@@ -1213,9 +1206,6 @@ async def _resolve_personalization(
     industry = trade_display or freeform_industry or "contractor"
 
     profile_tz = (profile_raw.get("timezone") or "America/New_York").strip()
-    voicemail_email = (
-        profile_raw.get("voicemail_email") or profile_raw.get("email") or ""
-    ).strip()
 
     # Pass 4: trade_specialty → {{industry_specialty}} (plan §4.2).
     # NULL → empty string; prompt template handles gracefully per contract rule 15.
@@ -1346,7 +1336,6 @@ async def _resolve_personalization(
         "owner_formal_name": owner_formal_name,
         "tenant_id": tenant_id,                     # Pass 19 §3.5
         "office_id": office_id,                     # Pass 19 §3.5
-        "voicemail_email": voicemail_email,          # Pass 19 §3.5
         "caller_history_summary": "",               # Pass 19 §3.5: V1 empty; V2 = prior call digest
         # Caller Memory (migration 110)
         "caller_is_known": caller_is_known,
@@ -1421,14 +1410,12 @@ async def _fetch_profile(
     """Fetch all identity fields the personalization payload needs.
 
     Returns a dict with keys: business_name, first_name, last_name, industry,
-    industry_specialty, timezone, voicemail_email, business_city,
-    business_state, owner_title.
+    industry_specialty, timezone, business_city, business_state, owner_title.
 
     Aspire's data model is currently 1:1 suite-to-office; both `tenant_profiles`
     and `office_profiles` tables do NOT exist (verified against live schema).
     All identity attributes live on `suite_profiles`. We split `owner_name`
-    into first/last on first whitespace; voicemail email falls back to the
-    owner's signup email when no dedicated field exists.
+    into first/last on first whitespace.
 
     Args `office_id` and `tenant_id` are kept for forward-compat / logging —
     the lookup itself is keyed by `suite_id`.
@@ -1440,7 +1427,6 @@ async def _fetch_profile(
         "industry": "professional_services",
         "industry_specialty": "",
         "timezone": "America/New_York",
-        "voicemail_email": "",
         "business_city": "",
         "business_state": "",
         "owner_title": "Owner",
@@ -1460,15 +1446,6 @@ async def _fetch_profile(
         out["business_city"] = row.get("business_city") or ""
         out["business_state"] = row.get("business_state") or ""
         out["owner_title"] = row.get("owner_title") or out["owner_title"]
-        # Prefer the dedicated voicemail_email column (migration 108) when set;
-        # fall back to the owner's signup email otherwise so existing tenants
-        # without a configured voicemail address still get routed somewhere.
-        out["voicemail_email"] = (
-            row.get("voicemail_email")
-            or row.get("email")
-            or out["voicemail_email"]
-        )
-
         owner_name = (row.get("owner_name") or "").strip()
         if owner_name:
             parts = owner_name.split(None, 1)
