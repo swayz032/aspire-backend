@@ -687,7 +687,12 @@ async def _notify_owner_email_legacy(
     # SMS thread view. The correct path is a direct owner-notify POST.
     try:
         import httpx
-        from aspire_orchestrator.services.sms_io import _twilio_auth, _TWILIO_BASE, _TIMEOUT_SECONDS
+        from aspire_orchestrator.services.sms_io import (
+            _TIMEOUT_SECONDS,
+            _TWILIO_BASE,
+            _resolve_sms_from_row,
+            _twilio_auth,
+        )
         from aspire_orchestrator.services.supabase_client import supabase_select
 
         account_sid, auth_token = _twilio_auth()
@@ -696,7 +701,8 @@ async def _notify_owner_email_legacy(
         from_rows = await supabase_select(
             "tenant_phone_numbers",
             f"office_id=eq.{office_id}&sms_enabled=eq.true&status=eq.active",
-            limit=1,
+            order_by="purchased_at.desc",
+            limit=10,
         )
         if not from_rows:
             logger.warning(
@@ -705,7 +711,15 @@ async def _notify_owner_email_legacy(
             )
             return
 
-        from_number = from_rows[0]["phone_number"]
+        try:
+            from_number = _resolve_sms_from_row(from_rows, office_id)
+        except Exception as exc:
+            logger.warning(
+                "voicemail_notifier invalid_sms_from_number office_id=%s err=%s",
+                office_id,
+                exc,
+            )
+            return
         url = f"{_TWILIO_BASE}/Accounts/{account_sid}/Messages.json"
         twilio_payload = {
             "From": from_number,

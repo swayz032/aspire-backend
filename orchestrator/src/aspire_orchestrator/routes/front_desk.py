@@ -261,6 +261,7 @@ def _cap_token_id(cap_token: dict[str, Any] | None) -> str:
 
 
 class FrontDeskConfigPatch(BaseModel):
+    phone_number_id: str | None = None
     public_number_mode: str | None = None
     catch_mode: str | None = None
     after_hours_mode: str | None = None
@@ -442,6 +443,7 @@ async def patch_config(
         "tenant_id": tenant_id, "suite_id": suite_id, "office_id": office_id,
         "version_no": current_version + 1, "is_current": True,
         "public_number_mode": req.public_number_mode or current.get("public_number_mode", "ASPIRE_NUMBER"),
+        "phone_number_id": req.phone_number_id if req.phone_number_id is not None else current.get("phone_number_id"),
         "catch_mode": req.catch_mode or current.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
         "after_hours_mode": req.after_hours_mode or current.get("after_hours_mode", "take_message"),
         "busy_mode": req.busy_mode or current.get("busy_mode", "take_message"),

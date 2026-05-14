@@ -111,6 +111,7 @@ class CarrierInfo(BaseModel):
 
 
 class PurchasedNumber(BaseModel):
+    phone_number_id: str
     phone_number: str                    # E.164
     twilio_sid: str                      # SIDxxxxxxxx
     elevenlabs_phone_number_id: str      # pn_...
@@ -744,6 +745,7 @@ async def purchase_number(
     }])
 
     result = PurchasedNumber(
+        phone_number_id=db_row_id,
         phone_number=phone_number,
         twilio_sid=twilio_sid,
         elevenlabs_phone_number_id=el_phone_number_id,

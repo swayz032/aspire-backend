@@ -62,6 +62,87 @@ class SmsIoError(Exception):
         super().__init__(message)
 
 
+def _resolve_sms_from_row(rows: list[dict[str, Any]], office_id: str) -> str:
+    """Pick a valid Twilio-owned SMS sender row or fail closed.
+
+    We only send from rows that have:
+      - status=active
+      - sms_enabled=true
+      - a non-empty E.164 phone_number
+      - a non-empty twilio_sid proving the number is owned by our Twilio account
+
+    This avoids passing forwarded/external numbers through to Twilio, which
+    triggers 21659 ("From is not a Twilio phone number"), and prevents empty
+    senders that trigger 21603.
+    """
+    for row in rows:
+        from_number = (row.get("phone_number") or "").strip()
+        twilio_sid = (row.get("twilio_sid") or "").strip()
+        if not from_number:
+            continue
+        if not twilio_sid:
+            logger.warning(
+                "sms_io skipping sender row without twilio_sid office_id=%s phone_prefix=%s",
+                office_id,
+                from_number[:6] + "...",
+            )
+            continue
+        return from_number
+    raise SmsIoError(
+        "NO_SMS_NUMBER",
+        (
+            "No active Twilio SMS-enabled number found for this office. "
+            "Buy an Aspire number for texting or re-enable the existing Twilio number."
+        ),
+        422,
+    )
+
+
+async def _resolve_sms_from_number_for_office(office_id: str) -> str:
+    """Resolve SMS sender from the configured front-desk number first.
+
+    Preferred path:
+      front_desk_configs.phone_number_id -> tenant_phone_numbers row
+    Fallback path:
+      newest valid active Twilio sms-enabled office number
+    """
+    config_rows = await supabase_select(
+        "front_desk_configs",
+        f"office_id=eq.{office_id}&is_current=eq.true",
+        order_by="version_no.desc",
+        limit=1,
+    )
+    config = config_rows[0] if config_rows else {}
+    phone_number_id = (config.get("phone_number_id") or "").strip()
+    if phone_number_id:
+        candidate_rows = await supabase_select(
+            "tenant_phone_numbers",
+            f"id=eq.{phone_number_id}&office_id=eq.{office_id}&sms_enabled=eq.true&status=eq.active",
+            limit=1,
+        )
+        if candidate_rows:
+            return _resolve_sms_from_row(candidate_rows, office_id)
+        logger.warning(
+            "sms_io configured phone_number_id not usable office_id=%s phone_number_id=%s",
+            office_id,
+            phone_number_id,
+        )
+
+    from_rows = await supabase_select(
+        "tenant_phone_numbers",
+        f"office_id=eq.{office_id}&sms_enabled=eq.true&status=eq.active",
+        order_by="purchased_at.desc",
+        limit=10,
+    )
+    if not from_rows:
+        raise SmsIoError(
+            "NO_SMS_NUMBER",
+            f"No active SMS-enabled number found for office_id={office_id}",
+            422,
+        )
+    return _resolve_sms_from_row(from_rows, office_id)
+
+
 def _twilio_auth() -> tuple[str, str]:
     """Return (account_sid, auth_token). Fail closed if not configured."""
     sid = settings.twilio_account_sid
@@ -181,26 +262,7 @@ async def send_sms(
         )
 
     # ── Resolve from_number ───────────────────────────────────────────────
-    from_rows = await supabase_select(
-        "tenant_phone_numbers",
-        f"office_id=eq.{office_id}&sms_enabled=eq.true&status=eq.active",
-        limit=1,
-    )
-    if not from_rows:
-        raise SmsIoError(
-            "NO_SMS_NUMBER",
-            f"No active SMS-enabled number found for office_id={office_id}",
-            422,
-        )
-    from_number = (from_rows[0].get("phone_number") or "").strip()
-    if not from_number:
-        # Defensive: row exists but phone_number column is null/empty.
-        # Never let an empty From reach Twilio (would return 21603).
-        raise SmsIoError(
-            "NO_SMS_NUMBER",
-            f"tenant_phone_numbers row for office_id={office_id} has empty phone_number",
-            422,
-        )
+    from_number = await _resolve_sms_from_number_for_office(office_id)
 
     # ── Resolve to_number from thread ────────────────────────────────────
     thread_rows = await supabase_select(

@@ -69,6 +69,7 @@ class PurchaseNumberRequest(BaseModel):
 
 class PurchaseNumberResponse(BaseModel):
     success: bool
+    phone_number_id: str
     phone_number: str
     twilio_sid: str
     elevenlabs_phone_number_id: str
@@ -225,6 +226,7 @@ async def purchase_number_route(
 
     return {
         "success": True,
+        "phone_number_id": purchased.phone_number_id,
         "phone_number": purchased.phone_number,
         "twilio_sid": purchased.twilio_sid,
         "elevenlabs_phone_number_id": purchased.elevenlabs_phone_number_id,
