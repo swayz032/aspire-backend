@@ -316,6 +316,14 @@ class RoutingContactPatch(BaseModel):
 
 def _normalize_mode_value(value: str | None, *, field_name: str) -> str:
     normalized = (value or "").strip().lower()
+    if field_name == "public_number_mode":
+        if normalized in {"", "aspire_number", "aspire_new_number"}:
+            return "ASPIRE_NUMBER"
+        if normalized in {"keep_current_number", "forward_existing"}:
+            return "KEEP_CURRENT_NUMBER"
+        if normalized == "port_in":
+            return "PORT_IN"
+        return value or "ASPIRE_NUMBER"
     if field_name in {"after_hours_mode", "busy_mode"}:
         if normalized in {"", "take_message"}:
             return "take_message"
@@ -474,7 +482,10 @@ async def patch_config(
         "id": str(uuid.uuid4()),
         "tenant_id": tenant_id, "suite_id": suite_id, "office_id": office_id,
         "version_no": current_version + 1, "is_current": True,
-        "public_number_mode": req.public_number_mode or current.get("public_number_mode", "ASPIRE_NUMBER"),
+        "public_number_mode": _normalize_mode_value(
+            req.public_number_mode if req.public_number_mode is not None else current.get("public_number_mode", "ASPIRE_NUMBER"),
+            field_name="public_number_mode",
+        ),
         "phone_number_id": req.phone_number_id if req.phone_number_id is not None else current.get("phone_number_id"),
         "catch_mode": req.catch_mode or current.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
         "after_hours_mode": _normalize_mode_value(

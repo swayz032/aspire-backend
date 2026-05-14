@@ -140,7 +140,7 @@ def test_patch_config_versioned_write():
 
 
 def test_patch_config_normalizes_frontend_modes():
-    """Frontend UPPERCASE modes are normalized to DB-safe lowercase values."""
+    """Frontend modes are normalized to DB-safe persisted values."""
     cap_token = _mint_valid_token("front_desk:config_save")
     current = _config_row(version_no=7)
     new_row = {**current, "id": str(uuid.uuid4()), "version_no": 8}
@@ -163,8 +163,35 @@ def test_patch_config_normalizes_frontend_modes():
 
     assert resp.status_code == 200
     inserted_data = mock_insert.call_args[0][1]
+    assert inserted_data["public_number_mode"] == "ASPIRE_NUMBER"
     assert inserted_data["after_hours_mode"] == "try_transfer_then_message"
     assert inserted_data["busy_mode"] == "callback_window"
+
+
+def test_patch_config_normalizes_public_number_mode_variants():
+    """New FE public number values are normalized for the older production schema."""
+    cap_token = _mint_valid_token("front_desk:config_save")
+    current = _config_row(version_no=9)
+    new_row = {**current, "id": str(uuid.uuid4()), "version_no": 10}
+
+    with patch("aspire_orchestrator.routes.front_desk.supabase_select",
+               new=AsyncMock(return_value=[current])), \
+         patch("aspire_orchestrator.routes.front_desk.supabase_insert",
+               new=AsyncMock(return_value=new_row)) as mock_insert, \
+         patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"):
+
+        resp = _client.patch(
+            "/v1/front-desk/config",
+            json={
+                "public_number_mode": "FORWARD_EXISTING",
+                "capability_token": cap_token,
+            },
+            headers=_SCOPE_HEADERS,
+        )
+
+    assert resp.status_code == 200
+    inserted_data = mock_insert.call_args[0][1]
+    assert inserted_data["public_number_mode"] == "KEEP_CURRENT_NUMBER"
 
 
 def test_patch_config_receipt_cut():

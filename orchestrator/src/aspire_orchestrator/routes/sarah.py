@@ -357,7 +357,18 @@ def _is_open_now(
     so the take_message flow fires by default.
     """
     if not business_hours:
-        return False
+    return False
+
+
+def _normalize_public_number_mode_for_prompt(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"", "aspire_number", "aspire_new_number"}:
+        return "aspire_new_number"
+    if normalized in {"keep_current_number", "forward_existing"}:
+        return "forward_existing"
+    if normalized == "port_in":
+        return "port_in"
+    return normalized
 
     try:
         tz = ZoneInfo(tz_name)
@@ -1325,7 +1336,7 @@ async def _resolve_personalization(
         # uses lowercase literals — normalize at the boundary here.
         "after_hours_mode": str(config.get("after_hours_mode") or "take_message").lower(),
         "busy_mode": str(config.get("busy_mode") or "take_message").lower(),
-        "public_number_mode": str(config.get("public_number_mode") or "aspire_new_number").lower(),
+        "public_number_mode": _normalize_public_number_mode_for_prompt(config.get("public_number_mode")),
         "catch_mode": str(config.get("catch_mode") or "app_and_phone_simul_ring").lower(),
         "greeting_name_override": config.get("greeting_name_override") or "",
         "pronunciation_override": config.get("pronunciation_override") or "",
