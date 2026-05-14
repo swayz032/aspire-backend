@@ -45,7 +45,7 @@ def _mock_twilio_settings():
 
 
 def _phone_numbers_row():
-    return [{"phone_number": FROM_NUMBER, "office_id": OFFICE_ID}]
+    return [{"phone_number": FROM_NUMBER, "office_id": OFFICE_ID, "twilio_sid": "PNtest123"}]
 
 
 def _a2p_registered_row():
@@ -94,14 +94,16 @@ def _make_send_client(send_resp=None):
 async def test_send_sms_happy(scoped_identity):
     """Happy path: receipt cut with to_prefix (THREAT-017), body_preview, idempotency_key."""
     body_text = "Hello, your appointment is confirmed for tomorrow at 2pm."
+    trace_id = "trace-send-001"
+    correlation_id = "corr-send-001"
 
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
-               new=AsyncMock(side_effect=[_a2p_registered_row(), _phone_numbers_row(), _thread_row()])), \
+               new=AsyncMock(side_effect=[_a2p_registered_row(), [], _phone_numbers_row(), _thread_row()])), \
          patch("aspire_orchestrator.services.sms_io.httpx.AsyncClient",
                return_value=_make_send_client()), \
          patch("aspire_orchestrator.services.sms_io.supabase_insert",
-               new=AsyncMock(return_value={"id": str(uuid.uuid4())})), \
+               new=AsyncMock(return_value={"id": str(uuid.uuid4())})) as mock_insert, \
          patch("aspire_orchestrator.services.sms_io.receipt_store.store_receipts") as mock_receipt:
 
         from aspire_orchestrator.services.sms_io import send_sms
@@ -111,6 +113,8 @@ async def test_send_sms_happy(scoped_identity):
             scope=scoped_identity,
             capability_token="cap-tok-abc",
             idempotency_key=IDEM_KEY,
+            trace_id=trace_id,
+            correlation_id=correlation_id,
         )
 
     assert result["message_sid"] == MSG_SID
@@ -134,12 +138,22 @@ async def test_send_sms_happy(scoped_identity):
     # idempotency_key present
     assert inputs["idempotency_key"] == IDEM_KEY
 
+    outbound_memory = None
+    for c in mock_insert.call_args_list:
+        if c[0][0] == "memory_objects":
+            outbound_memory = c[0][1]
+            break
+    assert outbound_memory is not None, "memory_objects INSERT not called"
+    assert outbound_memory["trace_id"] == trace_id
+    assert outbound_memory["correlation_id"] == correlation_id
+    assert outbound_memory["thread_id"] == THREAD_MEM_ID
+
 
 async def test_send_sms_idempotency_key_in_twilio_header(scoped_identity):
     """idempotency_key must be persisted on sms_messages DB row (Pass 18+ Lane 2)."""
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
-               new=AsyncMock(side_effect=[_a2p_registered_row(), _phone_numbers_row(), _thread_row()])), \
+               new=AsyncMock(side_effect=[_a2p_registered_row(), [], _phone_numbers_row(), _thread_row()])), \
          patch("aspire_orchestrator.services.sms_io.httpx.AsyncClient",
                return_value=_make_send_client()), \
          patch("aspire_orchestrator.services.sms_io.supabase_insert",
@@ -178,7 +192,7 @@ async def test_send_sms_twilio_4xx_raises_sms_failed_receipt(scoped_identity):
 
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
-               new=AsyncMock(side_effect=[_a2p_registered_row(), _phone_numbers_row(), _thread_row()])), \
+               new=AsyncMock(side_effect=[_a2p_registered_row(), [], _phone_numbers_row(), _thread_row()])), \
          patch("aspire_orchestrator.services.sms_io.httpx.AsyncClient",
                return_value=_make_send_client(err_resp)), \
          patch("aspire_orchestrator.services.sms_io.supabase_insert",
@@ -208,7 +222,7 @@ async def test_send_sms_no_from_number_for_office_fails_closed(scoped_identity):
     """No tenant_phone_numbers row for the office -> SmsIoError NO_SMS_NUMBER."""
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
-               new=AsyncMock(side_effect=[_a2p_registered_row(), []])):
+               new=AsyncMock(side_effect=[_a2p_registered_row(), [], []])):
 
         from aspire_orchestrator.services.sms_io import SmsIoError, send_sms
         with pytest.raises(SmsIoError) as exc_info:
@@ -305,7 +319,7 @@ async def test_send_sms_thread_not_found_fails_closed(scoped_identity):
     """Phone number found but thread_memory_id has no DB row -> THREAD_NOT_FOUND."""
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
-               new=AsyncMock(side_effect=[_a2p_registered_row(), _phone_numbers_row(), []])):  # empty thread
+               new=AsyncMock(side_effect=[_a2p_registered_row(), [], _phone_numbers_row(), []])):  # empty thread
 
         from aspire_orchestrator.services.sms_io import SmsIoError, send_sms
         with pytest.raises(SmsIoError) as exc_info:
@@ -331,7 +345,7 @@ async def test_send_sms_cannot_resolve_to_number(scoped_identity):
 
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
-               new=AsyncMock(side_effect=[_a2p_registered_row(), _phone_numbers_row(), thread_no_contact])):
+               new=AsyncMock(side_effect=[_a2p_registered_row(), [], _phone_numbers_row(), thread_no_contact])):
 
         from aspire_orchestrator.services.sms_io import SmsIoError, send_sms
         with pytest.raises(SmsIoError) as exc_info:

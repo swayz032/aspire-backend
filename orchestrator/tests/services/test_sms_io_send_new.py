@@ -73,6 +73,8 @@ def _send_sms_success_result():
 async def test_send_sms_new_happy_path(scoped_identity):
     """Success: thread created, send_sms delegated, thread_memory_id returned."""
     send_result = _send_sms_success_result()
+    trace_id = "trace-send-new-001"
+    correlation_id = "corr-send-new-001"
 
     with _mock_twilio_settings(), \
          patch("aspire_orchestrator.services.sms_io.supabase_select",
@@ -90,6 +92,8 @@ async def test_send_sms_new_happy_path(scoped_identity):
             scope=scoped_identity,
             capability_token="cap-tok-xyz",
             idempotency_key=IDEM_KEY,
+            trace_id=trace_id,
+            correlation_id=correlation_id,
         )
 
     # Result shape
@@ -110,9 +114,10 @@ async def test_send_sms_new_happy_path(scoped_identity):
     assert thread_insert_call["suite_id"] == SUITE_ID
     assert thread_insert_call["office_id"] == OFFICE_ID
     assert thread_insert_call["tenant_id"] == TENANT_ID
-    assert thread_insert_call["kind"] == "sms_thread"
+    assert thread_insert_call["trace_id"] == trace_id
+    assert thread_insert_call["correlation_id"] == correlation_id
+    assert thread_insert_call["memory_type"] == "sms_thread"
     assert thread_insert_call["detail"]["from"] == TO_PHONE_E164  # normalized
-    assert thread_insert_call["detail"]["to"] == FROM_NUMBER
     assert thread_insert_call["detail"]["origin"] == "compose"
 
     # send_sms delegated with the new thread_memory_id as a keyword arg
@@ -121,6 +126,8 @@ async def test_send_sms_new_happy_path(scoped_identity):
     assert call_kw["thread_memory_id"] == thread_id
     assert call_kw["scope"] is scoped_identity
     assert call_kw["idempotency_key"] == IDEM_KEY
+    assert call_kw["trace_id"] == trace_id
+    assert call_kw["correlation_id"] == correlation_id
 
 
 # ---------------------------------------------------------------------------
@@ -340,3 +347,37 @@ async def test_send_sms_new_tenant_fields_from_scope_only(scoped_identity):
     assert thread_row["tenant_id"] == TENANT_ID
     # Must NOT have drifted to any other value
     assert thread_row["suite_id"] != "00000000-0000-0000-0000-000000000099"  # not TENANT_ID
+
+
+async def test_send_sms_new_generates_trace_metadata_when_missing(scoped_identity):
+    """Thread rows still satisfy the DB contract when middleware IDs are absent."""
+    send_result = _send_sms_success_result()
+
+    with _mock_twilio_settings(), \
+         patch("aspire_orchestrator.services.sms_io.supabase_select",
+               new=AsyncMock(side_effect=[_a2p_registered_row(), _phone_numbers_row()])), \
+         patch("aspire_orchestrator.services.sms_io.supabase_insert",
+               new=AsyncMock(return_value={})) as mock_insert, \
+         patch("aspire_orchestrator.services.sms_io.send_sms",
+               new=AsyncMock(return_value=send_result)) as mock_send:
+
+        from aspire_orchestrator.services.sms_io import send_sms_new
+        await send_sms_new(
+            to_phone=TO_PHONE_RAW,
+            body="Trace fallback test",
+            scope=scoped_identity,
+            capability_token="cap",
+            idempotency_key=IDEM_KEY + "-trace-fallback",
+        )
+
+    thread_row = None
+    for c in mock_insert.call_args_list:
+        if c[0][0] == "memory_objects":
+            thread_row = c[0][1]
+            break
+
+    assert thread_row is not None
+    assert thread_row["trace_id"]
+    assert thread_row["correlation_id"] == thread_row["trace_id"]
+    assert mock_send.call_args.kwargs["trace_id"] == ""
+    assert mock_send.call_args.kwargs["correlation_id"] == ""

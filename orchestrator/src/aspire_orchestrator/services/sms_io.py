@@ -203,6 +203,8 @@ async def send_sms(
     tenant_id = str(scope.tenant_id)
     receipt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    resolved_trace_id = trace_id or correlation_id or str(uuid.uuid4())
+    resolved_correlation_id = correlation_id or resolved_trace_id
 
     # ── A2P 10DLC gate (Pass 19 Law #3: fail closed) ──────────────────────
     # Gate checks tenant_a2p_registrations by scope.tenant_id (never from
@@ -406,6 +408,8 @@ async def send_sms(
             "tenant_id": tenant_id,
             "suite_id": suite_id,
             "office_id": office_id,
+            "trace_id": resolved_trace_id,
+            "correlation_id": resolved_correlation_id,
             "memory_type": "sms_thread",
             "title": f"SMS to {to_number}",
             "summary": (body[:140] + "…") if len(body) > 140 else body,
@@ -634,6 +638,8 @@ async def send_sms_new(
     office_id = str(scope.office_id)
     tenant_id = str(scope.tenant_id)
     now = datetime.now(timezone.utc).isoformat()
+    resolved_trace_id = trace_id or correlation_id or str(uuid.uuid4())
+    resolved_correlation_id = correlation_id or resolved_trace_id
 
     # Pass D perf fix 2026-05-13: removed the duplicate A2P gate + from_number
     # resolve that were originally done here AND again inside send_sms().
@@ -659,6 +665,8 @@ async def send_sms_new(
         "suite_id": suite_id,
         "office_id": office_id,
         "tenant_id": tenant_id,
+        "trace_id": resolved_trace_id,
+        "correlation_id": resolved_correlation_id,
         "memory_type": "sms_thread",
         "title": f"SMS thread {to_phone_e164}",
         "summary": f"Outbound SMS thread opened with {to_phone_e164}",
