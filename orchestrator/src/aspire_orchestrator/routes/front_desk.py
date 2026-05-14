@@ -318,17 +318,17 @@ def _normalize_mode_value(value: str | None, *, field_name: str) -> str:
     normalized = (value or "").strip().lower()
     if field_name == "public_number_mode":
         if normalized in {"", "aspire_number", "aspire_new_number"}:
-            return "ASPIRE_NUMBER"
+            return "ASPIRE_NEW_NUMBER"
         if normalized in {"keep_current_number", "forward_existing"}:
-            return "KEEP_CURRENT_NUMBER"
+            return "FORWARD_EXISTING"
         if normalized == "port_in":
             return "PORT_IN"
-        return value or "ASPIRE_NUMBER"
+        return value or "ASPIRE_NEW_NUMBER"
     if field_name in {"after_hours_mode", "busy_mode"}:
         if normalized in {"", "take_message"}:
             return "take_message"
         if normalized in {"callback_window", "ask_callback_window"}:
-            return "callback_window"
+            return "ask_callback_window"
         if normalized == "try_transfer_then_message":
             return "try_transfer_then_message"
         return normalized
