@@ -283,6 +283,9 @@ class RoutingContactCreate(BaseModel):
     phone: str | None = Field(None, pattern=r"^\+\d{7,15}$")
     sip_uri: str | None = None
     email: str | None = None
+    transfer_allowed: bool | None = None
+    fallback_mode: str | None = None
+    sort_order: int | None = None
     capability_token: dict[str, Any] | None = None
 
     @property
@@ -309,6 +312,35 @@ class RoutingContactPatch(BaseModel):
         if self.label is not None:
             return self.label
         return None
+
+
+def _normalize_mode_value(value: str | None, *, field_name: str) -> str:
+    normalized = (value or "").strip().lower()
+    if field_name in {"after_hours_mode", "busy_mode"}:
+        if normalized in {"", "take_message"}:
+            return "take_message"
+        if normalized in {"callback_window", "ask_callback_window"}:
+            return "callback_window"
+        if normalized == "try_transfer_then_message":
+            return "try_transfer_then_message"
+        return normalized
+    return normalized
+
+
+def _normalize_routing_role(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized == "operations":
+        return "custom"
+    return normalized or "custom"
+
+
+def _normalize_fallback_mode(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"", "transfer_allowed"}:
+        return "transfer_allowed"
+    if normalized in {"message_only", "message_fallback"}:
+        return "message_only"
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +477,14 @@ async def patch_config(
         "public_number_mode": req.public_number_mode or current.get("public_number_mode", "ASPIRE_NUMBER"),
         "phone_number_id": req.phone_number_id if req.phone_number_id is not None else current.get("phone_number_id"),
         "catch_mode": req.catch_mode or current.get("catch_mode", "APP_AND_PHONE_SIMUL_RING"),
-        "after_hours_mode": req.after_hours_mode or current.get("after_hours_mode", "take_message"),
-        "busy_mode": req.busy_mode or current.get("busy_mode", "take_message"),
+        "after_hours_mode": _normalize_mode_value(
+            req.after_hours_mode if req.after_hours_mode is not None else current.get("after_hours_mode", "take_message"),
+            field_name="after_hours_mode",
+        ),
+        "busy_mode": _normalize_mode_value(
+            req.busy_mode if req.busy_mode is not None else current.get("busy_mode", "take_message"),
+            field_name="busy_mode",
+        ),
         "greeting_name_override": req.greeting_name_override
             if req.greeting_name_override is not None
             else current.get("greeting_name_override") or "",
@@ -613,9 +651,12 @@ async def create_routing_contact(
 
     row: dict[str, Any] = {
         "id": str(uuid.uuid4()), "tenant_id": tenant_id, "suite_id": suite_id, "office_id": office_id,
-        "role": req.role, "name": req.display_name, "phone": req.phone or "",
+        "role": _normalize_routing_role(req.role), "name": req.display_name, "phone": req.phone or "",
         "sip_uri": req.sip_uri or "", "email": req.email or "",
-        "transfer_allowed": True, "fallback_mode": "TRANSFER_ALLOWED", "sort_order": 0, "created_at": now,
+        "transfer_allowed": True if req.transfer_allowed is None else req.transfer_allowed,
+        "fallback_mode": _normalize_fallback_mode(req.fallback_mode),
+        "sort_order": 0 if req.sort_order is None else req.sort_order,
+        "created_at": now,
     }
     inserted = await supabase_insert("front_desk_routing_contacts", row)
     _invalidate_personalization_cache_safe(office_id)
@@ -656,7 +697,7 @@ async def update_routing_contact(
     if new_name is not None:
         update_data["name"] = new_name
     if req.role is not None:
-        update_data["role"] = req.role
+        update_data["role"] = _normalize_routing_role(req.role)
     if req.phone is not None:
         update_data["phone"] = req.phone
     if req.sip_uri is not None:
@@ -666,7 +707,7 @@ async def update_routing_contact(
     if req.transfer_allowed is not None:
         update_data["transfer_allowed"] = req.transfer_allowed
     if req.fallback_mode is not None:
-        update_data["fallback_mode"] = req.fallback_mode
+        update_data["fallback_mode"] = _normalize_fallback_mode(req.fallback_mode)
     if req.sort_order is not None:
         update_data["sort_order"] = req.sort_order
 

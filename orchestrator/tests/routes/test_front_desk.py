@@ -139,6 +139,34 @@ def test_patch_config_versioned_write():
     assert inserted_data["is_current"] is True
 
 
+def test_patch_config_normalizes_frontend_modes():
+    """Frontend UPPERCASE modes are normalized to DB-safe lowercase values."""
+    cap_token = _mint_valid_token("front_desk:config_save")
+    current = _config_row(version_no=7)
+    new_row = {**current, "id": str(uuid.uuid4()), "version_no": 8}
+
+    with patch("aspire_orchestrator.routes.front_desk.supabase_select",
+               new=AsyncMock(return_value=[current])), \
+         patch("aspire_orchestrator.routes.front_desk.supabase_insert",
+               new=AsyncMock(return_value=new_row)) as mock_insert, \
+         patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"):
+
+        resp = _client.patch(
+            "/v1/front-desk/config",
+            json={
+                "after_hours_mode": "TRY_TRANSFER_THEN_MESSAGE",
+                "busy_mode": "ASK_CALLBACK_WINDOW",
+                "capability_token": cap_token,
+            },
+            headers=_SCOPE_HEADERS,
+        )
+
+    assert resp.status_code == 200
+    inserted_data = mock_insert.call_args[0][1]
+    assert inserted_data["after_hours_mode"] == "try_transfer_then_message"
+    assert inserted_data["busy_mode"] == "callback_window"
+
+
 def test_patch_config_receipt_cut():
     """PATCH -> front_desk_config_save receipt cut with new version_no."""
     cap_token = _mint_valid_token("front_desk:config_save")
@@ -200,6 +228,37 @@ def test_routing_contacts_post_cuts_receipt():
     assert r["outcome"] == "success"
 
 
+def test_routing_contacts_post_persists_normalized_fields():
+    """Routing contact create preserves transfer/fallback/order and normalizes role aliases."""
+    cap_token = _mint_valid_token("front_desk:routing_write")
+    inserted = {"id": str(uuid.uuid4()), "role": "custom", "name": "Ops Desk"}
+
+    with patch("aspire_orchestrator.routes.front_desk.supabase_insert",
+               new=AsyncMock(return_value=inserted)) as mock_insert, \
+         patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"):
+
+        resp = _client.post(
+            "/v1/front-desk/routing-contacts",
+            json={
+                "role": "operations",
+                "name": "Ops Desk",
+                "phone": "+12125550002",
+                "transfer_allowed": False,
+                "fallback_mode": "MESSAGE_ONLY",
+                "sort_order": 9,
+                "capability_token": cap_token,
+            },
+            headers=_SCOPE_HEADERS,
+        )
+
+    assert resp.status_code == 200
+    inserted_data = mock_insert.call_args[0][1]
+    assert inserted_data["role"] == "custom"
+    assert inserted_data["transfer_allowed"] is False
+    assert inserted_data["fallback_mode"] == "message_only"
+    assert inserted_data["sort_order"] == 9
+
+
 def test_routing_contacts_patch_cuts_receipt():
     """PATCH /routing-contacts/{id} -> updates contact + cuts receipt."""
     cap_token = _mint_valid_token("front_desk:routing_write")
@@ -219,6 +278,31 @@ def test_routing_contacts_patch_cuts_receipt():
     mock_receipt.assert_called_once()
     r = mock_receipt.call_args[0][0][0]
     assert r["receipt_type"] == "routing_contact_update"
+
+
+def test_routing_contacts_patch_normalizes_fallback_and_role():
+    """PATCH normalizes frontend fallback casing and operations alias."""
+    cap_token = _mint_valid_token("front_desk:routing_write")
+    contact_id = str(uuid.uuid4())
+
+    with patch("aspire_orchestrator.routes.front_desk.supabase_update",
+               new=AsyncMock(return_value={"id": contact_id})) as mock_update, \
+         patch("aspire_orchestrator.routes.front_desk.receipt_store.store_receipts"):
+
+        resp = _client.patch(
+            f"/v1/front-desk/routing-contacts/{contact_id}",
+            json={
+                "role": "operations",
+                "fallback_mode": "TRANSFER_ALLOWED",
+                "capability_token": cap_token,
+            },
+            headers=_SCOPE_HEADERS,
+        )
+
+    assert resp.status_code == 200
+    update_data = mock_update.call_args[0][2]
+    assert update_data["role"] == "custom"
+    assert update_data["fallback_mode"] == "transfer_allowed"
 
 
 def test_routing_contacts_delete_cuts_receipt():
