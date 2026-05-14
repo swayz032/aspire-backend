@@ -108,7 +108,7 @@ async def _resolve_sms_from_number_for_office(office_id: str) -> str:
     """
     config_rows = await supabase_select(
         "front_desk_configs",
-        f"office_id=eq.{office_id}&is_current=eq.true",
+        f"office_id=eq.{office_id}",
         order_by="version_no.desc",
         limit=1,
     )

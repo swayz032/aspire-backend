@@ -293,7 +293,7 @@ async def get_business_context(req: GetBusinessContextReq) -> dict[str, Any]:
     try:
         cfg_rows = await supabase_select(
             "front_desk_configs",
-            f"office_id=eq.{scope['office_id']}&is_current=eq.true",
+            f"office_id=eq.{scope['office_id']}",
             order_by="version_no.desc",
             limit=1,
         )
@@ -686,7 +686,7 @@ async def _maybe_dispatch_app_ring(
     try:
         cfg_rows = await supabase_select(
             "front_desk_configs",
-            f"office_id=eq.{scope['office_id']}&is_current=eq.true",
+            f"office_id=eq.{scope['office_id']}",
             order_by="version_no.desc",
             limit=1,
         )

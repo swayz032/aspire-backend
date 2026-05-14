@@ -657,7 +657,8 @@ async def purchase_number(
         try:
             persona_rows = await supabase_select(
                 "front_desk_configs",
-                f"office_id=eq.{office_id}&is_current=eq.true",
+                f"office_id=eq.{office_id}",
+                order_by="version_no.desc",
                 limit=1,
             )
             if persona_rows:

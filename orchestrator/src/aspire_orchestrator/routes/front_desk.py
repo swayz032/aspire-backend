@@ -329,7 +329,7 @@ async def get_config(
 
     config_rows = await supabase_select(
         "front_desk_configs",
-        f"office_id=eq.{oid}&is_current=eq.true",
+        f"office_id=eq.{oid}",
         order_by="version_no.desc",
         limit=1,
     )
@@ -554,10 +554,22 @@ async def test_call(
         test_result = "failed"
         logger.error("test_call failed: %s", exc)
 
+    latest_config_id = None
+    latest_config_rows = await supabase_select(
+        "front_desk_configs",
+        f"office_id=eq.{office_id}",
+        order_by="version_no.desc",
+        limit=1,
+    )
+    if latest_config_rows:
+        latest_config_id = latest_config_rows[0].get("id")
+
     try:
+        if not latest_config_id:
+            raise SupabaseClientError("No front_desk_configs row found for forwarding test update")
         await supabase_update(
             "front_desk_configs",
-            f"office_id=eq.{office_id}&is_current=eq.true",
+            f"id=eq.{latest_config_id}",
             {
                 "last_forwarding_test_at": now,
                 "last_forwarding_test_result": test_result,
