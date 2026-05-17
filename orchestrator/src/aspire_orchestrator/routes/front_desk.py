@@ -325,13 +325,20 @@ def _normalize_mode_value(value: str | None, *, field_name: str) -> str:
             return "PORT_IN"
         return value or "ASPIRE_NEW_NUMBER"
     if field_name in {"after_hours_mode", "busy_mode"}:
+        # DB check constraint (migration 111) requires UPPERCASE canonical values:
+        #   TAKE_MESSAGE | ASK_CALLBACK_WINDOW | TRY_TRANSFER_THEN_MESSAGE
+        # Accept legacy lowercase wire shapes on input and emit UPPERCASE on output.
         if normalized in {"", "take_message"}:
-            return "take_message"
+            return "TAKE_MESSAGE"
         if normalized in {"callback_window", "ask_callback_window"}:
-            return "ask_callback_window"
+            return "ASK_CALLBACK_WINDOW"
         if normalized == "try_transfer_then_message":
-            return "try_transfer_then_message"
-        return normalized
+            return "TRY_TRANSFER_THEN_MESSAGE"
+        # Pass through any other already-uppercase canonical value as-is.
+        upper = normalized.upper()
+        if upper in {"TAKE_MESSAGE", "ASK_CALLBACK_WINDOW", "TRY_TRANSFER_THEN_MESSAGE"}:
+            return upper
+        return upper
     return normalized
 
 
