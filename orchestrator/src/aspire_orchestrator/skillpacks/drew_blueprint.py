@@ -141,7 +141,7 @@ class Drew:
     # Stage 1: INGEST (Wave 2A — real implementation)
     # ------------------------------------------------------------------
     def ingest(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
-        """Ingest a blueprint PDF: split, OCR, store sheets.
+        """Ingest a blueprint PDF: split, OCR, store sheets, upload thumbnails.
 
         Payload keys:
           - pdf_bytes: base64-encoded PDF binary
@@ -189,6 +189,10 @@ class Drew:
 
         # Compute project hash for idempotency check (Law #3: fail-closed on dup)
         project_hash: str = hashlib.sha256(pdf_bytes).hexdigest()
+
+        # Mark stage as in_progress before starting pipeline (best-effort)
+        # We need a project_id first, so we optimistically set it after creation.
+        # The _async_ingest_pipeline handles in_progress + done/failed internally.
 
         # Run the async pipeline in a sync context (Drew.ingest is sync; called
         # from run_agentic_loop which is sync). Use asyncio.run or get_event_loop.
@@ -257,6 +261,9 @@ class Drew:
         project_id: str = str(payload["project_id"])
         suite_id: str = str(payload["suite_id"])
 
+        # Mark in_progress before classifying
+        _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="classify", state="in_progress")
+
         try:
             result = _run_async_classify(
                 project_id=project_id,
@@ -265,6 +272,7 @@ class Drew:
                 correlation_id=correlation_id,
             )
         except Exception as exc:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="classify", state="failed")
             self._emit_receipt(
                 correlation_id=correlation_id,
                 event_type="blueprint.classify",
@@ -274,6 +282,7 @@ class Drew:
             )
             return {"status": "error", "stage": "classify", "reason": f"classify pipeline failed: {type(exc).__name__}"}
 
+        _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="classify", state="done")
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.classify",
@@ -289,32 +298,51 @@ class Drew:
 
     # ------------------------------------------------------------------
     # Remaining stages — stubs (Wave 3-5)
+    # Progress wiring is real; stage body is replaced by Wave 3/4/5.
     # ------------------------------------------------------------------
     def see(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
+        project_id = str(payload.get("project_id", ""))
+        suite_id = str(payload.get("suite_id", ""))
+        if project_id and suite_id:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state="in_progress")
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.see",
             status="stub",
             inputs={"task": "SEE"},
         )
+        if project_id and suite_id:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state="done")
         return {"status": "stub", "stage": "see"}
 
     def reason(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
+        project_id = str(payload.get("project_id", ""))
+        suite_id = str(payload.get("suite_id", ""))
+        if project_id and suite_id:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="reason", state="in_progress")
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.reason",
             status="stub",
             inputs={"task": "REASON"},
         )
+        if project_id and suite_id:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="reason", state="done")
         return {"status": "stub", "stage": "reason"}
 
     def procure(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
+        project_id = str(payload.get("project_id", ""))
+        suite_id = str(payload.get("suite_id", ""))
+        if project_id and suite_id:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="procure", state="in_progress")
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.procure",
             status="stub",
             inputs={"task": "PROCURE"},
         )
+        if project_id and suite_id:
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="procure", state="done")
         return {"status": "stub", "stage": "procure"}
 
     # ------------------------------------------------------------------
@@ -343,6 +371,48 @@ class Drew:
 # ---------------------------------------------------------------------------
 # Async pipeline helpers (called via asyncio bridge from sync .ingest/.classify)
 # ---------------------------------------------------------------------------
+
+def _run_async_set_stage(
+    *,
+    project_id: str,
+    suite_id: str,
+    stage: str,
+    state: str,
+) -> None:
+    """Bridge: run async set_stage_progress from sync context.
+
+    Swallows all errors — progress tracking is best-effort.
+    """
+    if not project_id or not suite_id:
+        return
+
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+
+    async def _run() -> None:
+        await set_stage_progress(
+            project_id=project_id,
+            stage=stage,
+            state=state,
+            suite_id=suite_id,
+        )
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, _run())
+                future.result(timeout=10)
+        else:
+            loop.run_until_complete(_run())
+    except RuntimeError:
+        try:
+            asyncio.run(_run())
+        except Exception:
+            pass
+    except Exception:
+        pass  # Never propagate — progress is best-effort
+
 
 def _run_async_ingest(
     *,
@@ -405,7 +475,7 @@ async def _async_ingest_pipeline(
     filename: str,
     correlation_id: str,
 ) -> dict[str, Any]:
-    """Async ingest: idempotency check → OCR → store sheets."""
+    """Async ingest: idempotency check → OCR → store sheets → upload thumbnails."""
     import logging as _logging
     _log = _logging.getLogger(__name__)
 
@@ -413,8 +483,12 @@ async def _async_ingest_pipeline(
         SupabaseClientError,
         supabase_insert,
         supabase_select,
+        supabase_update,
     )
     from aspire_orchestrator.services.blueprint.ocr_coordinator import extract_sheet_corpus
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+    from aspire_orchestrator.services.blueprint.thumbnail_storage import upload_sheet_thumbnail
+    from aspire_orchestrator.services.receipt_store import store_receipts
 
     # Idempotency check: look for existing project with same content hash
     try:
@@ -467,6 +541,14 @@ async def _async_ingest_pipeline(
     except SupabaseClientError as exc:
         raise RuntimeError(f"Failed to create blueprint_project: {exc}") from exc
 
+    # Mark ingest stage as in_progress
+    await set_stage_progress(
+        project_id=project_id,
+        stage="ingest",
+        state="in_progress",
+        suite_id=suite_id,
+    )
+
     _log.info(
         "drew.ingest: created project=%s, hash=%s, corr=%s",
         project_id[:8],
@@ -482,8 +564,9 @@ async def _async_ingest_pipeline(
         office_id=office_id,
     )
 
-    # Store each sheet
+    # Store each sheet + upload thumbnail
     sheet_ids: list[str] = []
+    thumbnail_failures: int = 0
     for ocr_sheet in corpus.sheets:
         sheet_id = str(uuid.uuid4())
         try:
@@ -508,11 +591,66 @@ async def _async_ingest_pipeline(
                 type(exc).__name__,
             )
             # Continue — partial ingest with error is better than total failure
+            continue
+
+        # Upload thumbnail for this sheet (soft failure — sheet is still useful)
+        if ocr_sheet.image_bytes:
+            signed_url = await upload_sheet_thumbnail(
+                suite_id=suite_id,
+                project_id=project_id,
+                sheet_id=sheet_id,
+                png_bytes=ocr_sheet.image_bytes,
+                correlation_id=correlation_id,
+            )
+            if signed_url:
+                try:
+                    await supabase_update(
+                        "blueprint_sheets",
+                        f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                        {"thumbnail_url": signed_url},
+                    )
+                except SupabaseClientError:
+                    _log.warning(
+                        "drew.ingest: failed to write thumbnail_url for sheet=%s",
+                        sheet_id[:8],
+                    )
+            else:
+                # Thumbnail upload failed — emit receipt for observability (Law #2)
+                thumbnail_failures += 1
+                store_receipts([
+                    {
+                        "receipt_version": RECEIPT_VERSION,
+                        "receipt_id": str(uuid.uuid4()),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "event_type": "blueprint.ingest.thumbnail_upload_failed",
+                        "actor": ACTOR_DREW,
+                        "correlation_id": correlation_id,
+                        "status": "failed",
+                        "inputs_hash": _compute_inputs_hash({"sheet_id": sheet_id}),
+                        "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                        "redactions": [],
+                        "metadata": {
+                            "sheet_id": sheet_id,
+                            "project_id": project_id,
+                            "suite_id": suite_id,
+                        },
+                    }
+                ])
+
+    # Mark ingest stage done (or failed if no sheets persisted)
+    final_state = "done" if sheet_ids else "failed"
+    await set_stage_progress(
+        project_id=project_id,
+        stage="ingest",
+        state=final_state,
+        suite_id=suite_id,
+    )
 
     _log.info(
-        "drew.ingest: stored %d sheets for project=%s, corr=%s",
+        "drew.ingest: stored %d sheets for project=%s thumbnail_failures=%d corr=%s",
         len(sheet_ids),
         project_id[:8],
+        thumbnail_failures,
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
 
