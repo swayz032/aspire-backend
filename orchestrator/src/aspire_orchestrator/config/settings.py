@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     parallel_extract_api_key: str = "" # ASPIRE_PARALLEL_EXTRACT_API_KEY — Parallel Extract (v1beta)
     apify_api_key: str = ""            # ASPIRE_APIFY_API_KEY — Apify Zillow scraper (property photos)
 
+    # --- Drew Blueprint Engine provider keys (Wave 1) ---
+    llamaparse_api_key: str = ""        # ASPIRE_LLAMAPARSE_API_KEY — LlamaParse PDF parser (primary)
+    azure_doc_intel_endpoint: str = ""  # ASPIRE_AZURE_DOC_INTEL_ENDPOINT — Azure Doc Intel endpoint URL
+    azure_doc_intel_key: str = ""       # ASPIRE_AZURE_DOC_INTEL_KEY — Azure subscription key (fallback OCR)
+    drew_model_dev: str = "gpt-5.4-mini"    # ASPIRE_DREW_MODEL_DEV
+    drew_model_prod: str = "gpt-5.2"        # ASPIRE_DREW_MODEL_PROD
+
     # --- Tec Documents (S3) provider keys ---
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
