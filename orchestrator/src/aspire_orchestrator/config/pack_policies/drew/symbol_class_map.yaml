@@ -1,0 +1,36 @@
+# Drew SEE — COCO YOLOv11 → Aspire construction symbol taxonomy.
+#
+# Pre-trained YOLOv11 was trained on COCO (80 generic classes: people,
+# vehicles, animals, household objects). It does NOT know construction
+# symbols. This map translates the small subset of COCO classes that
+# OCCASIONALLY fire on architectural drawings (mostly false positives)
+# into Aspire's coarse construction taxonomy.
+#
+# Any COCO class not listed here is recorded as `unmapped:<coco_class>`
+# so REASON (Stage 4) can choose to ignore or surface for human review.
+#
+# WAVE 10 — fine-tune YOLOv11 on a curated construction-symbol corpus and
+# replace this map with the fine-tune label set. Until then, accept that
+# v1 SEE is a best-effort hint and OCR text is the dominant REASON signal.
+
+coco_to_aspire:
+  # COCO 'clock' frequently fires on round embossed elements that resemble
+  # P.E. seals or compass roses. Route to a noisy 'circular_callout' bucket
+  # which REASON treats as low-trust.
+  clock: circular_callout
+
+  # COCO 'stop sign' is octagonal — sometimes matches detail-bubble callouts.
+  stop sign: detail_callout
+
+  # COCO 'tv' / 'laptop' / 'cell phone' rectangular shapes sometimes match
+  # equipment-block callouts and title-block stamps. We route them to a
+  # generic 'rectangular_block' bucket; REASON discards unless paired with
+  # OCR text suggesting equipment.
+  tv: rectangular_block
+  laptop: rectangular_block
+  cell phone: rectangular_block
+
+  # COCO 'book' fires on stacked-drawing legends.
+  book: legend_block
+
+  # Everything else falls through to `unmapped:<coco_class>`.
