@@ -32,21 +32,18 @@ def test_drew_unknown_task_denies() -> None:
     assert result["status"] == "deny"
 
 
-def test_drew_remaining_stub_stages() -> None:
-    """PROCURE remains a stub in Wave 4.
+def test_drew_procure_with_empty_payload_errors() -> None:
+    """PROCURE is now real (Wave 5) — empty payload returns error, not stub.
 
-    INGEST (Wave 2A), CLASSIFY (Wave 2A), SEE (Wave 3), and REASON (Wave 4) are
-    real — they validate payloads and return status='error' or 'ok', not 'stub'.
+    All 5 stages (INGEST/CLASSIFY/SEE/REASON/PROCURE) are real implementations.
+    Pipeline is complete; no remaining stubs.
     """
     from aspire_orchestrator.skillpacks.drew_blueprint import Drew
 
     drew = Drew()
-    for task, expected_stage in [
-        ("PROCURE", "procure"),
-    ]:
-        result = drew.run_agentic_loop(task, {}, "test-correlation-id")
-        assert result["status"] == "stub"
-        assert result["stage"] == expected_stage
+    result = drew.run_agentic_loop("PROCURE", {}, "test-correlation-id")
+    assert result["status"] == "error"
+    assert result["stage"] == "procure"
 
 
 def test_drew_reason_with_empty_payload_errors() -> None:
