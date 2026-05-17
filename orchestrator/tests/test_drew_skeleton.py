@@ -33,21 +33,30 @@ def test_drew_unknown_task_denies() -> None:
 
 
 def test_drew_remaining_stub_stages() -> None:
-    """REASON and PROCURE remain stubs in Wave 3.
+    """PROCURE remains a stub in Wave 4.
 
-    INGEST (Wave 2A), CLASSIFY (Wave 2A), and SEE (Wave 3) are real — they
-    validate payloads and return status='error' or 'ok', not 'stub'.
+    INGEST (Wave 2A), CLASSIFY (Wave 2A), SEE (Wave 3), and REASON (Wave 4) are
+    real — they validate payloads and return status='error' or 'ok', not 'stub'.
     """
     from aspire_orchestrator.skillpacks.drew_blueprint import Drew
 
     drew = Drew()
     for task, expected_stage in [
-        ("REASON", "reason"),
         ("PROCURE", "procure"),
     ]:
         result = drew.run_agentic_loop(task, {}, "test-correlation-id")
         assert result["status"] == "stub"
         assert result["stage"] == expected_stage
+
+
+def test_drew_reason_with_empty_payload_errors() -> None:
+    """REASON is now real (Wave 4) — empty payload returns error, not stub."""
+    from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+
+    drew = Drew()
+    result = drew.run_agentic_loop("REASON", {}, "test-correlation-id")
+    assert result["status"] == "error"
+    assert result["stage"] == "reason"
 
 
 def test_drew_see_with_empty_payload_errors() -> None:

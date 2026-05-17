@@ -421,22 +421,105 @@ class Drew:
         return result
 
     # ------------------------------------------------------------------
-    # Remaining stages — stubs (Wave 4-5)
+    # Stage 4: REASON (Wave 4 — real implementation)
     # ------------------------------------------------------------------
     def reason(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
-        project_id = str(payload.get("project_id", ""))
-        suite_id = str(payload.get("suite_id", ""))
-        if project_id and suite_id:
-            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="reason", state="in_progress")
+        """Derive assemblies, materials, phased story from sheets + symbols.
+
+        Payload keys (required):
+          - project_id: UUID str
+          - suite_id:   UUID str
+
+        Optional:
+          - office_id: UUID str
+
+        Returns:
+          {"status": "ok"|"error", "stage": "reason",
+           "project_id": str, "phase_count": int, "assembly_count": int,
+           "material_count": int, "missing_input_count": int,
+           "mean_confidence": float, "truth_distribution": dict,
+           "model_version": str}
+
+        Receipts:
+          - blueprint.reason — emitted once per call. metadata includes counts
+            and truth_distribution (never the story markdown — Law #9).
+
+        Stage progress (Wave 2.5):
+          - in_progress on entry with valid project_id+suite_id
+          - done on success
+          - failed on exception
+        """
+        # Validate required payload keys
+        for key in ("project_id", "suite_id"):
+            if key not in payload:
+                self._emit_receipt(
+                    correlation_id=correlation_id,
+                    event_type="blueprint.reason",
+                    status="failed",
+                    inputs={"task": "REASON", "missing_key": key},
+                )
+                return {
+                    "status": "error",
+                    "stage": "reason",
+                    "reason": f"missing payload key: {key}",
+                }
+
+        project_id: str = str(payload["project_id"])
+        suite_id: str = str(payload["suite_id"])
+        office_id: str | None = str(payload["office_id"]) if payload.get("office_id") else None
+
+        # Wave 2.5: mark stage in_progress
+        _run_async_set_stage(
+            project_id=project_id, suite_id=suite_id, stage="reason", state="in_progress"
+        )
+
+        try:
+            result = _run_async_reason(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                model=self.model,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            _run_async_set_stage(
+                project_id=project_id, suite_id=suite_id, stage="reason", state="failed"
+            )
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.reason",
+                status="failed",
+                inputs={"task": "REASON", "project_id": project_id, "suite_id": suite_id},
+                metadata={"error": type(exc).__name__, "message": str(exc)[:200]},
+            )
+            return {
+                "status": "error",
+                "stage": "reason",
+                "reason": f"reason pipeline failed: {type(exc).__name__}",
+            }
+
+        # Emit receipt (counts only — no markdown, Law #9)
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.reason",
-            status="stub",
-            inputs={"task": "REASON"},
+            status=result.get("status", "ok"),
+            inputs={"task": "REASON", "project_id": project_id, "suite_id": suite_id},
+            metadata={
+                "phase_count": result.get("phase_count", 0),
+                "assembly_count": result.get("assembly_count", 0),
+                "material_count": result.get("material_count", 0),
+                "missing_input_count": result.get("missing_input_count", 0),
+                "mean_confidence": result.get("mean_confidence", 0.0),
+                "truth_distribution": result.get("truth_distribution", {}),
+                "model_version": result.get("model_version", self.model),
+            },
         )
-        if project_id and suite_id:
-            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="reason", state="done")
-        return {"status": "stub", "stage": "reason"}
+
+        final_state = "done" if result.get("status") == "ok" else "failed"
+        _run_async_set_stage(
+            project_id=project_id, suite_id=suite_id, stage="reason", state=final_state
+        )
+        return result
 
     def procure(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
         project_id = str(payload.get("project_id", ""))
@@ -1241,4 +1324,103 @@ async def _async_see_pipeline(
         "seal_sheets": seal_sheets,
         "missing_inputs": missing_inputs,
         "model_version": model_version,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 REASON — async helpers
+# ---------------------------------------------------------------------------
+
+def _run_async_reason(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    model: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Bridge: run async REASON pipeline from sync context (mirrors ingest/classify/see)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    _async_reason_pipeline(
+                        project_id=project_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
+                        model=model,
+                        correlation_id=correlation_id,
+                    ),
+                )
+                return future.result(timeout=300)  # REASON: 5-min ceiling
+        else:
+            return loop.run_until_complete(
+                _async_reason_pipeline(
+                    project_id=project_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    model=model,
+                    correlation_id=correlation_id,
+                )
+            )
+    except RuntimeError:
+        return asyncio.run(
+            _async_reason_pipeline(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                model=model,
+                correlation_id=correlation_id,
+            )
+        )
+
+
+async def _async_reason_pipeline(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    model: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Async REASON: call story_writer.write_story and map result to stage dict."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    from aspire_orchestrator.services.blueprint.story_writer import write_story
+
+    output = await write_story(
+        project_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        model=model,
+    )
+
+    _log.info(
+        "drew.reason: project=%s phases=%d assemblies=%d materials=%d "
+        "missing=%d mean_conf=%.3f corr=%s",
+        project_id[:8],
+        output.phase_count,
+        output.assembly_count,
+        output.material_count,
+        output.missing_input_count,
+        output.mean_confidence,
+        correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
+    )
+
+    return {
+        "status": "ok",
+        "stage": "reason",
+        "project_id": project_id,
+        "phase_count": output.phase_count,
+        "assembly_count": output.assembly_count,
+        "material_count": output.material_count,
+        "missing_input_count": output.missing_input_count,
+        "mean_confidence": output.mean_confidence,
+        "truth_distribution": output.truth_distribution,
+        "model_version": output.model_version,
     }
