@@ -503,7 +503,10 @@ async def patch_config(
             if req.pronunciation_override is not None
             else current.get("pronunciation_override") or "",
         "business_hours": req.business_hours if req.business_hours is not None else current.get("business_hours"),
-        "timezone": req.timezone if req.timezone is not None else current.get("timezone"),
+        # NOT NULL on front_desk_configs.timezone — fall back to America/New_York when the
+        # tenant's first save omits it (FE timezone detection failed) and no prior row exists.
+        # Without this, first-save crashes with 23502 and the FE silently swallows the 500.
+        "timezone": req.timezone if req.timezone is not None else (current.get("timezone") or "America/New_York"),
         "receptionist_persona": (
             req.receptionist_persona.strip().lower()
             if req.receptionist_persona is not None
