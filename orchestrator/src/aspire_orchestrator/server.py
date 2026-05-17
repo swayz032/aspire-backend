@@ -1562,7 +1562,7 @@ async def a2a_dispatch(request: Request) -> JSONResponse:
 # =============================================================================
 
 
-SYNC_INVOKE_AGENTS = {"quinn", "adam", "tec"}
+SYNC_INVOKE_AGENTS = {"quinn", "adam", "tec", "drew"}
 
 
 @app.post("/v1/agents/invoke")
@@ -1695,6 +1695,22 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                 full_task = detail_text
             else:
                 full_task = f"{task}. {detail_text}"
+
+        # ── Drew: Blueprint Story Engine (Wave 1A skeleton) ──
+        # 5-stage pipeline (INGEST/CLASSIFY/SEE/REASON/PROCURE).
+        # V1 sync only, mirrors Adam pattern. Currently returns stub responses.
+        if agent == "drew":
+            from aspire_orchestrator.skillpacks.drew_blueprint import Drew as DrewSkillPack
+            drew = DrewSkillPack()
+            payload = body.get("payload", {}) or {}
+            if not isinstance(payload, dict):
+                payload = {}
+            result = drew.run_agentic_loop(
+                task=task,
+                payload=payload,
+                correlation_id=ctx.correlation_id,
+            )
+            return JSONResponse(result)
 
         # ── Adam: Research via Ultra Router (19 playbooks, 13 providers) ──
         # Routes through classify_fast → route_to_playbook → dispatch_playbook.

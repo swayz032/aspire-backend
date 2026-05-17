@@ -1,0 +1,21 @@
+# Drew Blueprint — Tool Policy
+# Which symbol classes Drew is allowed to auto-extract vs. those that require human review.
+
+pack_id: drew-blueprint
+
+authorized_tools:
+  - blueprint.parse
+  - blueprint.classify
+  - blueprint.detect_symbols
+  - blueprint.reason
+  - blueprint.procure
+
+auto_extract_symbol_classes:
+  - door
+  - window
+  - plumbing_fixture
+  - electrical_outlet
+
+human_review_required_classes:
+  - structural_column
+  - panel_schedule
