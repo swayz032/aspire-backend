@@ -10,6 +10,12 @@ authorized_tools:
   - blueprint.reason
   - blueprint.procure
 
+# YELLOW-tier: requires capability token scoped to materials.bundle.add
+# Enforced at gateway layer when desktop Takeoff agent pushes procurement bundle
+# to the Materials tab. Risk tier: YELLOW (Law #4 — state-changing, user confirmation required).
+yellow_tools:
+  - materials.bundle.add
+
 auto_extract_symbol_classes:
   - door
   - window
