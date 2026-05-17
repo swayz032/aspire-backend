@@ -1,7 +1,7 @@
 """Azure Document Intelligence Provider Client — OCR fallback for Drew (Blueprint Engine).
 
 Provider: Azure AI Document Intelligence
-         (https://{endpoint}/formrecognizer/documentModels/prebuilt-layout:analyze)
+         (https://{endpoint}/documentintelligence/documentModels/prebuilt-layout:analyze)
 Auth: API key via Ocp-Apim-Subscription-Key header (ASPIRE_AZURE_DOC_INTEL_KEY)
 Risk tier: GREEN (read-only document analysis)
 Idempotency: N/A (analysis is idempotent — same bytes → same output)
@@ -9,20 +9,31 @@ Idempotency: N/A (analysis is idempotent — same bytes → same output)
 Drew uses Azure Document Intelligence as the FALLBACK OCR layer for scanned
 or image-heavy blueprint sheets where LlamaParse cannot extract structured text.
 
-Wave 1: Stub only — method signature + ProviderRequest shape correct so
-Wave 2 INGEST only needs to flip the NotImplementedError to real wire-up.
+Wave 2: analyze_layout wired to real Azure prebuilt-layout async pipeline:
+  1. POST /documentintelligence/documentModels/prebuilt-layout:analyze
+     (api-version=2024-11-30, Content-Type: application/octet-stream)
+  2. Response: 202 Accepted + Operation-Location header
+  3. Poll GET Operation-Location until status=succeeded (2s cadence, 30s max)
+  4. Return analyzeResult from final poll body
 
 Law compliance:
   #2 — Receipt emission via BaseProviderClient.make_receipt_data()
   #3 — Fail-closed on missing API key OR endpoint (raises ProviderError before any call)
   #6 — suite_id/office_id scoped on every ProviderRequest
   #9 — Never logs pdf_bytes content; logs only len(pdf_bytes) + correlation_id
+
+MCP research note: Azure Document Intelligence v4.0 (2024-11-30) endpoint confirmed via
+Azure documentation. POST returns 202 + Operation-Location header for async polling.
+Poll until {"status": "succeeded"}, result in ["analyzeResult"].
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
+
+import httpx
 
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.providers.base_client import (
@@ -34,6 +45,10 @@ from aspire_orchestrator.providers.base_client import (
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
 
 logger = logging.getLogger(__name__)
+
+_API_VERSION = "2024-11-30"
+_POLL_INTERVAL_S: float = 2.0
+_POLL_MAX_S: float = 30.0
 
 
 class AzureDocIntelClient(BaseProviderClient):
@@ -117,6 +132,13 @@ class AzureDocIntelClient(BaseProviderClient):
     ) -> ProviderResponse:
         """Analyze a PDF/image document using the Azure prebuilt-layout model.
 
+        Pipeline:
+          1. POST {endpoint}/documentintelligence/documentModels/prebuilt-layout:analyze
+             (api-version=2024-11-30, Content-Type: application/octet-stream)
+          2. Read 202 response + Operation-Location header
+          3. Poll Operation-Location until status=succeeded (2s cadence, 30s max)
+          4. Return analyzeResult payload
+
         PII-safe: only logs byte length, never raw content (Law #9).
 
         Args:
@@ -126,12 +148,8 @@ class AzureDocIntelClient(BaseProviderClient):
             office_id: Tenant office ID for isolation enforcement (Law #6).
 
         Returns:
-            ProviderResponse with layout analysis in body["analyzeResult"] on success.
-            Azure returns an Operation-Location header for async polling — Wave 2
-            must implement the poll loop (GET Operation-Location until status=succeeded).
-
-        Raises:
-            NotImplementedError: Wave 1 stub — Wave 2 INGEST wires real call.
+            ProviderResponse with body["analyzeResult"] on success.
+            ProviderResponse with success=False and error_code on failure.
         """
         logger.info(
             "azure_doc_intel.analyze_layout called: suite=%s, corr=%s, size_bytes=%d",
@@ -140,33 +158,162 @@ class AzureDocIntelClient(BaseProviderClient):
             len(pdf_bytes),
         )
 
-        # Build the ProviderRequest shape so Wave 2 only needs to flip
-        # NotImplementedError → real self._request() + async poll.
-        #
-        # Azure Document Intelligence Layout endpoint:
-        #   POST {endpoint}/formrecognizer/documentModels/prebuilt-layout:analyze
-        #   ?api-version=2023-07-31
-        #
-        # Wave 2 notes:
-        #   - Content-Type must be "application/octet-stream" with raw PDF bytes
-        #   - Response is 202 Accepted + Operation-Location header
-        #   - Poll GET Operation-Location until {"status": "succeeded"}
-        #   - Final result in polled body["analyzeResult"]
-        _request = ProviderRequest(
-            method="POST",
-            path="/formrecognizer/documentModels/prebuilt-layout:analyze",
-            body=None,  # Wave 2: send pdf_bytes as raw octet-stream content
-            query_params={"api-version": "2023-07-31"},
-            correlation_id=correlation_id,
-            suite_id=suite_id,
-            office_id=office_id,
-            extra_headers={
-                "Content-Type": "application/octet-stream",
-                # Wave 2: also needs Accept: application/json (already set by base)
-            },
+        api_key: str = settings.azure_doc_intel_key
+        if not api_key:
+            raise ProviderError(
+                code=InternalErrorCode.AUTH_INVALID_KEY,
+                message=(
+                    "Azure Document Intelligence API key not configured "
+                    "(ASPIRE_AZURE_DOC_INTEL_KEY)"
+                ),
+                provider_id=self.provider_id,
+            )
+
+        analyze_url = (
+            f"{self.base_url}/documentintelligence/documentModels/"
+            f"prebuilt-layout:analyze?api-version={_API_VERSION}"
+        )
+        headers = {
+            "Ocp-Apim-Subscription-Key": api_key,
+            "Content-Type": "application/octet-stream",
+            "Accept": "application/json",
+            "X-Correlation-Id": correlation_id,
+        }
+
+        # Step 1: Submit analysis job
+        client = await self._get_client()
+        try:
+            submit_resp = await client.post(
+                analyze_url,
+                content=pdf_bytes,
+                headers=headers,
+                timeout=httpx.Timeout(self.timeout_seconds),
+            )
+        except httpx.TimeoutException:
+            self._circuit.record_failure()
+            return ProviderResponse(
+                status_code=408,
+                body={"error": InternalErrorCode.NETWORK_TIMEOUT.value},
+                success=False,
+                error_code=InternalErrorCode.NETWORK_TIMEOUT,
+                error_message="Azure Doc Intel submit timed out",
+            )
+        except httpx.ConnectError:
+            self._circuit.record_failure()
+            return ProviderResponse(
+                status_code=503,
+                body={"error": InternalErrorCode.NETWORK_CONNECTION_REFUSED.value},
+                success=False,
+                error_code=InternalErrorCode.NETWORK_CONNECTION_REFUSED,
+                error_message="Azure Doc Intel submit connection failed",
+            )
+
+        if submit_resp.status_code != 202:
+            error_code = self._parse_error(submit_resp.status_code, {})
+            self._circuit.record_failure()
+            return ProviderResponse(
+                status_code=submit_resp.status_code,
+                body={"error": error_code.value},
+                success=False,
+                error_code=error_code,
+                error_message=f"Azure Doc Intel submit failed: HTTP {submit_resp.status_code}",
+            )
+
+        operation_location: str | None = submit_resp.headers.get("Operation-Location")
+        if not operation_location:
+            # Some Azure deployments use lowercase header key
+            operation_location = submit_resp.headers.get("operation-location")
+        if not operation_location:
+            return ProviderResponse(
+                status_code=submit_resp.status_code,
+                body={"error": "MISSING_OPERATION_LOCATION"},
+                success=False,
+                error_code=InternalErrorCode.SERVER_INTERNAL_ERROR,
+                error_message="Azure Doc Intel 202 response missing Operation-Location header",
+            )
+
+        logger.info(
+            "azure_doc_intel: job submitted, corr=%s",
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
         )
 
-        raise NotImplementedError("Wave 2 wires this")
+        # Step 2: Poll Operation-Location until succeeded
+        poll_headers = {
+            "Ocp-Apim-Subscription-Key": api_key,
+            "Accept": "application/json",
+            "X-Correlation-Id": correlation_id,
+        }
+
+        elapsed: float = 0.0
+        final_status: str = ""
+        analyze_result: dict[str, Any] | None = None
+
+        while elapsed < _POLL_MAX_S:
+            await asyncio.sleep(_POLL_INTERVAL_S)
+            elapsed += _POLL_INTERVAL_S
+
+            try:
+                poll_resp = await client.get(
+                    operation_location,
+                    headers=poll_headers,
+                    timeout=httpx.Timeout(self.timeout_seconds),
+                )
+            except httpx.TimeoutException:
+                continue  # Transient poll timeout — keep polling
+
+            if poll_resp.status_code not in (200, 201):
+                error_code = self._parse_error(poll_resp.status_code, {})
+                self._circuit.record_failure()
+                return ProviderResponse(
+                    status_code=poll_resp.status_code,
+                    body={"error": error_code.value},
+                    success=False,
+                    error_code=error_code,
+                    error_message=f"Azure Doc Intel poll failed: HTTP {poll_resp.status_code}",
+                )
+
+            try:
+                poll_body: dict[str, Any] = poll_resp.json()
+            except Exception:
+                continue
+
+            final_status = poll_body.get("status", "")
+            if final_status == "succeeded":
+                analyze_result = poll_body.get("analyzeResult")
+                break
+            if final_status == "failed":
+                self._circuit.record_failure()
+                error_detail = poll_body.get("error", {})
+                return ProviderResponse(
+                    status_code=500,
+                    body={"error": "ANALYSIS_FAILED", "status": final_status},
+                    success=False,
+                    error_code=InternalErrorCode.SERVER_INTERNAL_ERROR,
+                    error_message=f"Azure Doc Intel analysis failed: {error_detail.get('message', final_status)}",
+                )
+            # running or notStarted — keep polling
+
+        if final_status != "succeeded" or analyze_result is None:
+            self._circuit.record_failure()
+            return ProviderResponse(
+                status_code=408,
+                body={"error": InternalErrorCode.NETWORK_TIMEOUT.value, "status": final_status},
+                success=False,
+                error_code=InternalErrorCode.NETWORK_TIMEOUT,
+                error_message=f"Azure Doc Intel analysis did not complete within {_POLL_MAX_S}s",
+            )
+
+        self._circuit.record_success()
+        logger.info(
+            "azure_doc_intel: analysis complete, corr=%s",
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+        )
+
+        return ProviderResponse(
+            status_code=200,
+            body={"analyzeResult": analyze_result},
+            success=True,
+        )
 
 
 # ---------------------------------------------------------------------------
