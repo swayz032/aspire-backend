@@ -21,3 +21,20 @@ class BlueprintStory(BaseModel):
     supersedes_id: UUID | None = None
     created_at: datetime
     created_by: UUID | None = None
+
+
+class StoryOutput(BaseModel):
+    """Structured return value from write_story()."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    story_id: str
+    project_id: str
+    suite_id: str
+    phase_count: int
+    assembly_count: int
+    material_count: int
+    missing_input_count: int
+    mean_confidence: float
+    truth_distribution: dict[str, int]
+    model_version: str
