@@ -57,6 +57,8 @@ plan/temp_ecosystem_scan/
 # Drew blueprint fixtures — originals contain PII pre-redaction; only redacted versions commit
 orchestrator/tests/fixtures/blueprints/originals/*
 !orchestrator/tests/fixtures/blueprints/originals/.gitkeep
+# Allow committed (redacted) fixture PDFs — these are the gitignore exception
+!orchestrator/tests/fixtures/blueprints/*.pdf
 
 # Misc
 *.log
