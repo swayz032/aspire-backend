@@ -60,5 +60,11 @@ orchestrator/tests/fixtures/blueprints/originals/*
 # Allow committed (redacted) fixture PDFs — these are the gitignore exception
 !orchestrator/tests/fixtures/blueprints/*.pdf
 
+# Drew SEE (Wave 3) — YOLOv11 weights are downloaded on first run, never committed.
+# Bootstrap: python -c "from ultralytics import YOLO; YOLO('yolo11m.pt')"
+models/
+*.pt
+*.onnx
+
 # Misc
 *.log

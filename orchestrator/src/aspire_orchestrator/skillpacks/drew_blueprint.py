@@ -1,7 +1,7 @@
 # [STATUS: v1-active, BYPASS] — Reachable via /v1/agents/invoke-sync.
 # Bypasses LangGraph: no policy gate, no token mint, no central receipt audit.
 # Migration debt — route through /v1/intents in a later wave.
-"""Drew Blueprint Story Engine — Wave 2A: INGEST + CLASSIFY implemented.
+"""Drew Blueprint Story Engine — Wave 3: SEE implemented (INGEST + CLASSIFY + SEE live).
 
 Reads architectural blueprints, builds a multi-discipline understanding, and produces
 a phase-by-phase build narrative with line-item materials.
@@ -9,7 +9,7 @@ a phase-by-phase build narrative with line-item materials.
 Pipeline tasks (orchestrator-driven, Drew never decides):
     INGEST   → parse PDFs (LlamaParse primary, Azure Doc Intel fallback)
     CLASSIFY → assign discipline + sheet metadata
-    SEE      → vision pass for symbols / bbox / confidence  [stub]
+    SEE      → YOLOv11 symbol detection + scale calibration + engineer-seal flag  [Wave 3]
     REASON   → derive assemblies, materials, story-by-phase  [stub]
     PROCURE  → push material requests to supplier playbooks  [stub]
 
@@ -297,24 +297,132 @@ class Drew:
         return result
 
     # ------------------------------------------------------------------
-    # Remaining stages — stubs (Wave 3-5)
-    # Progress wiring is real; stage body is replaced by Wave 3/4/5.
+    # Stage 3: SEE (Wave 3 — real implementation, stage_progress wired in Wave 2.5)
     # ------------------------------------------------------------------
     def see(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
-        project_id = str(payload.get("project_id", ""))
-        suite_id = str(payload.get("suite_id", ""))
+        """Run YOLOv11 symbol detection + scale calibration + seal flagging.
+
+        Payload keys (required):
+          - project_id: UUID str — the project to scan.
+          - suite_id:   UUID str — tenant scope.
+          - pdf_bytes:  base64-encoded PDF binary — re-rendered to recover
+                        the per-sheet 200 DPI images (we never persist images).
+
+        Optional:
+          - office_id:  UUID str
+          - confidence_floor: float (default 0.70)
+
+        Returns:
+          {"status": "ok"|"error"|"failed", "stage": "see",
+           "project_id": str, "sheet_count": int, "symbol_count": int,
+           "seal_sheets": int, "missing_inputs": int,
+           "mean_confidence": float, "model_version": str}
+
+        Image source: Wave 1 pdf_splitter renders pages at 200 DPI but the
+        raster bytes are not stored in DB. The caller resupplies pdf_bytes
+        in the payload; we re-split and match by SHA-256 hash to the
+        blueprint_sheets rows persisted by INGEST.
+
+        Receipts:
+          - blueprint.see — emitted once per call. metadata includes the
+            aggregate symbol_count, mean_confidence, seal_sheets,
+            missing_inputs, sheet_count, model_version.
+
+        Stage progress (Wave 2.5):
+          - On entry with valid project_id+suite_id: stage_progress["see"]="in_progress"
+          - On success: stage_progress["see"]="done"
+          - On failure: stage_progress["see"]="failed"
+        """
+        # Validate required payload keys
+        for key in ("project_id", "suite_id", "pdf_bytes"):
+            if key not in payload:
+                self._emit_receipt(
+                    correlation_id=correlation_id,
+                    event_type="blueprint.see",
+                    status="failed",
+                    inputs={"task": "SEE", "missing_key": key},
+                )
+                return {
+                    "status": "error",
+                    "stage": "see",
+                    "reason": f"missing payload key: {key}",
+                }
+
+        project_id: str = str(payload["project_id"])
+        suite_id: str = str(payload["suite_id"])
+        office_id: str | None = str(payload["office_id"]) if payload.get("office_id") else None
+        confidence_floor: float = float(payload.get("confidence_floor", 0.70))
+
+        # Wave 2.5: mark stage in_progress (no-op if project_id/suite_id falsy)
         if project_id and suite_id:
             _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state="in_progress")
+
+        try:
+            pdf_bytes: bytes = base64.b64decode(payload["pdf_bytes"])
+        except Exception as exc:
+            if project_id and suite_id:
+                _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state="failed")
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.see",
+                status="failed",
+                inputs={"task": "SEE", "project_id": project_id},
+                metadata={"error": f"invalid base64 pdf_bytes: {type(exc).__name__}"},
+            )
+            return {
+                "status": "error",
+                "stage": "see",
+                "reason": f"invalid base64 pdf_bytes: {type(exc).__name__}",
+            }
+
+        try:
+            result = _run_async_see(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                pdf_bytes=pdf_bytes,
+                confidence_floor=confidence_floor,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            if project_id and suite_id:
+                _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state="failed")
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.see",
+                status="failed",
+                inputs={"task": "SEE", "project_id": project_id, "suite_id": suite_id},
+                metadata={"error": type(exc).__name__},
+            )
+            return {
+                "status": "error",
+                "stage": "see",
+                "reason": f"see pipeline failed: {type(exc).__name__}",
+            }
+
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.see",
-            status="stub",
-            inputs={"task": "SEE"},
+            status=result["status"],
+            inputs={"task": "SEE", "project_id": project_id, "suite_id": suite_id},
+            metadata={
+                "sheet_count": result.get("sheet_count", 0),
+                "symbol_count": result.get("symbol_count", 0),
+                "mean_confidence": result.get("mean_confidence", 0.0),
+                "seal_sheets": result.get("seal_sheets", 0),
+                "missing_inputs": result.get("missing_inputs", 0),
+                "model_version": result.get("model_version", "yolo11m.pt"),
+            },
         )
+        # Wave 2.5: mark stage done/failed based on result
         if project_id and suite_id:
-            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state="done")
-        return {"status": "stub", "stage": "see"}
+            final_state = "done" if result.get("status") == "ok" else "failed"
+            _run_async_set_stage(project_id=project_id, suite_id=suite_id, stage="see", state=final_state)
+        return result
 
+    # ------------------------------------------------------------------
+    # Remaining stages — stubs (Wave 4-5)
+    # ------------------------------------------------------------------
     def reason(self, payload: dict[str, Any], correlation_id: str) -> dict[str, Any]:
         project_id = str(payload.get("project_id", ""))
         suite_id = str(payload.get("suite_id", ""))
@@ -369,7 +477,7 @@ class Drew:
 
 
 # ---------------------------------------------------------------------------
-# Async pipeline helpers (called via asyncio bridge from sync .ingest/.classify)
+# Async pipeline helpers (called via asyncio bridge from sync .ingest/.classify/.see)
 # ---------------------------------------------------------------------------
 
 def _run_async_set_stage(
@@ -853,4 +961,284 @@ async def _async_classify_pipeline(
         "discipline_counts": discipline_counts,
         "revisions": revision_count,
         "needs_review_count": needs_review_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 SEE — async helpers
+# ---------------------------------------------------------------------------
+
+def _run_async_see(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    pdf_bytes: bytes,
+    confidence_floor: float,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Bridge: run async SEE pipeline from sync context (mirrors ingest/classify)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    _async_see_pipeline(
+                        project_id=project_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
+                        pdf_bytes=pdf_bytes,
+                        confidence_floor=confidence_floor,
+                        correlation_id=correlation_id,
+                    ),
+                )
+                return future.result(timeout=600)  # SEE is slower; 10min ceiling
+        else:
+            return loop.run_until_complete(
+                _async_see_pipeline(
+                    project_id=project_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    pdf_bytes=pdf_bytes,
+                    confidence_floor=confidence_floor,
+                    correlation_id=correlation_id,
+                )
+            )
+    except RuntimeError:
+        return asyncio.run(
+            _async_see_pipeline(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                pdf_bytes=pdf_bytes,
+                confidence_floor=confidence_floor,
+                correlation_id=correlation_id,
+            )
+        )
+
+
+async def _async_see_pipeline(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    pdf_bytes: bytes,
+    confidence_floor: float,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Per-sheet SEE: YOLO symbols + scale + seal. Persists symbols/scale/flag.
+
+    Sheet matching strategy: pdf_splitter re-renders the PDF and produces the
+    same SHA-256 hashes the INGEST stage stored. We index sheet rows by hash
+    so we know which DB row each rendered image belongs to.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    from aspire_orchestrator.services.supabase_client import (
+        SupabaseClientError,
+        supabase_insert,
+        supabase_select,
+        supabase_update,
+    )
+    from aspire_orchestrator.services.blueprint.pdf_splitter import split_pdf_to_sheets
+    from aspire_orchestrator.services.blueprint.symbol_detector import (
+        SymbolDetectorError,
+        detect_symbols,
+    )
+    from aspire_orchestrator.services.blueprint.scale_calibrator import calibrate_scale
+    from aspire_orchestrator.services.blueprint.seal_detector import detect_engineer_seal
+
+    # Load all sheet rows for this project (RLS-scoped).
+    try:
+        sheets = await supabase_select(
+            "blueprint_sheets",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            order_by="created_at.asc",
+        )
+    except SupabaseClientError as exc:
+        raise RuntimeError(f"Failed to load sheets for project {project_id[:8]}: {exc}") from exc
+
+    if not sheets:
+        _log.warning(
+            "drew.see: no sheets found for project=%s, corr=%s",
+            project_id[:8],
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+        )
+        return {
+            "status": "ok",
+            "stage": "see",
+            "project_id": project_id,
+            "sheet_count": 0,
+            "symbol_count": 0,
+            "mean_confidence": 0.0,
+            "seal_sheets": 0,
+            "missing_inputs": 0,
+            "model_version": "yolo11m.pt",
+        }
+
+    # Re-render PDF to recover per-sheet 200 DPI PNG bytes.
+    try:
+        extracts = split_pdf_to_sheets(pdf_bytes)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"pdf_splitter failed in SEE: {type(exc).__name__}") from exc
+
+    # Index DB rows by hash (the canonical join key).
+    sheet_by_hash: dict[str, dict[str, Any]] = {
+        str(row.get("hash")): row for row in sheets if row.get("hash")
+    }
+
+    total_symbols = 0
+    seal_sheets = 0
+    missing_inputs = 0
+    confidence_sum = 0.0
+    confidence_count = 0
+    model_version = "yolo11m.pt"
+
+    for extract in extracts:
+        sheet_row = sheet_by_hash.get(extract.page_hash)
+        if not sheet_row:
+            _log.info(
+                "drew.see: no DB row matches hash=%s page=%d (likely page added post-INGEST)",
+                extract.page_hash[:8],
+                extract.page_number,
+            )
+            continue
+        sheet_id = str(sheet_row["id"])
+
+        # ───── 1. YOLO symbol detection ─────
+        try:
+            detections = await detect_symbols(
+                extract.image_bytes,
+                sheet_id=sheet_id,
+                correlation_id=correlation_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                confidence_floor=confidence_floor,
+            )
+        except SymbolDetectorError as exc:
+            # Law #3: fail-closed — weights missing is not a recoverable per-sheet failure;
+            # bubble up so the orchestrator can surface a clear operational message.
+            raise RuntimeError(
+                f"YOLO weights unavailable: {exc}. "
+                "Run `python -c \"from ultralytics import YOLO; YOLO('yolo11m.pt')\"` to fetch."
+            ) from exc
+
+        for det in detections:
+            try:
+                await supabase_insert(
+                    "blueprint_symbols",
+                    {
+                        "id": str(uuid.uuid4()),
+                        "suite_id": suite_id,
+                        "office_id": office_id,
+                        "sheet_id": sheet_id,
+                        "class": det.class_name,
+                        "bbox": det.bbox,
+                        "confidence": det.confidence,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                total_symbols += 1
+                confidence_sum += det.confidence
+                confidence_count += 1
+                model_version = det.model_version
+            except SupabaseClientError as exc:
+                _log.warning(
+                    "drew.see: failed to insert symbol sheet=%s (%s)",
+                    sheet_id[:8],
+                    type(exc).__name__,
+                )
+
+        # ───── 2. Scale calibration ─────
+        sheet_text: str = str(sheet_row.get("ocr_text") or extract.text or "")
+        calibration = calibrate_scale(extract.image_bytes, sheet_text)
+        if calibration.scale_factor > 0 and calibration.confidence >= 0.70:
+            scale_str = (
+                calibration.text_match
+                or f"{calibration.scale_factor:.6f}{calibration.units}/px"
+            )
+            try:
+                await supabase_update(
+                    "blueprint_sheets",
+                    f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                    {"scale": scale_str[:120]},
+                )
+            except SupabaseClientError as exc:
+                _log.warning(
+                    "drew.see: failed to update scale sheet=%s (%s)",
+                    sheet_id[:8],
+                    type(exc).__name__,
+                )
+        elif calibration.method != "none" and calibration.confidence < 0.50:
+            # Low-confidence or disagreement → contractor must confirm.
+            try:
+                await supabase_insert(
+                    "blueprint_missing_inputs",
+                    {
+                        "id": str(uuid.uuid4()),
+                        "suite_id": suite_id,
+                        "project_id": project_id,
+                        "description": (
+                            f"Sheet {sheet_row.get('sheet_number', sheet_id[:8])}: "
+                            f"scale calibration confidence {calibration.confidence:.0%} "
+                            f"(method={calibration.method}). Please confirm drawing scale."
+                        ),
+                        "suggested_resolution": (
+                            "Enter the explicit drawing scale (e.g. 1/4\" = 1'-0\" or 1:50)."
+                        ),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                missing_inputs += 1
+            except SupabaseClientError as exc:
+                _log.warning(
+                    "drew.see: failed to insert scale missing_input sheet=%s (%s)",
+                    sheet_id[:8],
+                    type(exc).__name__,
+                )
+
+        # ───── 3. Engineer-seal detection ─────
+        seal = detect_engineer_seal(extract.image_bytes)
+        if seal.seal_detected:
+            seal_sheets += 1
+            try:
+                await supabase_update(
+                    "blueprint_sheets",
+                    f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                    {"seal_detected": True},
+                )
+            except SupabaseClientError as exc:
+                _log.warning(
+                    "drew.see: failed to set seal_detected sheet=%s (%s)",
+                    sheet_id[:8],
+                    type(exc).__name__,
+                )
+
+    mean_conf = (confidence_sum / confidence_count) if confidence_count else 0.0
+
+    _log.info(
+        "drew.see: project=%s sheets=%d symbols=%d mean_conf=%.2f seals=%d "
+        "missing=%d corr=%s",
+        project_id[:8],
+        len(sheets),
+        total_symbols,
+        mean_conf,
+        seal_sheets,
+        missing_inputs,
+        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+    )
+
+    return {
+        "status": "ok",
+        "stage": "see",
+        "project_id": project_id,
+        "sheet_count": len(sheets),
+        "symbol_count": total_symbols,
+        "mean_confidence": round(mean_conf, 4),
+        "seal_sheets": seal_sheets,
+        "missing_inputs": missing_inputs,
+        "model_version": model_version,
     }

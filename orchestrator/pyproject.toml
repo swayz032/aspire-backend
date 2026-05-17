@@ -38,6 +38,8 @@ dependencies = [
     "requests>=2.33.0,<3.0",  # CVE fix (.netrc credential leak + redirect issues)
     "usaddress>=0.5.10,<1.0",  # Deterministic US address parsing (CRF tagger) for ATTOM /expandedprofile
     "pymupdf>=1.24.0,<2.0",   # Drew Blueprint Engine: per-page PDF split + raster snapshot (Wave 2)
+    "ultralytics>=8.3.0,<9.0",  # Drew SEE (Wave 3): YOLOv11 symbol detection. ~50MB weights auto-fetched on first run.
+    "opencv-python-headless>=4.10.0,<5.0",  # Drew SEE (Wave 3): scale-bar contour analysis + seal HoughCircles. ~30MB, no GUI deps.
     # Security pins — patched min versions for transitive deps flagged by pip-audit
     "aiohttp>=3.13.4",  # CVE fix
     "langchain-core>=1.2.28,<2.0",  # CVE fix (overrides upper line if conflict)
@@ -82,5 +84,7 @@ packages = ["src/aspire_orchestrator"]
 "src/aspire_orchestrator/config/provider_secret_registry.json" = "aspire_orchestrator/config/provider_secret_registry.json"
 "src/aspire_orchestrator/config/skill_pack_manifests.yaml" = "aspire_orchestrator/config/skill_pack_manifests.yaml"
 "src/aspire_orchestrator/config/tax_rules" = "aspire_orchestrator/config/tax_rules"
+"src/aspire_orchestrator/config/pack_policies" = "aspire_orchestrator/config/pack_policies"
 "src/aspire_orchestrator/schemas" = "aspire_orchestrator/schemas"
-
+"src/aspire_orchestrator/services/blueprint/kb" = "aspire_orchestrator/services/blueprint/kb"
+"src/aspire_orchestrator/services/blueprint/prompts" = "aspire_orchestrator/services/blueprint/prompts"

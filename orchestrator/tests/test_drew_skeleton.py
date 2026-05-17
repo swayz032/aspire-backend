@@ -1,4 +1,8 @@
-"""Drew Wave 1A skeleton tests — imports + dispatch + fail-closed on unknown task."""
+"""Drew Wave 1A skeleton tests — imports + dispatch + fail-closed on unknown task.
+
+Updated for Wave 3 SEE flip: SEE is no longer a stub (returns status='error' on
+empty payload, not 'stub'). Only REASON and PROCURE remain stubs.
+"""
 from __future__ import annotations
 
 
@@ -9,12 +13,14 @@ def test_drew_imports() -> None:
     assert drew.actor == "drew"
 
 
-def test_drew_run_agentic_loop_stub_returns() -> None:
+def test_drew_run_agentic_loop_ingest_with_empty_payload_errors() -> None:
+    """INGEST is now real (Wave 2A) — empty payload returns error, not stub."""
     from aspire_orchestrator.skillpacks.drew_blueprint import Drew
 
     drew = Drew()
     result = drew.run_agentic_loop("INGEST", {}, "test-correlation-id")
-    assert result["status"] == "stub"
+    # Real INGEST validates required keys and returns error on missing keys.
+    assert result["status"] in ("error", "failed")
     assert result["stage"] == "ingest"
 
 
@@ -26,17 +32,29 @@ def test_drew_unknown_task_denies() -> None:
     assert result["status"] == "deny"
 
 
-def test_drew_all_stages_stub() -> None:
+def test_drew_remaining_stub_stages() -> None:
+    """REASON and PROCURE remain stubs in Wave 3.
+
+    INGEST (Wave 2A), CLASSIFY (Wave 2A), and SEE (Wave 3) are real — they
+    validate payloads and return status='error' or 'ok', not 'stub'.
+    """
     from aspire_orchestrator.skillpacks.drew_blueprint import Drew
 
     drew = Drew()
     for task, expected_stage in [
-        ("INGEST", "ingest"),
-        ("CLASSIFY", "classify"),
-        ("SEE", "see"),
         ("REASON", "reason"),
         ("PROCURE", "procure"),
     ]:
         result = drew.run_agentic_loop(task, {}, "test-correlation-id")
         assert result["status"] == "stub"
         assert result["stage"] == expected_stage
+
+
+def test_drew_see_with_empty_payload_errors() -> None:
+    """SEE is now real (Wave 3) — empty payload returns error, not stub."""
+    from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+
+    drew = Drew()
+    result = drew.run_agentic_loop("SEE", {}, "test-correlation-id")
+    assert result["status"] == "error"
+    assert result["stage"] == "see"
