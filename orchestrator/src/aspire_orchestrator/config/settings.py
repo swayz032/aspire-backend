@@ -123,6 +123,11 @@ class Settings(BaseSettings):
 
     # --- Drew Blueprint Engine — Wave 5.1a Supplier Discovery ---
     unwrangle_api_key: str = ""         # ASPIRE_UNWRANGLE_API_KEY — Unwrangle supplier catalog scraper
+    # Per-project Unwrangle credit cap (Wave 5.1a-3 supplier cache).
+    # When blueprint_projects.unwrangle_credits_used >= this value, supplier_cache.py
+    # switches to force_serpapi_only=True (free SerpAPI HD path only). Default 25 =
+    # 250 credits over a 50-line blueprint (5 categories × 5 hits at 10 credits each).
+    unwrangle_per_project_cap: int = 25  # ASPIRE_UNWRANGLE_PER_PROJECT_CAP
 
     # --- Drew Blueprint Engine provider keys (Wave 1) ---
     llamaparse_api_key: str = ""        # ASPIRE_LLAMAPARSE_API_KEY — LlamaParse PDF parser (primary)
