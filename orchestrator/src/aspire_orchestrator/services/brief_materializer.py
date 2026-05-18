@@ -1,8 +1,8 @@
-"""Brief Materializer — refresh office / finance / thread brief caches.
+"""Brief Materializer — refresh office / finance / service / thread brief caches.
 
 Each public method reads recent memory + open candidates + pending approvals
 + recent receipts, builds a JSON projection of the brief, and UPSERTs the
-result into the appropriate *_brief_cache table (migration 098). The
+result into the appropriate *_brief_cache table (migration 098 / 101). The
 freshness_seq column is monotonically incremented on every refresh so
 readers can detect concurrent rebuilds.
 
@@ -13,15 +13,20 @@ Refresh policy:
 Visibility scope (Law #6):
   - build_office_brief filters memory by visibility_scope='office'
   - build_finance_brief filters memory by visibility_scope='finance'
+  - build_service_brief filters memory by visibility_scope='service'
   - build_thread_brief reads only memory that already exists in the thread
     (visibility scope already enforced by the writer at memory_objects layer)
 
 Receipts (Law #2):
-  Brief refreshes do NOT emit receipts directly — the cache row is a
-  derivation of memory_objects + candidates + receipts that already each have
-  receipts. Re-emitting on every refresh would multiply receipt volume by
-  ~3x without adding audit value. The build itself is read-only against
-  source-of-truth tables.
+  - build_office_brief / build_finance_brief / build_thread_brief do NOT emit
+    receipts directly — the cache is a derivation of source-of-truth tables
+    that each already have receipts. Re-emitting on every refresh would
+    multiply receipt volume by ~3x without adding audit value.
+  - build_service_brief DOES emit a receipt (action=memory.service_brief.built)
+    because the service brief aggregates across multiple actor domains (drew,
+    adam, dispatch) and the Law #2 gap was identified in the office-memory
+    review notes. Service brief receipts close that audit gap for the
+    highest-traffic new domain.
 """
 
 from __future__ import annotations
@@ -31,10 +36,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
+import uuid
+
 from aspire_orchestrator.schemas.memory_v1 import (
     FinanceBriefOut,
     OfficeBriefOut,
     ScopedIdentity,
+    ServiceBriefOut,
     ThreadBriefOut,
 )
 from aspire_orchestrator.services.memory_service import (
@@ -101,6 +109,29 @@ def _finance_row_to_out(row: dict[str, Any]) -> FinanceBriefOut:
         provider_health=row.get("provider_health") or {},
         aging_summary=row.get("aging_summary") or {},
         cash_narrative=row.get("cash_narrative"),
+        last_built_at=_to_dt(row["last_built_at"]) or _now_utc(),
+        freshness_seq=int(row.get("freshness_seq", 0)),
+    )
+
+
+def _service_row_to_out(row: dict[str, Any]) -> ServiceBriefOut:
+    brief_json = row.get("brief_json") or {}
+    return ServiceBriefOut(
+        tenant_id=UUID(row["tenant_id"]),
+        suite_id=UUID(row["suite_id"]),
+        office_id=UUID(row["office_id"]),
+        brief_text=row.get("brief_text"),
+        brief_json=brief_json,
+        due_now_count=int(row.get("due_now_count", 0)),
+        overdue_count=int(row.get("overdue_count", 0)),
+        pending_approval_count=int(row.get("pending_approval_count", 0)),
+        recent_receipts_count=int(row.get("recent_receipts_count", 0)),
+        # Service-specific counters — populated from brief_json on build; 0 on cache replay
+        recent_picks_count=int(brief_json.get("recent_picks_count", 0)),
+        recent_overrides_count=int(brief_json.get("recent_overrides_count", 0)),
+        open_pending_intents_count=int(brief_json.get("open_pending_intents_count", 0)),
+        recent_handoffs_count=int(brief_json.get("recent_handoffs_count", 0)),
+        active_threads_count=int(brief_json.get("active_threads_count", 0)),
         last_built_at=_to_dt(row["last_built_at"]) or _now_utc(),
         freshness_seq=int(row.get("freshness_seq", 0)),
     )
@@ -310,6 +341,190 @@ class BriefMaterializer:
         return out
 
     # ---------------------------------------------------------------------------
+    # Service brief (Wave 5.1b-4)
+    # ---------------------------------------------------------------------------
+
+    async def build_service_brief(
+        self,
+        office_id: UUID,
+        *,
+        scope: ScopedIdentity,
+        refresh: bool = False,
+    ) -> ServiceBriefOut:
+        """Build/refresh service_brief_cache for the given office.
+
+        Reads recent service-scope memory_objects (picks, overrides, pending
+        intents, handoff notes) + service-domain open candidates + pending
+        approvals + recent receipts. UPSERTs into service_brief_cache.
+
+        Law #2: Emits memory.service_brief.built receipt on every build/refresh.
+        Law #6: All queries scoped by tenant_id + suite_id + office_id.
+        Law #9: Only counts and IDs are logged; no content or PII.
+
+        Args:
+            office_id: Must match scope.office_id (Law #6 — fail closed).
+            scope:     ScopedIdentity carrying tenant_id / suite_id / office_id.
+            refresh:   If True, bypass the 60s TTL and force a rebuild.
+
+        Returns:
+            ServiceBriefOut — the freshly built (or cached) brief.
+
+        Raises:
+            MemoryServiceError: office_id / scope mismatch or DB upsert failure.
+        """
+        if str(office_id) != str(scope.office_id):
+            raise MemoryServiceError(
+                f"office_id={office_id} does not match scope.office_id={scope.office_id}",
+                code="TENANT_ISOLATION_VIOLATION",
+                tenant_id=scope.tenant_id,
+            )
+
+        cached = await self._fetch_service_cache(scope)
+        if cached and not refresh and self._is_fresh(cached.last_built_at):
+            return cached
+
+        # ------------------------------------------------------------------ #
+        # Aggregate source data                                                #
+        # ------------------------------------------------------------------ #
+        recent_picks = await self._fetch_service_decision_facts(
+            scope=scope, decision_type="material_pick", limit=5
+        )
+        recent_overrides = await self._fetch_service_decision_facts(
+            scope=scope, decision_type="material_override", limit=3
+        )
+        open_pending_intents = await self._fetch_service_pending_intents(
+            scope=scope, limit=20
+        )
+        recent_handoffs = await self._fetch_service_handoffs(scope=scope, limit=3)
+        active_threads_count = await self._fetch_service_active_threads_count(scope=scope)
+        open_candidates = await self._fetch_open_candidates(scope=scope, limit=20)
+        pending_approvals = await self._fetch_pending_approvals(scope=scope, limit=20)
+        recent_receipts = await self._fetch_recent_receipts(scope=scope, limit=10)
+
+        now = _now_utc()
+        due_now_count = self._count_due_now(open_candidates, now=now)
+        overdue_count = self._count_overdue(open_candidates, now=now)
+
+        # ------------------------------------------------------------------ #
+        # Build brief_json — counts embedded for cache replay                 #
+        # ------------------------------------------------------------------ #
+        brief_json: dict[str, Any] = {
+            "recent_picks": [self._project_memory(m) for m in recent_picks],
+            "recent_overrides": [self._project_memory(m) for m in recent_overrides],
+            "open_pending_intents": [self._project_memory(m) for m in open_pending_intents],
+            "recent_handoffs": [self._project_memory(m) for m in recent_handoffs],
+            "open_candidates": [self._project_candidate(c) for c in open_candidates],
+            "pending_approvals": [self._project_approval(a) for a in pending_approvals],
+            "recent_receipts": [self._project_receipt(r) for r in recent_receipts],
+            # Embed counts into brief_json so _service_row_to_out() can recover
+            # them on cache replay without re-querying source tables.
+            "recent_picks_count": len(recent_picks),
+            "recent_overrides_count": len(recent_overrides),
+            "open_pending_intents_count": len(open_pending_intents),
+            "recent_handoffs_count": len(recent_handoffs),
+            "active_threads_count": active_threads_count,
+        }
+        brief_text = self._render_service_text(
+            recent_picks_count=len(recent_picks),
+            recent_overrides_count=len(recent_overrides),
+            open_pending_intents_count=len(open_pending_intents),
+            recent_handoffs_count=len(recent_handoffs),
+            active_threads_count=active_threads_count,
+            open_candidate_count=len(open_candidates),
+            pending_approval_count=len(pending_approvals),
+            due_now_count=due_now_count,
+            overdue_count=overdue_count,
+        )
+
+        next_seq = (cached.freshness_seq + 1) if cached else 1
+        upsert_row = {
+            "tenant_id": str(scope.tenant_id),
+            "suite_id": str(scope.suite_id),
+            "office_id": str(office_id),
+            "brief_text": brief_text,
+            "brief_json": brief_json,
+            "due_now_count": due_now_count,
+            "overdue_count": overdue_count,
+            "pending_approval_count": len(pending_approvals),
+            "recent_receipts_count": len(recent_receipts),
+            "last_built_at": now.isoformat(),
+            "freshness_seq": next_seq,
+        }
+
+        # ------------------------------------------------------------------ #
+        # Upsert                                                               #
+        # ------------------------------------------------------------------ #
+        correlation_id = str(uuid.uuid4())
+        success = False
+        try:
+            row = await supabase_upsert(
+                "service_brief_cache",
+                upsert_row,
+                on_conflict="tenant_id,suite_id,office_id",
+            )
+            success = True
+        except SupabaseClientError as exc:
+            raise MemoryServiceError(
+                f"DB upsert service_brief_cache failed: {exc.detail}",
+                code="DB_UPSERT_FAILED",
+                tenant_id=scope.tenant_id,
+            ) from exc
+        finally:
+            # ---------------------------------------------------------------- #
+            # Law #2 — emit receipt for every service brief build attempt       #
+            # (success OR failure). Counts only — no PII, no content (Law #9). #
+            # ---------------------------------------------------------------- #
+            receipt_outcome = "ok" if success else "failed"
+            try:
+                from aspire_orchestrator.services.receipt_store import store_receipts
+                store_receipts([{
+                    "id": str(uuid.uuid4()),
+                    "correlation_id": correlation_id,
+                    "receipt_type": "memory.service_brief.built",
+                    "action_type": "memory.service_brief.built",
+                    "actor": "system",
+                    "actor_type": "SYSTEM",
+                    "risk_tier": "GREEN",
+                    "suite_id": str(scope.suite_id),
+                    "tenant_id": str(scope.tenant_id),
+                    "office_id": str(office_id),
+                    "outcome": receipt_outcome,
+                    "details": {
+                        "picks_count": len(recent_picks),
+                        "overrides_count": len(recent_overrides),
+                        "open_pending_intents_count": len(open_pending_intents),
+                        "recent_handoffs_count": len(recent_handoffs),
+                        "active_threads_count": active_threads_count,
+                        "open_candidates_count": len(open_candidates),
+                        "pending_approvals_count": len(pending_approvals),
+                        "recent_receipts_count": len(recent_receipts),
+                        "freshness_seq": next_seq,
+                    },
+                }])
+            except Exception as receipt_exc:
+                # Never let receipt emission crash the pipeline (but do log it)
+                logger.warning(
+                    "brief_materializer: service brief receipt emit failed: %s",
+                    receipt_exc,
+                )
+
+        out = _service_row_to_out(row)
+        # Law #9: log counts only, never the brief content
+        logger.info(
+            "brief_materializer: service brief built tenant=%s office=%s seq=%d "
+            "picks=%d overrides=%d pending_intents=%d handoffs=%d threads=%d",
+            str(scope.tenant_id),
+            str(office_id),
+            out.freshness_seq,
+            len(recent_picks),
+            len(recent_overrides),
+            len(open_pending_intents),
+            len(recent_handoffs),
+            active_threads_count,
+        )
+        return out
+
+    # ---------------------------------------------------------------------------
     # Thread brief
     # ---------------------------------------------------------------------------
 
@@ -429,6 +644,20 @@ class BriefMaterializer:
         except SupabaseClientError:
             return None
         return _finance_row_to_out(rows[0]) if rows else None
+
+    async def _fetch_service_cache(
+        self, scope: ScopedIdentity
+    ) -> ServiceBriefOut | None:
+        filter_str = (
+            f"tenant_id=eq.{scope.tenant_id}"
+            f"&suite_id=eq.{scope.suite_id}"
+            f"&office_id=eq.{scope.office_id}"
+        )
+        try:
+            rows = await supabase_select("service_brief_cache", filter_str, limit=1)
+        except SupabaseClientError:
+            return None
+        return _service_row_to_out(rows[0]) if rows else None
 
     async def _fetch_thread_cache(
         self, thread_id: UUID, scope: ScopedIdentity
@@ -569,6 +798,148 @@ class BriefMaterializer:
         except Exception:
             pass
         return {}
+
+    async def _fetch_service_decision_facts(
+        self,
+        *,
+        scope: ScopedIdentity,
+        decision_type: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch recent decision_fact memory objects filtered by a detail.decision_type tag.
+
+        decision_type is stored inside the detail JSONB column:
+          { "decision_type": "material_pick" | "material_override", ... }
+
+        PostgREST JSONB path filter: detail->>'decision_type'=eq.{decision_type}
+        maps to the PostgREST operator `detail->>decision_type=eq.{value}`.
+        """
+        filter_str = (
+            f"tenant_id=eq.{scope.tenant_id}"
+            f"&suite_id=eq.{scope.suite_id}"
+            f"&office_id=eq.{scope.office_id}"
+            f"&visibility_scope=eq.service"
+            f"&memory_type=eq.decision_fact"
+            f"&status=not.in.(rejected,superseded)"
+        )
+        try:
+            rows = await supabase_select(
+                "memory_objects",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=limit * 5,  # over-fetch then filter client-side (PostgREST JSONB filter workaround)
+            )
+        except SupabaseClientError as exc:
+            logger.warning(
+                "brief_materializer: decision_fact fetch failed type=%s scope=%s: %s",
+                decision_type,
+                scope.tenant_id,
+                exc.detail,
+            )
+            return []
+
+        # Client-side filter on detail.decision_type (avoids complex PostgREST encoding)
+        filtered = [
+            r for r in rows
+            if isinstance(r.get("detail"), dict)
+            and r["detail"].get("decision_type") == decision_type
+        ]
+        return filtered[:limit]
+
+    async def _fetch_service_pending_intents(
+        self,
+        *,
+        scope: ScopedIdentity,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch unresolved pending_intent memory objects in service scope."""
+        filter_str = (
+            f"tenant_id=eq.{scope.tenant_id}"
+            f"&suite_id=eq.{scope.suite_id}"
+            f"&office_id=eq.{scope.office_id}"
+            f"&visibility_scope=eq.service"
+            f"&memory_type=eq.pending_intent"
+            f"&status=not.in.(executed,rejected,superseded)"
+        )
+        try:
+            return await supabase_select(
+                "memory_objects",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=limit,
+            )
+        except SupabaseClientError as exc:
+            logger.warning(
+                "brief_materializer: pending_intent fetch failed scope=%s: %s",
+                scope.tenant_id,
+                exc.detail,
+            )
+            return []
+
+    async def _fetch_service_handoffs(
+        self,
+        *,
+        scope: ScopedIdentity,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch recent handoff_note memory objects with visibility_scope='service'."""
+        filter_str = (
+            f"tenant_id=eq.{scope.tenant_id}"
+            f"&suite_id=eq.{scope.suite_id}"
+            f"&office_id=eq.{scope.office_id}"
+            f"&visibility_scope=eq.service"
+            f"&memory_type=eq.handoff_note"
+            f"&status=not.in.(rejected,superseded)"
+        )
+        try:
+            return await supabase_select(
+                "memory_objects",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=limit,
+            )
+        except SupabaseClientError as exc:
+            logger.warning(
+                "brief_materializer: handoff_note fetch failed scope=%s: %s",
+                scope.tenant_id,
+                exc.detail,
+            )
+            return []
+
+    async def _fetch_service_active_threads_count(
+        self,
+        *,
+        scope: ScopedIdentity,
+    ) -> int:
+        """Count open project_thread / job_thread / property_thread with recent activity.
+
+        'Recent' = last_activity_at within 7 days. Returns 0 on any error
+        (best-effort counter — the brief is still valid without this).
+        """
+        cutoff = (_now_utc() - timedelta(days=7)).isoformat()
+        filter_str = (
+            f"tenant_id=eq.{scope.tenant_id}"
+            f"&suite_id=eq.{scope.suite_id}"
+            f"&office_id=eq.{scope.office_id}"
+            f"&thread_type=in.(project_thread,job_thread,property_thread)"
+            f"&status=eq.open"
+            f"&last_activity_at=gte.{cutoff}"
+        )
+        try:
+            rows = await supabase_select(
+                "threads",
+                filter_str,
+                order_by="last_activity_at.desc",
+                limit=500,  # practical cap; real COUNT(*) would require RPC
+            )
+            return len(rows)
+        except SupabaseClientError as exc:
+            logger.warning(
+                "brief_materializer: active_threads count failed scope=%s: %s",
+                scope.tenant_id,
+                exc.detail,
+            )
+            return 0
 
     async def _fetch_thread_row(
         self,
@@ -802,6 +1173,30 @@ class BriefMaterializer:
     ) -> str:
         return (
             f"Finance brief: {recent_memory_count} finance-scoped memory items, "
+            f"{open_candidate_count} open candidates "
+            f"({due_now_count} due now, {overdue_count} overdue), "
+            f"{pending_approval_count} pending approvals."
+        )
+
+    @staticmethod
+    def _render_service_text(
+        *,
+        recent_picks_count: int,
+        recent_overrides_count: int,
+        open_pending_intents_count: int,
+        recent_handoffs_count: int,
+        active_threads_count: int,
+        open_candidate_count: int,
+        pending_approval_count: int,
+        due_now_count: int,
+        overdue_count: int,
+    ) -> str:
+        return (
+            f"Service brief: {recent_picks_count} recent picks, "
+            f"{recent_overrides_count} overrides, "
+            f"{open_pending_intents_count} open pending intents, "
+            f"{recent_handoffs_count} recent handoffs, "
+            f"{active_threads_count} active threads, "
             f"{open_candidate_count} open candidates "
             f"({due_now_count} due now, {overdue_count} overdue), "
             f"{pending_approval_count} pending approvals."
