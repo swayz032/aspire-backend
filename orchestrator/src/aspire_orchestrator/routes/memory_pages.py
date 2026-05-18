@@ -48,6 +48,7 @@ from aspire_orchestrator.schemas.memory_v1 import (
     OfficeBriefOut,
     Provenance,
     ScopedIdentity,
+    ServiceBriefOut,
     ThreadBriefOut,
 )
 from aspire_orchestrator.services.brief_materializer import BriefMaterializer
@@ -790,6 +791,288 @@ async def finance_promote_artifact(
 
     logger.info(
         "finance_memory.promote_artifact: memory_id=%s trace_id=%s",
+        str(result.memory_id)[:8],
+        str(body.trace_id)[:8],
+    )
+    return PromoteArtifactResponse(memory_id=result.memory_id, status="promoted")
+
+
+# ---------------------------------------------------------------------------
+# ============================  SERVICE MEMORY  ============================
+# visibility_scope='service' on all writes — Wave 5.1b-3
+# ---------------------------------------------------------------------------
+
+
+@router.post("/v1/service-memory/get-memory-brief", response_model=ServiceBriefOut)
+async def service_get_memory_brief(
+    body: GetMemoryBriefRequest,
+    scope: ScopedIdentityFromHeaders = Depends(get_scope),
+) -> ServiceBriefOut:
+    """Return the service brief for the caller's office.
+
+    TODO: Wire build_service_brief() once the parallel Wave 5.1b-3 agent ships
+    that method on BriefMaterializer. Until then the route returns a stub so
+    downstream callers can exercise the auth/scope path.
+    """
+    _assert_tenant_match(scope, body.scope)
+
+    try:
+        materializer = BriefMaterializer()
+        return await materializer.build_service_brief(
+            office_id=body.scope.office_id,
+            scope=body.scope,
+        )
+    except AttributeError:
+        # Stub path: build_service_brief not yet on BriefMaterializer.
+        logger.warning(
+            "service_memory.get_memory_brief: build_service_brief not yet wired — returning stub"
+        )
+        return ServiceBriefOut(
+            tenant_id=body.scope.tenant_id,
+            suite_id=body.scope.suite_id,
+            office_id=body.scope.office_id,
+            brief_text=None,
+            brief_json={"placeholder": "build_service_brief not yet wired"},
+            last_built_at=datetime.now(tz=timezone.utc),
+        )
+    except MemoryServiceError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)})
+    except Exception as exc:
+        logger.exception("service_memory.get_memory_brief error: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail={"code": "BRIEF_BUILD_FAILED", "message": "Service brief build failed"})
+
+
+@router.post("/v1/service-memory/search-memory", response_model=SearchMemoryResponse)
+async def service_search_memory(
+    body: SearchMemoryRequest,
+    scope: ScopedIdentityFromHeaders = Depends(get_scope),
+) -> SearchMemoryResponse:
+    """Search service memory — wraps MemorySearchService with visibility_scope='service'.
+
+    The page route forces visibility_scope='service' regardless of caller intent.
+    Cross-scope searches must use /v1/memory/search directly.
+    """
+    _assert_tenant_match(scope, body.scope)
+
+    canonical_req = SpineMemorySearchRequest(
+        tenant_id=body.scope.tenant_id,
+        suite_id=body.scope.suite_id,
+        office_id=body.scope.office_id,
+        query_text=body.q,
+        entity_id=body.entity_id,
+        thread_id=body.thread_id,
+        memory_types=body.memory_type,  # type: ignore[arg-type]
+        visibility_scope="service",  # forced for service page
+        limit=body.limit,
+    )
+
+    try:
+        result = await MemorySearchService().search(canonical_req, scope=body.scope)
+    except MemoryServiceError as exc:
+        if exc.code == "TENANT_ISOLATION_VIOLATION":
+            raise HTTPException(status_code=403, detail={"code": exc.code, "message": str(exc)})
+        raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)})
+    except Exception as exc:
+        logger.exception("service_memory.search_memory error: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "MEMORY_SEARCH_FAILED", "message": "Service memory search failed"},
+        )
+
+    logger.info(
+        "service_memory.search_memory: q=%r tenant=%s items=%d",
+        body.q[:40] if body.q else "",
+        str(scope.tenant_id)[:8],
+        len(result.items),
+    )
+
+    return SearchMemoryResponse(
+        results=result.items,
+        total=result.total or len(result.items),
+        note=None,
+    )
+
+
+@router.post("/v1/service-memory/get-thread-memory", response_model=GetThreadMemoryResponse)
+async def service_get_thread_memory(
+    body: GetThreadMemoryRequest,
+    scope: ScopedIdentityFromHeaders = Depends(get_scope),
+) -> GetThreadMemoryResponse:
+    """List memory objects for a thread and return the thread brief (service scope)."""
+    _assert_tenant_match(scope, body.scope)
+
+    try:
+        svc = MemoryService()
+        objects, _ = await svc.list_by_thread(
+            body.thread_id,
+            scope=body.scope,
+            limit=body.limit,
+        )
+
+        brief: ThreadBriefOut | None = None
+        try:
+            materializer = BriefMaterializer()
+            brief = await materializer.build_thread_brief(
+                thread_id=body.thread_id,
+                scope=body.scope,
+            )
+        except Exception as brief_exc:
+            logger.warning(
+                "service_memory.get_thread_memory: brief fetch failed (non-fatal): %s",
+                type(brief_exc).__name__,
+            )
+
+    except MemoryServiceError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)})
+    except Exception as exc:
+        logger.exception("service_memory.get_thread_memory error: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail={"code": "THREAD_MEMORY_FAILED", "message": "Thread memory fetch failed"})
+
+    return GetThreadMemoryResponse(
+        objects=objects,
+        brief=brief,
+        total=len(objects),
+    )
+
+
+@router.post("/v1/service-memory/create-handoff-note", response_model=CreateHandoffNoteResponse)
+async def service_create_handoff_note(
+    body: CreateHandoffNoteRequest,
+    scope: ScopedIdentityFromHeaders = Depends(get_scope),
+) -> CreateHandoffNoteResponse:
+    """Write a handoff_note memory object with visibility_scope='service'."""
+    _assert_tenant_match(scope, body.scope)
+
+    provenance = _build_provenance(
+        correlation_id=body.correlation_id,
+        trace_id=body.trace_id,
+        source_agent=body.source_agent,
+    )
+
+    obj_in = MemoryObjectIn(
+        scope=body.scope,
+        provenance=provenance,
+        memory_type="handoff_note",
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        thread_id=body.thread_id,
+        title=body.title,
+        summary=body.summary,
+        detail={},
+        visibility_scope="service",
+        idempotency_key=body.idempotency_key,
+    )
+
+    try:
+        svc = MemoryService()
+        result = await svc.write(obj_in, scope=body.scope)
+    except MemoryServiceError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)})
+    except Exception as exc:
+        logger.exception("service_memory.create_handoff_note error: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail={"code": "WRITE_FAILED", "message": "Service handoff note write failed"})
+
+    logger.info(
+        "service_memory.create_handoff_note: memory_id=%s trace_id=%s",
+        str(result.memory_id)[:8],
+        str(body.trace_id)[:8],
+    )
+    return CreateHandoffNoteResponse(memory_id=result.memory_id, status="success")
+
+
+@router.post("/v1/service-memory/save-session-summary", response_model=SaveSessionSummaryResponse)
+async def service_save_session_summary(
+    body: SaveSessionSummaryRequest,
+    scope: ScopedIdentityFromHeaders = Depends(get_scope),
+) -> SaveSessionSummaryResponse:
+    """Write a session_summary memory object with visibility_scope='service'."""
+    _assert_tenant_match(scope, body.scope)
+
+    provenance = _build_provenance(
+        correlation_id=body.correlation_id,
+        trace_id=body.trace_id,
+        source_agent=body.source_agent,
+    )
+
+    detail: dict[str, Any] = {}
+    if body.session_duration_seconds is not None:
+        detail["session_duration_seconds"] = body.session_duration_seconds
+
+    obj_in = MemoryObjectIn(
+        scope=body.scope,
+        provenance=provenance,
+        memory_type="session_summary",
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        thread_id=body.thread_id,
+        title=body.title,
+        summary=body.summary,
+        detail=detail,
+        visibility_scope="service",
+        idempotency_key=body.idempotency_key,
+    )
+
+    try:
+        svc = MemoryService()
+        result = await svc.write(obj_in, scope=body.scope)
+    except MemoryServiceError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)})
+    except Exception as exc:
+        logger.exception("service_memory.save_session_summary error: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail={"code": "WRITE_FAILED", "message": "Service session summary write failed"})
+
+    logger.info(
+        "service_memory.save_session_summary: memory_id=%s trace_id=%s",
+        str(result.memory_id)[:8],
+        str(body.trace_id)[:8],
+    )
+    return SaveSessionSummaryResponse(memory_id=result.memory_id, status="success")
+
+
+@router.post("/v1/service-memory/promote-artifact", response_model=PromoteArtifactResponse)
+async def service_promote_artifact(
+    body: PromoteArtifactRequest,
+    scope: ScopedIdentityFromHeaders = Depends(get_scope),
+) -> PromoteArtifactResponse:
+    """Promote an artifact with visibility_scope='service', status='promoted'."""
+    _assert_tenant_match(scope, body.scope)
+
+    provenance = _build_provenance(
+        correlation_id=body.correlation_id,
+        trace_id=body.trace_id,
+        source_agent=body.source_agent,
+        artifact_origin=body.artifact_origin,
+    )
+
+    now = datetime.now(tz=timezone.utc)
+    obj_in = MemoryObjectIn(
+        scope=body.scope,
+        provenance=provenance,
+        memory_type="artifact_reference",
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        thread_id=body.thread_id,
+        title=body.title,
+        summary=body.summary,
+        detail={"artifact_origin": body.artifact_origin},
+        visibility_scope="service",
+        status="promoted",
+        promoted_at=now,
+        linked_artifact_ids=body.linked_artifact_ids,
+        idempotency_key=body.idempotency_key,
+    )
+
+    try:
+        svc = MemoryService()
+        result = await svc.write(obj_in, scope=body.scope)
+    except MemoryServiceError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)})
+    except Exception as exc:
+        logger.exception("service_memory.promote_artifact error: %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail={"code": "WRITE_FAILED", "message": "Service artifact promotion failed"})
+
+    logger.info(
+        "service_memory.promote_artifact: memory_id=%s trace_id=%s",
         str(result.memory_id)[:8],
         str(body.trace_id)[:8],
     )
