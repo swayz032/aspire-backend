@@ -11,6 +11,8 @@ class TruthClass(str, Enum):
     FIELD_CONFIRMED = "field_confirmed"
     VENDOR_CONFIRMED = "vendor_confirmed"
     PERMIT_CONFIRMED = "permit_confirmed"
+    USER_SKIPPED = "user_skipped"      # Wave 5.1a-5: user explicitly skipped this material
+    USER_OVERRIDDEN = "user_overridden"  # Wave 5.1a-5: user provided an override pick
 
 
 class TariffFlag(str, Enum):

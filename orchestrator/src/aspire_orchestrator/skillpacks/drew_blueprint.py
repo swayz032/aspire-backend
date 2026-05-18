@@ -125,6 +125,8 @@ class Drew:
             "SEE": self.see,
             "REASON": self.reason,
             "PROCURE": self.procure,
+            "MATERIAL_OVERRIDE": self.material_override,
+            "MATERIAL_SKIP": self.material_skip,
         }
         handler = dispatch.get(task)
         if handler is None:
@@ -595,6 +597,195 @@ class Drew:
         final_state = "done" if result.get("status") == "ok" else "failed"
         _run_async_set_stage(
             project_id=project_id, suite_id=suite_id, stage="procure", state=final_state
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Wave 5.1a-5: MATERIAL_OVERRIDE (YELLOW — user replaces a Drew pick)
+    # ------------------------------------------------------------------
+    def material_override(
+        self, payload: dict[str, Any], correlation_id: str
+    ) -> dict[str, Any]:
+        """User overrides a Drew-sourced material pick.
+
+        Payload keys:
+          - project_id: UUID str
+          - material_id: UUID str  — the original blueprint_materials row to supersede
+          - suite_id: UUID str
+          - override: dict — partial material fields (spec_text, quantity, unit,
+                             supplier_name, supplier_id, unit_price, notes)
+          - reason: str  — 'spec_mismatch' | 'vendor_pref' | 'price' |
+                           'availability' | 'other'
+
+        Law #2 (append-only): inserts a NEW blueprint_materials row with
+          supersedes_id = original material_id and truth = "user_overridden".
+          Never UPDATEs the original row.
+        Law #6: suite_id verified on both load and insert.
+        Law #9: supplier_name / notes truncated to <=80 chars in receipt metadata.
+        """
+        for key in ("project_id", "material_id", "suite_id"):
+            if key not in payload:
+                self._emit_receipt(
+                    correlation_id=correlation_id,
+                    event_type="blueprint.material_pick.override",
+                    status="failed",
+                    inputs={"task": "MATERIAL_OVERRIDE", "missing_key": key},
+                )
+                return {
+                    "status": "error",
+                    "task": "MATERIAL_OVERRIDE",
+                    "reason": f"missing payload key: {key}",
+                }
+
+        project_id: str = str(payload["project_id"])
+        material_id: str = str(payload["material_id"])
+        suite_id: str = str(payload["suite_id"])
+        override: dict[str, Any] = dict(payload.get("override") or {})
+        reason: str = str(payload.get("reason") or "other")
+
+        if not override:
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.material_pick.override",
+                status="failed",
+                inputs={"task": "MATERIAL_OVERRIDE", "project_id": project_id,
+                        "material_id": material_id, "suite_id": suite_id},
+            )
+            return {
+                "status": "error",
+                "task": "MATERIAL_OVERRIDE",
+                "reason": "override must include at least one field",
+            }
+
+        try:
+            result = _run_async_material_override(
+                project_id=project_id,
+                material_id=material_id,
+                suite_id=suite_id,
+                override=override,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.material_pick.override",
+                status="failed",
+                inputs={
+                    "task": "MATERIAL_OVERRIDE",
+                    "project_id": project_id,
+                    "material_id": material_id,
+                    "suite_id": suite_id,
+                },
+                metadata={"error": type(exc).__name__, "message": str(exc)[:200]},
+            )
+            return {
+                "status": "error",
+                "task": "MATERIAL_OVERRIDE",
+                "reason": f"override failed: {type(exc).__name__}",
+            }
+
+        self._emit_receipt(
+            correlation_id=correlation_id,
+            event_type="blueprint.material_pick.override",
+            status=result.get("status", "ok"),
+            inputs={
+                "task": "MATERIAL_OVERRIDE",
+                "project_id": project_id,
+                "material_id": material_id,
+                "suite_id": suite_id,
+                "reason": reason,
+            },
+            metadata={
+                "new_row_id": result.get("new_row_id"),
+                "supersedes_id": material_id,
+                # Law #9: truncate free-text fields
+                "supplier_name": str(override.get("supplier_name") or "")[:80],
+                "notes": str(override.get("notes") or "")[:80],
+            },
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Wave 5.1a-5: MATERIAL_SKIP (YELLOW — user skips a Drew pick)
+    # ------------------------------------------------------------------
+    def material_skip(
+        self, payload: dict[str, Any], correlation_id: str
+    ) -> dict[str, Any]:
+        """User skips a Drew-sourced material (won't propagate to bundle/estimate).
+
+        Payload keys:
+          - project_id: UUID str
+          - material_id: UUID str  — original row to supersede
+          - suite_id: UUID str
+          - reason: str (optional, default "user_skipped")
+
+        Law #2 (append-only): inserts a NEW blueprint_materials row with
+          supersedes_id = original material_id and truth = "user_skipped".
+          Never UPDATEs the original row.
+        Law #6: suite_id verified on both load and insert.
+        """
+        for key in ("project_id", "material_id", "suite_id"):
+            if key not in payload:
+                self._emit_receipt(
+                    correlation_id=correlation_id,
+                    event_type="blueprint.material_pick.skip",
+                    status="failed",
+                    inputs={"task": "MATERIAL_SKIP", "missing_key": key},
+                )
+                return {
+                    "status": "error",
+                    "task": "MATERIAL_SKIP",
+                    "reason": f"missing payload key: {key}",
+                }
+
+        project_id: str = str(payload["project_id"])
+        material_id: str = str(payload["material_id"])
+        suite_id: str = str(payload["suite_id"])
+        reason: str = str(payload.get("reason") or "user_skipped")
+
+        try:
+            result = _run_async_material_skip(
+                project_id=project_id,
+                material_id=material_id,
+                suite_id=suite_id,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.material_pick.skip",
+                status="failed",
+                inputs={
+                    "task": "MATERIAL_SKIP",
+                    "project_id": project_id,
+                    "material_id": material_id,
+                    "suite_id": suite_id,
+                },
+                metadata={"error": type(exc).__name__, "message": str(exc)[:200]},
+            )
+            return {
+                "status": "error",
+                "task": "MATERIAL_SKIP",
+                "reason": f"skip failed: {type(exc).__name__}",
+            }
+
+        self._emit_receipt(
+            correlation_id=correlation_id,
+            event_type="blueprint.material_pick.skip",
+            status=result.get("status", "ok"),
+            inputs={
+                "task": "MATERIAL_SKIP",
+                "project_id": project_id,
+                "material_id": material_id,
+                "suite_id": suite_id,
+                "reason": reason,
+            },
+            metadata={
+                "new_row_id": result.get("new_row_id"),
+                "supersedes_id": material_id,
+            },
         )
         return result
 
@@ -1726,3 +1917,294 @@ async def _async_procure_pipeline(
         "supplier_match_rate": supplier_match_rate,
         "missing_inputs_added": missing_inputs_added,
     }
+
+
+# ---------------------------------------------------------------------------
+# Wave 5.1a-5: async helpers for MATERIAL_OVERRIDE + MATERIAL_SKIP
+# ---------------------------------------------------------------------------
+
+async def _async_material_override(
+    *,
+    project_id: str,
+    material_id: str,
+    suite_id: str,
+    override: dict[str, Any],
+    reason: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Append-only override: insert new blueprint_materials row superseding the original.
+
+    Law #2: original row is NEVER updated. New row gets truth=user_overridden,
+    supersedes_id=original material_id.
+    Law #6: verifies original row belongs to suite_id before inserting.
+    Law #9: supplier_name/notes truncated in receipt (caller enforces).
+    """
+    import logging as _logging
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+
+    _log = _logging.getLogger(__name__)
+
+    from aspire_orchestrator.services.supabase_client import (
+        SupabaseClientError,
+        supabase_select,
+        supabase_insert,
+    )
+
+    # Verify original row exists and belongs to this suite (Law #6)
+    try:
+        original_rows = await supabase_select(
+            "blueprint_materials",
+            filters=f"id=eq.{material_id}&project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            limit=1,
+        )
+    except SupabaseClientError as exc:
+        raise RuntimeError(
+            f"Failed to load original material {material_id[:8]}: {exc}"
+        ) from exc
+
+    if not original_rows:
+        raise RuntimeError(
+            f"Material {material_id[:8]} not found or not owned by suite {suite_id[:8]}"
+        )
+
+    original: dict[str, Any] = original_rows[0]
+    now_iso = _dt.now(_tz.utc).isoformat()
+    new_id = str(_uuid.uuid4())
+
+    # Build new row — copy safe fields from original, apply override fields
+    new_row: dict[str, Any] = {
+        "id": new_id,
+        "suite_id": suite_id,
+        "office_id": original.get("office_id"),
+        "project_id": project_id,
+        # Carry forward original line_item unless caller explicitly overrides spec_text
+        "line_item": str(override.get("spec_text") or original.get("line_item") or ""),
+        "quantity": (
+            float(override["quantity"])
+            if override.get("quantity") is not None
+            else original.get("quantity")
+        ),
+        "unit": str(override["unit"]) if override.get("unit") else original.get("unit"),
+        "truth": "user_overridden",
+        "tariff_flag": original.get("tariff_flag", "none"),
+        # Allow caller to set supplier fields; fall back to original
+        "supplier_id": str(override.get("supplier_id") or override.get("supplier_name") or "")[:60] or original.get("supplier_id"),
+        "supersedes_id": material_id,
+        "created_at": now_iso,
+    }
+
+    try:
+        await supabase_insert("blueprint_materials", new_row)
+    except SupabaseClientError as exc:
+        raise RuntimeError(
+            f"Failed to insert override row for material {material_id[:8]}: {exc}"
+        ) from exc
+
+    _log.info(
+        "drew.material_override: project=%s original=%s new=%s suite=%s corr=%s",
+        project_id[:8],
+        material_id[:8],
+        new_id[:8],
+        suite_id[:8],
+        correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
+    )
+
+    return {
+        "status": "ok",
+        "task": "MATERIAL_OVERRIDE",
+        "project_id": project_id,
+        "material_id": material_id,
+        "new_row_id": new_id,
+        "supersedes_id": material_id,
+    }
+
+
+async def _async_material_skip(
+    *,
+    project_id: str,
+    material_id: str,
+    suite_id: str,
+    reason: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Append-only skip: insert new blueprint_materials row superseding the original.
+
+    Law #2: original row is NEVER updated. New row gets truth=user_skipped,
+    supersedes_id=original material_id.
+    Law #6: verifies original row belongs to suite_id before inserting.
+    """
+    import logging as _logging
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+
+    _log = _logging.getLogger(__name__)
+
+    from aspire_orchestrator.services.supabase_client import (
+        SupabaseClientError,
+        supabase_select,
+        supabase_insert,
+    )
+
+    # Verify original row exists and belongs to this suite (Law #6)
+    try:
+        original_rows = await supabase_select(
+            "blueprint_materials",
+            filters=f"id=eq.{material_id}&project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            limit=1,
+        )
+    except SupabaseClientError as exc:
+        raise RuntimeError(
+            f"Failed to load original material {material_id[:8]}: {exc}"
+        ) from exc
+
+    if not original_rows:
+        raise RuntimeError(
+            f"Material {material_id[:8]} not found or not owned by suite {suite_id[:8]}"
+        )
+
+    original: dict[str, Any] = original_rows[0]
+    now_iso = _dt.now(_tz.utc).isoformat()
+    new_id = str(_uuid.uuid4())
+
+    new_row: dict[str, Any] = {
+        "id": new_id,
+        "suite_id": suite_id,
+        "office_id": original.get("office_id"),
+        "project_id": project_id,
+        "line_item": original.get("line_item", ""),
+        "quantity": original.get("quantity"),
+        "unit": original.get("unit"),
+        "truth": "user_skipped",
+        "tariff_flag": original.get("tariff_flag", "none"),
+        "supplier_id": None,
+        "supersedes_id": material_id,
+        "created_at": now_iso,
+    }
+
+    try:
+        await supabase_insert("blueprint_materials", new_row)
+    except SupabaseClientError as exc:
+        raise RuntimeError(
+            f"Failed to insert skip row for material {material_id[:8]}: {exc}"
+        ) from exc
+
+    _log.info(
+        "drew.material_skip: project=%s original=%s new=%s suite=%s reason=%s corr=%s",
+        project_id[:8],
+        material_id[:8],
+        new_id[:8],
+        suite_id[:8],
+        reason[:40],
+        correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
+    )
+
+    return {
+        "status": "ok",
+        "task": "MATERIAL_SKIP",
+        "project_id": project_id,
+        "material_id": material_id,
+        "new_row_id": new_id,
+        "supersedes_id": material_id,
+    }
+
+
+def _run_async_material_override(
+    *,
+    project_id: str,
+    material_id: str,
+    suite_id: str,
+    override: dict[str, Any],
+    reason: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Sync bridge for _async_material_override (mirrors _run_async_procure pattern)."""
+    import asyncio as _asyncio
+
+    try:
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    _asyncio.run,
+                    _async_material_override(
+                        project_id=project_id,
+                        material_id=material_id,
+                        suite_id=suite_id,
+                        override=override,
+                        reason=reason,
+                        correlation_id=correlation_id,
+                    ),
+                )
+                return future.result(timeout=10)
+        return loop.run_until_complete(
+            _async_material_override(
+                project_id=project_id,
+                material_id=material_id,
+                suite_id=suite_id,
+                override=override,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        )
+    except Exception:
+        return _asyncio.run(
+            _async_material_override(
+                project_id=project_id,
+                material_id=material_id,
+                suite_id=suite_id,
+                override=override,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        )
+
+
+def _run_async_material_skip(
+    *,
+    project_id: str,
+    material_id: str,
+    suite_id: str,
+    reason: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Sync bridge for _async_material_skip (mirrors _run_async_procure pattern)."""
+    import asyncio as _asyncio
+
+    try:
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    _asyncio.run,
+                    _async_material_skip(
+                        project_id=project_id,
+                        material_id=material_id,
+                        suite_id=suite_id,
+                        reason=reason,
+                        correlation_id=correlation_id,
+                    ),
+                )
+                return future.result(timeout=10)
+        return loop.run_until_complete(
+            _async_material_skip(
+                project_id=project_id,
+                material_id=material_id,
+                suite_id=suite_id,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        )
+    except Exception:
+        return _asyncio.run(
+            _async_material_skip(
+                project_id=project_id,
+                material_id=material_id,
+                suite_id=suite_id,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        )
+
