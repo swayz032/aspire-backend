@@ -13,6 +13,10 @@ Wave 5.1a-5 — verifies:
   10. Error path: supabase_select raises → error result + receipt emitted
   11. Error path: supabase_insert raises → error result + receipt emitted
   12. Evil: cross-tenant material_id (suite_id mismatch) → error + receipt, no insert
+
+Patching note: supabase_select/insert/update are imported inside the async helpers
+via local `from ... import` statements, so we patch the canonical module
+`aspire_orchestrator.services.supabase_client` rather than `drew_blueprint`.
 """
 from __future__ import annotations
 
@@ -94,6 +98,10 @@ def _make_drew() -> Any:
 
 @pytest.fixture(autouse=True)
 def patch_deps():
+    """Patch at the canonical module level (supabase_client) because the async
+    helpers import supabase_select/insert/update via local `from ... import`
+    inside each function body. patch.object on drew_blueprint won't intercept
+    those calls — patching supabase_client module attributes will."""
     _reset()
     with (
         patch(
@@ -119,23 +127,22 @@ def patch_deps():
 # ── test 1: MATERIAL_OVERRIDE inserts append-only row ──────────────────────
 
 def test_material_override_inserts_new_row():
-    """MATERIAL_OVERRIDE must insert a new blueprint_materials row (Law #2 append-only)."""
+    """MATERIAL_OVERRIDE must insert a new blueprint_materials row (Law #2 append-only).
+    Patching at supabase_client module level because helpers use local `from ... import`.
+    """
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
 
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_mock_supabase_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_mock_supabase_insert)),
-    ):
-        result = asyncio.run(
-            mod._async_material_override(
-                project_id=PROJECT_ID,
-                material_id=MATERIAL_ID,
-                suite_id=SUITE_A,
-                override={"spec_text": "8in PVC schedule 80 pipe", "quantity": 120.0, "unit": "ft"},
-                reason="spec_mismatch",
-                correlation_id=CORR_ID,
-            )
+    # patch_deps fixture already patches supabase_client — use it directly
+    result = asyncio.run(
+        mod._async_material_override(
+            project_id=PROJECT_ID,
+            material_id=MATERIAL_ID,
+            suite_id=SUITE_A,
+            override={"spec_text": "8in PVC schedule 80 pipe", "quantity": 120.0, "unit": "ft"},
+            reason="spec_mismatch",
+            correlation_id=CORR_ID,
         )
+    )
 
     assert result["status"] == "ok"
     assert result["supersedes_id"] == MATERIAL_ID
@@ -159,19 +166,15 @@ def test_material_skip_inserts_new_row():
     """MATERIAL_SKIP must insert a new blueprint_materials row (Law #2 append-only)."""
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
 
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_mock_supabase_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_mock_supabase_insert)),
-    ):
-        result = asyncio.run(
-            mod._async_material_skip(
-                project_id=PROJECT_ID,
-                material_id=MATERIAL_ID,
-                suite_id=SUITE_A,
-                reason="price",
-                correlation_id=CORR_ID,
-            )
+    result = asyncio.run(
+        mod._async_material_skip(
+            project_id=PROJECT_ID,
+            material_id=MATERIAL_ID,
+            suite_id=SUITE_A,
+            reason="price",
+            correlation_id=CORR_ID,
         )
+    )
 
     assert result["status"] == "ok"
     assert result["supersedes_id"] == MATERIAL_ID
@@ -316,32 +319,25 @@ def test_material_skip_missing_key_returns_error(missing_key: str):
 # ── test 5: cross-tenant — suite_B cannot touch suite_A material (Law #6) ──
 
 def test_material_override_cross_tenant_blocked():
-    """Material belonging to suite_A must not be overrideable by suite_B (Law #6)."""
+    """Material belonging to suite_A must not be overrideable by suite_B (Law #6).
+    patch_deps fixture sets up _mock_supabase_select which returns [] for any
+    suite_id != SUITE_A — so suite_B query will return empty and raise RuntimeError.
+    """
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
 
-    async def _cross_tenant_select(
-        table: str, *, filters: str = "", limit: int | None = None, **_: Any
-    ) -> list[dict[str, Any]]:
-        # suite_B query returns empty — material not visible (existence not leaked)
-        if f"suite_id=eq.{SUITE_B}" in filters:
-            return []
-        return []
-
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_cross_tenant_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_mock_supabase_insert)),
-    ):
-        with pytest.raises(RuntimeError, match="not found or not owned"):
-            asyncio.run(
-                mod._async_material_override(
-                    project_id=PROJECT_ID,
-                    material_id=MATERIAL_ID,
-                    suite_id=SUITE_B,  # wrong suite
-                    override={"quantity": 1},
-                    reason="other",
-                    correlation_id=CORR_ID,
-                )
+    # patch_deps already patches supabase_client.supabase_select with _mock_supabase_select
+    # which only returns the ORIGINAL_ROW for SUITE_A. SUITE_B gets [].
+    with pytest.raises(RuntimeError, match="not found or not owned"):
+        asyncio.run(
+            mod._async_material_override(
+                project_id=PROJECT_ID,
+                material_id=MATERIAL_ID,
+                suite_id=SUITE_B,  # wrong suite — _mock_supabase_select returns []
+                override={"quantity": 1},
+                reason="other",
+                correlation_id=CORR_ID,
             )
+        )
 
     # No inserts performed
     assert len(_inserted_rows) == 0
@@ -372,22 +368,20 @@ def test_material_override_empty_override_returns_error():
 # ── test 7: spec_text maps to line_item on new row ────────────────────────
 
 def test_override_spec_text_becomes_line_item():
+    """spec_text in override payload becomes the line_item of the new row."""
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
 
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_mock_supabase_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_mock_supabase_insert)),
-    ):
-        asyncio.run(
-            mod._async_material_override(
-                project_id=PROJECT_ID,
-                material_id=MATERIAL_ID,
-                suite_id=SUITE_A,
-                override={"spec_text": "Copper 3/4in type L"},
-                reason="spec_mismatch",
-                correlation_id=CORR_ID,
-            )
+    # patch_deps provides supabase_client patches via autouse fixture
+    asyncio.run(
+        mod._async_material_override(
+            project_id=PROJECT_ID,
+            material_id=MATERIAL_ID,
+            suite_id=SUITE_A,
+            override={"spec_text": "Copper 3/4in type L"},
+            reason="spec_mismatch",
+            correlation_id=CORR_ID,
         )
+    )
 
     inserts = [r for (t, r) in _inserted_rows if t == "blueprint_materials"]
     assert inserts[0]["line_item"] == "Copper 3/4in type L"
@@ -396,33 +390,32 @@ def test_override_spec_text_becomes_line_item():
 # ── test 8: original row is NEVER updated ─────────────────────────────────
 
 def test_no_update_on_original_row():
-    """Law #2: append-only. supabase_update must NOT be called by override or skip."""
+    """Law #2: append-only. supabase_update must NOT be called by override or skip.
+    patch_deps patches supabase_client.supabase_update with _mock_supabase_update
+    which captures all calls into _updated_rows.
+    """
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
 
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_mock_supabase_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_mock_supabase_insert)),
-        patch.object(mod, "supabase_update", new=AsyncMock(side_effect=_mock_supabase_update)),
-    ):
-        asyncio.run(
-            mod._async_material_override(
-                project_id=PROJECT_ID,
-                material_id=MATERIAL_ID,
-                suite_id=SUITE_A,
-                override={"quantity": 50},
-                reason="price",
-                correlation_id=CORR_ID,
-            )
+    # patch_deps autouse fixture already patches supabase_client — just call directly
+    asyncio.run(
+        mod._async_material_override(
+            project_id=PROJECT_ID,
+            material_id=MATERIAL_ID,
+            suite_id=SUITE_A,
+            override={"quantity": 50},
+            reason="price",
+            correlation_id=CORR_ID,
         )
-        asyncio.run(
-            mod._async_material_skip(
-                project_id=PROJECT_ID,
-                material_id=MATERIAL_ID,
-                suite_id=SUITE_A,
-                reason="price",
-                correlation_id=CORR_ID,
-            )
+    )
+    asyncio.run(
+        mod._async_material_skip(
+            project_id=PROJECT_ID,
+            material_id=MATERIAL_ID,
+            suite_id=SUITE_A,
+            reason="price",
+            correlation_id=CORR_ID,
         )
+    )
 
     mat_updates = [u for u in _updated_rows if u[0] == "blueprint_materials"]
     assert len(mat_updates) == 0, (
@@ -447,18 +440,22 @@ def test_unknown_task_still_denied():
     assert len(deny_receipts) == 1
 
 
-# ── test 10: supabase_select raises → error result + receipt ──────────────
+# ── test 10: supabase_select raises → RuntimeError propagates ─────────────
 
 def test_override_select_error_emits_failure_receipt():
+    """When supabase_select raises SupabaseClientError, _async_material_override
+    must re-raise as RuntimeError (which the sync handler catches and converts
+    to an error result with receipt). Patched at supabase_client module level.
+    """
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
     from aspire_orchestrator.services.supabase_client import SupabaseClientError
 
     async def _raising_select(table: str, **_: Any) -> list[dict[str, Any]]:
         raise SupabaseClientError("DB unavailable")
 
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_raising_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_mock_supabase_insert)),
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new=AsyncMock(side_effect=_raising_select),
     ):
         with pytest.raises(RuntimeError, match="Failed to load original material"):
             asyncio.run(
@@ -471,22 +468,25 @@ def test_override_select_error_emits_failure_receipt():
                     correlation_id=CORR_ID,
                 )
             )
-    # No inserts should have happened
+    # No inserts should have happened (select failed before insert)
     assert len(_inserted_rows) == 0
 
 
-# ── test 11: supabase_insert raises → error result + receipt ─────────────
+# ── test 11: supabase_insert raises → RuntimeError propagates ────────────
 
 def test_override_insert_error_propagates():
+    """When supabase_insert raises SupabaseClientError, _async_material_override
+    must re-raise as RuntimeError. Patched at supabase_client module level.
+    """
     import aspire_orchestrator.skillpacks.drew_blueprint as mod
     from aspire_orchestrator.services.supabase_client import SupabaseClientError
 
     async def _failing_insert(table: str, data: dict[str, Any]) -> dict[str, Any]:
         raise SupabaseClientError("write failed")
 
-    with (
-        patch.object(mod, "supabase_select", new=AsyncMock(side_effect=_mock_supabase_select)),
-        patch.object(mod, "supabase_insert", new=AsyncMock(side_effect=_failing_insert)),
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_insert",
+        new=AsyncMock(side_effect=_failing_insert),
     ):
         with pytest.raises(RuntimeError, match="Failed to insert override row"):
             asyncio.run(
