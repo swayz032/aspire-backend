@@ -2269,72 +2269,114 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     },
                 })
 
-            # Step 1: GPT-5.2 parses invoice intent from natural language
-            # (only reached when the fast-path heuristic did NOT match —
-            # i.e. the user gave amounts, dates, multi-field structure)
-            try:
-                parse_prompt = (
-                    "You are Quinn, an invoicing specialist. Extract structured invoice data from the user's request.\n\n"
-                    f"Request: {full_task}\n\n"
-                    "Return ONLY a JSON object with these fields:\n"
-                    '{\n'
-                    '  "customer_name": "string — business or person name",\n'
-                    '  "customer_email": "string or null — email if mentioned",\n'
-                    '  "customer_first_name": "string or null",\n'
-                    '  "customer_last_name": "string or null",\n'
-                    '  "customer_company": "string or null — business/company name if different from person name",\n'
-                    '  "customer_phone": "string or null",\n'
-                    '  "customer_address": "string or null — billing address only",\n'
-                    '  "line_items": [{"description": "string — the SERVICE or PRODUCT being billed, NOT the address", "quantity": number, "unit_price_cents": number}],\n'
-                    '  "total_cents": number — total in cents (e.g., 475000 for $4,750.00),\n'
-                    '  "due_days": number — days until due. Use 0 for "immediately", "due now", or "upon receipt". Default 30 if not specified.,\n'
-                    '  "currency": "usd",\n'
-                    '  "notes": "string or empty",\n'
-                    '  "is_quote": false\n'
-                    '}\n\n'
-                    "IMPORTANT:\n"
-                    "- line_items description must be the SERVICE or PRODUCT (e.g. 'Painting job', 'Roofing repair', '500 GMA pallets'). NEVER put an address in the description.\n"
-                    "- customer_address is a SEPARATE field — do not mix it with line item descriptions.\n"
-                    "- 'due immediately' or 'due now' or 'upon receipt' = due_days: 0\n"
-                    "- Convert dollars to cents (9.50 = 950 cents, 4500 = 450000 cents).\n"
-                    "- If any required field is unclear, set it to null."
-                )
+            # ── STEP 9 FAST-PATH: structured payload bypasses LLM parse ──
+            # When Ava follows the workflow she's ALREADY collected the
+            # customer name, email, line items, total, due days, and notes
+            # in the conversation. The legacy contract stuffs them into one
+            # natural-language `details` string that we then LLM-parse back
+            # out — 600-1200ms of avoidable latency that pushes Quinn past
+            # the Anam tool deadline.
+            #
+            # If the caller supplied a `payload` object with the required
+            # invoice fields, use them verbatim and skip the parse entirely.
+            # Falls through to the LLM parse when payload is missing — the
+            # legacy natural-language path still works for one-shot
+            # utterances like "Invoice Joe Smith $500 for repair".
+            _payload = body.get("payload") or {}
+            _have_structured = (
+                isinstance(_payload, dict)
+                and _payload.get("line_items")
+                and (_payload.get("total_cents") or _payload.get("total_dollars"))
+                and _payload.get("customer_name")
+            )
+            invoice_data: dict[str, Any] = {}
+            if _have_structured:
+                total_cents_in = _payload.get("total_cents")
+                if not total_cents_in and _payload.get("total_dollars") is not None:
+                    try:
+                        total_cents_in = int(round(float(_payload["total_dollars"]) * 100))
+                    except (TypeError, ValueError):
+                        total_cents_in = 0
+                invoice_data = {
+                    "customer_name": str(_payload.get("customer_name", "")).strip(),
+                    "customer_email": _payload.get("customer_email"),
+                    "customer_first_name": _payload.get("customer_first_name"),
+                    "customer_last_name": _payload.get("customer_last_name"),
+                    "customer_company": _payload.get("customer_company"),
+                    "customer_phone": _payload.get("customer_phone"),
+                    "customer_address": _payload.get("customer_address"),
+                    "line_items": _payload.get("line_items") or [],
+                    "total_cents": int(total_cents_in or 0),
+                    "due_days": int(_payload.get("due_days", 30) or 30),
+                    "currency": str(_payload.get("currency") or "usd").lower(),
+                    "notes": str(_payload.get("notes") or ""),
+                    "is_quote": bool(_payload.get("is_quote", False)),
+                }
+                logger.info("Quinn structured-payload fast-path: skipping LLM parse")
 
-                # Voice path: keep the LLM parse FAST. Anam tools time out
-                # around 5 seconds. gpt-5.4-mini gives us ~600-1200ms latency
-                # vs gpt-5.2's 2-4s, with comparable JSON extraction quality
-                # for invoice data. Timeout dropped from 15s → 4s so a stuck
-                # LLM call returns a user-visible error instead of bubbling
-                # up as a hard Anam tool timeout. max_output_tokens dropped
-                # from 4096 → 512 because the JSON response is ~200 tokens
-                # max — the 4096 cap was burning latency on unused budget.
-                parse_resp = await generate_text_async(
-                    model="gpt-5.4-mini",
-                    messages=[
-                        {"role": "developer", "content": "Extract invoice data. Return ONLY valid JSON. No explanation."},
-                        {"role": "user", "content": parse_prompt},
-                    ],
-                    api_key=api_key,
-                    base_url="https://api.openai.com/v1",
-                    timeout_seconds=4.0,
-                    max_output_tokens=512,
-                    prefer_responses_api=True,
-                )
+            # Step 1: GPT-5.4-mini parses invoice intent from natural language.
+            # Skipped when the structured-payload fast-path above already
+            # populated invoice_data.
+            if not _have_structured:
+                try:
+                    parse_prompt = (
+                        "You are Quinn, an invoicing specialist. Extract structured invoice data from the user's request.\n\n"
+                        f"Request: {full_task}\n\n"
+                        "Return ONLY a JSON object with these fields:\n"
+                        '{\n'
+                        '  "customer_name": "string — business or person name",\n'
+                        '  "customer_email": "string or null — email if mentioned",\n'
+                        '  "customer_first_name": "string or null",\n'
+                        '  "customer_last_name": "string or null",\n'
+                        '  "customer_company": "string or null — business/company name if different from person name",\n'
+                        '  "customer_phone": "string or null",\n'
+                        '  "customer_address": "string or null — billing address only",\n'
+                        '  "line_items": [{"description": "string — the SERVICE or PRODUCT being billed, NOT the address", "quantity": number, "unit_price_cents": number}],\n'
+                        '  "total_cents": number — total in cents (e.g., 475000 for $4,750.00),\n'
+                        '  "due_days": number — days until due. Use 0 for "immediately", "due now", or "upon receipt". Default 30 if not specified.,\n'
+                        '  "currency": "usd",\n'
+                        '  "notes": "string or empty",\n'
+                        '  "is_quote": false\n'
+                        '}\n\n'
+                        "IMPORTANT:\n"
+                        "- line_items description must be the SERVICE or PRODUCT (e.g. 'Painting job', 'Roofing repair', '500 GMA pallets'). NEVER put an address in the description.\n"
+                        "- customer_address is a SEPARATE field — do not mix it with line item descriptions.\n"
+                        "- 'due immediately' or 'due now' or 'upon receipt' = due_days: 0\n"
+                        "- Convert dollars to cents (9.50 = 950 cents, 4500 = 450000 cents).\n"
+                        "- If any required field is unclear, set it to null."
+                    )
 
-                # Clean and parse JSON
-                cleaned = parse_resp.strip()
-                if cleaned.startswith("```"):
-                    cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-                    cleaned = cleaned.rsplit("```", 1)[0]
-                invoice_data = _json.loads(cleaned.strip())
+                    # Voice path: keep the LLM parse FAST. Anam tools time
+                    # out around 5 seconds. gpt-5.4-mini gives us ~600-1200ms
+                    # latency vs gpt-5.2's 2-4s, with comparable JSON
+                    # extraction quality. Timeout 4s; tokens 512.
+                    parse_resp = await generate_text_async(
+                        model="gpt-5.4-mini",
+                        messages=[
+                            {"role": "developer", "content": "Extract invoice data. Return ONLY valid JSON. No explanation."},
+                            {"role": "user", "content": parse_prompt},
+                        ],
+                        api_key=api_key,
+                        base_url="https://api.openai.com/v1",
+                        timeout_seconds=4.0,
+                        max_output_tokens=512,
+                        prefer_responses_api=True,
+                    )
 
-            except Exception as parse_err:
-                logger.warning("Quinn parse failed: %s", parse_err)
-                return JSONResponse(status_code=200, content={
-                    "success": False, "agent": "quinn",
-                    "result": "I couldn't understand the invoice details. Can you tell me who it's for, what you're billing, and how much?",
-                    "error": str(parse_err),
-                })
+                    # Clean and parse JSON
+                    cleaned = parse_resp.strip()
+                    if cleaned.startswith("```"):
+                        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+                        cleaned = cleaned.rsplit("```", 1)[0]
+                    invoice_data = _json.loads(cleaned.strip())
+
+                except Exception as parse_err:
+                    logger.warning("Quinn parse failed: %s", parse_err)
+                    return JSONResponse(status_code=200, content={
+                        "success": False, "agent": "quinn",
+                        "result": "I couldn't understand the invoice details. Can you tell me who it's for, what you're billing, and how much?",
+                        "error": str(parse_err),
+                    })
 
             customer_name = invoice_data.get("customer_name", "")
             customer_email = invoice_data.get("customer_email")
