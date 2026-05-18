@@ -54,5 +54,17 @@ tmp_*.json
 scripts/__pycache__/
 plan/temp_ecosystem_scan/
 
+# Drew blueprint fixtures — originals contain PII pre-redaction; only redacted versions commit
+orchestrator/tests/fixtures/blueprints/originals/*
+!orchestrator/tests/fixtures/blueprints/originals/.gitkeep
+# Allow committed (redacted) fixture PDFs — these are the gitignore exception
+!orchestrator/tests/fixtures/blueprints/*.pdf
+
+# Drew SEE (Wave 3) — YOLOv11 weights are downloaded on first run, never committed.
+# Bootstrap: python -c "from ultralytics import YOLO; YOLO('yolo11m.pt')"
+models/
+*.pt
+*.onnx
+
 # Misc
 *.log

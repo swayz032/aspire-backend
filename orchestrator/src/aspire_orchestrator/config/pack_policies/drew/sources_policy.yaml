@@ -1,0 +1,12 @@
+# Drew Blueprint — Sources Policy
+# Provider preference order for PDF parsing.
+
+pack_id: drew-blueprint
+
+parsing:
+  primary: llamaparse
+  fallback: azure_doc_intel
+
+source_requirements:
+  require_sheet_hash: true
+  require_revision_tag: true

@@ -1,0 +1,36 @@
+# Drew Blueprint — Risk Policy
+# Confidence floors that gate auto-pricing and auto-bid emission.
+
+pack_id: drew-blueprint
+default_risk_tier: green
+max_risk_tier: yellow
+
+auto_pricing_confidence_floor: 0.85
+auto_bid_min_line_item_confidence: 0.85
+auto_bid_min_coverage_pct: 80
+
+actions:
+  blueprint.ingest:
+    risk_tier: green
+    approval_required: false
+    description: "Parse PDFs / images into sheet rows"
+
+  blueprint.classify:
+    risk_tier: green
+    approval_required: false
+    description: "Discipline + revision tagging"
+
+  blueprint.see:
+    risk_tier: green
+    approval_required: false
+    description: "Symbol + bbox detection via vision"
+
+  blueprint.reason:
+    risk_tier: green
+    approval_required: false
+    description: "Assemblies + story-by-phase reasoning"
+
+  blueprint.procure:
+    risk_tier: yellow
+    approval_required: true
+    description: "Push material requests to supplier playbooks"

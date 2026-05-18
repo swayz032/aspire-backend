@@ -1,4 +1,4 @@
-# [STATUS: v1-active, BYPASS] — Reachable via /v1/agents/invoke-sync (server.py:1467-1472, SYNC_INVOKE_AGENTS). Bypasses LangGraph: no policy gate, no token mint, no central receipt audit. Migration debt — route through /v1/intents.
+﻿# [STATUS: v1-active, BYPASS] — Reachable via /v1/agents/invoke-sync (server.py:1467-1472, SYNC_INVOKE_AGENTS). Bypasses LangGraph: no policy gate, no token mint, no central receipt audit. Migration debt — route through /v1/intents.
 """Adam Research Skill Pack — Web search, places, vendor comparison, RFQ generation.
 
 All GREEN tier (no approval needed). Uses the search_router for cascading
@@ -142,6 +142,112 @@ def _emit_receipt(
 
 
 class AdamResearchSkillPack:
+
+    async def material_supplier_search(
+        self,
+        payload: dict[str, Any],
+        context: "AdamResearchContext",
+    ) -> "SkillPackResult":
+        """MATERIAL_SUPPLIER_SEARCH -- Route a blueprint material spec to ranked supplier candidates.
+
+        Drew PROCURE stage delegates supplier discovery here. Adam selects the right
+        provider(s) based on material category and returns ranked candidates.
+        Drew decides which candidates to persist (Law #1 -- Adam never writes).
+
+        GREEN tier. Read-only search.
+
+        Input payload keys:
+            line_item: str            -- material description (required)
+            category: SupplyCategory  -- routing category (required)
+            brand_familiarity_map: dict
+            geofence_miles: float     -- default 25.0
+            office_zip: str | None
+            office_lat: float | None
+            office_lng: float | None
+
+        Law compliance:
+          Law #1: Returns candidates only. Drew persists; Adam never writes.
+          Law #2: Parent receipt emitted; sub-receipts emitted per provider.
+          Law #3: Missing line_item/category -> fail-closed with receipt.
+          Law #6: suite_id/office_id scoped throughout.
+          Law #9: Only line_item[:100] + counts in logs/receipts.
+        """
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import route_supplier_search
+
+        line_item: str = str(payload.get("line_item") or "").strip()
+        category_raw: str = str(payload.get("category") or "").strip()
+
+        _valid_categories: tuple[str, ...] = (
+            "commodity", "commercial_plumbing", "appliance_finish", "local_trade", "specialty_hardware",
+        )
+
+        if not line_item:
+            receipt = _emit_receipt(ctx=context, event_type="adam.material_supplier_search", status="denied", inputs={"action": "adam.material_supplier_search", "line_item": ""})
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_LINE_ITEM"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: line_item")
+
+        if category_raw not in _valid_categories:
+            receipt = _emit_receipt(ctx=context, event_type="adam.material_supplier_search", status="denied", inputs={"action": "adam.material_supplier_search", "line_item": line_item[:100], "category": category_raw})
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["INVALID_CATEGORY"]
+            return SkillPackResult(success=False, receipt=receipt, error=f"Invalid category: {category_raw!r}")
+
+        brand_familiarity_map: dict[str, float] = dict(payload.get("brand_familiarity_map") or {})
+        geofence_miles: float = float(payload.get("geofence_miles") or 25.0)
+        office_zip: str | None = payload.get("office_zip") or None
+        office_lat_raw = payload.get("office_lat")
+        office_lng_raw = payload.get("office_lng")
+        office_lat: float | None = float(office_lat_raw) if office_lat_raw is not None else None
+        office_lng: float | None = float(office_lng_raw) if office_lng_raw is not None else None
+
+        _emit_activity_event("thinking", f"Searching suppliers for: {line_item[:60]} (category={category_raw})", "search")
+
+        import time as _time
+        t0 = _time.monotonic()
+
+        candidate_list = await route_supplier_search(
+            line_item=line_item,
+            category=category_raw,  # type: ignore[arg-type]
+            brand_familiarity_map=brand_familiarity_map,
+            geofence_miles=geofence_miles,
+            office_zip=office_zip,
+            office_lat=office_lat,
+            office_lng=office_lng,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+            correlation_id=context.correlation_id,
+        )
+
+        elapsed_ms = (_time.monotonic() - t0) * 1000
+        status_str = candidate_list.get("status", "ok")
+        is_success = status_str in ("ok", "degraded", "defer_to_manual")
+
+        receipt = _emit_receipt(
+            ctx=context,
+            event_type="adam.material_supplier_search",
+            status=status_str,
+            inputs={"action": "adam.material_supplier_search", "line_item": line_item[:100], "category": category_raw},
+            metadata={
+                "candidates_returned": len(candidate_list.get("candidates", [])),
+                "source_apis_called": candidate_list.get("source_apis_called", []),
+                "credits_used": candidate_list.get("credits_used", 0),
+                "degradation_reason": candidate_list.get("degradation_reason"),
+                "latency_ms": round(elapsed_ms, 1),
+            },
+        )
+
+        if is_success:
+            _emit_activity_event("done", f"Found {len(candidate_list.get('candidates', []))} supplier candidates", "checkmark")
+        else:
+            _emit_activity_event("error", f"Supplier search failed: {candidate_list.get('degradation_reason', 'unknown')}", "error")
+
+        return SkillPackResult(
+            success=is_success,
+            data=candidate_list,
+            receipt=receipt,
+            error=None if is_success else candidate_list.get("degradation_reason"),
+        )
     async def research_playbook(
         self,
         query: str,

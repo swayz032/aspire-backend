@@ -1,0 +1,27 @@
+# Drew Blueprint — Tool Policy
+# Which symbol classes Drew is allowed to auto-extract vs. those that require human review.
+
+pack_id: drew-blueprint
+
+authorized_tools:
+  - blueprint.parse
+  - blueprint.classify
+  - blueprint.detect_symbols
+  - blueprint.reason
+  - blueprint.procure
+
+# YELLOW-tier: requires capability token scoped to materials.bundle.add
+# Enforced at gateway layer when desktop Takeoff agent pushes procurement bundle
+# to the Materials tab. Risk tier: YELLOW (Law #4 — state-changing, user confirmation required).
+yellow_tools:
+  - materials.bundle.add
+
+auto_extract_symbol_classes:
+  - door
+  - window
+  - plumbing_fixture
+  - electrical_outlet
+
+human_review_required_classes:
+  - structural_column
+  - panel_schedule

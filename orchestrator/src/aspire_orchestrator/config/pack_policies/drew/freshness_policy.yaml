@@ -1,0 +1,11 @@
+# Drew Blueprint — Freshness Policy
+# Sheet revisions older than this are flagged as stale (Addenda check).
+
+pack_id: drew-blueprint
+
+max_sheet_revision_age_days: 30
+
+cache:
+  enabled: true
+  parsed_sheet_ttl_seconds: 86400
+  symbol_detection_ttl_seconds: 86400

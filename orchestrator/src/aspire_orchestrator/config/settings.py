@@ -121,6 +121,21 @@ class Settings(BaseSettings):
     parallel_extract_api_key: str = "" # ASPIRE_PARALLEL_EXTRACT_API_KEY — Parallel Extract (v1beta)
     apify_api_key: str = ""            # ASPIRE_APIFY_API_KEY — Apify Zillow scraper (property photos)
 
+    # --- Drew Blueprint Engine — Wave 5.1a Supplier Discovery ---
+    unwrangle_api_key: str = ""         # ASPIRE_UNWRANGLE_API_KEY — Unwrangle supplier catalog scraper
+    # Per-project Unwrangle credit cap (Wave 5.1a-3 supplier cache).
+    # When blueprint_projects.unwrangle_credits_used >= this value, supplier_cache.py
+    # switches to force_serpapi_only=True (free SerpAPI HD path only). Default 25 =
+    # 250 credits over a 50-line blueprint (5 categories × 5 hits at 10 credits each).
+    unwrangle_per_project_cap: int = 25  # ASPIRE_UNWRANGLE_PER_PROJECT_CAP
+
+    # --- Drew Blueprint Engine provider keys (Wave 1) ---
+    llamaparse_api_key: str = ""        # ASPIRE_LLAMAPARSE_API_KEY — LlamaParse PDF parser (primary)
+    azure_doc_intel_endpoint: str = ""  # ASPIRE_AZURE_DOC_INTEL_ENDPOINT — Azure Doc Intel endpoint URL
+    azure_doc_intel_key: str = ""       # ASPIRE_AZURE_DOC_INTEL_KEY — Azure subscription key (fallback OCR)
+    drew_model_dev: str = "gpt-5.4-mini"    # ASPIRE_DREW_MODEL_DEV
+    drew_model_prod: str = "gpt-5.2"        # ASPIRE_DREW_MODEL_PROD
+
     # --- Tec Documents (S3) provider keys ---
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""

@@ -59,6 +59,7 @@ def _init_registry() -> dict[str, Any]:
         "mail_ops": ("aspire_orchestrator.skillpacks.mail_ops_desk", "EnhancedMailOps"),
         "ava": ("aspire_orchestrator.skillpacks.ava_user", "EnhancedAvaUser"),
         "ava_admin": ("aspire_orchestrator.skillpacks.ava_admin", "AvaAdminSkillPack"),
+        "drew": ("aspire_orchestrator.skillpacks.drew_blueprint", "Drew"),
     }
 
     for agent_id, (module_path, class_name) in _class_map.items():

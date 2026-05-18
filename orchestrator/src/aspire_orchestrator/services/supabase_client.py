@@ -385,11 +385,25 @@ async def supabase_insert_batch_ignore_conflicts(
 
 
 async def supabase_update(table: str, match_filters: str, data: dict[str, Any]) -> dict[str, Any]:
-    """PATCH (update) rows in a Supabase table matching filters."""
+    """PATCH (update) rows in a Supabase table matching filters.
+
+    Uses ``Prefer: return=minimal`` (PostgREST responds 204 No Content) so that
+    a PATCH that matches zero rows does NOT raise a 406 error.  Previous
+    ``return=representation`` caused PostgREST to return 406 when the filter
+    matched 0 rows, which surfaced as SupabaseClientError in every
+    set_stage_progress call during the brief window between project creation
+    and the first pipeline write.  Callers that need the updated row must issue
+    a separate SELECT.
+    """
     url = f"{_base_url()}/{table}?{match_filters}"
+    hdrs = _headers()
+    hdrs["Prefer"] = "return=minimal"
     try:
         client = _get_async_pool()
-        resp = await client.patch(url, json=data, headers=_headers())
+        resp = await client.patch(url, json=data, headers=hdrs)
+        # 204 No Content is success for return=minimal; treat it as an empty dict.
+        if resp.status_code == 204:
+            return {}
         result = _handle_response(resp, f"update/{table}")
         return result[0] if isinstance(result, list) and result else result
     except SupabaseClientError:
