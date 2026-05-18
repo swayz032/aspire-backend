@@ -918,8 +918,15 @@ async def _async_ingest_pipeline(
     office_id: str,
     filename: str,
     correlation_id: str,
+    project_id: str | None = None,
+    _skip_project_creation: bool = False,
 ) -> dict[str, Any]:
-    """Async ingest: idempotency check → OCR → store sheets → upload thumbnails."""
+    """Async ingest: idempotency check → OCR → store sheets → upload thumbnails.
+
+    When project_id is provided and _skip_project_creation=True (dispatch path),
+    skips dedup check + row creation — the dispatch route already handled both.
+    All downstream sheet/thumbnail logic is unchanged.
+    """
     import logging as _logging
     _log = _logging.getLogger(__name__)
 
@@ -934,56 +941,70 @@ async def _async_ingest_pipeline(
     from aspire_orchestrator.services.blueprint.thumbnail_storage import upload_sheet_thumbnail
     from aspire_orchestrator.services.receipt_store import store_receipts
 
-    # Idempotency check: look for existing project with same content hash
-    try:
-        existing = await supabase_select(
-            "blueprint_projects",
-            filters=f"suite_id=eq.{suite_id}&address=eq.{project_hash}",
-            limit=1,
-        )
-        if existing:
-            project_id = str(existing[0]["id"])
-            _log.info(
-                "drew.ingest: dedup hit for hash=%s suite=%s, returning existing project=%s",
-                project_hash[:8],
-                suite_id[:8],
-                project_id[:8],
+    # Idempotency check: look for existing project with same content hash.
+    # Skipped when _skip_project_creation=True (dispatch path already handled dedup).
+    if not _skip_project_creation:
+        try:
+            existing = await supabase_select(
+                "blueprint_projects",
+                filters=f"suite_id=eq.{suite_id}&address=eq.{project_hash}",
+                limit=1,
             )
-            # Count existing sheets for dedup receipt
-            sheets = await supabase_select(
-                "blueprint_sheets",
-                filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            if existing:
+                project_id = str(existing[0]["id"])
+                _log.info(
+                    "drew.ingest: dedup hit for hash=%s suite=%s, returning existing project=%s",
+                    project_hash[:8],
+                    suite_id[:8],
+                    project_id[:8],
+                )
+                # Count existing sheets for dedup receipt
+                sheets = await supabase_select(
+                    "blueprint_sheets",
+                    filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+                )
+                sheet_ids = [str(s["id"]) for s in sheets]
+                return {
+                    "status": "dedup",
+                    "stage": "ingest",
+                    "project_id": project_id,
+                    "sheet_count": len(sheet_ids),
+                    "sheet_ids": sheet_ids,
+                    "provider_mix": {},
+                }
+        except SupabaseClientError as exc:
+            _log.warning(
+                "drew.ingest: idempotency check failed (%s), proceeding with fresh ingest",
+                type(exc).__name__,
             )
-            sheet_ids = [str(s["id"]) for s in sheets]
-            return {
-                "status": "dedup",
-                "stage": "ingest",
-                "project_id": project_id,
-                "sheet_count": len(sheet_ids),
-                "sheet_ids": sheet_ids,
-                "provider_mix": {},
-            }
-    except SupabaseClientError as exc:
-        _log.warning(
-            "drew.ingest: idempotency check failed (%s), proceeding with fresh ingest",
-            type(exc).__name__,
-        )
 
-    # Create project row (using address field to store hash for idempotency key)
-    project_id = str(uuid.uuid4())
-    try:
-        await supabase_insert(
-            "blueprint_projects",
-            {
-                "id": project_id,
-                "suite_id": suite_id,
-                "office_id": office_id,
-                "address": project_hash,  # Repurposed for content hash idempotency
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
+        # Create project row (using address field to store hash for idempotency key)
+        project_id = str(uuid.uuid4())
+        try:
+            await supabase_insert(
+                "blueprint_projects",
+                {
+                    "id": project_id,
+                    "suite_id": suite_id,
+                    "office_id": office_id,
+                    "address": project_hash,  # Repurposed for content hash idempotency
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except SupabaseClientError as exc:
+            raise RuntimeError(f"Failed to create blueprint_project: {exc}") from exc
+    else:
+        # Dispatch path: project_id was provided by the dispatch route (already created)
+        if not project_id:
+            raise RuntimeError(
+                "_skip_project_creation=True requires project_id to be provided"
+            )
+        _log.info(
+            "drew.ingest: using pre-created project_id=%s (dispatch path) suite=%s corr=%s",
+            project_id[:8],
+            suite_id[:8],
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
         )
-    except SupabaseClientError as exc:
-        raise RuntimeError(f"Failed to create blueprint_project: {exc}") from exc
 
     # Mark ingest stage as in_progress
     await set_stage_progress(
