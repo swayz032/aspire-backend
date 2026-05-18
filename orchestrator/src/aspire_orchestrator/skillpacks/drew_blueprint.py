@@ -1,4 +1,4 @@
-# [STATUS: v1-active, BYPASS] — Reachable via /v1/agents/invoke-sync.
+﻿# [STATUS: v1-active, BYPASS] — Reachable via /v1/agents/invoke-sync.
 # Bypasses LangGraph: no policy gate, no token mint, no central receipt audit.
 # Migration debt — route through /v1/intents in a later wave.
 """Drew Blueprint Story Engine — Wave 3: SEE implemented (INGEST + CLASSIFY + SEE live).
@@ -546,6 +546,10 @@ class Drew:
         project_id: str = str(payload["project_id"])
         suite_id: str = str(payload["suite_id"])
         office_id: str | None = str(payload["office_id"]) if payload.get("office_id") else None
+        tenant_id: str = str(payload.get("tenant_id") or suite_id)
+        office_zip: str | None = str(payload["office_zip"]) if payload.get("office_zip") else None
+        office_lat: float | None = float(payload["office_lat"]) if payload.get("office_lat") is not None else None
+        office_lng: float | None = float(payload["office_lng"]) if payload.get("office_lng") is not None else None
         geofence_miles: float = float(payload.get("geofence_miles", 25.0))
 
         _run_async_set_stage(
@@ -557,6 +561,10 @@ class Drew:
                 project_id=project_id,
                 suite_id=suite_id,
                 office_id=office_id,
+                office_zip=office_zip,
+                office_lat=office_lat,
+                office_lng=office_lng,
+                tenant_id=tenant_id,
                 geofence_miles=geofence_miles,
                 correlation_id=correlation_id,
             )
@@ -588,7 +596,7 @@ class Drew:
                 "tariff_breakdown": result.get("tariff_breakdown", {}),
                 "suppliers_matched": result.get("suppliers_matched", 0),
                 "supplier_match_rate": result.get("supplier_match_rate", 0.0),
-                "missing_inputs_added": result.get("missing_inputs_added", 0),
+                "memory_writes": result.get("memory_writes", 0),
             },
         )
 
@@ -1497,6 +1505,10 @@ def _run_async_procure(
     project_id: str,
     suite_id: str,
     office_id: str | None,
+    office_zip: str | None,
+    office_lat: float | None,
+    office_lng: float | None,
+    tenant_id: str,
     geofence_miles: float,
     correlation_id: str,
 ) -> dict[str, Any]:
@@ -1512,6 +1524,10 @@ def _run_async_procure(
                         project_id=project_id,
                         suite_id=suite_id,
                         office_id=office_id,
+                        office_zip=office_zip,
+                        office_lat=office_lat,
+                        office_lng=office_lng,
+                        tenant_id=tenant_id,
                         geofence_miles=geofence_miles,
                         correlation_id=correlation_id,
                     ),
@@ -1523,6 +1539,10 @@ def _run_async_procure(
                     project_id=project_id,
                     suite_id=suite_id,
                     office_id=office_id,
+                    office_zip=office_zip,
+                    office_lat=office_lat,
+                    office_lng=office_lng,
+                    tenant_id=tenant_id,
                     geofence_miles=geofence_miles,
                     correlation_id=correlation_id,
                 )
@@ -1533,10 +1553,56 @@ def _run_async_procure(
                 project_id=project_id,
                 suite_id=suite_id,
                 office_id=office_id,
+                office_zip=office_zip,
+                office_lat=office_lat,
+                office_lng=office_lng,
+                tenant_id=tenant_id,
                 geofence_miles=geofence_miles,
                 correlation_id=correlation_id,
             )
         )
+
+
+
+def classify_material_category(line_item: str) -> str:
+    """Keyword-based classifier that maps a line_item to a SupplyCategory.
+
+    Categories (in match-priority order):
+      commercial_plumbing  -- commercial-grade plumbing fixtures / fittings
+      appliance_finish     -- appliances, finish surfaces, cabinets, tile
+      local_trade          -- bulk commodities ordered locally (call-for-quote)
+      specialty_hardware   -- custom / specialty / antique items
+      commodity            -- default for everything else (HD / big-box)
+
+    Law #9: Only line_item[:80] used; no raw text logged.
+    """
+    text = line_item.lower()
+
+    _COMMERCIAL_PLUMBING = (
+        "copper pipe", "brass fitting", "commercial faucet",
+        "water heater commercial", "fixture commercial", "gpm",
+        "lavatory", "urinal", "floor drain", "backflow preventer",
+    )
+    _APPLIANCE_FINISH = (
+        "dishwasher", "refrigerator", "range", "oven", "washer", "dryer",
+        "microwave", "countertop", "cabinet", "tile", "paint", "finish",
+        "faucet",
+    )
+    _LOCAL_TRADE = (
+        "bulk rebar", "2x4 bulk", "conduit bulk", "gravel", "concrete bulk",
+        "insulation bulk", "r-13 bulk", "drywall bulk",
+    )
+    _SPECIALTY = ("custom", "specialty", "vintage", "antique")
+
+    if any(kw in text for kw in _COMMERCIAL_PLUMBING):
+        return "commercial_plumbing"
+    if any(kw in text for kw in _APPLIANCE_FINISH):
+        return "appliance_finish"
+    if any(kw in text for kw in _LOCAL_TRADE):
+        return "local_trade"
+    if any(kw in text for kw in _SPECIALTY):
+        return "specialty_hardware"
+    return "commodity"
 
 
 async def _async_procure_pipeline(
@@ -1544,21 +1610,22 @@ async def _async_procure_pipeline(
     project_id: str,
     suite_id: str,
     office_id: str | None,
+    office_zip: str | None,
+    office_lat: float | None,
+    office_lng: float | None,
+    tenant_id: str,
     geofence_miles: float,
     correlation_id: str,
 ) -> dict[str, Any]:
-    """Async PROCURE: tariff-flag + supplier-match all blueprint_materials for a project.
+    """Async PROCURE: Wave 5.1a-4 -- tariff-flag + Adam supplier search.
 
-    For each material row:
-      1. detect_tariff_flag(line_item) → UPDATE tariff_flag column
-      2. match_suppliers(...) → pick top supplier, UPDATE supplier_id column
-         (uses google_places_id or "home_depot" as the supplier_id value)
-      3. Compute tariff_exposure_usd and UPDATE the column when unit_cost available.
+    Drew delegates all supplier discovery to Adam via
+    get_or_fetch_supplier_candidates (24-hr TTL cache). Drew classifies,
+    picks, and persists; Adam queries only (Law #1).
 
-    Returns summary dict with counts used by Drew.procure() receipt.
-
-    Law #6: All selects and updates include suite_id in filters.
-    Law #9: Only line_item[:40] in info logs; no full addresses or PII.
+    Law #2: blueprint.material_pick.memory_write receipt per row.
+    Law #6: All DB reads/writes scoped by suite_id in filter strings.
+    Law #9: line_item truncated to <=80 chars in logs/receipts.
     """
     import logging as _logging
     _log = _logging.getLogger(__name__)
@@ -1573,8 +1640,42 @@ async def _async_procure_pipeline(
         detect_tariff_flag,
         estimate_tariff_impact_usd,
     )
-    from aspire_orchestrator.services.blueprint.supplier_matcher import match_suppliers
-    from aspire_orchestrator.services.blueprint.schemas.truth import TariffFlag as TariffFlagEnum
+    from aspire_orchestrator.services.blueprint.supplier_cache import (
+        get_or_fetch_supplier_candidates,
+    )
+    from aspire_orchestrator.services.blueprint.adam_supplier_router import (
+        route_supplier_search,
+    )
+    from aspire_orchestrator.services.memory_service import MemoryService
+    from aspire_orchestrator.schemas.memory_v1 import (
+        MemoryObjectIn,
+        Provenance,
+        ScopedIdentity,
+    )
+    from uuid import UUID
+
+    # Build ScopedIdentity (tenant_id defaults to suite_id on BYPASS route)
+    try:
+        _tenant_uuid = UUID(tenant_id)
+        _suite_uuid = UUID(suite_id)
+        _office_uuid = UUID(office_id) if office_id else _suite_uuid
+    except (ValueError, AttributeError) as exc:
+        raise RuntimeError(f"Invalid tenant/suite/office UUID: {exc}") from exc
+
+    import hashlib as _hashlib
+    try:
+        _trace_uuid = UUID(correlation_id)
+        _corr_uuid = UUID(correlation_id)
+    except (ValueError, AttributeError):
+        _hash_bytes = _hashlib.sha256(correlation_id.encode()).digest()[:16]
+        _trace_uuid = UUID(bytes=_hash_bytes)
+        _corr_uuid = _trace_uuid
+
+    scoped_identity = ScopedIdentity(
+        tenant_id=_tenant_uuid,
+        suite_id=_suite_uuid,
+        office_id=_office_uuid,
+    )
 
     # Load all material rows for this project (RLS-scoped by suite_id)
     try:
@@ -1584,7 +1685,9 @@ async def _async_procure_pipeline(
             order_by="created_at.asc",
         )
     except SupabaseClientError as exc:
-        raise RuntimeError(f"Failed to load blueprint_materials for project {project_id[:8]}: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to load blueprint_materials for project {project_id[:8]}: {exc}"
+        ) from exc
 
     if not materials:
         _log.warning(
@@ -1602,103 +1705,200 @@ async def _async_procure_pipeline(
             "tariff_breakdown": {},
             "suppliers_matched": 0,
             "supplier_match_rate": 0.0,
-            "missing_inputs_added": 0,
+            "memory_writes": 0,
         }
 
+    memory_svc = MemoryService()
     materials_processed = 0
     tariff_flagged = 0
     tariff_breakdown: dict[str, int] = {}
     suppliers_matched = 0
-    missing_inputs_added = 0
+    memory_writes = 0
 
     for mat in materials:
         material_id = str(mat["id"])
         line_item: str = str(mat.get("line_item") or "")
         quantity: float | None = mat.get("quantity")
-        # unit_cost not yet on schema — will be added via supplier price later
-        unit_cost: float | None = None
 
         materials_processed += 1
 
-        # ── 1. Tariff classification ──────────────────────────────────────
-        flag = detect_tariff_flag(line_item)
+        # 1. Category + tariff classification
+        category = classify_material_category(line_item)
+        tariff_flag = detect_tariff_flag(line_item)
+        brand_familiarity_map: dict[str, float] = {}  # TODO Wave 5.2: read from memory
+
+        # 2. Adam delegation via supplier_cache (24-hr TTL, per-project credit cap)
+        async def _fetch_fn(force_serpapi_only: bool = False) -> dict[str, Any]:
+            return await route_supplier_search(
+                line_item=line_item,
+                category=category,  # type: ignore[arg-type]
+                brand_familiarity_map=brand_familiarity_map,
+                geofence_miles=geofence_miles,
+                office_zip=office_zip,
+                office_lat=office_lat,
+                office_lng=office_lng,
+                suite_id=suite_id,
+                office_id=office_id or suite_id,
+                correlation_id=correlation_id,
+            )
+
+        candidates_result: dict[str, Any]
+        was_cached: bool
+        try:
+            candidates_result, was_cached = await get_or_fetch_supplier_candidates(
+                suite_id=suite_id,
+                project_id=project_id,
+                category=category,
+                line_item=line_item,
+                office_zip=office_zip,
+                correlation_id=correlation_id,
+                fetch_fn=_fetch_fn,
+            )
+        except Exception as exc:
+            _log.warning(
+                "drew.procure: Adam search failed material=%s error=%s",
+                material_id[:8],
+                type(exc).__name__,
+            )
+            candidates_result = {"candidates": [], "credits_used": 0, "status": "error"}
+            was_cached = False
+
+        candidates: list[dict[str, Any]] = list(candidates_result.get("candidates") or [])
+        credits_used: int = int(candidates_result.get("credits_used") or 0)
+
+        # 3. Drew picks: top + 2 alternates
+        top: dict[str, Any] | None = candidates[0] if candidates else None
+        alternates: list[dict[str, Any]] = candidates[1:3] if len(candidates) > 1 else []
+
+        # 4. Tariff exposure (unit_cost from top candidate price)
+        unit_cost: float | None = None
+        if top and (top.get("price") or {}).get("value") is not None:
+            unit_cost = float(top["price"]["value"])
+
         tariff_exposure: float | None = estimate_tariff_impact_usd(
-            flag=flag,
+            flag=tariff_flag,
             quantity=quantity,
             unit_cost_usd=unit_cost,
         )
 
-        tariff_update: dict[str, Any] = {"tariff_flag": flag.value}
+        # 5. UPDATE blueprint_materials row
+        update_payload: dict[str, Any] = {"tariff_flag": tariff_flag.value}
         if tariff_exposure is not None:
-            tariff_update["tariff_exposure_usd"] = tariff_exposure
+            update_payload["tariff_exposure_usd"] = tariff_exposure
+        if top:
+            top_supplier: dict[str, Any] = top.get("supplier") or {}
+            update_payload["supplier_id"] = (
+                top_supplier.get("id") or top_supplier.get("name", "")[:60]
+            )
+            update_payload["supplier_candidates_json"] = [dict(c) for c in alternates]
+        else:
+            update_payload["supplier_id"] = None
+            update_payload["supplier_candidates_json"] = [dict(c) for c in candidates]
 
         try:
             await supabase_update(
                 "blueprint_materials",
                 f"id=eq.{material_id}&suite_id=eq.{suite_id}",
-                tariff_update,
+                update_payload,
             )
+            if top:
+                suppliers_matched += 1
         except SupabaseClientError as exc:
             _log.warning(
-                "drew.procure: failed to update tariff_flag material=%s error=%s",
+                "drew.procure: failed to update material=%s error=%s",
                 material_id[:8],
                 type(exc).__name__,
             )
 
-        if flag != TariffFlag.NONE:
+        if tariff_flag != TariffFlag.NONE:
             tariff_flagged += 1
-            tariff_breakdown[flag.value] = tariff_breakdown.get(flag.value, 0) + 1
+            tariff_breakdown[tariff_flag.value] = tariff_breakdown.get(tariff_flag.value, 0) + 1
 
-        # ── 2. Supplier matching ──────────────────────────────────────────
-        if line_item and office_id:
-            try:
-                search_result = await match_suppliers(
-                    line_item,
-                    suite_id=suite_id,
-                    office_id=office_id,
-                    project_id=project_id,
-                    geofence_miles=geofence_miles,
+        # 6. Write material_pick to memory (Law #2)
+        top_supplier_name: str = (
+            ((top.get("supplier") or {}).get("name") or "NO MATCH") if top else "NO MATCH"
+        )
+        top_supplier_id: str | None = (
+            ((top.get("supplier") or {}).get("id") or None) if top else None
+        )
+        top_match_class: str | None = (top.get("match_class") or None) if top else None
+        top_match_score: float = float((top.get("match_score") or 0.0)) if top else 0.0
+
+        memory_obj = MemoryObjectIn(
+            scope=scoped_identity,
+            provenance=Provenance(
+                source_surface="system",
+                source_agent=None,
+                trace_id=_trace_uuid,
+                correlation_id=_corr_uuid,
+            ),
+            memory_type="decision_fact",
+            entity_type="material_pick",
+            entity_id=None,
+            title=f"Material pick: {line_item[:60]}",
+            summary=(
+                f"Drew picked {top_supplier_name} for {line_item[:80]}; "
+                f"tariff_flag={tariff_flag.value}"
+            ),
+            detail={
+                "material_id": material_id,
+                "project_id": project_id,
+                "supplier_id": top_supplier_id,
+                "candidates_count": len(candidates),
+                "match_class": top_match_class,
+                "match_score": top_match_score,
+                "tariff_flag": tariff_flag.value,
+                "tariff_exposure_usd": tariff_exposure,
+                "credits_used": credits_used,
+                "was_cached": was_cached,
+                "category": category,
+            },
+            visibility_scope="office",  # TODO Wave 5.1b-5: migrate to "service"
+            status="drafted",
+            idempotency_key=f"drew:material:{project_id}:{material_id}",
+        )
+
+        try:
+            await memory_svc.write(memory_obj, scope=scoped_identity, embed=False)
+            memory_writes += 1
+            store_receipts([
+                _build_receipt(
                     correlation_id=correlation_id,
+                    event_type="blueprint.material_pick.memory_write",
+                    status="ok",
+                    inputs={
+                        "material_id": material_id,
+                        "project_id": project_id,
+                        "suite_id": suite_id,
+                    },
+                    metadata={
+                        "supplier_name": top_supplier_name,
+                        "tariff_flag": tariff_flag.value,
+                        "match_class": top_match_class,
+                        "was_cached": was_cached,
+                        "category": category,
+                    },
                 )
-
-                if search_result.missing_input_inserted:
-                    missing_inputs_added += 1
-
-                if search_result.matches:
-                    # Pick top supplier: best-ranked (distance asc, in_stock first)
-                    top = search_result.matches[0]
-                    # Use place_id when available, else provider name as stable ID
-                    if top.provider == "home_depot":
-                        supplier_id = "home_depot"
-                    else:
-                        # Google Places results have place_id in raw — use name as stable key
-                        supplier_id = f"gp:{top.name[:60]}"
-
-                    try:
-                        await supabase_update(
-                            "blueprint_materials",
-                            f"id=eq.{material_id}&suite_id=eq.{suite_id}",
-                            {"supplier_id": supplier_id},
-                        )
-                        suppliers_matched += 1
-                    except SupabaseClientError as exc:
-                        _log.warning(
-                            "drew.procure: failed to update supplier_id material=%s error=%s",
-                            material_id[:8],
-                            type(exc).__name__,
-                        )
-
-            except Exception as exc:
-                _log.warning(
-                    "drew.procure: supplier match failed material=%s error=%s",
-                    material_id[:8],
-                    type(exc).__name__,
-                )
-        elif not office_id:
-            _log.info(
-                "drew.procure: no office_id — skipping supplier match material=%s",
+            ])
+        except Exception as exc:
+            _log.warning(
+                "drew.procure: memory write failed material=%s error=%s",
                 material_id[:8],
+                type(exc).__name__,
             )
+            store_receipts([
+                _build_receipt(
+                    correlation_id=correlation_id,
+                    event_type="blueprint.material_pick.memory_write",
+                    status="failed",
+                    inputs={
+                        "material_id": material_id,
+                        "project_id": project_id,
+                        "suite_id": suite_id,
+                    },
+                    metadata={"error": type(exc).__name__},
+                )
+            ])
 
     supplier_match_rate = (
         round(suppliers_matched / materials_processed, 4) if materials_processed else 0.0
@@ -1706,12 +1906,12 @@ async def _async_procure_pipeline(
 
     _log.info(
         "drew.procure: project=%s processed=%d tariff_flagged=%d suppliers_matched=%d "
-        "missing_inputs=%d corr=%s",
+        "memory_writes=%d corr=%s",
         project_id[:8],
         materials_processed,
         tariff_flagged,
         suppliers_matched,
-        missing_inputs_added,
+        memory_writes,
         correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
     )
 
@@ -1724,5 +1924,5 @@ async def _async_procure_pipeline(
         "tariff_breakdown": tariff_breakdown,
         "suppliers_matched": suppliers_matched,
         "supplier_match_rate": supplier_match_rate,
-        "missing_inputs_added": missing_inputs_added,
+        "memory_writes": memory_writes,
     }
