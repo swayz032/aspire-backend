@@ -290,12 +290,20 @@ async def test_dispatch_fail_closed_oversized_pdf():
     corr = "test-dispatch-oversized-001"
     mock_bg = MagicMock(spec=BackgroundTasks)
 
-    # Create a base64-encoded byte string that decodes to >50MB
-    # We don't actually allocate 50MB — mock the decode
-    oversized_bytes = b"x" * (51 * 1024 * 1024)
-    oversized_b64 = base64.b64encode(oversized_bytes).decode()
+    # Use a small valid b64 but mock b64decode to return bytes just over the 50MB limit.
+    # Avoids actually allocating 51MB in the test process (MemoryError on low-memory CI).
+    _OVER_LIMIT = b"x" * 100  # tiny placeholder; len() is what matters
+    # Patch b64decode at the blueprint_dispatch module namespace so the size check fires.
+    # We override __len__ on a bytearray subclass to report 51MB without allocation.
+    class _OversizedBytes(bytes):
+        def __len__(self) -> int:  # type: ignore[override]
+            return 51 * 1024 * 1024
 
     with (
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.base64.b64decode",
+            return_value=_OversizedBytes(b"x"),
+        ),
         patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-006"),
         patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
     ):
@@ -305,7 +313,7 @@ async def test_dispatch_fail_closed_oversized_pdf():
         with pytest.raises(HTTPException) as exc_info:
             await dispatch_blueprint(
                 mock_bg,
-                _make_request(pdf_b64=oversized_b64, correlation_id=corr),
+                _make_request(pdf_b64="dGVzdA==", correlation_id=corr),
             )
 
     assert exc_info.value.status_code == 422
