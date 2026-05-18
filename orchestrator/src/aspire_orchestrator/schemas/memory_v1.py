@@ -97,6 +97,7 @@ SourceSurface = Literal[
     "nora_meeting",
     "finn_finance",
     "tim_service_lab",
+    # General Estimate Studio surface (non-service-hub context)
     "estimate_studio",
     "canvas_desk",
     "receipt_ledger",
@@ -106,6 +107,16 @@ SourceSurface = Literal[
     "tec_documents",    # Aspire upload pipeline (user-uploaded files)
     "google_calendar",  # Google Calendar push notifications
     "aspire_calendar",  # Aspire internal calendar events
+    # Wave 5.1b — Service Hub surfaces (service visibility scope)
+    # Service Hub Estimate Studio with Drew context (use for service visibility_scope writes)
+    "service_hub_estimate_studio",
+    "service_hub_jobs",
+    "service_hub_dispatch",
+    "service_hub_scheduling",
+    "service_hub_inspections",
+    "internal_drew",
+    "elevenlabs_tim_service",
+    "anam_tim_service",
 ]
 
 SourceAgent = Literal[
@@ -121,6 +132,8 @@ SourceAgent = Literal[
 VisibilityScope = Literal[
     "office",
     "finance",
+    "service",      # Wave 5.1b — Service Hub operational memory (Drew, jobs, dispatch).
+                    # NOTE: DB CHECK constraint update required in Wave 5.1b-2 migration before writing.
     "workflow",
     "admin",
     "restricted",
@@ -134,6 +147,7 @@ ThreadType = Literal[
     "deal_thread",
     "job_thread",
     "project_thread",
+    "property_thread",   # Wave 5.1b — all memory tied to a property address across projects/jobs
     "estimate_thread",
     "quote_thread",
     "invoice_thread",
