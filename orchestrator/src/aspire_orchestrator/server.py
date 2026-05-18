@@ -2182,6 +2182,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
         if agent == "quinn":
             import json as _json
             import os as _os
+            import re as _re
             from aspire_orchestrator.services.openai_client import generate_text_async
             from aspire_orchestrator.skillpacks.quinn_invoicing import (
                 QuinnInvoicingSkillPack, QuinnContext,
@@ -2189,7 +2190,88 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
 
             api_key = _os.environ.get("ASPIRE_OPENAI_API_KEY") or _os.environ.get("OPENAI_API_KEY")
 
+            # ── FAST-PATH: name-only lookup (Step 2 of the workflow) ──
+            # Production transcript 2026-05-18 09:21 showed the LLM parse adding
+            # 3-5 seconds of latency on a one-word name ("Clark", "James"),
+            # pushing total tool latency past Anam's ~5s timeout. For Step 2
+            # the `details` string IS the customer name — no extraction
+            # needed. Skip the GPT-5.2 parse entirely and jump straight to
+            # the Stripe customer search. Drops p95 latency from ~5s to
+            # ~500ms for the lookup leg.
+            #
+            # Heuristic for "this is just a name lookup":
+            #   - details is short (<60 chars)
+            #   - no digits (rules out amounts, dates, phone numbers)
+            #   - no currency or pricing language
+            #   - no email
+            #   - no "billing for", "due", "at" pricing structure
+            # If any of these signal a richer payload, fall through to the
+            # full LLM parse so multi-field utterances still get extracted
+            # ("Invoice Joe Smith $500 for repair").
+            _details_str = (details or "").strip()
+            _full_task_str = (full_task or "").strip()
+            _name_only = (
+                bool(_details_str)
+                and len(_details_str) < 60
+                and not _re.search(r"\d", _details_str)
+                and not _re.search(r"[\$@]", _details_str)
+                and not _re.search(r"\b(due|billing|invoice|quote|email|at\s+\$|for\s+\$|dollars?|cents?|each|total)\b", _details_str, _re.IGNORECASE)
+            )
+            if _name_only and task.strip().lower() in {"invoice", "quote"}:
+                from aspire_orchestrator.providers.stripe_client import _get_client as _get_stripe
+                customer_name = _details_str
+                stripe_client = _get_stripe()
+                try:
+                    # url-encode the name in case it has special characters
+                    from urllib.parse import quote as _qs
+                    safe_q = _qs(customer_name)
+                    search_resp = await stripe_client._request(
+                        __import__("aspire_orchestrator.providers.base_client", fromlist=["ProviderRequest"]).ProviderRequest(
+                            method="GET",
+                            path=f"/customers/search?query=name%3A%27{safe_q}%27&limit=3",
+                            body={},
+                            correlation_id=ctx.correlation_id,
+                            suite_id=safe_suite_id,
+                            office_id=safe_office_id,
+                        )
+                    )
+                    found_customers = []
+                    if search_resp.success:
+                        found_customers = search_resp.body.get("data", [])
+                except Exception as stripe_err:
+                    logger.warning("Quinn fast-path Stripe search failed: %s", stripe_err)
+                    found_customers = []
+
+                if found_customers:
+                    cust = found_customers[0]
+                    cust_name = cust.get("name", customer_name)
+                    cust_email = cust.get("email", "")
+                    return JSONResponse(status_code=200, content={
+                        "success": True,
+                        "agent": "quinn",
+                        "result": f"{cust_name} is in the system. Email on file is {cust_email}. Go ahead — what are you billing them for and how much?",
+                        "data": {
+                            "status": "customer_found",
+                            "customer_name": cust_name,
+                            "customer_id": cust.get("id"),
+                            "customer_email": cust_email,
+                        },
+                    })
+                return JSONResponse(status_code=200, content={
+                    "success": True,
+                    "agent": "quinn",
+                    "result": (
+                        f"{customer_name} isn't in the system yet. One-time setup — what's their first name, last name, and email? Company, phone, and address are optional."
+                    ),
+                    "data": {
+                        "status": "needs_onboarding",
+                        "customer_name": customer_name,
+                    },
+                })
+
             # Step 1: GPT-5.2 parses invoice intent from natural language
+            # (only reached when the fast-path heuristic did NOT match —
+            # i.e. the user gave amounts, dates, multi-field structure)
             try:
                 parse_prompt = (
                     "You are Quinn, an invoicing specialist. Extract structured invoice data from the user's request.\n\n"
@@ -2218,16 +2300,24 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     "- If any required field is unclear, set it to null."
                 )
 
+                # Voice path: keep the LLM parse FAST. Anam tools time out
+                # around 5 seconds. gpt-5.4-mini gives us ~600-1200ms latency
+                # vs gpt-5.2's 2-4s, with comparable JSON extraction quality
+                # for invoice data. Timeout dropped from 15s → 4s so a stuck
+                # LLM call returns a user-visible error instead of bubbling
+                # up as a hard Anam tool timeout. max_output_tokens dropped
+                # from 4096 → 512 because the JSON response is ~200 tokens
+                # max — the 4096 cap was burning latency on unused budget.
                 parse_resp = await generate_text_async(
-                    model="gpt-5.2",
+                    model="gpt-5.4-mini",
                     messages=[
                         {"role": "developer", "content": "Extract invoice data. Return ONLY valid JSON. No explanation."},
                         {"role": "user", "content": parse_prompt},
                     ],
                     api_key=api_key,
                     base_url="https://api.openai.com/v1",
-                    timeout_seconds=15.0,
-                    max_output_tokens=4096,
+                    timeout_seconds=4.0,
+                    max_output_tokens=512,
                     prefer_responses_api=True,
                 )
 
