@@ -1,4 +1,4 @@
-"""Drew Wave 5.1a-4 PROCURE tests.
+﻿"""Drew Wave 5.1a-4 PROCURE tests.
 
 Wave 5.1a-4 rewire: supplier_matcher.py is deleted. Drew now delegates all
 supplier discovery to Adam via get_or_fetch_supplier_candidates (24-hr TTL
@@ -538,7 +538,7 @@ async def test_procure_pipeline_cache_hit_skips_adam():
         # HIT -- fetch_fn must NOT be called
         return MOCK_CANDIDATES_LIST, True
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         m = MagicMock()
         m.memory_id = uuid.uuid4()
         return m
@@ -592,7 +592,7 @@ async def test_procure_pipeline_cache_miss_cap_hit_writes_row():
     async def _mock_update(table: str, filters: str, data: dict, **kw: Any) -> None:
         pass
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         m = MagicMock()
         m.memory_id = uuid.uuid4()
         return m
@@ -644,7 +644,7 @@ async def test_procure_pipeline_writes_material_pick_to_memory():
     async def _mock_cache(*, fetch_fn, **kw: Any) -> tuple[dict, bool]:
         return MOCK_CANDIDATES_LIST, False
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         envelopes.append(envelope)
         m = MagicMock()
         m.memory_id = uuid.uuid4()
@@ -706,7 +706,7 @@ async def test_procure_pipeline_emits_memory_write_receipt_per_row():
     async def _mock_cache(*, fetch_fn, **kw: Any) -> tuple[dict, bool]:
         return MOCK_CANDIDATES_LIST, True
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         m = MagicMock()
         m.memory_id = uuid.uuid4()
         return m
@@ -939,7 +939,7 @@ async def test_drew_material_pick_not_visible_under_office_scope():
     async def _mock_cache(*, fetch_fn: Any, **kw: Any) -> tuple[dict, bool]:
         return MOCK_CANDIDATES_LIST, False
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         written_envelopes.append(envelope)
         m = MagicMock()
         m.memory_id = uuid.uuid4()
