@@ -951,27 +951,66 @@ async def _async_ingest_pipeline(
                 limit=1,
             )
             if existing:
-                project_id = str(existing[0]["id"])
-                _log.info(
-                    "drew.ingest: dedup hit for hash=%s suite=%s, returning existing project=%s",
-                    project_hash[:8],
-                    suite_id[:8],
-                    project_id[:8],
-                )
-                # Count existing sheets for dedup receipt
-                sheets = await supabase_select(
+                candidate_id = str(existing[0]["id"])
+                # Validate dedup hit: the existing project must have completed INGEST
+                # and have at least one sheet.  A row with ingest != "done" or zero sheets
+                # is a stale/broken project from a prior failed run — treat as a new upload.
+                candidate_progress = existing[0].get("stage_progress") or {}
+                ingest_state = candidate_progress.get("ingest", "not_started") if isinstance(candidate_progress, dict) else "not_started"
+                existing_sheets = await supabase_select(
                     "blueprint_sheets",
-                    filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+                    filters=f"project_id=eq.{candidate_id}&suite_id=eq.{suite_id}",
                 )
-                sheet_ids = [str(s["id"]) for s in sheets]
-                return {
-                    "status": "dedup",
-                    "stage": "ingest",
-                    "project_id": project_id,
-                    "sheet_count": len(sheet_ids),
-                    "sheet_ids": sheet_ids,
-                    "provider_mix": {},
-                }
+                sheet_ids = [str(s["id"]) for s in existing_sheets]
+
+                if ingest_state == "done" and sheet_ids:
+                    _log.info(
+                        "drew.ingest: dedup hit for hash=%s suite=%s, returning existing project=%s sheets=%d",
+                        project_hash[:8],
+                        suite_id[:8],
+                        candidate_id[:8],
+                        len(sheet_ids),
+                    )
+                    return {
+                        "status": "dedup",
+                        "stage": "ingest",
+                        "project_id": candidate_id,
+                        "sheet_count": len(sheet_ids),
+                        "sheet_ids": sheet_ids,
+                        "provider_mix": {},
+                    }
+                else:
+                    # Stale project: ingest never completed or has no sheets.
+                    # Emit a receipt for observability (Law #2) then fall through
+                    # to create a fresh project.
+                    _log.warning(
+                        "drew.ingest: dedup_invalid_stale hash=%s suite=%s stale_project=%s "
+                        "ingest_state=%s sheet_count=%d — treating as new upload",
+                        project_hash[:8],
+                        suite_id[:8],
+                        candidate_id[:8],
+                        ingest_state,
+                        len(sheet_ids),
+                    )
+                    store_receipts([{
+                        "receipt_version": RECEIPT_VERSION,
+                        "receipt_id": str(uuid.uuid4()),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "event_type": "blueprint.upload.dedup_invalid_stale",
+                        "actor": ACTOR_DREW,
+                        "correlation_id": correlation_id,
+                        "status": "failed",
+                        "inputs_hash": _compute_inputs_hash({"project_hash": project_hash[:8], "suite_id": suite_id}),
+                        "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                        "redactions": [],
+                        "metadata": {
+                            "stale_project_id": candidate_id,
+                            "ingest_state": ingest_state,
+                            "sheet_count": len(sheet_ids),
+                            "suite_id": suite_id,
+                        },
+                    }])
+                    # Fall through — create a new project row below
         except SupabaseClientError as exc:
             _log.warning(
                 "drew.ingest: idempotency check failed (%s), proceeding with fresh ingest",

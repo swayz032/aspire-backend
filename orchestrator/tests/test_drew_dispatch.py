@@ -792,3 +792,217 @@ async def test_async_ingest_pipeline_skip_creation_requires_project_id():
             project_id=None,  # Missing!
             _skip_project_creation=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# 16. Stale dedup — existing project with no sheets treated as new upload
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stale_dedup_bypassed_when_no_sheets():
+    """Dedup hit with ingest != done and zero sheets must create a fresh project.
+
+    Bug 2 fix: when the existing project row was created by a prior failed run
+    (address column = content_hash, stage_progress.ingest != done, no sheets),
+    _async_ingest_pipeline MUST NOT return it as a dedup hit.  It must emit a
+    blueprint.upload.dedup_invalid_stale receipt and fall through to create a
+    new project row.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    stale_project_id = str(uuid.uuid4())
+    fresh_project_id = str(uuid.uuid4())
+    corr = "test-stale-dedup-001"
+
+    from aspire_orchestrator.services.blueprint.ocr_coordinator import SheetCorpus
+
+    fake_corpus = SheetCorpus()
+
+    async def _mock_select(table: str, *, filters: str = "", **kwargs: Any) -> list[dict]:
+        if table == "blueprint_projects":
+            # Return stale project: ingest never completed, no sheets
+            return [{
+                "id": stale_project_id,
+                "suite_id": SUITE_A,
+                "address": _FAKE_PDF_HASH,
+                "content_hash": None,
+                "stage_progress": {"ingest": "in_progress", "classify": "not_started",
+                                   "see": "not_started", "reason": "not_started", "procure": "not_started"},
+            }]
+        if table == "blueprint_sheets":
+            return []  # zero sheets on the stale project
+        return []
+
+    # _async_ingest_pipeline uses local imports from supabase_client inside the
+    # async function body.  Patch at the supabase_client module level so the
+    # local `from ... import supabase_select` picks up the mock.
+    with (
+        patch(
+            "aspire_orchestrator.services.supabase_client.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=_mock_select,
+        ),
+        patch(
+            "aspire_orchestrator.services.supabase_client.supabase_insert",
+            new_callable=AsyncMock,
+            return_value={"id": fresh_project_id},
+        ),
+        patch(
+            "aspire_orchestrator.services.blueprint.ocr_coordinator.extract_sheet_corpus",
+            new_callable=AsyncMock,
+            return_value=fake_corpus,
+        ),
+        patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new_callable=AsyncMock,
+        ),
+    ):
+        from aspire_orchestrator.skillpacks.drew_blueprint import _async_ingest_pipeline
+
+        result = await _async_ingest_pipeline(
+            pdf_bytes=_FAKE_PDF_BYTES,
+            project_hash=_FAKE_PDF_HASH,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+            filename="test.pdf",
+            correlation_id=corr,
+        )
+
+    # Must NOT have returned the stale project as a dedup hit
+    assert result.get("status") != "dedup", "stale project must NOT be returned as dedup"
+    assert result.get("project_id") != stale_project_id, "stale project_id must NOT be reused"
+
+    # Law #2: stale dedup receipt must be emitted
+    receipts = _query_receipts_by_corr(corr)
+    event_types = [r.get("event_type", "") for r in receipts]
+    assert "blueprint.upload.dedup_invalid_stale" in event_types, (
+        f"dedup_invalid_stale receipt missing — got: {event_types}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_valid_dedup_still_returns_existing_project():
+    """Dedup hit with ingest=done and sheets present must return the existing project.
+
+    Regression guard: the stale-dedup fix must NOT break the happy-path dedup.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    good_project_id = str(uuid.uuid4())
+    sheet1_id = str(uuid.uuid4())
+    corr = "test-valid-dedup-001"
+
+    async def _mock_select(table: str, *, filters: str = "", **kwargs: Any) -> list[dict]:
+        if table == "blueprint_projects":
+            return [{
+                "id": good_project_id,
+                "suite_id": SUITE_A,
+                "address": _FAKE_PDF_HASH,
+                "content_hash": _FAKE_PDF_HASH,
+                "stage_progress": {"ingest": "done", "classify": "done",
+                                   "see": "not_started", "reason": "not_started", "procure": "not_started"},
+            }]
+        if table == "blueprint_sheets":
+            return [{"id": sheet1_id, "project_id": good_project_id, "suite_id": SUITE_A}]
+        return []
+
+    with patch(
+        "aspire_orchestrator.services.supabase_client.supabase_select",
+        new_callable=AsyncMock,
+        side_effect=_mock_select,
+    ):
+        from aspire_orchestrator.skillpacks.drew_blueprint import _async_ingest_pipeline
+
+        result = await _async_ingest_pipeline(
+            pdf_bytes=_FAKE_PDF_BYTES,
+            project_hash=_FAKE_PDF_HASH,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+            filename="test.pdf",
+            correlation_id=corr,
+        )
+
+    assert result["status"] == "dedup"
+    assert result["project_id"] == good_project_id
+    assert result["sheet_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 17. supabase_update — 204 No Content treated as success (Bug 1 regression)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_supabase_update_204_does_not_raise():
+    """supabase_update must not raise SupabaseClientError when PostgREST returns 204."""
+    import httpx
+    from aspire_orchestrator.services.supabase_client import supabase_update, SupabaseClientError
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+    mock_resp.json.return_value = None
+
+    with patch(
+        "aspire_orchestrator.services.supabase_client._get_async_pool",
+    ) as mock_pool:
+        mock_client = AsyncMock()
+        mock_client.patch = AsyncMock(return_value=mock_resp)
+        mock_pool.return_value = mock_client
+
+        with patch("aspire_orchestrator.services.supabase_client._headers", return_value={
+            "apikey": "test",
+            "Authorization": "Bearer test",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }):
+            with patch("aspire_orchestrator.services.supabase_client._base_url", return_value="https://fake/rest/v1"):
+                result = await supabase_update(
+                    "blueprint_projects",
+                    "id=eq.fake-id&suite_id=eq.fake-suite",
+                    {"stage_progress": {"ingest": "in_progress"}},
+                )
+
+    # Must return empty dict (not raise)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_stage_progress_set_uses_return_minimal():
+    """set_stage_progress must use Prefer: return=minimal so 0-match UPDATEs don't 406."""
+    import httpx
+    from aspire_orchestrator.services.supabase_client import supabase_update
+
+    captured_headers: dict[str, str] = {}
+
+    async def _capture_patch(url: str, *, json: Any = None, headers: dict | None = None, **kwargs: Any):
+        if headers:
+            captured_headers.update(headers)
+        mock = MagicMock()
+        mock.status_code = 204
+        return mock
+
+    with patch(
+        "aspire_orchestrator.services.supabase_client._get_async_pool",
+    ) as mock_pool:
+        mock_client = AsyncMock()
+        mock_client.patch = _capture_patch
+        mock_pool.return_value = mock_client
+
+        with patch("aspire_orchestrator.services.supabase_client._headers", return_value={
+            "apikey": "k",
+            "Authorization": "Bearer k",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }):
+            with patch("aspire_orchestrator.services.supabase_client._base_url", return_value="https://fake/rest/v1"):
+                await supabase_update(
+                    "blueprint_projects",
+                    "id=eq.test",
+                    {"stage_progress": {"ingest": "done"}},
+                )
+
+    # The Prefer header must have been overwritten to return=minimal
+    assert captured_headers.get("Prefer") == "return=minimal", (
+        f"Expected return=minimal but got: {captured_headers.get('Prefer')}"
+    )
