@@ -286,7 +286,7 @@ async def dispatch_blueprint(
             redacted_inputs={"filename": body.filename, "error": "invalid_base64"},
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "INVALID_BASE64", "message": type(exc).__name__},
         )
 
@@ -300,7 +300,7 @@ async def dispatch_blueprint(
             redacted_inputs={"filename": body.filename, "error": "empty_bytes"},
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "EMPTY_PDF"},
         )
 
@@ -319,7 +319,7 @@ async def dispatch_blueprint(
             },
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "PDF_TOO_LARGE", "max_bytes": _MAX_PDF_SIZE_BYTES},
         )
 
