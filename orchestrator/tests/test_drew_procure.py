@@ -1,4 +1,4 @@
-"""Drew Wave 5.1a-4 PROCURE tests.
+﻿"""Drew Wave 5.1a-4 PROCURE tests.
 
 Wave 5.1a-4 rewire: supplier_matcher.py is deleted. Drew now delegates all
 supplier discovery to Adam via get_or_fetch_supplier_candidates (24-hr TTL
@@ -22,13 +22,14 @@ Test categories:
   6.  stage_progress set to failed on pipeline exception
   7.  Cache hit path: Adam NOT called, result from cache
   8.  Cache miss + cap hit: was_cached=False, Drew still writes row + memory
-  9.  material_pick memory write shape (visibility_scope=office, entity_type)
+  9.  material_pick memory write shape (visibility_scope=service, entity_type)
   10. Per-row memory write receipt emitted (Law #2)
   11. Tenant isolation (Law #6): Suite B sees 0 materials from Project A
   12. YELLOW gate (Law #4): materials.bundle.add tool name confirmed
   13. PII/Law #9: raw line_item never in blueprint.procure receipt
   14. Smoke import: no ImportError on deleted supplier_matcher
   15. Tariff edge cases: empty line_item, no false positives on concrete
+  16. Evil: office-scope query returns 0 Drew material_pick rows (scope isolation)
 
 Mocking strategy:
   - supabase_select, supabase_update patched in unit tests.
@@ -537,7 +538,7 @@ async def test_procure_pipeline_cache_hit_skips_adam():
         # HIT -- fetch_fn must NOT be called
         return MOCK_CANDIDATES_LIST, True
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         m = MagicMock()
         m.memory_id = uuid.uuid4()
         return m
@@ -591,7 +592,7 @@ async def test_procure_pipeline_cache_miss_cap_hit_writes_row():
     async def _mock_update(table: str, filters: str, data: dict, **kw: Any) -> None:
         pass
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         m = MagicMock()
         m.memory_id = uuid.uuid4()
         return m
@@ -643,7 +644,7 @@ async def test_procure_pipeline_writes_material_pick_to_memory():
     async def _mock_cache(*, fetch_fn, **kw: Any) -> tuple[dict, bool]:
         return MOCK_CANDIDATES_LIST, False
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         envelopes.append(envelope)
         m = MagicMock()
         m.memory_id = uuid.uuid4()
@@ -674,7 +675,7 @@ async def test_procure_pipeline_writes_material_pick_to_memory():
     assert result["memory_writes"] == 1
     assert len(envelopes) == 1
     env = envelopes[0]
-    assert env.visibility_scope == "office", "Wave 5.1a: must be office until Wave 5.1b-5"
+    assert env.visibility_scope == "service", "Wave 5.1b-5: material_pick rows use service scope"
     assert env.entity_type == "material_pick"
     assert env.memory_type == "decision_fact"
     assert env.idempotency_key.startswith("drew:material:")
@@ -705,7 +706,7 @@ async def test_procure_pipeline_emits_memory_write_receipt_per_row():
     async def _mock_cache(*, fetch_fn, **kw: Any) -> tuple[dict, bool]:
         return MOCK_CANDIDATES_LIST, True
 
-    async def _mock_write(envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
         m = MagicMock()
         m.memory_id = uuid.uuid4()
         return m
@@ -907,3 +908,91 @@ def test_tariff_no_false_positive_on_concrete():
     assert detect_tariff_flag("concrete masonry unit CMU 8x8x16") == TariffFlag.NONE
     assert detect_tariff_flag("ready-mix concrete 4000 psi") == TariffFlag.NONE
     assert detect_tariff_flag("cast-in-place concrete slab on grade") == TariffFlag.NONE
+
+
+# ---------------------------------------------------------------------------
+# 16. Evil: office-scope query never returns Drew material_pick rows
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drew_material_pick_not_visible_under_office_scope():
+    """Evil test (Law #6 / Wave 5.1b-5): Drew writes material_pick with
+    visibility_scope='service'. An office-scope query MUST return 0 rows
+    for that material. A service-scope query must return the row.
+
+    Strategy: run the pipeline with one material and capture the MemoryObjectIn
+    written to the mock MemoryService. Assert its visibility_scope is 'service'
+    (not 'office'). Then simulate an office-scope filter and confirm it would
+    exclude the row — proving the scopes are mutually exclusive.
+    """
+    from aspire_orchestrator.skillpacks.drew_blueprint import _async_procure_pipeline
+
+    written_envelopes: list[Any] = []
+
+    async def _mock_select(table: str, filters: str = "", **kw: Any) -> list[dict]:
+        return [MATERIAL_REBAR] if table == "blueprint_materials" else []
+
+    async def _mock_update(table: str, filters: str, data: dict, **kw: Any) -> None:
+        pass
+
+    async def _mock_cache(*, fetch_fn: Any, **kw: Any) -> tuple[dict, bool]:
+        return MOCK_CANDIDATES_LIST, False
+
+    async def _mock_write(_self: Any, envelope: Any, *, scope: Any, embed: bool = True) -> Any:
+        written_envelopes.append(envelope)
+        m = MagicMock()
+        m.memory_id = uuid.uuid4()
+        return m
+
+    with (
+        patch("aspire_orchestrator.services.supabase_client.supabase_select", new=_mock_select),
+        patch("aspire_orchestrator.services.supabase_client.supabase_update", new=_mock_update),
+        patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.get_or_fetch_supplier_candidates",
+            new=_mock_cache,
+        ),
+        patch("aspire_orchestrator.services.memory_service.MemoryService.write", new=_mock_write),
+        patch("aspire_orchestrator.services.receipt_store.store_receipts"),
+    ):
+        result = await _async_procure_pipeline(
+            project_id=PROJECT_A,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+            office_zip="33101",
+            office_lat=25.7617,
+            office_lng=-80.1918,
+            tenant_id=TENANT_A,
+            geofence_miles=25.0,
+            correlation_id=CORR_ID,
+        )
+
+    assert result["memory_writes"] == 1
+    assert len(written_envelopes) == 1
+    env = written_envelopes[0]
+
+    # The row must be service-scoped — not office-scoped.
+    assert env.visibility_scope == "service", (
+        f"material_pick must be service-scoped; got '{env.visibility_scope}'"
+    )
+    assert env.visibility_scope != "office", (
+        "material_pick must NOT be office-scoped after Wave 5.1b-5 migration"
+    )
+
+    # Simulate an office-scope filter: rows where visibility_scope='office'
+    # must not include this envelope.
+    office_scope_visible: list[Any] = [
+        e for e in written_envelopes if e.visibility_scope == "office"
+    ]
+    assert office_scope_visible == [], (
+        f"Office-scope query returned {len(office_scope_visible)} Drew material_pick row(s); "
+        "must be 0 after Wave 5.1b-5 migration"
+    )
+
+    # Confirm service-scope filter DOES include this envelope.
+    service_scope_visible: list[Any] = [
+        e for e in written_envelopes if e.visibility_scope == "service"
+    ]
+    assert len(service_scope_visible) == 1, (
+        "Service-scope query must return exactly 1 Drew material_pick row"
+    )
