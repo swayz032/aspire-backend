@@ -1853,7 +1853,7 @@ async def _async_procure_pipeline(
                 "was_cached": was_cached,
                 "category": category,
             },
-            visibility_scope="office",  # TODO Wave 5.1b-5: migrate to "service"
+            visibility_scope="service",
             status="drafted",
             idempotency_key=f"drew:material:{project_id}:{material_id}",
         )
@@ -1877,6 +1877,7 @@ async def _async_procure_pipeline(
                         "match_class": top_match_class,
                         "was_cached": was_cached,
                         "category": category,
+                        "visibility_scope": "service",
                     },
                 )
             ])
