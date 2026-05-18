@@ -739,6 +739,40 @@ class FinanceBriefOut(BaseModel):
     freshness_seq: int = 0
 
 
+class ServiceBriefOut(BaseModel):
+    """Read-shape for service_brief_cache rows (Wave 5.1b-4).
+
+    Mirrors office_brief_cache layout (migration 101). Service-specific
+    summary counters are extracted from brief_json by BriefMaterializer on
+    every build so the cache table schema stays stable across feature passes.
+
+    Fields:
+      recent_picks_count      — last 5 material_pick decision_facts (Drew)
+      recent_overrides_count  — last 3 material_override decision_facts
+      open_pending_intents_count — unresolved service-scope pending_intents
+      recent_handoffs_count   — last 3 handoff_note entries (visibility=service)
+      active_threads_count    — project/job/property threads with recent activity
+    """
+
+    tenant_id: UUID
+    suite_id: UUID
+    office_id: UUID
+    brief_text: str | None = None
+    brief_json: dict = Field(default_factory=dict)
+    due_now_count: int = 0
+    overdue_count: int = 0
+    pending_approval_count: int = 0
+    recent_receipts_count: int = 0
+    # Service-specific summary counters (derived from brief_json on each build)
+    recent_picks_count: int = 0
+    recent_overrides_count: int = 0
+    open_pending_intents_count: int = 0
+    recent_handoffs_count: int = 0
+    active_threads_count: int = 0
+    last_built_at: datetime
+    freshness_seq: int = 0
+
+
 class ThreadBriefOut(BaseModel):
     """Read-shape for thread_brief_cache rows."""
 
@@ -801,6 +835,7 @@ __all__ = [
     "CandidateQuery",
     "OfficeBriefOut",
     "FinanceBriefOut",
+    "ServiceBriefOut",
     "ThreadBriefOut",
     # Pass 5 — memory search
     "MemorySearchRequest",
