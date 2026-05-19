@@ -52,6 +52,9 @@ class OcrSheetResult:
             - Azure Doc Intel result: 0.75 (layout OCR from raster image)
             - PyMuPDF native (fallback of last resort): 0.5 (raw text layer, no structure)
         page_hash: SHA-256 hash of the page image bytes (from pdf_splitter).
+        image_bytes: PNG raster snapshot of this page (from pdf_splitter). Used for
+            thumbnail upload in the ingest pipeline. May be empty bytes if splitter
+            failed to render this page.
     """
 
     page_number: int
@@ -59,6 +62,7 @@ class OcrSheetResult:
     provider: str
     confidence: float
     page_hash: str
+    image_bytes: bytes = b""
 
 
 @dataclass
@@ -102,8 +106,12 @@ async def extract_sheet_corpus(
     extracts: list[SheetExtract] = split_pdf_to_sheets(pdf_bytes)
     corpus = SheetCorpus()
 
-    llamaparse = get_llamaparse_client()
-    azure = get_azure_doc_intel_client()
+    # Lazily resolve provider clients — instantiation raises ProviderError if the
+    # required env var is absent (fail-closed per Law #3).  We defer to inside the
+    # per-sheet try blocks so a missing credential only disables that provider path;
+    # the downstream PyMuPDF fallback (Path C) always succeeds regardless of creds.
+    _llamaparse = None
+    _azure = None
 
     for extract in extracts:
         page_num = extract.page_number
@@ -122,7 +130,9 @@ async def extract_sheet_corpus(
         # Path A: Text-layer PDF → try LlamaParse for richer markdown structure
         if native_char_count >= _TEXT_LAYER_MIN_CHARS:
             try:
-                lp_response = await llamaparse.parse_pdf(
+                if _llamaparse is None:
+                    _llamaparse = get_llamaparse_client()
+                lp_response = await _llamaparse.parse_pdf(
                     pdf_bytes,  # LlamaParse parses full doc; we extract the matching page
                     correlation_id=correlation_id,
                     suite_id=suite_id,
@@ -146,6 +156,7 @@ async def extract_sheet_corpus(
                         provider="llamaparse",
                         confidence=0.9,
                         page_hash=extract.page_hash,
+                        image_bytes=extract.image_bytes,
                     )
                     corpus.record_provider("llamaparse")
                     logger.info(
@@ -171,7 +182,9 @@ async def extract_sheet_corpus(
         # Path B: Scanned/image sheet, OR LlamaParse failed → Azure Doc Intelligence
         if ocr_result is None:
             try:
-                az_response = await azure.analyze_layout(
+                if _azure is None:
+                    _azure = get_azure_doc_intel_client()
+                az_response = await _azure.analyze_layout(
                     extract.image_bytes,
                     correlation_id=correlation_id,
                     suite_id=suite_id,
@@ -187,6 +200,7 @@ async def extract_sheet_corpus(
                         provider="azure_doc_intel",
                         confidence=0.75,
                         page_hash=extract.page_hash,
+                        image_bytes=extract.image_bytes,
                     )
                     corpus.record_provider("azure_doc_intel")
                     logger.info(
@@ -217,6 +231,7 @@ async def extract_sheet_corpus(
                 provider="pymupdf",
                 confidence=0.5,
                 page_hash=extract.page_hash,
+                image_bytes=extract.image_bytes,
             )
             corpus.record_provider("pymupdf")
             logger.info(
