@@ -111,6 +111,9 @@ from aspire_orchestrator.services.supabase_client import (
 from aspire_orchestrator.skillpacks.drew_blueprint import (
     _async_classify_pipeline,
     _async_ingest_pipeline,
+    _async_procure_pipeline,
+    _async_reason_pipeline,
+    _async_see_pipeline,
 )
 
 logger = logging.getLogger(__name__)
@@ -336,7 +339,7 @@ async def _run_full_pipeline(
     correlation_id: str,
     model: str,
 ) -> None:
-    """Run INGEST → CLASSIFY pipeline in the background.
+    """Run INGEST → CLASSIFY → SEE → REASON → PROCURE pipeline in the background.
 
     Law #5: Capability token already validated at HTTP boundary — not re-checked here.
     Law #2: Emits blueprint.ingest.started, blueprint.ingest.failed,
@@ -413,6 +416,58 @@ async def _run_full_pipeline(
                 project_id=project_id,
                 suite_id=suite_id,
                 model=model,
+                correlation_id=correlation_id,
+            ),
+            project_id=project_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+        )
+
+        # SEE — YOLOv11 symbol detection + scale + seal
+        _current_stage = "see"
+        await _run_stage_with_timeout(
+            stage="see",
+            coro=_async_see_pipeline(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                pdf_bytes=pdf_bytes,
+                confidence_floor=0.70,
+                correlation_id=correlation_id,
+            ),
+            project_id=project_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+        )
+
+        # REASON — story_writer (the moat)
+        _current_stage = "reason"
+        await _run_stage_with_timeout(
+            stage="reason",
+            coro=_async_reason_pipeline(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                model=model,
+                correlation_id=correlation_id,
+            ),
+            project_id=project_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+        )
+
+        # PROCURE — tariff flags + supplier match
+        _current_stage = "procure"
+        await _run_stage_with_timeout(
+            stage="procure",
+            coro=_async_procure_pipeline(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                geofence_miles=25.0,
                 correlation_id=correlation_id,
             ),
             project_id=project_id,
