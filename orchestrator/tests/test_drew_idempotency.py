@@ -553,3 +553,151 @@ class TestProcureIdempotency:
         assert material_id in update_call_args or "blueprint_materials" in update_call_args, (
             f"UPDATE must target the existing material. Got: {update_call_args}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Concurrent SEE dispatch guard (P1 fix, Wave 9f)
+# ---------------------------------------------------------------------------
+
+class TestConcurrentSeeGuard:
+    """Concurrent _async_see_pipeline calls on the same project_id: only one proceeds.
+
+    The application-level asyncio.Lock ensures the second concurrent invocation
+    on the SAME event loop detects the lock is held and emits a concurrent_skip
+    receipt without touching blueprint_symbols.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_see_emits_skip_receipt_and_only_one_deletes(self) -> None:
+        """When SEE is called concurrently for the same project_id on the same event loop,
+        the second call must:
+          1. Return status='skipped' with reason='concurrent_run'
+          2. Emit blueprint.see.concurrent_skip receipt
+          3. NOT call supabase_delete for blueprint_symbols (no double-write)
+        """
+        import asyncio
+        from aspire_orchestrator.skillpacks.drew_blueprint import _async_see_pipeline, _stage_locks
+        from aspire_orchestrator.services.receipt_store import clear_store, _receipts
+
+        clear_store()
+
+        # Reset the lock state for this project_id so the test is isolated.
+        lock_key = f"see:{PROJECT_ID}"
+        if lock_key in _stage_locks:
+            del _stage_locks[lock_key]
+
+        mock_stage = AsyncMock(return_value=None)
+        delete_call_count = {"n": 0}
+
+        async def _counting_delete(table: str, *args: Any, **kwargs: Any) -> None:
+            if table == "blueprint_symbols":
+                delete_call_count["n"] += 1
+
+        mock_sheet = {
+            "id": str(uuid.uuid4()),
+            "project_id": PROJECT_ID,
+            "suite_id": SUITE_ID,
+            "hash": "concurrent_test",
+            "ocr_text": "notes",
+        }
+        mock_extract = MagicMock()
+        mock_extract.page_number = 1
+        mock_extract.page_hash = "concurrent_test"
+        mock_extract.text = "notes"
+        mock_extract.image_bytes = b"\x89PNG"
+
+        mock_calibration = MagicMock()
+        mock_calibration.scale_factor = 0.0
+        mock_calibration.confidence = 0.0
+        mock_calibration.method = "none"
+
+        mock_seal = MagicMock()
+        mock_seal.seal_detected = False
+
+        select_call_n = {"n": 0}
+
+        async def _mock_select(table: str, **kwargs: Any) -> list[dict]:
+            # First symbols select = empty (no existing symbols to avoid clearing)
+            if table == "blueprint_symbols" and select_call_n["n"] == 0:
+                select_call_n["n"] += 1
+                return []
+            return [mock_sheet]
+
+        with (
+            patch(
+                "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+                new=mock_stage,
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_select",
+                new=AsyncMock(side_effect=_mock_select),
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_delete",
+                new=AsyncMock(side_effect=_counting_delete),
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_insert",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_update",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aspire_orchestrator.services.blueprint.pdf_splitter.split_pdf_to_sheets",
+                return_value=[mock_extract],
+            ),
+            patch(
+                "aspire_orchestrator.services.blueprint.symbol_detector.detect_symbols",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "aspire_orchestrator.services.blueprint.scale_calibrator.calibrate_scale",
+                return_value=mock_calibration,
+            ),
+            patch(
+                "aspire_orchestrator.services.blueprint.seal_detector.detect_engineer_seal",
+                return_value=mock_seal,
+            ),
+        ):
+            # Acquire the lock manually to simulate a concurrent first run already in-flight.
+            from aspire_orchestrator.skillpacks.drew_blueprint import _get_stage_lock
+            held_lock = _get_stage_lock("see", PROJECT_ID)
+            await held_lock.acquire()
+            try:
+                # Now call _async_see_pipeline — it should detect lock.locked() == True
+                # and return early with status='skipped'.
+                result = await _async_see_pipeline(
+                    project_id=PROJECT_ID,
+                    suite_id=SUITE_ID,
+                    office_id=None,
+                    pdf_bytes=b"%PDF-1.4",
+                    confidence_floor=0.70,
+                    correlation_id=CORRELATION_ID,
+                )
+            finally:
+                held_lock.release()
+
+        # Verify the concurrent skip behavior.
+        assert result.get("status") == "skipped", (
+            f"Expected status='skipped' for concurrent run. Got: {result}"
+        )
+        assert result.get("reason") == "concurrent_run", (
+            f"Expected reason='concurrent_run'. Got: {result}"
+        )
+
+        # No blueprint_symbols delete should have been called.
+        assert delete_call_count["n"] == 0, (
+            f"P1 fix: concurrent SEE must NOT delete symbols. "
+            f"Got {delete_call_count['n']} delete(s)."
+        )
+
+        # A concurrent_skip receipt must be emitted.
+        skip_receipts = [
+            r for r in _receipts
+            if r.get("action_type") == "blueprint.see.concurrent_skip"
+        ]
+        assert len(skip_receipts) >= 1, (
+            "Expected blueprint.see.concurrent_skip receipt (Law #2)"
+        )

@@ -601,3 +601,157 @@ class TestProcureStageProgress:
         procure_states = [state for stage, state in calls if stage == "procure"]
         assert "in_progress" in procure_states, f"Expected in_progress. Got: {calls}"
         assert "done" in procure_states, f"Expected done. Got: {calls}"
+
+    @pytest.mark.asyncio
+    async def test_procure_marks_done_on_no_materials(self) -> None:
+        """P1 fix: _async_procure_pipeline no-materials early-return path calls set_stage_progress(done).
+
+        Previously the early return at line 2224-2241 skipped the set_stage_progress(done)
+        call at the end of the function, causing the sweeper to treat these projects as
+        orphans after the 3-minute threshold.
+        """
+        import sys
+        from aspire_orchestrator.skillpacks.drew_blueprint import _async_procure_pipeline
+        from aspire_orchestrator.services.receipt_store import clear_store
+        from unittest.mock import MagicMock as _MagicMock
+
+        clear_store()
+        calls, mock_set_stage = _make_stage_progress_recorder()
+
+        _stub_modules = {
+            "aspire_orchestrator.services.blueprint.supplier_matcher": _MagicMock(
+                match_suppliers=AsyncMock(return_value=_MagicMock(matches=[], missing_input_inserted=False))
+            ),
+            "aspire_orchestrator.services.blueprint.schemas.truth": _MagicMock(
+                TariffFlag=_MagicMock()
+            ),
+        }
+
+        with (
+            patch.dict("sys.modules", _stub_modules),
+            patch(
+                "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+                new=mock_set_stage,
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_select",
+                new=AsyncMock(return_value=[]),  # No materials → triggers early return
+            ),
+        ):
+            result = await _async_procure_pipeline(
+                project_id=PROJECT_ID,
+                suite_id=SUITE_ID,
+                office_id=None,
+                geofence_miles=25.0,
+                correlation_id=CORRELATION_ID,
+            )
+
+        # Verify the fix: status=ok AND set_stage_progress(done) was called.
+        assert result.get("status") == "ok", (
+            f"Expected status=ok for no-materials path, got {result.get('status')!r}"
+        )
+        assert result.get("materials_processed") == 0
+        procure_states = [state for stage, state in calls if stage == "procure"]
+        assert "done" in procure_states, (
+            f"P1 fix: no-materials early return must call set_stage_progress(done). "
+            f"Got procure states: {procure_states}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# DLP fail-closed tests (MEDIUM fix, Wave 9f)
+# ---------------------------------------------------------------------------
+
+class TestDLPFailClosed:
+    """_dlp_redact returns placeholder when DLP is unavailable (Law #3 fail-closed)."""
+
+    @pytest.mark.asyncio
+    async def test_ingest_stores_placeholder_when_dlp_unavailable(self) -> None:
+        """When _dlp is None, ocr_text written to DB must be the DLP_UNAVAILABLE placeholder.
+
+        Law #3: fail closed — never write unredacted PII when DLP is down.
+        Law #9: raw OCR text must not reach blueprint_sheets.ocr_text.
+        """
+        from aspire_orchestrator.skillpacks.drew_blueprint import _async_ingest_pipeline
+        from aspire_orchestrator.services.receipt_store import clear_store, _receipts
+
+        clear_store()
+        calls, mock_set_stage = _make_stage_progress_recorder()
+
+        mock_extract = MagicMock()
+        mock_extract.page_number = 1
+        mock_extract.text = "REAL PII TEXT — SSN 123-45-6789"
+        mock_extract.page_hash = "deadbeef01"
+        mock_extract.image_bytes = b""
+
+        mock_corpus = MagicMock()
+        mock_corpus.sheets = [mock_extract]
+        mock_corpus.provider_mix = {"pymupdf": 1}
+
+        inserted_rows: list[dict] = []
+
+        async def _capture_insert(table: str, row: dict, **kwargs: Any) -> None:
+            if table == "blueprint_sheets":
+                inserted_rows.append(dict(row))
+            return None
+
+        import aspire_orchestrator.skillpacks.drew_blueprint as _drew_module
+
+        with (
+            patch.object(_drew_module, "_dlp", None),
+            patch(
+                "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+                new=mock_set_stage,
+            ),
+            patch(
+                "aspire_orchestrator.services.blueprint.ocr_coordinator.extract_sheet_corpus",
+                new=AsyncMock(return_value=mock_corpus),
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_insert",
+                new=AsyncMock(side_effect=_capture_insert),
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_select",
+                new=AsyncMock(return_value=[{"id": PROJECT_ID, "project_id": PROJECT_ID, "suite_id": SUITE_ID}]),
+            ),
+            patch(
+                "aspire_orchestrator.services.supabase_client.supabase_update",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aspire_orchestrator.services.blueprint.thumbnail_storage.upload_sheet_thumbnail",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            await _async_ingest_pipeline(
+                pdf_bytes=b"%PDF-1.4 stub",
+                project_hash="a" * 64,
+                suite_id=SUITE_ID,
+                office_id="b" * 36,
+                filename="test.pdf",
+                correlation_id=CORRELATION_ID,
+                project_id=PROJECT_ID,
+                _skip_project_creation=True,
+            )
+
+        # The blueprint_sheets insert must use the placeholder, NOT the raw text.
+        assert len(inserted_rows) >= 1, "Expected at least one blueprint_sheets row"
+        sheet_row = inserted_rows[0]
+        ocr_text_stored = sheet_row.get("ocr_text", "")
+        assert "DLP_UNAVAILABLE" in ocr_text_stored, (
+            f"Law #3 fail-closed violation: raw PII text stored when DLP unavailable. "
+            f"Got ocr_text={ocr_text_stored!r}"
+        )
+        assert "REAL PII TEXT" not in ocr_text_stored, (
+            "Raw PII text must NOT reach blueprint_sheets when DLP is unavailable"
+        )
+
+        # A dlp_unavailable receipt must be emitted (Law #2)
+        dlp_unavailable_receipts = [
+            r for r in _receipts
+            if r.get("action_type") == "blueprint.ingest.dlp_unavailable"
+        ]
+        assert len(dlp_unavailable_receipts) >= 1, (
+            "Expected blueprint.ingest.dlp_unavailable receipt (Law #2)"
+        )
