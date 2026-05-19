@@ -2,9 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system deps for Presidio NER models
+# Install system deps. Wave 9g: libgl1 + libglib2.0-0 + libxcb1 are required by
+# opencv (cv2 transitive dep from ultralytics/YOLO) on python:3.11-slim. Without
+# them: `ImportError: libxcb.so.1: cannot open shared object file` at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency spec and source code
@@ -15,18 +20,14 @@ COPY scripts/schemas/ ./scripts/schemas/
 # Install Python deps + package
 RUN pip install --no-cache-dir .
 
-# Wave 9g: ensure ultralytics+torch CPU are installed for Drew SEE stage.
-# pyproject.toml declares ultralytics>=8.3.0 but transitive torch wheels can
-# silently fail on memory-constrained builders. Force-install torch CPU
-# explicitly (lighter, no CUDA) and verify ultralytics imports.
-RUN pip install --no-cache-dir \
-      torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir 'ultralytics>=8.3.0,<9.0' \
-    && python -c "from ultralytics import YOLO; print('ultralytics OK')"
-
-# Wave 9g: pre-fetch YOLOv11 weights so SEE doesn't cold-fetch on first
-# request (50MB download). Bakes weights into the image layer.
-RUN python -c "from ultralytics import YOLO; YOLO('yolo11m.pt')" \
+# Wave 9g: verify ultralytics imports and pre-fetch YOLOv11 weights so SEE
+# doesn't cold-fetch on first request. ultralytics is already declared in
+# pyproject.toml so `pip install .` above pulled it. We do NOT force CPU torch
+# here because ultralytics pins torchvision which re-resolves to a full torch.
+# Railway's runtime has enough memory for the full wheel; the build penalty is
+# accepted in exchange for not fighting the dep solver.
+RUN python -c "from ultralytics import YOLO; print('ultralytics OK')" \
+    && python -c "from ultralytics import YOLO; YOLO('yolo11m.pt')" \
     && mkdir -p /home/aspire/.config/Ultralytics \
     && mv yolo11m.pt /home/aspire/.config/Ultralytics/ 2>/dev/null || true
 
