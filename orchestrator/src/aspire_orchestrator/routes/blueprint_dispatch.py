@@ -39,13 +39,31 @@ Production Hardening (2026-05-19):
   Fix 6 — Dispatch response includes receipt_id so the frontend can deep-link to failure
            details when the user wants to inspect a stalled upload.
 
+New endpoints (2026-05-19) — pre-signed PUT upload flow:
+  POST /v1/blueprints/upload-init
+    Accepts: { mime_type, size_bytes, filename, suite_id, office_id, correlation_id, capability_token }
+    Returns: { upload_id, signed_url, storage_path, expires_at, receipt_id }
+    GREEN tier. Mints a Supabase Storage write-signed URL. No project row created.
+
+  POST /v1/blueprints/upload-complete
+    Accepts: { upload_id, filename, suite_id, office_id, correlation_id, capability_token }
+    Returns: { project_id, status: "queued"|"dedup", correlation_id, pdf_storage_path, receipt_id }
+    Verifies the uploaded object exists, computes SHA-256 via streaming, runs dedup,
+    creates the project row, and enqueues the full pipeline.
+
 Law compliance:
-  Law #2 — 7 receipt types: blueprint.upload.accepted, blueprint.upload.dedup,
+  Law #2 — 7 receipt types on /dispatch:
+            blueprint.upload.accepted, blueprint.upload.dedup,
             blueprint.upload.dedup_invalid_stale, blueprint.upload.denied,
             blueprint.ingest.started, blueprint.ingest.failed, blueprint.pipeline.failed,
             blueprint.<stage>.timeout
-  Law #3 — Fail closed: missing fields → 422, invalid base64 → 422, oversized PDF → 422,
-            missing capability token → 401, cross-tenant → 403.
+            3 receipt types on /upload-init:
+            blueprint.upload.signed_url_issued, blueprint.upload.signed_url_denied
+            4 receipt types on /upload-complete:
+            blueprint.upload.complete.accepted, blueprint.upload.complete.denied,
+            blueprint.upload.complete.dedup
+  Law #3 — Fail closed: missing fields → 422/415/413, missing capability token → 401,
+            cross-tenant → 403, storage object missing → 422, storage error → 503.
   Law #5 — Capability token validated ONCE at HTTP boundary. Not re-checked in background.
   Law #6 — All DB queries filtered by suite_id from the validated token scope.
   Law #9 — PDF bytes never logged. Only len() and sha256[:8] prefix in log lines.
@@ -69,7 +87,7 @@ import base64
 import hashlib
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
@@ -78,6 +96,10 @@ from pydantic import BaseModel, Field
 from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
 from aspire_orchestrator.services import receipt_store
 from aspire_orchestrator.services.blueprint.pdf_raw_storage import upload_raw_pdf
+from aspire_orchestrator.services.blueprint.pdf_signed_upload import (
+    mint_signed_upload_url,
+    stream_pdf_for_hash,
+)
 from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
 from aspire_orchestrator.services.supabase_client import (
     SupabaseClientError,
@@ -97,6 +119,15 @@ router = APIRouter(prefix="/v1/blueprints", tags=["blueprints-dispatch"])
 
 _MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50MB hard limit (Law #3)
 
+# Accepted MIME types for upload-init (Law #3: reject anything else)
+_ACCEPTED_MIME_TYPES: frozenset[str] = frozenset({
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/heic",
+    "image/heif",
+})
+
 # Fix 2: Per-stage hard timeouts (seconds).  asyncio.wait_for enforces these.
 # On TimeoutError the pipeline stops immediately — no subsequent stages run.
 _STAGE_TIMEOUTS: dict[str, int] = {
@@ -108,7 +139,7 @@ _STAGE_TIMEOUTS: dict[str, int] = {
 }
 
 # ---------------------------------------------------------------------------
-# Request / Response schemas
+# Request / Response schemas — /dispatch (legacy)
 # ---------------------------------------------------------------------------
 
 
@@ -135,6 +166,59 @@ class BlueprintDispatchResponse(BaseModel):
     correlation_id: str
     pdf_storage_path: str | None = None
     receipt_id: str | None = None  # Fix 6: receipt_id for deep-linking
+
+
+# ---------------------------------------------------------------------------
+# Request / Response schemas — /upload-init (new)
+# ---------------------------------------------------------------------------
+
+
+class UploadInitRequest(BaseModel):
+    """Metadata-only body for /upload-init (~200 bytes, no file bytes)."""
+
+    mime_type: str = Field(..., description="MIME type of the file to be uploaded")
+    size_bytes: int = Field(..., description="File size in bytes (client-reported, validated server-side)")
+    filename: str = Field(default="blueprint.pdf", description="Original filename")
+    suite_id: str = Field(..., description="Tenant suite UUID (Law #6)")
+    office_id: str = Field(..., description="Office UUID (Law #6)")
+    correlation_id: str = Field(..., description="Client-provided correlation UUID")
+    capability_token: str = Field(..., description="Short-lived capability token (Law #5)")
+
+
+class UploadInitResponse(BaseModel):
+    """Response from /upload-init — client PUTs directly to signed_url."""
+
+    upload_id: str         # UUID v4 — opaque handle, carry to /upload-complete
+    signed_url: str        # PUT this URL with raw file bytes (no auth header)
+    storage_path: str      # {suite_id}/{upload_id}/raw.pdf
+    expires_at: str        # ISO8601 UTC — when signed_url expires
+    receipt_id: str        # Law #2 receipt ID
+
+
+# ---------------------------------------------------------------------------
+# Request / Response schemas — /upload-complete (new)
+# ---------------------------------------------------------------------------
+
+
+class UploadCompleteRequest(BaseModel):
+    """Metadata-only body for /upload-complete — confirms the browser PUT succeeded."""
+
+    upload_id: str = Field(..., description="UUID v4 returned by /upload-init")
+    filename: str = Field(default="blueprint.pdf", description="Original filename")
+    suite_id: str = Field(..., description="Tenant suite UUID (Law #6)")
+    office_id: str = Field(..., description="Office UUID (Law #6)")
+    correlation_id: str = Field(..., description="Client-provided correlation UUID")
+    capability_token: str = Field(..., description="Short-lived capability token (Law #5)")
+
+
+class UploadCompleteResponse(BaseModel):
+    """Synchronous acceptance response from /upload-complete."""
+
+    project_id: str
+    status: Literal["queued", "dedup"]
+    correlation_id: str
+    pdf_storage_path: str
+    receipt_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +487,507 @@ async def _run_full_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# POST /v1/blueprints/dispatch
+# Shared dedup validation helper (used by /dispatch and /upload-complete)
+# ---------------------------------------------------------------------------
+
+
+async def _validate_dedup_hit(
+    *,
+    candidate: dict[str, Any],
+    suite_id: str,
+    office_id: str,
+    correlation_id: str,
+    filename: str,
+    content_hash: str,
+    pdf_size_bytes: int,
+) -> bool:
+    """Return True if the existing project is a genuine, valid dedup hit.
+
+    Fix 1: Dedup is only valid when ingest=done AND at least one blueprint_sheet
+    row exists. A project with ingest != "done" or zero sheets is stale — NULL-out
+    its content_hash and return False so the caller falls through to fresh creation.
+
+    Law #2: Emits blueprint.upload.dedup_invalid_stale receipt on stale hit.
+    """
+    existing_project_id = str(candidate["id"])
+    candidate_progress = candidate.get("stage_progress") or {}
+    ingest_state: str = (
+        candidate_progress.get("ingest", "not_started")
+        if isinstance(candidate_progress, dict)
+        else "not_started"
+    )
+
+    if ingest_state == "done":
+        try:
+            existing_sheets = await supabase_select(
+                "blueprint_sheets",
+                filters=f"project_id=eq.{existing_project_id}&suite_id=eq.{suite_id}",
+                limit=1,
+            )
+            if len(existing_sheets) > 0:
+                return True  # Genuine cache hit
+        except SupabaseClientError:
+            pass  # Cannot confirm — treat as stale
+
+    # Stale — emit receipt and NULL-out content_hash
+    _cut_receipt(
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        action_type="blueprint.upload.dedup_invalid_stale",
+        outcome="failed",
+        redacted_inputs={
+            "filename": filename,
+            "content_hash_prefix": content_hash[:8],
+            "pdf_size_bytes": pdf_size_bytes,
+        },
+        redacted_outputs={
+            "stale_project_id": existing_project_id,
+            "ingest_state": ingest_state,
+        },
+    )
+    logger.warning(
+        "blueprint_dispatch: stale dedup — nulling hash project=%s ingest_state=%s hash=%s corr=%s",
+        existing_project_id[:8],
+        ingest_state,
+        content_hash[:8],
+        correlation_id[:8],
+    )
+    try:
+        await supabase_update(
+            "blueprint_projects",
+            f"id=eq.{existing_project_id}&suite_id=eq.{suite_id}",
+            {"content_hash": None},
+        )
+    except SupabaseClientError:
+        logger.warning(
+            "blueprint_dispatch: failed to null content_hash stale project=%s corr=%s",
+            existing_project_id[:8],
+            correlation_id[:8],
+        )
+    return False
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/blueprints/upload-init  (Step 2 — GREEN tier)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/upload-init",
+    response_model=UploadInitResponse,
+    summary="Mint a pre-signed PUT URL for direct-to-Storage blueprint upload",
+    status_code=status.HTTP_200_OK,
+)
+async def blueprint_upload_init(
+    body: UploadInitRequest = Body(...),
+) -> UploadInitResponse:
+    """Step 1 of 3-step upload flow. Returns a signed URL the browser PUTs to directly.
+
+    No file bytes pass through this endpoint — only metadata (~200 bytes).
+    The browser then PUTs raw bytes to Storage; this endpoint never sees them.
+
+    Law #3: Fail closed on:
+      - Missing capability token → 401
+      - Unsupported MIME type → 415
+      - Reported size > 50MB → 413
+      - Storage service unavailable → 503
+    Law #5: Capability token validated at this boundary.
+    Law #6: storage_path prefixed with suite_id.
+    Law #9: No file bytes here; no secrets logged.
+    """
+    suite_id = body.suite_id
+    office_id = body.office_id
+    correlation_id = body.correlation_id
+
+    # --- Law #5: Capability token validation (fail closed) ---
+    if not body.capability_token or not body.capability_token.strip():
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.signed_url_denied",
+            outcome="denied",
+            redacted_inputs={"filename": body.filename, "reason": "missing_capability_token"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "MISSING_CAPABILITY_TOKEN"},
+        )
+
+    # --- MIME type gate (Law #3) ---
+    if body.mime_type not in _ACCEPTED_MIME_TYPES:
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.signed_url_denied",
+            outcome="denied",
+            redacted_inputs={
+                "filename": body.filename,
+                "mime_type": body.mime_type,
+                "reason": "unsupported_mime_type",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={
+                "error": "UNSUPPORTED_MIME_TYPE",
+                "accepted": sorted(_ACCEPTED_MIME_TYPES),
+            },
+        )
+
+    # --- Size guard (Law #3) ---
+    if body.size_bytes > _MAX_PDF_SIZE_BYTES:
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.signed_url_denied",
+            outcome="denied",
+            redacted_inputs={
+                "filename": body.filename,
+                "size_bytes": body.size_bytes,
+                "max_bytes": _MAX_PDF_SIZE_BYTES,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={"error": "FILE_TOO_LARGE", "max_bytes": _MAX_PDF_SIZE_BYTES},
+        )
+
+    # --- Generate upload_id ---
+    upload_id = str(uuid.uuid4())
+    storage_path = f"{suite_id}/{upload_id}/raw.pdf"
+
+    # --- Mint signed URL from Supabase Storage ---
+    signed_url = await mint_signed_upload_url(
+        suite_id=suite_id,
+        upload_id=upload_id,
+        correlation_id=correlation_id,
+        expires_in_seconds=600,  # 10-minute window for the PUT
+    )
+
+    if signed_url is None:
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.signed_url_denied",
+            outcome="failed",
+            redacted_inputs={
+                "filename": body.filename,
+                "reason": "storage_unavailable",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "STORAGE_UNAVAILABLE"},
+        )
+
+    # --- Emit issued receipt (Law #2) ---
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=600)).isoformat()
+    rid = _cut_receipt(
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        action_type="blueprint.upload.signed_url_issued",
+        outcome="success",
+        redacted_inputs={
+            "filename": body.filename,
+            "mime_type": body.mime_type,
+            "size_bytes": body.size_bytes,
+        },
+        redacted_outputs={
+            "upload_id": upload_id,
+            "storage_path": storage_path,
+            # signed_url contains a token — Law #9: do not log it, but it IS
+            # returned to the caller (browser) as the API contract requires
+        },
+    )
+
+    logger.info(
+        "blueprint_dispatch: upload-init upload_id=%s suite=%s corr=%s",
+        upload_id[:8],
+        suite_id[:8],
+        correlation_id[:8],
+    )
+
+    return UploadInitResponse(
+        upload_id=upload_id,
+        signed_url=signed_url,
+        storage_path=storage_path,
+        expires_at=expires_at,
+        receipt_id=rid,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/blueprints/upload-complete  (Step 3)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/upload-complete",
+    response_model=UploadCompleteResponse,
+    summary="Confirm browser PUT completed — verify, dedup, and enqueue pipeline",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def blueprint_upload_complete(
+    background_tasks: BackgroundTasks,
+    body: UploadCompleteRequest = Body(...),
+) -> UploadCompleteResponse:
+    """Step 3 of 3-step upload flow. Verifies object exists, deduplicates, enqueues pipeline.
+
+    The browser calls this after a successful PUT to the signed URL.
+    This endpoint streams the uploaded PDF to compute SHA-256 (no full memory load),
+    runs the same dedup logic as /dispatch, creates the project row, and enqueues
+    the INGEST→CLASSIFY pipeline as a background task.
+
+    Law #3: Fail closed on:
+      - Missing capability token → 401
+      - Invalid UUID for upload_id → 422
+      - Object not found in Storage → 422 UPLOAD_OBJECT_NOT_FOUND
+      - DB insert failure → 503
+    Law #5: Capability token validated at this boundary.
+    Law #6: Storage path prefixed with suite_id; all DB queries filter by suite_id.
+    Law #9: PDF bytes never logged — only sizes and hash prefixes.
+    """
+    suite_id = body.suite_id
+    office_id = body.office_id
+    correlation_id = body.correlation_id
+
+    # --- Law #5: Capability token validation (fail closed) ---
+    if not body.capability_token or not body.capability_token.strip():
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.complete.denied",
+            outcome="denied",
+            redacted_inputs={"reason": "missing_capability_token"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "MISSING_CAPABILITY_TOKEN"},
+        )
+
+    # --- Validate upload_id is a well-formed UUID (Law #3) ---
+    try:
+        uuid.UUID(body.upload_id)
+    except (ValueError, AttributeError):
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.complete.denied",
+            outcome="denied",
+            redacted_inputs={"reason": "invalid_upload_id_format"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "INVALID_UPLOAD_ID"},
+        )
+
+    upload_id = body.upload_id
+    storage_path = f"{suite_id}/{upload_id}/raw.pdf"
+
+    # --- Stream PDF from Storage to compute SHA-256 (Law #9: no full-mem load) ---
+    stream_result = await stream_pdf_for_hash(
+        suite_id=suite_id,
+        upload_id=upload_id,
+        correlation_id=correlation_id,
+    )
+
+    if stream_result is None:
+        # Object not found or storage error — emit denied receipt
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.complete.denied",
+            outcome="denied",
+            redacted_inputs={
+                "upload_id": upload_id,
+                "storage_path": storage_path,
+                "reason": "UPLOAD_OBJECT_NOT_FOUND",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "UPLOAD_OBJECT_NOT_FOUND",
+                "reason_code": "UPLOAD_OBJECT_NOT_FOUND",
+                "message": "The uploaded file was not found in storage. Re-upload required.",
+            },
+        )
+
+    pdf_bytes, content_hash = stream_result
+
+    # --- Dedup check scoped by suite_id (Law #6) ---
+    try:
+        existing = await supabase_select(
+            "blueprint_projects",
+            filters=f"suite_id=eq.{suite_id}&content_hash=eq.{content_hash}",
+            limit=1,
+        )
+    except SupabaseClientError as exc:
+        logger.warning(
+            "blueprint_dispatch: upload-complete dedup check failed suite=%s error=%s corr=%s",
+            suite_id[:8],
+            type(exc).__name__,
+            correlation_id[:8],
+        )
+        existing = []
+
+    if existing:
+        is_valid = await _validate_dedup_hit(
+            candidate=existing[0],
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            filename=body.filename,
+            content_hash=content_hash,
+            pdf_size_bytes=len(pdf_bytes),
+        )
+        if is_valid:
+            existing_project_id = str(existing[0]["id"])
+            existing_path: str = existing[0].get("pdf_storage_path") or storage_path
+            rid = _cut_receipt(
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                action_type="blueprint.upload.complete.dedup",
+                outcome="success",
+                redacted_inputs={
+                    "filename": body.filename,
+                    "content_hash_prefix": content_hash[:8],
+                    "pdf_size_bytes": len(pdf_bytes),
+                },
+                redacted_outputs={
+                    "project_id": existing_project_id,
+                    "status": "dedup",
+                },
+            )
+            logger.info(
+                "blueprint_dispatch: upload-complete dedup project=%s hash=%s corr=%s",
+                existing_project_id[:8],
+                content_hash[:8],
+                correlation_id[:8],
+            )
+            return UploadCompleteResponse(
+                project_id=existing_project_id,
+                status="dedup",
+                correlation_id=correlation_id,
+                pdf_storage_path=existing_path,
+                receipt_id=rid,
+            )
+        # _validate_dedup_hit returned False — stale hit, fall through
+
+    # --- Create new project row ---
+    project_id = str(uuid.uuid4())
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        await supabase_insert(
+            "blueprint_projects",
+            {
+                "id": project_id,
+                "suite_id": suite_id,
+                "office_id": office_id,
+                "content_hash": content_hash,
+                "pdf_storage_path": storage_path,  # set immediately — object already exists
+                "created_at": now_iso,
+                "stage_progress": {
+                    "ingest": "not_started",
+                    "classify": "not_started",
+                    "see": "not_started",
+                    "reason": "not_started",
+                    "procure": "not_started",
+                },
+            },
+        )
+    except SupabaseClientError as exc:
+        logger.error(
+            "blueprint_dispatch: upload-complete project insert failed suite=%s error=%s corr=%s",
+            suite_id[:8],
+            type(exc).__name__,
+            correlation_id[:8],
+        )
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.complete.denied",
+            outcome="failed",
+            redacted_inputs={"filename": body.filename, "reason": "db_insert_failed"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "DB_INSERT_FAILED"},
+        )
+
+    # --- Emit accepted receipt (Law #2) ---
+    rid = _cut_receipt(
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        action_type="blueprint.upload.complete.accepted",
+        outcome="success",
+        redacted_inputs={
+            "filename": body.filename,
+            "content_hash_prefix": content_hash[:8],
+            "pdf_size_bytes": len(pdf_bytes),
+        },
+        redacted_outputs={
+            "project_id": project_id,
+            "status": "queued",
+            "pdf_storage_path": storage_path,
+        },
+    )
+
+    logger.info(
+        "blueprint_dispatch: upload-complete accepted project=%s hash=%s corr=%s",
+        project_id[:8],
+        content_hash[:8],
+        correlation_id[:8],
+    )
+
+    # --- Determine model ---
+    import os as _os
+    _aspire_env = _os.getenv("ASPIRE_ENV", "development")
+    if _aspire_env == "production":
+        _model = _os.getenv("ASPIRE_DREW_MODEL_PROD") or _os.getenv("DREW_MODEL_PROD") or "gpt-4o"
+    else:
+        _model = (
+            _os.getenv("ASPIRE_DREW_MODEL_DEV")
+            or _os.getenv("DREW_MODEL_DEV")
+            or "gpt-5.4-mini"
+        )
+
+    # --- Enqueue background pipeline (Law #7) ---
+    background_tasks.add_task(
+        _run_full_pipeline,
+        project_id=project_id,
+        suite_id=suite_id,
+        office_id=office_id,
+        filename=body.filename,
+        pdf_bytes=pdf_bytes,
+        correlation_id=correlation_id,
+        model=_model,
+    )
+
+    return UploadCompleteResponse(
+        project_id=project_id,
+        status="queued",
+        correlation_id=correlation_id,
+        pdf_storage_path=storage_path,
+        receipt_id=rid,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/blueprints/dispatch  (DEPRECATED — use /upload-init + /upload-complete)
 # ---------------------------------------------------------------------------
 
 
@@ -422,6 +1006,9 @@ async def dispatch_blueprint(
     Returns within 5s with project_id and queued/dedup status.
     Background task runs the full pipeline and updates stage_progress.
 
+    DEPRECATED: Use /upload-init + /upload-complete for large files.
+    This endpoint accepts base64 JSON bodies which causes 413/TCP-abort on >5MB.
+
     Law #3: Fail closed on:
       - Missing capability token → 401
       - Invalid base64 → 422
@@ -431,6 +1018,14 @@ async def dispatch_blueprint(
     Law #6: All DB queries filter by suite_id from the validated request body.
     Law #9: PDF bytes never logged — only len() and sha256[:8] prefix.
     """
+    # Step 4: Deprecation log
+    logger.warning(
+        "blueprint_dispatch: DEPRECATED endpoint called — use /upload-init + /upload-complete. "
+        "suite=%s corr=%s",
+        body.suite_id,
+        body.correlation_id,
+    )
+
     correlation_id = body.correlation_id
     suite_id = body.suite_id
     office_id = body.office_id
@@ -463,7 +1058,7 @@ async def dispatch_blueprint(
             redacted_inputs={"filename": body.filename, "error": "invalid_base64"},
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": "INVALID_BASE64", "message": type(exc).__name__},
         )
 
@@ -477,7 +1072,7 @@ async def dispatch_blueprint(
             redacted_inputs={"filename": body.filename, "error": "empty_bytes"},
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": "EMPTY_PDF"},
         )
 
@@ -496,7 +1091,7 @@ async def dispatch_blueprint(
             },
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": "PDF_TOO_LARGE", "max_bytes": _MAX_PDF_SIZE_BYTES},
         )
 
@@ -523,31 +1118,17 @@ async def dispatch_blueprint(
         existing_project_id = str(existing[0]["id"])
         existing_path: str | None = existing[0].get("pdf_storage_path")
 
-        # Fix 1: Validate dedup hit before returning it.
-        # Only return status="dedup" if the existing project has completed INGEST
-        # AND has at least one sheet row.  A project with ingest != "done" or zero sheets
-        # is a stale/broken project from a prior failed run — must NOT be returned.
-        candidate_progress = existing[0].get("stage_progress") or {}
-        ingest_state: str = (
-            candidate_progress.get("ingest", "not_started")
-            if isinstance(candidate_progress, dict)
-            else "not_started"
+        is_valid = await _validate_dedup_hit(
+            candidate=existing[0],
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            filename=body.filename,
+            content_hash=content_hash,
+            pdf_size_bytes=len(pdf_bytes),
         )
 
-        dedup_is_valid = False
-        if ingest_state == "done":
-            try:
-                existing_sheets = await supabase_select(
-                    "blueprint_sheets",
-                    filters=f"project_id=eq.{existing_project_id}&suite_id=eq.{suite_id}",
-                    limit=1,
-                )
-                dedup_is_valid = len(existing_sheets) > 0
-            except SupabaseClientError:
-                dedup_is_valid = False  # Cannot confirm — treat as stale
-
-        if dedup_is_valid:
-            # Genuine cache hit: ingest=done + sheets present
+        if is_valid:
             rid = _cut_receipt(
                 suite_id=suite_id,
                 office_id=office_id,
@@ -580,48 +1161,8 @@ async def dispatch_blueprint(
                 pdf_storage_path=existing_path,
                 receipt_id=rid,  # Fix 6
             )
-
-        # Stale dedup: emit receipt and NULL-out content_hash so it can no longer
-        # be found by future hash lookups.  Fall through to fresh project creation.
-        stale_receipt_id = _cut_receipt(
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
-            action_type="blueprint.upload.dedup_invalid_stale",
-            outcome="failed",
-            redacted_inputs={
-                "filename": body.filename,
-                "content_hash_prefix": content_hash[:8],
-                "pdf_size_bytes": len(pdf_bytes),
-            },
-            redacted_outputs={
-                "stale_project_id": existing_project_id,
-                "ingest_state": ingest_state,
-            },
-        )
-        logger.warning(
-            "blueprint_dispatch: stale dedup detected — nulling hash project=%s "
-            "ingest_state=%s suite=%s hash=%s corr=%s",
-            existing_project_id[:8],
-            ingest_state,
-            suite_id[:8],
-            content_hash[:8],
-            correlation_id[:8],
-        )
-        # NULL-out content_hash so the stale project is no longer findable by hash
-        try:
-            await supabase_update(
-                "blueprint_projects",
-                f"id=eq.{existing_project_id}&suite_id=eq.{suite_id}",
-                {"content_hash": None},
-            )
-        except SupabaseClientError:
-            logger.warning(
-                "blueprint_dispatch: failed to null content_hash for stale project=%s corr=%s",
-                existing_project_id[:8],
-                correlation_id[:8],
-            )
-        # Fall through to fresh project creation below
+        # Stale dedup — _validate_dedup_hit already emitted receipt and NULL-ed hash
+        # Fall through to fresh project creation
 
     # --- Create new project row ---
     project_id = str(uuid.uuid4())
