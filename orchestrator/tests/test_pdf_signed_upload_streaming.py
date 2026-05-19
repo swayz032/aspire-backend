@@ -147,3 +147,101 @@ async def test_stream_pdf_to_temp_file_404_returns_none_and_cleans_temp() -> Non
         )
 
     assert result is None  # 404 surfaces as None; temp file cleaned up internally
+
+
+# ---------------------------------------------------------------------------
+# Wave 9f: Verify upload-complete uses stream_pdf_to_temp_file (not the old
+# stream_pdf_for_hash accumulator) and that stream_pdf_for_hash raises RuntimeError.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stream_pdf_for_hash_raises_runtime_error() -> None:
+    """stream_pdf_for_hash must raise RuntimeError (Wave 9f deprecation guard).
+
+    Any straggler caller that did not migrate to stream_pdf_to_temp_file will
+    hit this guard loudly instead of silently accumulating 22MB in heap.
+    """
+    from aspire_orchestrator.services.blueprint import pdf_signed_upload
+
+    with pytest.raises(RuntimeError, match="deprecated"):
+        await pdf_signed_upload.stream_pdf_for_hash(
+            suite_id="00000000-0000-0000-0000-000000000001",
+            upload_id="upload-deprecated-test",
+            correlation_id="corr-deprecated",
+        )
+
+
+def test_blueprint_dispatch_imports_stream_pdf_to_temp_file_not_for_hash() -> None:
+    """blueprint_dispatch must import stream_pdf_to_temp_file, NOT stream_pdf_for_hash.
+
+    This is a static-analysis regression guard: if a future edit accidentally
+    re-introduces the old import, this test fails immediately.
+    """
+    import importlib
+    import ast
+    from pathlib import Path
+
+    dispatch_path = (
+        Path(__file__).parent.parent
+        / "src"
+        / "aspire_orchestrator"
+        / "routes"
+        / "blueprint_dispatch.py"
+    )
+    source = dispatch_path.read_text(encoding="utf-8")
+
+    assert "stream_pdf_to_temp_file" in source, (
+        "blueprint_dispatch.py must import stream_pdf_to_temp_file"
+    )
+    # stream_pdf_for_hash must NOT appear in any import statement
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.ImportFrom, ast.Import)):
+            node_src = ast.unparse(node)
+            assert "stream_pdf_for_hash" not in node_src, (
+                f"Stale import of stream_pdf_for_hash found in blueprint_dispatch.py: {node_src}"
+            )
+
+
+def test_upload_complete_calls_stream_pdf_to_temp_file() -> None:
+    """The /upload-complete handler source must reference stream_pdf_to_temp_file
+    and must NOT reference stream_pdf_for_hash anywhere in the upload-complete
+    endpoint body.
+
+    This is a source-level regression guard that does NOT require importing
+    blueprint_dispatch (which has a transitive dependency on drew_blueprint.py
+    that may have Team E's pre-existing syntax issues).
+    """
+    from pathlib import Path
+
+    dispatch_path = (
+        Path(__file__).parent.parent
+        / "src"
+        / "aspire_orchestrator"
+        / "routes"
+        / "blueprint_dispatch.py"
+    )
+    source = dispatch_path.read_text(encoding="utf-8")
+
+    # The call site must use stream_pdf_to_temp_file
+    assert "stream_pdf_to_temp_file" in source, (
+        "blueprint_dispatch.py must call stream_pdf_to_temp_file in the upload-complete handler"
+    )
+
+    # The variable pdf_path must be used (not pdf_bytes) after unpacking stream result
+    assert "pdf_path, content_hash, pdf_size_bytes = stream_result" in source, (
+        "upload-complete handler must unpack stream result into (pdf_path, content_hash, pdf_size_bytes)"
+    )
+
+    # pdf_path must be passed to _run_full_pipeline (not pdf_bytes)
+    assert "pdf_path=pdf_path" in source, (
+        "background_tasks.add_task must pass pdf_path=pdf_path to _run_full_pipeline"
+    )
+
+    # The old call must be gone from the upload-complete section
+    # (it may still appear in the deprecated function body — that's OK)
+    # Count: the old "stream_pdf_for_hash(" call site must not appear
+    call_sites = source.count("await stream_pdf_for_hash(")
+    assert call_sites == 0, (
+        f"Found {call_sites} call site(s) of deprecated stream_pdf_for_hash — all must be removed"
+    )

@@ -241,15 +241,19 @@ async def list_storage_orphans(
     if not candidates:
         return []
 
-    # For each candidate, verify NO blueprint_projects row references this upload_id.
-    # Keep this cheap by querying in small batches (one row at a time is OK at
-    # the expected orphan rate of <20 per 30 min).
+    # For each candidate, verify NO blueprint_projects row references this object path.
+    # The schema does NOT have an upload_id column — the canonical FK is pdf_storage_path,
+    # which is set to "{suite_id}/{upload_id}/raw.pdf" at project insert time.
+    # Wave 9f fix: was incorrectly querying upload_id=eq.{c['upload_id']} which always
+    # produced SupabaseClientError → continue → zero orphans ever confirmed.
     confirmed_orphans: list[dict[str, Any]] = []
     for c in candidates:
+        from urllib.parse import quote as _urlencode
+        object_path_val = f"{c['suite_id']}/{c['upload_id']}/raw.pdf"
         try:
             rows = await supabase_select(
                 "blueprint_projects",
-                filters=f"upload_id=eq.{c['upload_id']}",
+                filters=f"pdf_storage_path=eq.{_urlencode(object_path_val, safe='')}",
                 limit=1,
             )
         except _SCErr:
