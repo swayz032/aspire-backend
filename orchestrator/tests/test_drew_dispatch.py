@@ -41,7 +41,30 @@ SUITE_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 OFFICE_A = "aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 TENANT_A = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 CORR_ID = "test-dispatch-corr-001"
-VALID_TOKEN = "valid-capability-token-xyz"
+
+
+def _make_token(scope: str, suite_id: str = SUITE_A, office_id: str = OFFICE_A) -> str:
+    """Mint a real capability token with the correct scope for test helpers.
+
+    Updated as part of Wave 9e (fix/blueprint-auth-tokens) — previous VALID_TOKEN
+    constant was a plain string that bypassed the full 6-check validation.
+    """
+    import json as _json
+    from aspire_orchestrator.services.token_service import mint_token
+    tok = mint_token(
+        suite_id=suite_id,
+        office_id=office_id,
+        tool=scope,
+        scopes=[scope],
+        correlation_id=f"corr-test-{scope}",
+        ttl_seconds=45,
+    )
+    return _json.dumps(tok)
+
+
+# Keep a module-level alias for the dispatch scope so existing tests compile
+# without changes to call sites that pass VALID_TOKEN directly.
+VALID_TOKEN = _make_token("blueprints:upload")
 
 # Minimal valid PDF bytes (just enough to pass base64 decode and size check)
 _FAKE_PDF_BYTES = b"%PDF-1.4 fake-pdf-content-for-testing"
@@ -359,9 +382,17 @@ async def test_dispatch_cross_tenant_dedup_never_leaks():
     ):
         from aspire_orchestrator.routes.blueprint_dispatch import dispatch_blueprint
 
+        # Wave 9e (fix/blueprint-auth-tokens): token must be scoped to the suite
+        # being called — use SUITE_B token for the SUITE_B request.
+        suite_b_token = _make_token("blueprints:upload", suite_id=SUITE_B, office_id=OFFICE_A)
         resp = await dispatch_blueprint(
             mock_bg,
-            _make_request(suite_id=SUITE_B, correlation_id=corr),
+            _make_request(
+                suite_id=SUITE_B,
+                office_id=OFFICE_A,
+                capability_token=suite_b_token,
+                correlation_id=corr,
+            ),
         )
 
     # SUITE_B gets its OWN project — SUITE_A data never leaks
@@ -429,10 +460,12 @@ def _make_init_request(
     office_id: str = OFFICE_A,
     mime_type: str = "application/pdf",
     size_bytes: int = 1024 * 1024,  # 1MB default
-    capability_token: str = VALID_TOKEN,
+    capability_token: str | None = None,
     correlation_id: str = "test-init-corr-001",
     filename: str = "blueprint.pdf",
 ) -> "UploadInitRequest":
+    if capability_token is None:
+        capability_token = _make_token("blueprints:upload_init", suite_id=suite_id, office_id=office_id)
     from aspire_orchestrator.routes.blueprint_dispatch import UploadInitRequest
     return UploadInitRequest(
         mime_type=mime_type,
@@ -449,10 +482,12 @@ def _make_complete_request(
     upload_id: str | None = None,
     suite_id: str = SUITE_A,
     office_id: str = OFFICE_A,
-    capability_token: str = VALID_TOKEN,
+    capability_token: str | None = None,
     correlation_id: str = "test-complete-corr-001",
     filename: str = "blueprint.pdf",
 ) -> "UploadCompleteRequest":
+    if capability_token is None:
+        capability_token = _make_token("blueprints:upload_complete", suite_id=suite_id, office_id=office_id)
     from aspire_orchestrator.routes.blueprint_dispatch import UploadCompleteRequest
     return UploadCompleteRequest(
         upload_id=upload_id or str(uuid.uuid4()),

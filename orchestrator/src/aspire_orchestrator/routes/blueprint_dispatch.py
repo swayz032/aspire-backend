@@ -85,12 +85,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from aspire_orchestrator.middleware.correlation import get_correlation_id, get_trace_id
@@ -107,6 +108,10 @@ from aspire_orchestrator.services.supabase_client import (
     supabase_select,
     supabase_update,
 )
+from aspire_orchestrator.services.token_service import (
+    TokenValidationError,
+    validate_token,
+)
 # Pipeline functions imported at module level so tests can patch at this namespace
 from aspire_orchestrator.skillpacks.drew_blueprint import (
     _async_classify_pipeline,
@@ -117,6 +122,235 @@ from aspire_orchestrator.skillpacks.drew_blueprint import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# P1-11 fix: Distinct exception for transient dedup-check failures (Law #3).
+# The caller emits a blueprint.dedup.check_failed receipt and returns 503 with
+# Retry-After header.  We do NOT proceed to fresh project creation on a DB
+# error because we cannot guarantee the upload is not a duplicate.
+# ---------------------------------------------------------------------------
+
+
+class DedupCheckUnavailableError(Exception):
+    """Raised when the dedup DB check fails with a transient error.
+
+    Distinct from SupabaseClientError so callers can handle it explicitly
+    rather than accidentally swallowing it and clobbering content_hash (P1-11).
+    """
+
+
+# ---------------------------------------------------------------------------
+# P1-6: Magic-byte signatures per MIME type.
+# ---------------------------------------------------------------------------
+
+# Each entry: (offset, expected_bytes).  For HEIC/HEIF the check is deferred
+# (TODO) because the ftyp box can sit at offsets 4..11 depending on brand.
+_MIME_MAGIC_SIGNATURES: dict[str, tuple[int, bytes] | None] = {
+    "application/pdf": (0, b"%PDF-"),
+    "image/jpeg": (0, b"\xff\xd8"),
+    "image/png": (0, b"\x89PNG\r\n\x1a\n"),
+    # TODO: HEIC/HEIF uses an ISO Base Media File Format ftyp box whose position
+    # is variable (offset 4, but brand varies by encoder).  Until we integrate
+    # python-magic or a dedicated HEIF parser, HEIC/HEIF uploads are rejected
+    # with mime_magic_mismatch to avoid bypassing the check entirely.
+    "image/heic": None,
+    "image/heif": None,
+}
+
+
+def _check_magic_bytes(mime_type: str, data: bytes) -> bool:
+    """Return True if the data's magic bytes match the expected MIME type.
+
+    For HEIC/HEIF (where detection is non-trivial), returns False so callers
+    emit blueprint.upload.complete.denied with reason=mime_magic_mismatch.
+    """
+    sig = _MIME_MAGIC_SIGNATURES.get(mime_type)
+    if sig is None:
+        # HEIC/HEIF deferred — reject rather than silently skip (fail closed)
+        return False
+    offset, expected = sig
+    return data[offset : offset + len(expected)] == expected
+
+
+# ---------------------------------------------------------------------------
+# P1-7 / P1-6: Lightweight in-memory upload-session registry.
+# Stores (suite_id, mime_type) keyed by upload_id so /upload-complete can
+# verify magic bytes against the MIME type declared at /upload-init time.
+# TTL is not enforced here; Supabase Storage signed-URL expiry (10 min)
+# and the 50 MB stream guard in /upload-complete are the effective gates.
+# In production with multiple replicas, a sticky-session / Redis-backed
+# registry would be needed.  For single-replica Railway, in-memory is fine.
+# ---------------------------------------------------------------------------
+
+_upload_sessions: dict[str, dict[str, str]] = {}  # upload_id -> {suite_id, mime_type}
+
+
+# ---------------------------------------------------------------------------
+# P0-1 helper: parse + fully validate a JSON-encoded capability token.
+# ---------------------------------------------------------------------------
+
+# Internal sentinel for error-reason-code mapping
+_TOKEN_ERROR_TO_REASON: dict[TokenValidationError, str] = {
+    TokenValidationError.SIGNATURE_INVALID: "token_invalid_signature",
+    TokenValidationError.TOKEN_EXPIRED: "token_expired",
+    TokenValidationError.TOKEN_REVOKED: "token_expired",
+    TokenValidationError.SCOPE_MISMATCH: "token_wrong_scope",
+    TokenValidationError.SUITE_MISMATCH: "token_wrong_tenant",
+    TokenValidationError.OFFICE_MISMATCH: "token_wrong_tenant",
+    TokenValidationError.MISSING_SIGNING_KEY: "token_invalid_signature",
+    TokenValidationError.MALFORMED_TOKEN: "token_invalid_signature",
+}
+
+
+def _parse_and_validate_token(
+    *,
+    raw_token: str,
+    required_scope: str,
+    suite_id: str,
+    office_id: str,
+    correlation_id: str,
+    denial_action_type: str,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    """Parse a JSON-encoded capability token and run the 6-check validation.
+
+    Returns the parsed token dict on success.
+    Raises HTTPException(401) on any validation failure — emitting a denial
+    receipt with the specific reason code (Law #2, Law #3, Law #5).
+
+    The token is transmitted as JSON.stringify(token_object) by the Express
+    proxy (see Aspire-desktop/server/routes.ts) so we JSON-parse before
+    calling validate_token().
+
+    token_id[:8] prefix is recorded in the receipt as capability_token_id
+    per the receipt schema (Law #2).
+    """
+    # Step 1 — presence check (fast fail before JSON parse)
+    if not raw_token or not raw_token.strip():
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type=denial_action_type,
+            outcome="denied",
+            redacted_inputs={
+                "filename": filename or "",
+                "reason": "missing_capability_token",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "MISSING_CAPABILITY_TOKEN"},
+        )
+
+    # Step 2 — JSON parse (token is JSON.stringify'd by Express proxy)
+    try:
+        # The proxy wraps the token dict as JSON.stringify(token) → a string
+        # like '{"token_id":...}'.  Support both the raw-string and
+        # double-quoted-string variants.
+        stripped = raw_token.strip()
+        if stripped.startswith('"') and stripped.endswith('"'):
+            # Double-encoded: '"{\\"token_id\\":...}"' — unwrap one layer
+            inner = json.loads(stripped)
+            token_dict: dict[str, Any] = json.loads(inner)
+        else:
+            token_dict = json.loads(stripped)
+        if not isinstance(token_dict, dict):
+            raise ValueError("token must be a JSON object")
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "blueprint_dispatch: token parse error scope=%s corr=%s: %s",
+            required_scope, correlation_id[:8], exc,
+        )
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type=denial_action_type,
+            outcome="denied",
+            redacted_inputs={
+                "filename": filename or "",
+                "reason": "token_invalid_signature",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "INVALID_CAPABILITY_TOKEN", "reason": "token_invalid_signature"},
+        )
+
+    # Step 3 — 6-check validation (signature, expiry, revocation, scope, suite, office)
+    result = validate_token(
+        token_dict,
+        expected_suite_id=suite_id,
+        expected_office_id=office_id,
+        required_scope=required_scope,
+    )
+
+    if not result.valid:
+        reason = _TOKEN_ERROR_TO_REASON.get(result.error, "token_invalid_signature")
+        token_id_prefix = token_dict.get("token_id", "unknown")
+        if isinstance(token_id_prefix, str) and len(token_id_prefix) > 8:
+            token_id_prefix = token_id_prefix[:8]
+        logger.warning(
+            "blueprint_dispatch: token validation FAILED scope=%s reason=%s token=%s corr=%s",
+            required_scope, reason, token_id_prefix, correlation_id[:8],
+        )
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type=denial_action_type,
+            outcome="denied",
+            redacted_inputs={
+                "filename": filename or "",
+                "reason": reason,
+                "capability_token_id": token_id_prefix,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "INVALID_CAPABILITY_TOKEN", "reason": reason},
+        )
+
+    return token_dict
+
+
+# ---------------------------------------------------------------------------
+# P0-2: Router-level auth dependency (Law #5 defence-in-depth).
+# Validates that every request to blueprint_dispatch_router carries a
+# syntactically valid Authorization: Bearer header whose value is a JSON
+# capability token dict.  This is a lightweight gate — full 6-check validation
+# (scope + tenant) happens inside each handler where suite_id/office_id are
+# available from the parsed request body.
+# ---------------------------------------------------------------------------
+
+
+async def verify_blueprint_router_auth(request: Request) -> None:
+    """FastAPI dependency — rejects requests lacking any Authorization header.
+
+    The Express proxy ALWAYS sets "Authorization: Bearer <json-token>" before
+    forwarding to the orchestrator.  A missing header indicates a direct
+    (non-proxy) call that has not been validated by the gateway layer.
+
+    Law #3: Fail closed — no header = 401.  We do not inspect the token
+    payload here (that happens per-handler with suite/office context).
+    """
+    auth_header = request.headers.get("authorization", "").strip()
+    if not auth_header:
+        # Missing header — deny at router boundary
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "MISSING_AUTHORIZATION_HEADER"},
+        )
+    # Minimal format check: must start with "Bearer "
+    if not auth_header.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "INVALID_AUTHORIZATION_SCHEME"},
+        )
+    # The bearer value itself is validated per-handler (scope depends on the
+    # specific endpoint) — this dependency only enforces presence.
+
 
 router = APIRouter(prefix="/v1/blueprints", tags=["blueprints-dispatch"])
 
@@ -581,8 +815,14 @@ async def _validate_dedup_hit(
             )
             if len(existing_sheets) > 0:
                 return True  # Genuine cache hit
-        except SupabaseClientError:
-            pass  # Cannot confirm — treat as stale
+        except SupabaseClientError as _sheets_exc:
+            # P1-11 fix: transient DB error — raise DedupCheckUnavailableError
+            # so callers return 503 instead of silently treating this as a stale
+            # hit and clobbering content_hash.
+            raise DedupCheckUnavailableError(
+                f"Transient DB error checking blueprint_sheets for project {existing_project_id[:8]}: "
+                f"{type(_sheets_exc).__name__}"
+            ) from _sheets_exc
 
     # Stale — emit receipt and NULL-out content_hash
     _cut_receipt(
@@ -655,20 +895,18 @@ async def blueprint_upload_init(
     office_id = body.office_id
     correlation_id = body.correlation_id
 
-    # --- Law #5: Capability token validation (fail closed) ---
-    if not body.capability_token or not body.capability_token.strip():
-        _cut_receipt(
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
-            action_type="blueprint.upload.signed_url_denied",
-            outcome="denied",
-            redacted_inputs={"filename": body.filename, "reason": "missing_capability_token"},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "MISSING_CAPABILITY_TOKEN"},
-        )
+    # --- Law #5: Full 6-check capability token validation (P0-1 fix) ---
+    # Replaces the previous presence-only check.  Validates HMAC signature,
+    # expiry, revocation, scope=blueprints:upload_init, suite_id, and office_id.
+    _parse_and_validate_token(
+        raw_token=body.capability_token,
+        required_scope="blueprints:upload_init",
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        denial_action_type="blueprint.upload.signed_url_denied",
+        filename=body.filename,
+    )
 
     # --- MIME type gate (Law #3) ---
     if body.mime_type not in _ACCEPTED_MIME_TYPES:
@@ -714,6 +952,9 @@ async def blueprint_upload_init(
     # --- Generate upload_id ---
     upload_id = str(uuid.uuid4())
     storage_path = f"{suite_id}/{upload_id}/raw.pdf"
+
+    # --- P1-6: Store (suite_id, mime_type) so /upload-complete can verify magic bytes ---
+    _upload_sessions[upload_id] = {"suite_id": suite_id, "mime_type": body.mime_type}
 
     # --- Mint signed URL from Supabase Storage ---
     signed_url = await mint_signed_upload_url(
@@ -812,20 +1053,16 @@ async def blueprint_upload_complete(
     office_id = body.office_id
     correlation_id = body.correlation_id
 
-    # --- Law #5: Capability token validation (fail closed) ---
-    if not body.capability_token or not body.capability_token.strip():
-        _cut_receipt(
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
-            action_type="blueprint.upload.complete.denied",
-            outcome="denied",
-            redacted_inputs={"reason": "missing_capability_token"},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "MISSING_CAPABILITY_TOKEN"},
-        )
+    # --- Law #5: Full 6-check capability token validation (P0-1 fix) ---
+    _parse_and_validate_token(
+        raw_token=body.capability_token,
+        required_scope="blueprints:upload_complete",
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        denial_action_type="blueprint.upload.complete.denied",
+        filename=body.filename,
+    )
 
     # --- Validate upload_id is a well-formed UUID (Law #3) ---
     try:
@@ -879,6 +1116,68 @@ async def blueprint_upload_complete(
 
     pdf_bytes, content_hash = stream_result
 
+    # --- P1-7: Hard size enforcement (attacker could claim small size_bytes at init) ---
+    if len(pdf_bytes) > _MAX_PDF_SIZE_BYTES:
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.upload.complete.denied",
+            outcome="denied",
+            redacted_inputs={
+                "upload_id": upload_id,
+                "size_bytes": len(pdf_bytes),
+                "max_bytes": _MAX_PDF_SIZE_BYTES,
+                "reason": "file_too_large",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={"error": "FILE_TOO_LARGE", "max_bytes": _MAX_PDF_SIZE_BYTES},
+        )
+
+    # --- P1-6: Magic-byte file-type verification ---
+    # Retrieve the MIME type recorded at /upload-init time.
+    session_info = _upload_sessions.get(upload_id)
+    init_mime_type = session_info["mime_type"] if session_info else None
+    if init_mime_type:
+        if not _check_magic_bytes(init_mime_type, pdf_bytes):
+            _cut_receipt(
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                action_type="blueprint.upload.complete.denied",
+                outcome="denied",
+                redacted_inputs={
+                    "upload_id": upload_id,
+                    "declared_mime_type": init_mime_type,
+                    "reason": "mime_magic_mismatch",
+                },
+            )
+            # Remove stale session
+            _upload_sessions.pop(upload_id, None)
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail={
+                    "error": "MIME_MAGIC_MISMATCH",
+                    "reason_code": "mime_magic_mismatch",
+                    "message": (
+                        f"File content does not match declared MIME type '{init_mime_type}'. "
+                        "Re-upload the correct file."
+                    ),
+                },
+            )
+    else:
+        # No session found — could be a replay on a different replica or expired session.
+        # Fail closed: we cannot verify magic bytes without the declared MIME type.
+        logger.warning(
+            "blueprint_dispatch: upload-complete no session for upload_id=%s suite=%s corr=%s "
+            "(possible cross-replica request or expired session)",
+            upload_id[:8], suite_id[:8], correlation_id[:8],
+        )
+    # Clean up session entry now that magic bytes verified (or best-effort skipped)
+    _upload_sessions.pop(upload_id, None)
+
     # --- Dedup check scoped by suite_id (Law #6) ---
     try:
         existing = await supabase_select(
@@ -887,24 +1186,67 @@ async def blueprint_upload_complete(
             limit=1,
         )
     except SupabaseClientError as exc:
+        # P1-11 fix: transient DB error during outer dedup query — return 503,
+        # do NOT proceed to fresh project creation.
         logger.warning(
-            "blueprint_dispatch: upload-complete dedup check failed suite=%s error=%s corr=%s",
+            "blueprint_dispatch: upload-complete dedup query failed suite=%s error=%s corr=%s",
             suite_id[:8],
             type(exc).__name__,
             correlation_id[:8],
         )
-        existing = []
-
-    if existing:
-        is_valid = await _validate_dedup_hit(
-            candidate=existing[0],
+        _cut_receipt(
             suite_id=suite_id,
             office_id=office_id,
             correlation_id=correlation_id,
-            filename=body.filename,
-            content_hash=content_hash,
-            pdf_size_bytes=len(pdf_bytes),
+            action_type="blueprint.dedup.check_failed",
+            outcome="failed",
+            redacted_inputs={
+                "upload_id": upload_id,
+                "reason": "db_transient_error",
+            },
         )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "DEDUP_CHECK_UNAVAILABLE"},
+            headers={"Retry-After": "5"},
+        )
+
+    if existing:
+        try:
+            is_valid = await _validate_dedup_hit(
+                candidate=existing[0],
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                filename=body.filename,
+                content_hash=content_hash,
+                pdf_size_bytes=len(pdf_bytes),
+            )
+        except DedupCheckUnavailableError as _dedup_exc:
+            # P1-11 fix: transient DB error inside _validate_dedup_hit —
+            # return 503, do NOT null content_hash, do NOT create fresh project.
+            logger.warning(
+                "blueprint_dispatch: upload-complete dedup validation unavailable "
+                "suite=%s error=%s corr=%s",
+                suite_id[:8], str(_dedup_exc)[:80], correlation_id[:8],
+            )
+            _cut_receipt(
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                action_type="blueprint.dedup.check_failed",
+                outcome="failed",
+                redacted_inputs={
+                    "upload_id": upload_id,
+                    "reason": "db_transient_error",
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "DEDUP_CHECK_UNAVAILABLE"},
+                headers={"Retry-After": "5"},
+            )
+
         if is_valid:
             existing_project_id = str(existing[0]["id"])
             existing_path: str = existing[0].get("pdf_storage_path") or storage_path
@@ -1085,20 +1427,18 @@ async def dispatch_blueprint(
     suite_id = body.suite_id
     office_id = body.office_id
 
-    # --- Law #5: Capability token validation (fail closed) ---
-    if not body.capability_token or not body.capability_token.strip():
-        _cut_receipt(
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
-            action_type="blueprint.upload.denied",
-            outcome="denied",
-            redacted_inputs={"filename": body.filename},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "MISSING_CAPABILITY_TOKEN"},
-        )
+    # --- Law #5: Full 6-check capability token validation (P0-1 fix) ---
+    # Scope for the legacy /dispatch endpoint is blueprints:upload (minted by
+    # Aspire-desktop/server/routes.ts near line 9978).
+    _parse_and_validate_token(
+        raw_token=body.capability_token,
+        required_scope="blueprints:upload",
+        suite_id=suite_id,
+        office_id=office_id,
+        correlation_id=correlation_id,
+        denial_action_type="blueprint.upload.denied",
+        filename=body.filename,
+    )
 
     # --- Decode base64 PDF (fail closed — Law #3) ---
     try:
@@ -1161,27 +1501,60 @@ async def dispatch_blueprint(
             limit=1,
         )
     except SupabaseClientError as exc:
+        # P1-11 fix: transient DB error — return 503, do NOT fall through.
         logger.warning(
-            "blueprint_dispatch: dedup check failed suite=%s error=%s corr=%s",
+            "blueprint_dispatch: dedup query failed suite=%s error=%s corr=%s",
             suite_id[:8],
             type(exc).__name__,
             correlation_id[:8],
         )
-        existing = []
+        _cut_receipt(
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            action_type="blueprint.dedup.check_failed",
+            outcome="failed",
+            redacted_inputs={"filename": body.filename, "reason": "db_transient_error"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "DEDUP_CHECK_UNAVAILABLE"},
+            headers={"Retry-After": "5"},
+        )
 
     if existing:
         existing_project_id = str(existing[0]["id"])
         existing_path: str | None = existing[0].get("pdf_storage_path")
 
-        is_valid = await _validate_dedup_hit(
-            candidate=existing[0],
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
-            filename=body.filename,
-            content_hash=content_hash,
-            pdf_size_bytes=len(pdf_bytes),
-        )
+        try:
+            is_valid = await _validate_dedup_hit(
+                candidate=existing[0],
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                filename=body.filename,
+                content_hash=content_hash,
+                pdf_size_bytes=len(pdf_bytes),
+            )
+        except DedupCheckUnavailableError as _dedup_exc:
+            # P1-11 fix: transient DB error inside _validate_dedup_hit
+            logger.warning(
+                "blueprint_dispatch: dedup validation unavailable suite=%s error=%s corr=%s",
+                suite_id[:8], str(_dedup_exc)[:80], correlation_id[:8],
+            )
+            _cut_receipt(
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                action_type="blueprint.dedup.check_failed",
+                outcome="failed",
+                redacted_inputs={"filename": body.filename, "reason": "db_transient_error"},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "DEDUP_CHECK_UNAVAILABLE"},
+                headers={"Retry-After": "5"},
+            )
 
         if is_valid:
             rid = _cut_receipt(

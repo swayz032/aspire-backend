@@ -71,7 +71,7 @@ _ALLOW_LOCAL_DOTENV = _is_truthy(os.getenv("ASPIRE_ENABLE_LOCAL_DOTENV"))
 if _ALLOW_LOCAL_DOTENV and _ASPIRE_ENV not in {"prod", "production"}:
     load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -130,6 +130,7 @@ from aspire_orchestrator.routes.materials import router as materials_router  # P
 from aspire_orchestrator.routes.materials_bundles import router as materials_bundles_router  # Pass D
 from aspire_orchestrator.routes.blueprints import router as blueprints_router  # Wave 2.5 / 2.7
 from aspire_orchestrator.routes.blueprint_dispatch import router as blueprint_dispatch_router  # Wave 6a-3
+from aspire_orchestrator.routes.blueprint_dispatch import verify_blueprint_router_auth  # P0-2 auth dep
 from aspire_orchestrator.config.settings import settings
 from aspire_orchestrator.services.orchestrator_runtime import (
     GraphInvokeUnavailableError,
@@ -198,20 +199,34 @@ async def _app_lifespan(_: FastAPI):
     start_sre_triage()
 
     # Fix 4 (2026-05-19): Orphan blueprint project sweeper.
-    # Catches projects where the worker died (Railway redeploy, OOM, signal) before
-    # INGEST completed.  Any project with stage_progress.ingest = "in_progress" and
-    # created_at older than 15 minutes is assumed dead — mark it failed and emit a receipt.
+    # Catches projects where the worker died (Railway redeploy, OOM, signal)
+    # at ANY of the 5 pipeline stages.  Each stage has its own staleness
+    # threshold from _STAGE_TIMEOUTS in blueprint_dispatch.py.
+    # See _sweep_stale_blueprint_projects() for per-stage thresholds.
     _orphan_sweeper_task: asyncio.Task[None] = asyncio.create_task(
         _sweep_stale_blueprint_projects_loop(),
         name="blueprint-orphan-sweeper",
+    )
+
+    # P1-8 (2026-05-19): Storage object orphan sweep — heavier scan that
+    # catches blobs where /upload-init minted a signed URL but /upload-complete
+    # was never called (no DB row exists at all). Runs every 30 min.
+    _storage_orphan_sweeper_task: asyncio.Task[None] = asyncio.create_task(
+        _sweep_storage_orphans_loop(),
+        name="blueprint-storage-orphan-sweeper",
     )
 
     try:
         yield
     finally:
         _orphan_sweeper_task.cancel()
+        _storage_orphan_sweeper_task.cancel()
         try:
             await _orphan_sweeper_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await _storage_orphan_sweeper_task
         except asyncio.CancelledError:
             pass
         await stop_sre_triage()
@@ -236,85 +251,115 @@ async def _sweep_stale_blueprint_projects_loop() -> None:
         await asyncio.sleep(5 * 60)  # sweep every 5 minutes
 
 
+# Per-stage staleness thresholds in minutes (P0-5).
+# Slightly larger than the hard timeouts in routes/blueprint_dispatch.py:_STAGE_TIMEOUTS
+# so we only sweep projects whose worker is truly dead (not running slowly).
+_SWEEP_STAGE_THRESHOLDS_MINUTES: dict[str, int] = {
+    "ingest": 15,    # legacy default; hard timeout is 8 min
+    "classify": 5,   # hard timeout is 2 min
+    "see": 8,        # hard timeout is 3 min
+    "reason": 5,     # hard timeout is 2 min
+    "procure": 3,    # hard timeout is 1 min
+}
+_SWEEP_STAGES_ORDER: tuple[str, ...] = ("ingest", "classify", "see", "reason", "procure")
+
+
 async def _sweep_stale_blueprint_projects() -> None:
-    """Fix 4: Find in-progress blueprint projects older than 15 minutes and mark them failed.
+    """P0-5: Find in-progress blueprint projects across ALL 5 stages and mark stalled stage failed.
 
     Law #2: Every state change emits an immutable receipt (blueprint.pipeline.timed_out).
     Law #6: Uses suite_id from the project row to scope all DB operations.
     Law #3: DB errors are logged and swallowed — sweeper must not crash the server.
 
-    Detection criteria: stage_progress->>'ingest' = 'in_progress'
-                        AND created_at < NOW() - INTERVAL '15 minutes'
+    Detection: stage_progress->>'<stage>' = 'in_progress' AND created_at older
+    than the per-stage threshold in _SWEEP_STAGE_THRESHOLDS_MINUTES.
+    P1-8: Also issues best-effort DELETE of the orphaned Storage object after marking failed.
     """
     from aspire_orchestrator.services.supabase_client import (
         SupabaseClientError,
         supabase_select,
-        supabase_update,
     )
     from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+    from aspire_orchestrator.services.blueprint.storage_lifecycle import (
+        delete_orphaned_storage_object,
+    )
     from aspire_orchestrator.services.receipt_store import store_receipts
 
-    _STALE_THRESHOLD_MINUTES = 15
+    # Single PostgREST query covering all 5 stages via `or=(...)` syntax.
+    or_clauses = ",".join(
+        f"stage_progress->>{stage}.eq.in_progress" for stage in _SWEEP_STAGES_ORDER
+    )
+    or_filter = f"or=({or_clauses})"
 
     try:
-        # Query via PostgREST: stage_progress->>'ingest' = 'in_progress'
-        # We use the jsonb text-path filter via PostgREST's ->> syntax.
-        stale_rows = await supabase_select(
+        candidate_rows = await supabase_select(
             "blueprint_projects",
-            filters="stage_progress->>ingest=eq.in_progress",
+            filters=or_filter,
         )
     except SupabaseClientError as exc:
         logger.warning("[blueprint-sweeper] DB query failed: %s", type(exc).__name__)
         return
 
-    if not stale_rows:
+    if not candidate_rows:
         return
 
     from datetime import timedelta
     now_utc = datetime.now(timezone.utc)
-    threshold = now_utc - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
-    orphaned_ids: list[str] = []
+    swept: list[tuple[str, str]] = []  # (project_id_prefix, stage)
 
-    for row in stale_rows:
+    for row in candidate_rows:
         project_id = str(row.get("id", ""))
         suite_id = str(row.get("suite_id", ""))
         if not project_id or not suite_id:
             continue
 
-        # Parse created_at — skip if recently created (might still be processing)
         created_at_raw: str | None = row.get("created_at")
         if not created_at_raw:
             continue
         try:
-            # Handle both offset-aware and naive timestamps
             created_dt = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
             if created_dt.tzinfo is None:
-                import pytz
-                created_dt = pytz.utc.localize(created_dt)
+                created_dt = created_dt.replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             continue
 
-        if created_dt >= threshold:
-            continue  # Still within grace window — not yet an orphan
+        # Pick the earliest stage currently in_progress that's past its
+        # per-stage staleness threshold.
+        stage_progress_blob = row.get("stage_progress") or {}
+        if not isinstance(stage_progress_blob, dict):
+            continue
 
-        orphaned_ids.append(project_id)
+        stalled_stage: str | None = None
+        for stage in _SWEEP_STAGES_ORDER:
+            if stage_progress_blob.get(stage) != "in_progress":
+                continue
+            threshold_minutes = _SWEEP_STAGE_THRESHOLDS_MINUTES.get(stage, 15)
+            if created_dt >= now_utc - timedelta(minutes=threshold_minutes):
+                continue  # still within grace window for this stage
+            stalled_stage = stage
+            break
 
-        # Mark ingest as failed (best-effort)
+        if stalled_stage is None:
+            continue
+
+        # Mark the stalled stage as failed (best-effort)
         try:
             await set_stage_progress(
                 project_id=project_id,
-                stage="ingest",
+                stage=stalled_stage,
                 state="failed",
                 suite_id=suite_id,
             )
         except Exception as exc:
             logger.warning(
-                "[blueprint-sweeper] set_stage_progress failed project=%s: %s",
+                "[blueprint-sweeper] set_stage_progress failed project=%s stage=%s err=%s",
                 project_id[:8],
+                stalled_stage,
                 type(exc).__name__,
             )
 
         # Emit immutable receipt (Law #2)
+        elapsed_minutes = int((now_utc - created_dt).total_seconds() / 60)
         try:
             now_iso = now_utc.isoformat()
             store_receipts([{
@@ -329,14 +374,15 @@ async def _sweep_stale_blueprint_projects() -> None:
                 "risk_tier": "green",
                 "redacted_inputs": {"project_id": project_id},
                 "redacted_outputs": {
-                    "stage": "ingest",
+                    "stage": stalled_stage,
                     "error_class": "OrphanTimeout",
                     "error_message": (
-                        f"Project stuck in-progress for >{_STALE_THRESHOLD_MINUTES} min; "
-                        f"worker assumed dead (Railway redeploy / OOM)"
+                        f"Stage '{stalled_stage}' stuck in-progress for >"
+                        f"{_SWEEP_STAGE_THRESHOLDS_MINUTES.get(stalled_stage, 15)} min; "
+                        f"worker assumed dead (Railway redeploy / OOM / signal)"
                     ),
                     "created_at": created_at_raw,
-                    "elapsed_minutes": int((now_utc - created_dt).total_seconds() / 60),
+                    "elapsed_minutes": elapsed_minutes,
                 },
                 "trace_id": "",
                 "correlation_id": str(row.get("id", "")),
@@ -344,16 +390,133 @@ async def _sweep_stale_blueprint_projects() -> None:
             }])
         except Exception as exc:
             logger.warning(
-                "[blueprint-sweeper] receipt emit failed project=%s: %s",
+                "[blueprint-sweeper] receipt emit failed project=%s stage=%s err=%s",
+                project_id[:8],
+                stalled_stage,
+                type(exc).__name__,
+            )
+
+        # P1-8: Best-effort Storage cleanup.
+        upload_id = str(row.get("upload_id") or project_id)
+        try:
+            ok = await delete_orphaned_storage_object(
+                suite_id=suite_id,
+                upload_id=upload_id,
+                correlation_id=project_id,
+            )
+            if ok:
+                store_receipts([{
+                    "id": str(uuid.uuid4()),
+                    "receipt_type": "blueprint.storage.orphan_deleted",
+                    "action_type": "blueprint.storage.orphan_deleted",
+                    "suite_id": suite_id,
+                    "office_id": str(row.get("office_id", suite_id)),
+                    "tenant_id": suite_id,
+                    "outcome": "success",
+                    "tool_used": "blueprint_orphan_sweeper",
+                    "risk_tier": "green",
+                    "redacted_inputs": {"project_id": project_id, "upload_id": upload_id},
+                    "redacted_outputs": {
+                        "object_path": f"{suite_id}/{upload_id}/raw.pdf",
+                        "trigger": "stalled_stage",
+                        "stage": stalled_stage,
+                    },
+                    "trace_id": "",
+                    "correlation_id": project_id,
+                    "created_at": now_utc.isoformat(),
+                }])
+        except Exception as exc:
+            logger.warning(
+                "[blueprint-sweeper] storage delete failed project=%s err=%s",
                 project_id[:8],
                 type(exc).__name__,
             )
 
-    if orphaned_ids:
+        swept.append((project_id, stalled_stage))
+
+    if swept:
         logger.warning(
-            "[blueprint-sweeper] swept %d orphaned blueprint projects: %s",
-            len(orphaned_ids),
-            [p[:8] for p in orphaned_ids],
+            "[blueprint-sweeper] swept %d stalled blueprint stages: %s",
+            len(swept),
+            [(p[:8], s) for p, s in swept],
+        )
+
+
+async def _sweep_storage_orphans_loop() -> None:
+    """P1-8: Periodic loop scanning Storage for blobs with no DB row, every 30 min.
+
+    Catches the case where /upload-init minted a signed URL, the browser PUT
+    succeeded, but /upload-complete was never called — leaving a blob with no
+    corresponding blueprint_projects row.
+    """
+    await asyncio.sleep(60)  # startup grace
+    while True:
+        try:
+            await _sweep_storage_orphans()
+        except Exception as exc:
+            logger.warning("[storage-orphan-sweeper] error: %s", type(exc).__name__)
+        await asyncio.sleep(30 * 60)
+
+
+async def _sweep_storage_orphans() -> None:
+    """P1-8: List Storage objects older than 60 min with no DB row and delete them."""
+    from aspire_orchestrator.services.blueprint.storage_lifecycle import (
+        delete_orphaned_storage_object,
+        list_storage_orphans,
+    )
+    from aspire_orchestrator.services.receipt_store import store_receipts
+
+    orphans = await list_storage_orphans(older_than_minutes=60)
+    if not orphans:
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    deleted: list[str] = []
+    for o in orphans:
+        suite_id = o["suite_id"]
+        upload_id = o["upload_id"]
+        ok = await delete_orphaned_storage_object(
+            suite_id=suite_id,
+            upload_id=upload_id,
+            correlation_id=upload_id,
+        )
+        if not ok:
+            continue
+        deleted.append(upload_id[:8])
+        try:
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "receipt_type": "blueprint.storage.orphan_deleted",
+                "action_type": "blueprint.storage.orphan_deleted",
+                "suite_id": suite_id,
+                "office_id": suite_id,
+                "tenant_id": suite_id,
+                "outcome": "success",
+                "tool_used": "blueprint_storage_orphan_sweeper",
+                "risk_tier": "green",
+                "redacted_inputs": {"upload_id": upload_id},
+                "redacted_outputs": {
+                    "object_path": o["object_path"],
+                    "trigger": "no_db_row",
+                    "created_at": o.get("created_at"),
+                    "size_bytes": o.get("size_bytes", 0),
+                },
+                "trace_id": "",
+                "correlation_id": upload_id,
+                "created_at": now_utc.isoformat(),
+            }])
+        except Exception as exc:
+            logger.warning(
+                "[storage-orphan-sweeper] receipt emit failed upload_id=%s err=%s",
+                upload_id[:8],
+                type(exc).__name__,
+            )
+
+    if deleted:
+        logger.warning(
+            "[storage-orphan-sweeper] deleted %d orphan blobs: %s",
+            len(deleted),
+            deleted,
         )
 
 
@@ -458,7 +621,10 @@ app.include_router(contacts_router)     # /v1/contacts    — Tiffany-captured c
 app.include_router(materials_router)    # /v1/materials/search - Pass C cache-first materials search
 app.include_router(materials_bundles_router)  # /v1/materials/bundles/* - Pass D bundle CRUD + push-to-estimate
 app.include_router(blueprints_router)  # /v1/blueprints/* - Wave 2.5/2.7 read APIs
-app.include_router(blueprint_dispatch_router)  # /v1/blueprints/dispatch - Wave 6a-3 async upload
+app.include_router(  # P0-2: router-level auth dependency (Law #5 defence-in-depth)
+    blueprint_dispatch_router,
+    dependencies=[Depends(verify_blueprint_router_auth)],
+)  # /v1/blueprints/dispatch + /upload-init + /upload-complete - Wave 6a-3 async upload
 
 # Load secrets from AWS Secrets Manager (production) or .env (dev)
 # Must happen BEFORE graph build, which may read provider keys from os.environ
