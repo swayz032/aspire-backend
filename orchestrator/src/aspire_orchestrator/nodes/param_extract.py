@@ -536,7 +536,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
             messages = [{"role": "developer" if _is_reasoning else "system", "content": "You are a precise parameter extractor. Return only valid JSON."}]
             messages.append({"role": "user", "content": prompt})
 
-            extracted_params = await generate_json_async(
+            extracted_params = (await generate_json_async(
                 model=model,
                 messages=messages,
                 api_key=api_key,
@@ -545,7 +545,7 @@ async def param_extract_node(state: OrchestratorState) -> dict[str, Any]:
                 max_output_tokens=1024,
                 temperature=None if _is_reasoning else 0.0,
                 prefer_responses_api=True,
-            )
+            ))["json"]
             logger.info("Param extraction success for %s: %d fields — %s", tool_used, len(extracted_params), json.dumps(extracted_params, default=str)[:500])
 
         except json.JSONDecodeError as e:

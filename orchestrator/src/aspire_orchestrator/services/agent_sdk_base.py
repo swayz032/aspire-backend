@@ -373,7 +373,7 @@ class AspireAgentBase:
             effective_max_tokens = 4096
 
         try:
-            content = await generate_text_async(
+            content = (await generate_text_async(
                 model=model,
                 messages=messages,
                 api_key=api_key,
@@ -382,7 +382,7 @@ class AspireAgentBase:
                 max_output_tokens=effective_max_tokens,
                 temperature=None if _is_reasoning else route_temperature,
                 prefer_responses_api=True,
-            )
+            ))["text"]
             content, quality_report = enforce_response_quality(
                 text=content,
                 channel="chat",

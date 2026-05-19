@@ -721,7 +721,7 @@ async def _agent_reason_inner(
                 on_token=_on_token,
             )
         else:
-            response_text = await generate_text_async(
+            response_text = (await generate_text_async(
                 model=model,
                 messages=llm_messages,
                 api_key=resolve_openai_api_key(),
@@ -730,7 +730,7 @@ async def _agent_reason_inner(
                 max_output_tokens=_max_tokens,
                 temperature=None if _is_reasoning else 0.7,
                 prefer_responses_api=True,
-            )
+            ))["text"]
 
     except Exception as e:
         logger.error("agent_reason LLM call failed: %s", e)

@@ -63,7 +63,7 @@ async def _call_openai(prompt: str, model: str = "gpt-5.2") -> dict[str, Any]:
     _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
     system_role = "developer" if _is_reasoning else "system"
 
-    content = await generate_text_async(
+    content = (await generate_text_async(
         model=model,
         messages=[
             {"role": system_role, "content": _ADVISOR_SYSTEM_PROMPT},
@@ -75,7 +75,7 @@ async def _call_openai(prompt: str, model: str = "gpt-5.2") -> dict[str, Any]:
         max_output_tokens=1000,
         temperature=None if _is_reasoning else 0.3,
         prefer_responses_api=True,
-    )
+    ))["text"]
 
     parsed = parse_json_text(content)
     if isinstance(parsed, dict):

@@ -99,7 +99,7 @@ class EpisodicMemory:
             )
 
             # 2. Call GPT-5-mini for summarization
-            raw_output = await generate_text_async(
+            raw_output = (await generate_text_async(
                 model="gpt-5-mini",
                 messages=[
                     {
@@ -123,7 +123,7 @@ class EpisodicMemory:
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=300,
                 prefer_responses_api=True,
-            )
+            ))["text"]
 
             # 3. Parse structured output
             summary, topics, entities = self._parse_summary_output(raw_output)

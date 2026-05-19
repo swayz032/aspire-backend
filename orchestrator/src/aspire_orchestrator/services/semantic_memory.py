@@ -99,7 +99,7 @@ class SemanticMemory:
             )
 
             # 2. Call GPT-5-mini for fact extraction
-            raw = await generate_text_async(
+            raw = (await generate_text_async(
                 model="gpt-5-mini",
                 messages=[
                     {
@@ -126,7 +126,7 @@ class SemanticMemory:
                 timeout_seconds=float(settings.openai_timeout_seconds),
                 max_output_tokens=400,
                 prefer_responses_api=True,
-            ) or "[]"
+            ))["text"] or "[]"
 
             # 3. Parse extracted facts
             try:

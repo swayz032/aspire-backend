@@ -6,17 +6,20 @@ Centralizes model-call behavior across orchestrator nodes/services:
   - Reasoning-model role rules: developer role, no temperature.
   - Runtime model probing + deterministic profile fallback support.
   - Unified telemetry for request outcomes and model fallback transitions.
+  - Cache observability: cached_tokens extracted from prompt_tokens_details
+    and returned as UsageDict alongside every response (Wave 9h).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import threading
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -25,6 +28,125 @@ from aspire_orchestrator.services.llm_cache import LLMCache, get_llm_cache
 from aspire_orchestrator.services.metrics import METRICS
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Wave 9h: Cache observability types
+# ---------------------------------------------------------------------------
+
+class UsageDict(TypedDict):
+    """Structured LLM usage data returned alongside every response.
+
+    cached_tokens: tokens served from OpenAI's server-side prefix cache.
+    cache_hit_ratio: cached_tokens / max(prompt_tokens, 1).
+    prompt_prefix_hash: first 16 hex chars of SHA-256(system_msg + user_msg_head).
+    """
+
+    prompt_tokens: int
+    cached_tokens: int
+    cache_hit_ratio: float
+    completion_tokens: int
+    total_tokens: int
+    model: str
+    latency_ms: float
+    prompt_prefix_hash: str
+
+
+class LLMTextResult(TypedDict):
+    """Return type for generate_text_async (Wave 9h)."""
+
+    text: str
+    usage: UsageDict
+
+
+class LLMJsonResult(TypedDict):
+    """Return type for generate_json_async (Wave 9h)."""
+
+    json: dict[str, Any]
+    usage: UsageDict
+
+
+# One-time warning flag: emit once if the SDK omits prompt_tokens_details.cached_tokens.
+_warned_missing_cached_tokens: bool = False
+
+
+def _extract_cached_tokens(usage: Any) -> int:  # noqa: ANN401
+    """Extract cached_tokens from OpenAI usage object (Wave 9h).
+
+    Newer SDK versions expose usage.prompt_tokens_details.cached_tokens.
+    Older SDK versions omit this field.  Gracefully returns 0 and emits a
+    one-time WARNING so ops knows the SDK needs upgrading.
+    """
+    global _warned_missing_cached_tokens
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is not None:
+        ct = getattr(details, "cached_tokens", None)
+        if ct is not None:
+            return int(ct)
+    if not _warned_missing_cached_tokens:
+        logger.warning(
+            "9h: prompt_tokens_details.cached_tokens absent — SDK may need upgrading. "
+            "Defaulting cached_tokens=0. This warning emits once per process."
+        )
+        _warned_missing_cached_tokens = True
+    return 0
+
+
+def _compute_prompt_prefix_hash(messages: list[dict[str, str]]) -> str:
+    """SHA-256 of system message + first 200 chars of first user message (Wave 9h).
+
+    First 16 hex chars returned as a short stable fingerprint.  Callers use this
+    to detect accidental per-call drift in the system prompt that would break
+    OpenAI prefix-cache reuse.
+    """
+    system_content = ""
+    user_head = ""
+    for msg in messages:
+        if msg.get("role") in ("system", "developer") and not system_content:
+            system_content = msg.get("content", "")
+        if msg.get("role") == "user" and not user_head:
+            user_head = msg.get("content", "")[:200]
+    raw = f"{system_content}|||{user_head}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _build_usage_dict(
+    *,
+    usage: Any,  # noqa: ANN401
+    model: str,
+    latency_ms: float,
+    prompt_prefix_hash: str,
+) -> UsageDict:
+    """Construct a UsageDict from an OpenAI usage object (Wave 9h)."""
+    prompt_tokens: int = int(getattr(usage, "prompt_tokens", 0) or 0)
+    cached_tokens: int = _extract_cached_tokens(usage)
+    completion_tokens: int = int(getattr(usage, "completion_tokens", 0) or 0)
+    total_tokens: int = int(getattr(usage, "total_tokens", 0) or 0)
+    cache_hit_ratio: float = cached_tokens / max(prompt_tokens, 1)
+    return UsageDict(
+        prompt_tokens=prompt_tokens,
+        cached_tokens=cached_tokens,
+        cache_hit_ratio=round(cache_hit_ratio, 4),
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        model=model,
+        latency_ms=latency_ms,
+        prompt_prefix_hash=prompt_prefix_hash,
+    )
+
+
+def _zero_usage(*, model: str, latency_ms: float, prompt_prefix_hash: str) -> UsageDict:
+    """Return a zeroed UsageDict (for cache hits and error paths)."""
+    return UsageDict(
+        prompt_tokens=0,
+        cached_tokens=0,
+        cache_hit_ratio=0.0,
+        completion_tokens=0,
+        total_tokens=0,
+        model=model,
+        latency_ms=latency_ms,
+        prompt_prefix_hash=prompt_prefix_hash,
+    )
+
 
 _MODEL_PROBE_CACHE: dict[str, bool] = {}
 _PROFILE_PROBE_CACHE: dict[str, str] = {}
@@ -454,8 +576,15 @@ async def generate_text_async(
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
-) -> str:
-    """Generate text from a chat-style message list."""
+) -> LLMTextResult:
+    """Generate text from a chat-style message list.
+
+    Returns a LLMTextResult typed dict with keys:
+      - text: the generated string
+      - usage: UsageDict with token counts, cache_hit_ratio, and latency (Wave 9h)
+
+    Callers that only need the text can do: result["text"].
+    """
     # ... (circuit breaker check)
     if not _openai_circuit_breaker.allow_request():
         raise OpenAIAdapterError(
@@ -468,7 +597,10 @@ async def generate_text_async(
     resolved_model, _ = _resolve_model_for_profile(profile, model)
     reasoning_model = _is_reasoning_model(resolved_model)
     normalized = _normalize_messages(messages, reasoning_model=reasoning_model)
-    
+
+    # Wave 9h: compute prompt prefix hash once (used in every log line and UsageDict)
+    prompt_prefix_hash = _compute_prompt_prefix_hash(normalized)
+
     # Reasoning models don't support these parameters
     effective_temp = None if reasoning_model else temperature
     effective_top_p = None if reasoning_model else top_p
@@ -484,7 +616,10 @@ async def generate_text_async(
             resolved_model=resolved_model,
             outcome="hit",
         )
-        return cached_result
+        return LLMTextResult(
+            text=cached_result,
+            usage=_zero_usage(model=resolved_model, latency_ms=0.0, prompt_prefix_hash=prompt_prefix_hash),
+        )
 
     async def _via_responses(call_model: str) -> tuple[str, Any]:
         client = _get_or_create_async_client(api_key, base_url, timeout_seconds)
@@ -528,7 +663,7 @@ async def generate_text_async(
         _TOKEN_TASKS.add(task)
         task.add_done_callback(_TOKEN_TASKS.discard)
 
-    async def _track_token_usage(response: Any, call_model: str) -> None:
+    async def _track_token_usage(response: Any, call_model: str, usage_dict: UsageDict) -> None:
         """Token usage tracking (Phase 5E) — best-effort, non-blocking."""
         try:
             usage = getattr(response, "usage", None)
@@ -540,10 +675,10 @@ async def generate_text_async(
                 "agent_id": "orchestrator",
                 "model": call_model,
                 "profile": profile or "unknown",
-                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0),
-                "completion_tokens": getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0),
-                "total_tokens": getattr(usage, "total_tokens", 0),
-                "cache_hit": False,
+                "prompt_tokens": usage_dict["prompt_tokens"],
+                "completion_tokens": usage_dict["completion_tokens"],
+                "total_tokens": usage_dict["total_tokens"],
+                "cache_hit": usage_dict["cache_hit_ratio"] > 0,
             }
             await supabase_insert("token_usage_log", token_data)
         except Exception:
@@ -561,6 +696,30 @@ async def generate_text_async(
                 resolved_model=call_model,
                 outcome="ok",
             )
+            # Wave 9h: build usage dict with cache observability
+            usage_obj = getattr(response, "usage", None)
+            if usage_obj is not None:
+                usage_dict = _build_usage_dict(
+                    usage=usage_obj,
+                    model=call_model,
+                    latency_ms=latency_ms,
+                    prompt_prefix_hash=prompt_prefix_hash,
+                )
+            else:
+                usage_dict = _zero_usage(model=call_model, latency_ms=latency_ms, prompt_prefix_hash=prompt_prefix_hash)
+            # Wave 9h: structured INFO log for cache observability
+            logger.info(
+                "9h llm_call model=%s prompt_tokens=%d cached_tokens=%d "
+                "cache_hit_ratio=%.4f completion_tokens=%d latency_ms=%.1f "
+                "prompt_prefix_hash=%s",
+                call_model,
+                usage_dict["prompt_tokens"],
+                usage_dict["cached_tokens"],
+                usage_dict["cache_hit_ratio"],
+                usage_dict["completion_tokens"],
+                latency_ms,
+                prompt_prefix_hash,
+            )
             # Log to provider_call_log (Phase 2B — makes LLM calls visible in admin portal)
             _log_openai_call(
                 action="chat.completion",
@@ -573,8 +732,8 @@ async def generate_text_async(
             await cache.set(cache_key, result, profile=profile)
             # M4: Token tracking with bounded task set (prevents memory leak)
             import asyncio
-            _schedule_token_tracking(asyncio.create_task(_track_token_usage(response, call_model)))
-            return result
+            _schedule_token_tracking(asyncio.create_task(_track_token_usage(response, call_model, usage_dict)))
+            return LLMTextResult(text=result, usage=usage_dict)
         except Exception as e:
             latency_ms = round((time.monotonic() - call_start) * 1000, 1)
             last_error = e
@@ -606,7 +765,10 @@ async def generate_text_async(
             f"OpenAI text generation failed for profile={profile} model={resolved_model}",
             cause=last_error,
         ) from last_error
-    return ""
+    return LLMTextResult(
+        text="",
+        usage=_zero_usage(model=resolved_model, latency_ms=0.0, prompt_prefix_hash=prompt_prefix_hash),
+    )
 
 
 async def generate_text_streaming_async(
@@ -625,9 +787,11 @@ async def generate_text_streaming_async(
 ) -> str:
     """Stream text from OpenAI Responses API, calling on_token(str) per chunk.
 
-    Returns the full accumulated text. on_token is called with each text delta
-    as it arrives — use this to emit SSE events for progressive TTS.
+    Returns the full accumulated text string. on_token is called with each text
+    delta as it arrives — use this to emit SSE events for progressive TTS.
     Falls back to non-streaming generate_text_async if streaming fails.
+    Note: streaming does not expose per-call usage; cache observability is
+    available only in the non-streaming fallback path.
     """
     if not _openai_circuit_breaker.allow_request():
         raise OpenAIAdapterError(
@@ -706,8 +870,8 @@ async def generate_text_streaming_async(
             outcome="failed",
             latency_ms=latency_ms,
         )
-        # Fallback to non-streaming
-        return await generate_text_async(
+        # Fallback to non-streaming (extract text from LLMTextResult)
+        fallback = await generate_text_async(
             model=model,
             messages=messages,
             api_key=api_key,
@@ -718,6 +882,7 @@ async def generate_text_streaming_async(
             prefer_responses_api=True,
             model_profile=model_profile,
         )
+        return fallback["text"]
 
 
 async def generate_json_async(
@@ -732,9 +897,14 @@ async def generate_json_async(
     prefer_responses_api: bool = True,
     model_profile: str | None = None,
     reasoning_effort: str | None = None,
-) -> dict[str, Any]:
-    """Generate JSON by prompting model for JSON and parsing output robustly."""
-    text = await generate_text_async(
+) -> LLMJsonResult:
+    """Generate JSON by prompting model for JSON and parsing output robustly.
+
+    Returns a LLMJsonResult typed dict with keys:
+      - json: the parsed dict
+      - usage: UsageDict with token counts and cache_hit_ratio (Wave 9h)
+    """
+    text_result = await generate_text_async(
         model=model,
         messages=messages,
         api_key=api_key,
@@ -746,7 +916,7 @@ async def generate_json_async(
         model_profile=model_profile,
         reasoning_effort=reasoning_effort,
     )
-    return parse_json_text(text)
+    return LLMJsonResult(json=parse_json_text(text_result["text"]), usage=text_result["usage"])
 
 
 def generate_text_sync(

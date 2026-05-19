@@ -1053,7 +1053,7 @@ async def _intelligent_compliance_assessment(
         # new code should use execute_with_llm() via EnhancedClaraLegal.
         from aspire_orchestrator.services.openai_client import generate_text_async, parse_json_text
 
-        content = await generate_text_async(
+        content = (await generate_text_async(
             model=model,
             messages=[
                 {
@@ -1072,7 +1072,7 @@ async def _intelligent_compliance_assessment(
             max_output_tokens=400,
             temperature=None if _is_reasoning else 0.1,
             prefer_responses_api=True,
-        )
+        ))["text"]
 
         llm_data = parse_json_text(content)
         if isinstance(llm_data, dict):

@@ -205,15 +205,31 @@ def _make_llm_response(
             "suggested_resolution": "Confirm ceiling height on site or from architectural notes.",
         })
 
+    # Wave 9h: generate_json_async now returns LLMJsonResult typed dict.
+    # Tests mock generate_json_async directly on story_writer module, so the
+    # mock return value must match the new shape: {"json": {...}, "usage": {...}}.
+    _stub_usage = {
+        "prompt_tokens": 5000,
+        "cached_tokens": 2500,
+        "cache_hit_ratio": 0.5,
+        "completion_tokens": 1500,
+        "total_tokens": 6500,
+        "model": "gpt-5.4-mini",
+        "latency_ms": 1200.0,
+        "prompt_prefix_hash": "abc12345deadbeef",
+    }
     return {
-        "phases": phases,
-        "missing_inputs": missing_inputs,
-        "truth_distribution": {
-            "observed": 3,
-            "derived": 4,
-            "assumed": 0,
+        "json": {
+            "phases": phases,
+            "missing_inputs": missing_inputs,
+            "truth_distribution": {
+                "observed": 3,
+                "derived": 4,
+                "assumed": 0,
+            },
+            "mean_confidence": 0.91,
         },
-        "mean_confidence": 0.91,
+        "usage": _stub_usage,
     }
 
 
@@ -545,8 +561,8 @@ class TestReasonSealTrustUpgrade:
         # above with +0.05 boost → 0.87)
         llm_resp = _make_llm_response()
         # Override the assembly confidence to 0.82 on the sealed sheet
-        llm_resp["phases"][0]["assemblies"][0]["confidence"] = 0.82
-        llm_resp["phases"][0]["assemblies"][0]["source_sheet_id"] = SHEET_1_ID
+        llm_resp["json"]["phases"][0]["assemblies"][0]["confidence"] = 0.82
+        llm_resp["json"]["phases"][0]["assemblies"][0]["source_sheet_id"] = SHEET_1_ID
 
         mock_llm.return_value = llm_resp
         inserted_tables: list[str] = []
@@ -890,7 +906,7 @@ class TestReasonGoldenFixtures:
 
         # LLM returns story referencing addendum and framing
         llm_resp = _make_llm_response(phase_count=3)
-        llm_resp["phases"][0]["markdown"] = (
+        llm_resp["json"]["phases"][0]["markdown"] = (
             "## Phase 3 — Framing / Drywall\n\n"
             "Addendum A-3 Rev 1 specifies 3-5/8\" metal stud framing with "
             "moisture-resistant GWB. Ceiling height 10'-0\" (observed). "
@@ -971,7 +987,8 @@ class TestReasonGoldenFixtures:
         mock_select.return_value = sheets
 
         # LLM returns 4-discipline phased story
-        llm_resp = {
+        # Wave 9h: generate_json_async now returns LLMJsonResult {"json": ..., "usage": ...}
+        _llm_raw = {
             "phases": [
                 {
                     "phase_number": 1,
@@ -1020,6 +1037,15 @@ class TestReasonGoldenFixtures:
             ],
             "truth_distribution": {"observed": 4, "derived": 0, "assumed": 0},
             "mean_confidence": 1.0,
+        }
+        llm_resp = {
+            "json": _llm_raw,
+            "usage": {
+                "prompt_tokens": 8000, "cached_tokens": 4000, "cache_hit_ratio": 0.5,
+                "completion_tokens": 2000, "total_tokens": 10000,
+                "model": "gpt-5.4-mini", "latency_ms": 2500.0,
+                "prompt_prefix_hash": "fixture_hash00000",
+            },
         }
         mock_llm.return_value = llm_resp
         mock_insert.return_value = None

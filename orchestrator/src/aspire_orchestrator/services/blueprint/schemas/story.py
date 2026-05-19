@@ -38,3 +38,5 @@ class StoryOutput(BaseModel):
     mean_confidence: float
     truth_distribution: dict[str, int]
     model_version: str
+    # Wave 9h: LLM cache observability — included in REASON receipt metadata
+    llm_usage: dict[str, Any] = {}

@@ -1598,7 +1598,7 @@ async def _llm_fill_missing_tokens(
         if not _is_reasoning:
             create_kwargs["temperature"] = 0.0
 
-        content = await generate_text_async(
+        content = (await generate_text_async(
             model=create_kwargs["model"],
             messages=create_kwargs["messages"],
             api_key=resolve_openai_api_key(),
@@ -1607,7 +1607,7 @@ async def _llm_fill_missing_tokens(
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
             temperature=create_kwargs.get("temperature"),
             prefer_responses_api=True,
-        )
+        ))["text"]
         raw_values = _extract_json_from_llm_response(content, dict)
         if raw_values is not None:
             if isinstance(raw_values, dict):
@@ -2278,7 +2278,7 @@ async def _llm_parse_pricing(
         _is_reasoning = model.startswith(("gpt-5", "o1", "o3"))
         system_role = "developer" if _is_reasoning else "system"
 
-        content = await generate_text_async(
+        content = (await generate_text_async(
             model=model,
             messages=[
                 {
@@ -2309,7 +2309,7 @@ async def _llm_parse_pricing(
             max_output_tokens=400,
             temperature=None if _is_reasoning else 0.0,
             prefer_responses_api=True,
-        )
+        ))["text"]
         # Extract JSON array using robust parser
         items = _extract_json_from_llm_response(content, list)
         if items is not None:
@@ -2457,7 +2457,7 @@ async def _build_content_placeholders(
         if not _is_reasoning:
             create_kwargs["temperature"] = 0.3
 
-        content = await generate_text_async(
+        content = (await generate_text_async(
             model=create_kwargs["model"],
             messages=create_kwargs["messages"],
             api_key=resolve_openai_api_key(),
@@ -2466,7 +2466,7 @@ async def _build_content_placeholders(
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
             temperature=create_kwargs.get("temperature"),
             prefer_responses_api=True,
-        )
+        ))["text"]
 
         # Extract JSON array
         result = _extract_json_from_llm_response(content, list)
@@ -3482,7 +3482,7 @@ async def _generate_smart_questions(
         if not _is_reasoning:
             create_kwargs["temperature"] = 0.1
 
-        content = await generate_text_async(
+        content = (await generate_text_async(
             model=create_kwargs["model"],
             messages=create_kwargs["messages"],
             api_key=resolve_openai_api_key(),
@@ -3491,7 +3491,7 @@ async def _generate_smart_questions(
             max_output_tokens=int(create_kwargs.get("max_completion_tokens", 1024)),
             temperature=create_kwargs.get("temperature"),
             prefer_responses_api=True,
-        )
+        ))["text"]
         # Extract JSON array
         questions = _extract_json_from_llm_response(content, list)
         if questions is not None:

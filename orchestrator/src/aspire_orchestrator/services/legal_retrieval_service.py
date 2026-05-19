@@ -348,7 +348,7 @@ class LegalRetrievalService:
                 for i, c in enumerate(top_n)
             )
 
-            content = await generate_text_async(
+            content = (await generate_text_async(
                 model=settings.router_model_classifier,  # GPT-5-mini (cheap)
                 messages=[
                     {
@@ -377,7 +377,7 @@ class LegalRetrievalService:
                 max_output_tokens=500,
                 temperature=0.0,
                 prefer_responses_api=True,
-            )
+            ))["text"]
 
             parsed = parse_json_text(content)
             if not parsed and "[" in content and "]" in content:

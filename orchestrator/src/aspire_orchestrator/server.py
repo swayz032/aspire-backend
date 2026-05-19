@@ -2670,7 +2670,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                     # out around 5 seconds. gpt-5.4-mini gives us ~600-1200ms
                     # latency vs gpt-5.2's 2-4s, with comparable JSON
                     # extraction quality. Timeout 4s; tokens 512.
-                    parse_resp = await generate_text_async(
+                    parse_resp = (await generate_text_async(
                         model="gpt-5.4-mini",
                         messages=[
                             {"role": "developer", "content": "Extract invoice data. Return ONLY valid JSON. No explanation."},
@@ -2681,7 +2681,7 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
                         timeout_seconds=4.0,
                         max_output_tokens=512,
                         prefer_responses_api=True,
-                    )
+                    ))["text"]
 
                     # Clean and parse JSON
                     cleaned = parse_resp.strip()

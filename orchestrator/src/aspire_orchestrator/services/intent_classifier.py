@@ -414,7 +414,7 @@ class IntentClassifier:
         if _is_reasoning and max_tokens < 4096:
             effective_max_tokens = 4096
 
-        parsed = await generate_json_async(
+        parsed = (await generate_json_async(
             model=model,
             messages=messages,
             api_key=self._api_key or "",
@@ -424,7 +424,7 @@ class IntentClassifier:
             temperature=None if _is_reasoning else temperature,
             prefer_responses_api=True,
             reasoning_effort="low" if _is_reasoning else None,
-        )
+        ))["json"]
         if not parsed:
             logger.error("LLM returned empty/invalid JSON for intent classifier (model=%s)", model)
         return parsed

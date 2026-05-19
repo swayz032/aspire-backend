@@ -659,6 +659,7 @@ class Drew:
             }
 
         # Emit receipt (counts only — no markdown, Law #9)
+        # Wave 9h: include LLM cache observability fields in receipt metadata
         self._emit_receipt(
             correlation_id=correlation_id,
             event_type="blueprint.reason",
@@ -672,6 +673,11 @@ class Drew:
                 "mean_confidence": result.get("mean_confidence", 0.0),
                 "truth_distribution": result.get("truth_distribution", {}),
                 "model_version": result.get("model_version", self.model),
+                # Wave 9h cache metrics
+                "llm_prompt_tokens": result.get("llm_prompt_tokens", 0),
+                "llm_cached_tokens": result.get("llm_cached_tokens", 0),
+                "llm_cache_hit_ratio": result.get("llm_cache_hit_ratio", 0.0),
+                "llm_completion_tokens": result.get("llm_completion_tokens", 0),
             },
         )
 
@@ -1670,6 +1676,8 @@ async def _async_classify_pipeline(
     except Exception as _sp_exc:
         _log.warning("drew.classify: set_stage_progress(done) failed: %s", _sp_exc)
 
+    # Wave 9h: cache_hit_ratio and token counts are logged inside tag_disciplines.
+    # No separate accumulation needed here — stage summary log is in the tagger.
     return {
         "status": "ok",
         "stage": "classify",
@@ -2207,6 +2215,13 @@ async def _async_reason_pipeline(
             _total_deleted, project_id[:8],
         )
 
+    # Wave 9h: clear LLM response cache so stale responses don't survive a re-run.
+    try:
+        from aspire_orchestrator.services.llm_response_cache import clear_llm_cache_for_project
+        await clear_llm_cache_for_project(project_id, suite_id)
+    except Exception as _cache_exc:
+        _log.warning("drew.reason: llm_response_cache clear failed (non-blocking): %s", _cache_exc)
+
     try:
         output = await write_story(
             project_id,
@@ -2260,6 +2275,11 @@ async def _async_reason_pipeline(
         "mean_confidence": output.mean_confidence,
         "truth_distribution": output.truth_distribution,
         "model_version": output.model_version,
+        # Wave 9h: LLM cache observability fields surfaced in receipt metadata
+        "llm_prompt_tokens": output.llm_usage.get("prompt_tokens", 0),
+        "llm_cached_tokens": output.llm_usage.get("cached_tokens", 0),
+        "llm_cache_hit_ratio": output.llm_usage.get("cache_hit_ratio", 0.0),
+        "llm_completion_tokens": output.llm_usage.get("completion_tokens", 0),
     }
 
 

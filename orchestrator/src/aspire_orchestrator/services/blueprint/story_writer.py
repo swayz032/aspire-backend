@@ -15,6 +15,14 @@ Token budget:
   Target: 30–50k input tokens, 8–12k output tokens.
   Control: OCR text truncated to 600 chars/sheet; KB docs injected as compressed
   reference blocks; symbols summarized as a count-by-class dict per sheet.
+
+Wave 9h — cache observability:
+  - KB docs and system prompt are loaded via module-level cached helpers so the
+    system-message prefix is byte-identical across all retry attempts.
+  - Dynamic project context (sheet OCR, symbols) is placed ONLY in the user message.
+  - prompt_prefix_hash drift is logged at WARNING to signal cache invalidation.
+  - LLM usage (cached_tokens, cache_hit_ratio) is returned in StoryOutput and
+    included in the caller's receipt metadata.
 """
 
 from __future__ import annotations
@@ -28,6 +36,15 @@ from pathlib import Path
 from typing import Any
 
 _log = logging.getLogger(__name__)
+
+# Wave 9h: module-level caches for KB docs and system prompt.
+# Loading these once per process keeps the system-message prefix byte-identical
+# across all LLM calls, maximising OpenAI prefix cache reuse.
+_KB_DOC_CACHE: dict[str, str] = {}
+_SYSTEM_PROMPT_CACHE: str | None = None
+
+# Wave 9h: track last prefix hash to detect drift (invalidates OpenAI prefix cache).
+_LAST_PREFIX_HASH_REASON: str | None = None
 
 # Module-level re-exports so tests can patch at the correct module path.
 # (aspire_orchestrator.services.blueprint.story_writer.generate_json_async, etc.)
@@ -66,18 +83,33 @@ _VALID_TRUTH_TAGS = {"observed", "derived", "assumed", "field_confirmed"}
 
 
 def _load_kb_doc(name: str) -> str:
-    """Load a KB markdown doc, returning empty string if missing (non-fatal)."""
+    """Load a KB markdown doc, caching per-process for prefix stability (Wave 9h).
+
+    Caching ensures KB content is loaded once so the system-message bytes are
+    identical across all LLM calls in a run.  Returns empty string if missing
+    (non-fatal — missing KB docs degrade story quality but do not block execution).
+    """
+    if name in _KB_DOC_CACHE:
+        return _KB_DOC_CACHE[name]
     path = _KB_DIR / name
     try:
-        return path.read_text(encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
+        _KB_DOC_CACHE[name] = content
+        return content
     except OSError:
         _log.warning("story_writer: KB doc missing: %s", path)
+        _KB_DOC_CACHE[name] = ""
         return ""
 
 
 def _load_system_prompt() -> str:
+    """Load the Drew system prompt, caching per-process for prefix stability (Wave 9h)."""
+    global _SYSTEM_PROMPT_CACHE
+    if _SYSTEM_PROMPT_CACHE is not None:
+        return _SYSTEM_PROMPT_CACHE
     try:
-        return _PROMPT_PATH.read_text(encoding="utf-8")
+        _SYSTEM_PROMPT_CACHE = _PROMPT_PATH.read_text(encoding="utf-8")
+        return _SYSTEM_PROMPT_CACHE
     except OSError as exc:
         raise RuntimeError(
             f"Drew system prompt missing at {_PROMPT_PATH} — cannot run REASON (Law #3)"
@@ -488,6 +520,13 @@ async def write_story(
 
     api_key = _resolve_api_key()
 
+    # Wave 9h: import LLM response cache helpers
+    from aspire_orchestrator.services.llm_response_cache import (
+        compute_content_hash,
+        get_cached_llm_response,
+        set_cached_llm_response,
+    )
+
     # ── 1. Load active sheets (exclude superseded) ─────────────────────────
     try:
         all_sheets = await _supabase_select(
@@ -584,10 +623,51 @@ async def write_story(
     # ── 6. Call LLM with structured output (one retry on invalid schema) ──
     raw_response: dict[str, Any] = {}
     last_exc: Exception | None = None
+    # Wave 9h: capture usage from successful LLM call
+    llm_usage: dict[str, Any] = {}
 
-    for attempt in range(2):
+    # Wave 9h: compute content hash for Redis response cache (user message is dynamic)
+    user_message_content = messages[-1]["content"] if messages else ""
+    reason_content_hash = compute_content_hash(user_message_content)
+
+    # Wave 9h: check Redis response cache before calling OpenAI
+    cached_reason = await get_cached_llm_response("reason", reason_content_hash, model)
+    if cached_reason is not None:
+        _log.info(
+            "9h reason_cache_hit stage=reason model=%s hash=%s project=%s",
+            model, reason_content_hash[:8], project_id[:8],
+        )
+        raw_response = cached_reason
+        # Emit a cache_hit receipt (best-effort)
         try:
-            raw_response = await _generate_json_async(
+            from aspire_orchestrator.services.receipt_store import store_receipts as _sr
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+            _sr([{
+                "id": str(_uuid.uuid4()),
+                "outcome": "success",
+                "action_type": "blueprint.llm.cache_hit",
+                "receipt_type": "blueprint.llm.cache_hit",
+                "created_at": _dt.now(_tz.utc).isoformat(),
+                "risk_tier": "GREEN",
+                "actor_type": "WORKER",
+                "actor_id": "skillpack:drew-blueprint",
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "metadata": {
+                    "stage": "reason",
+                    "model": model,
+                    "content_hash": reason_content_hash[:16],
+                    "cache_layer": "redis",
+                    "project_id": project_id,
+                },
+            }])
+        except Exception:
+            pass
+
+    for attempt in range(2) if not raw_response.get("phases") else range(0):
+        try:
+            llm_result = await _generate_json_async(
                 model=model,
                 messages=messages,
                 api_key=api_key,
@@ -597,7 +677,44 @@ async def write_story(
                 temperature=None,  # reasoning model — no temperature
                 model_profile="primary_reasoner",
             )
+            # Wave 9h: extract json payload and usage dict from LLMJsonResult
+            raw_response = llm_result["json"]
+            llm_usage = dict(llm_result["usage"])
+
+            # Wave 9h: verify prompt prefix stability (warn on drift)
+            global _LAST_PREFIX_HASH_REASON
+            observed_hash = llm_usage.get("prompt_prefix_hash", "")
+            if _LAST_PREFIX_HASH_REASON is None:
+                _LAST_PREFIX_HASH_REASON = observed_hash
+            elif _LAST_PREFIX_HASH_REASON != observed_hash:
+                _log.warning(
+                    "9h: prefix_hash drift detected for reason stage — "
+                    "previous=%s current=%s — OpenAI prefix cache INVALIDATED. "
+                    "Ensure system prompt + KB docs are byte-stable.",
+                    _LAST_PREFIX_HASH_REASON, observed_hash,
+                )
+                _LAST_PREFIX_HASH_REASON = observed_hash
+
             if raw_response and raw_response.get("phases"):
+                # Wave 9h: log cache observability for this REASON call
+                _log.info(
+                    "9h reason_llm_call model=%s prompt_tokens=%d cached_tokens=%d "
+                    "cache_hit_ratio=%.4f completion_tokens=%d latency_ms=%.1f "
+                    "prompt_prefix_hash=%s project=%s",
+                    llm_usage.get("model", model),
+                    llm_usage.get("prompt_tokens", 0),
+                    llm_usage.get("cached_tokens", 0),
+                    llm_usage.get("cache_hit_ratio", 0.0),
+                    llm_usage.get("completion_tokens", 0),
+                    llm_usage.get("latency_ms", 0.0),
+                    llm_usage.get("prompt_prefix_hash", ""),
+                    project_id[:8],
+                )
+                # Wave 9h: store in Redis response cache (best-effort)
+                try:
+                    await set_cached_llm_response("reason", reason_content_hash, model, raw_response)
+                except Exception:
+                    pass
                 break  # Valid response
             _log.warning(
                 "story_writer: LLM returned empty phases on attempt %d for project=%s",
@@ -717,4 +834,5 @@ async def write_story(
         mean_confidence=mean_conf,
         truth_distribution=truth_dist,
         model_version=model,
+        llm_usage=llm_usage,  # Wave 9h: propagated to receipt metadata by Drew.reason
     )
