@@ -123,10 +123,21 @@ async def mint_signed_upload_url(
             )
             return None
 
-        # Supabase sometimes returns a relative path — prepend origin
+        # Supabase Storage's upload/sign endpoint returns a URL that is missing
+        # the `/storage/v1` prefix — either as a relative path ("/object/...")
+        # or as an absolute URL without the prefix
+        # ("https://*.supabase.co/object/..."). Normalize both shapes so
+        # browser PUTs land on the correct Storage gateway.
+        origin = (settings.supabase_url or "").rstrip("/")
         if signed_url.startswith("/"):
-            origin = (settings.supabase_url or "").rstrip("/")
-            signed_url = f"{origin}{signed_url}"
+            signed_url = (
+                f"{origin}{signed_url}"
+                if signed_url.startswith("/storage/v1")
+                else f"{origin}/storage/v1{signed_url}"
+            )
+        elif origin and "/storage/v1/" not in signed_url and signed_url.startswith(origin):
+            # Absolute URL missing /storage/v1 prefix — insert it after the origin
+            signed_url = signed_url.replace(origin, f"{origin}/storage/v1", 1)
 
         logger.info(
             "pdf_signed_upload: minted signed URL upload_id=%s duration_ms=%.1f corr=%s",
