@@ -136,25 +136,41 @@ async def test_dispatch_happy_path_queued():
 
 @pytest.mark.asyncio
 async def test_dispatch_dedup_returns_existing():
-    """Same PDF re-uploaded returns existing project_id, status=dedup."""
+    """Same PDF re-uploaded returns existing project_id, status=dedup.
+
+    Fix 1 update: the mock must provide a valid project (ingest=done + at least 1 sheet)
+    so the dispatch route's dedup validation confirms a genuine cache hit.
+    """
     import aspire_orchestrator.services.receipt_store as rs
     rs._receipts.clear()
 
     existing_id = str(uuid.uuid4())
+    sheet_id = str(uuid.uuid4())
     corr = "test-dispatch-dedup-001"
 
     mock_bg = MagicMock(spec=BackgroundTasks)
+
+    async def _valid_dedup_select(table: str, *, filters: str = "", limit: int = 100, **kwargs: Any) -> list[dict]:
+        if table == "blueprint_projects":
+            return [{
+                "id": existing_id,
+                "suite_id": SUITE_A,
+                "pdf_storage_path": f"{SUITE_A}/{existing_id}/raw.pdf",
+                "content_hash": _FAKE_PDF_HASH,
+                "stage_progress": {
+                    "ingest": "done", "classify": "done",
+                    "see": "not_started", "reason": "not_started", "procure": "not_started",
+                },
+            }]
+        if table == "blueprint_sheets":
+            return [{"id": sheet_id, "project_id": existing_id, "suite_id": SUITE_A}]
+        return []
 
     with (
         patch(
             "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
             new_callable=AsyncMock,
-            return_value=[{
-                "id": existing_id,
-                "suite_id": SUITE_A,
-                "pdf_storage_path": f"{SUITE_A}/{existing_id}/raw.pdf",
-                "content_hash": _FAKE_PDF_HASH,
-            }],
+            side_effect=_valid_dedup_select,
         ),
         patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-002"),
         patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
@@ -166,6 +182,7 @@ async def test_dispatch_dedup_returns_existing():
     assert resp.status == "dedup"
     assert resp.project_id == existing_id
     assert resp.pdf_storage_path is not None
+    assert resp.receipt_id is not None  # Fix 6
     # Background pipeline NOT enqueued for dedup
     assert not mock_bg.add_task.called
 
@@ -1006,3 +1023,519 @@ async def test_stage_progress_set_uses_return_minimal():
     assert captured_headers.get("Prefer") == "return=minimal", (
         f"Expected return=minimal but got: {captured_headers.get('Prefer')}"
     )
+
+
+# ===========================================================================
+# Production-hardening tests (Fixes 1–6, 2026-05-19)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Fix 1a — Dispatch dedup: stale project (ingest=failed) falls through to fresh
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_dedup_stale_ingest_failed_creates_fresh_project():
+    """Fix 1: Dedup hit with ingest=failed in stage_progress must fall through to fresh project.
+
+    The dispatch route validates the existing project before returning dedup.
+    A project with ingest != 'done' is stale and must NOT be returned.
+    New behavior: emit dedup_invalid_stale receipt, NULL content_hash, create fresh.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    stale_id = str(uuid.uuid4())
+    fresh_id = str(uuid.uuid4())
+    corr = "test-dispatch-stale-failed-001"
+    mock_bg = MagicMock(spec=BackgroundTasks)
+
+    async def _select_fn(table: str, *, filters: str = "", limit: int = 100, **kwargs: Any) -> list[dict]:
+        if table == "blueprint_projects":
+            return [{
+                "id": stale_id,
+                "suite_id": SUITE_A,
+                "pdf_storage_path": None,
+                "content_hash": _FAKE_PDF_HASH,
+                "stage_progress": {"ingest": "failed", "classify": "not_started",
+                                   "see": "not_started", "reason": "not_started", "procure": "not_started"},
+            }]
+        # blueprint_sheets — called during dedup validation
+        if table == "blueprint_sheets":
+            return []
+        return []
+
+    with (
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=_select_fn,
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_update",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_insert",
+            new_callable=AsyncMock,
+            return_value={"id": fresh_id},
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.upload_raw_pdf",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-fix1a"),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+    ):
+        from aspire_orchestrator.routes.blueprint_dispatch import dispatch_blueprint
+
+        resp = await dispatch_blueprint(mock_bg, _make_request(correlation_id=corr))
+
+    # Must create fresh project, NOT return stale
+    assert resp.status == "queued", f"Expected queued, got {resp.status}"
+    assert resp.project_id != stale_id, "Must NOT return the stale project_id"
+
+    # Fix 6: receipt_id must be present on queued response
+    assert resp.receipt_id is not None
+
+    # Law #2: dedup_invalid_stale receipt must be emitted
+    receipts = _query_receipts_by_corr(corr)
+    action_types = [r["action_type"] for r in receipts]
+    assert "blueprint.upload.dedup_invalid_stale" in action_types, (
+        f"dedup_invalid_stale receipt missing — got: {action_types}"
+    )
+
+    # Background pipeline enqueued for fresh project
+    assert mock_bg.add_task.called
+
+
+# ---------------------------------------------------------------------------
+# Fix 1b — Dispatch dedup: stale project (no sheets) falls through to fresh
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_dedup_stale_no_sheets_creates_fresh_project():
+    """Fix 1: Dedup hit with ingest=done but zero sheets falls through to fresh project.
+
+    ingest=done alone is not enough — there must be at least one blueprint_sheets row.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    stale_id = str(uuid.uuid4())
+    corr = "test-dispatch-stale-nosheets-001"
+    mock_bg = MagicMock(spec=BackgroundTasks)
+
+    async def _select_fn(table: str, *, filters: str = "", limit: int = 100, **kwargs: Any) -> list[dict]:
+        if table == "blueprint_projects":
+            return [{
+                "id": stale_id,
+                "suite_id": SUITE_A,
+                "pdf_storage_path": None,
+                "content_hash": _FAKE_PDF_HASH,
+                "stage_progress": {"ingest": "done", "classify": "not_started",
+                                   "see": "not_started", "reason": "not_started", "procure": "not_started"},
+            }]
+        if table == "blueprint_sheets":
+            return []  # ingest=done but zero sheets → stale
+        return []
+
+    with (
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=_select_fn,
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_update",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_insert",
+            new_callable=AsyncMock,
+            return_value={"id": str(uuid.uuid4())},
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.upload_raw_pdf",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-fix1b"),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+    ):
+        from aspire_orchestrator.routes.blueprint_dispatch import dispatch_blueprint
+
+        resp = await dispatch_blueprint(mock_bg, _make_request(correlation_id=corr))
+
+    assert resp.status == "queued"
+    assert resp.project_id != stale_id
+
+    receipts = _query_receipts_by_corr(corr)
+    action_types = [r["action_type"] for r in receipts]
+    assert "blueprint.upload.dedup_invalid_stale" in action_types
+
+
+# ---------------------------------------------------------------------------
+# Fix 1c — Dispatch dedup: genuine hit (ingest=done + sheets>0) returns existing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_dedup_genuine_hit_returns_existing_project():
+    """Fix 1 regression guard: genuine dedup (ingest=done + sheets>0) still returns existing.
+
+    The stale-dedup fix must NOT break the happy-path dedup.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    good_id = str(uuid.uuid4())
+    sheet_id = str(uuid.uuid4())
+    corr = "test-dispatch-genuine-dedup-001"
+    mock_bg = MagicMock(spec=BackgroundTasks)
+
+    async def _select_fn(table: str, *, filters: str = "", limit: int = 100, **kwargs: Any) -> list[dict]:
+        if table == "blueprint_projects":
+            return [{
+                "id": good_id,
+                "suite_id": SUITE_A,
+                "pdf_storage_path": f"{SUITE_A}/{good_id}/raw.pdf",
+                "content_hash": _FAKE_PDF_HASH,
+                "stage_progress": {"ingest": "done", "classify": "done",
+                                   "see": "not_started", "reason": "not_started", "procure": "not_started"},
+            }]
+        if table == "blueprint_sheets":
+            return [{"id": sheet_id, "project_id": good_id, "suite_id": SUITE_A}]
+        return []
+
+    with (
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
+            new_callable=AsyncMock,
+            side_effect=_select_fn,
+        ),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-fix1c"),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+    ):
+        from aspire_orchestrator.routes.blueprint_dispatch import dispatch_blueprint
+
+        resp = await dispatch_blueprint(mock_bg, _make_request(correlation_id=corr))
+
+    assert resp.status == "dedup"
+    assert resp.project_id == good_id
+    assert resp.receipt_id is not None  # Fix 6: receipt_id present on dedup too
+    # Background pipeline NOT enqueued for genuine dedup
+    assert not mock_bg.add_task.called
+
+    receipts = _query_receipts_by_corr(corr)
+    action_types = [r["action_type"] for r in receipts]
+    assert "blueprint.upload.dedup" in action_types
+    assert "blueprint.upload.dedup_invalid_stale" not in action_types
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — Stage timeout fires and emits structured receipt
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stage_timeout_fires_and_emits_receipt():
+    """Fix 2: When a stage exceeds its timeout, blueprint.<stage>.timeout and
+    blueprint.pipeline.failed receipts are both emitted.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    project_id = str(uuid.uuid4())
+    corr = "test-stage-timeout-001"
+
+    async def _slow_ingest(**kwargs: Any) -> dict[str, Any]:
+        """Simulates a hung INGEST by sleeping far longer than any timeout."""
+        await asyncio.sleep(9999)
+        return {"status": "ok"}
+
+    with (
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-fix2"),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch._async_ingest_pipeline",
+            side_effect=_slow_ingest,
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.set_stage_progress",
+            new_callable=AsyncMock,
+        ),
+        # Override timeout to 0.05s so the test runs instantly
+        patch.dict(
+            "aspire_orchestrator.routes.blueprint_dispatch._STAGE_TIMEOUTS",
+            {"ingest": 0.05, "classify": 0.05, "see": 0.05, "reason": 0.05, "procure": 0.05},
+        ),
+    ):
+        from aspire_orchestrator.routes.blueprint_dispatch import _run_full_pipeline
+
+        await _run_full_pipeline(
+            project_id=project_id,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+            filename="test.pdf",
+            pdf_bytes=_FAKE_PDF_BYTES,
+            correlation_id=corr,
+            model="gpt-5.4-mini",
+        )
+
+    receipts = _query_receipts_by_corr(corr)
+    action_types = [r["action_type"] for r in receipts]
+    assert "blueprint.ingest.timeout" in action_types, (
+        f"blueprint.ingest.timeout receipt missing — got: {action_types}"
+    )
+    assert "blueprint.pipeline.failed" in action_types, (
+        f"blueprint.pipeline.failed receipt missing after timeout — got: {action_types}"
+    )
+
+    # Fix 5: structured fields must be present in pipeline.failed receipt
+    failed = next(r for r in receipts if r["action_type"] == "blueprint.pipeline.failed")
+    outputs = failed.get("redacted_outputs", {})
+    assert outputs.get("error_class") == "TimeoutError", (
+        f"error_class must be TimeoutError, got: {outputs.get('error_class')}"
+    )
+    assert outputs.get("stage") == "ingest", (
+        f"stage must be ingest, got: {outputs.get('stage')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — Provider retry on transient 5xx, no retry on 4xx (ocr_coordinator)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ocr_coordinator_retries_once_on_transient_error():
+    """Fix 3: LlamaParse transient ProviderError triggers exactly one retry.
+
+    On first attempt: raises ProviderError with NETWORK category (transient).
+    On second attempt: returns success.
+    Total provider calls = 2, not 1 or 3.
+    """
+    from aspire_orchestrator.services.blueprint.ocr_coordinator import extract_sheet_corpus
+    from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+    from aspire_orchestrator.providers.base_client import ProviderError
+    from aspire_orchestrator.providers.error_codes import InternalErrorCode
+
+    call_count = 0
+
+    # Build a mock LlamaParse client
+    mock_lp_client = MagicMock()
+
+    async def _flaky_parse_pdf(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: transient 503
+            raise ProviderError(
+                code=InternalErrorCode.SERVER_UNAVAILABLE,
+                message="503 service unavailable",
+                provider_id="llamaparse",
+                status_code=503,
+            )
+        # Second call: success
+        result = MagicMock()
+        result.success = True
+        result.body = {"pages": [{"page_number": 1, "text": "Retried text content here. " * 10}]}
+        return result
+
+    mock_lp_client.parse_pdf = _flaky_parse_pdf
+
+    fake_extract = SheetExtract(
+        page_number=1,
+        text="A" * 300,  # >= 200 chars → triggers LlamaParse path
+        page_hash="abc123def456",
+        image_bytes=b"fakeimage",
+    )
+
+    with (
+        patch(
+            "aspire_orchestrator.services.blueprint.ocr_coordinator.split_pdf_to_sheets",
+            return_value=[fake_extract],
+        ),
+        patch(
+            "aspire_orchestrator.services.blueprint.ocr_coordinator.get_llamaparse_client",
+            return_value=mock_lp_client,
+        ),
+        # Prevent asyncio.sleep from actually sleeping
+        patch("aspire_orchestrator.services.blueprint.ocr_coordinator.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        corpus = await extract_sheet_corpus(
+            b"fake-pdf-bytes",
+            correlation_id=CORR_ID,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+        )
+
+    # Exactly 2 calls (1 original + 1 retry)
+    assert call_count == 2, f"Expected 2 provider calls (1 + retry), got {call_count}"
+    assert len(corpus.sheets) == 1
+    assert corpus.sheets[0].provider == "llamaparse"
+
+
+@pytest.mark.asyncio
+async def test_ocr_coordinator_no_retry_on_4xx_auth_error():
+    """Fix 3: Auth error (4xx) must NOT be retried — falls through to Azure immediately."""
+    from aspire_orchestrator.services.blueprint.ocr_coordinator import extract_sheet_corpus
+    from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+    from aspire_orchestrator.providers.base_client import ProviderError
+    from aspire_orchestrator.providers.error_codes import InternalErrorCode
+
+    call_count = 0
+
+    mock_lp_client = MagicMock()
+
+    async def _auth_fail(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        raise ProviderError(
+            code=InternalErrorCode.AUTH_INVALID_KEY,  # 4xx — non-retryable
+            message="401 unauthorized",
+            provider_id="llamaparse",
+            status_code=401,
+        )
+
+    mock_lp_client.parse_pdf = _auth_fail
+
+    # Azure mock — returns success to confirm fallback is working
+    mock_az_client = MagicMock()
+    az_success = MagicMock()
+    az_success.success = True
+    az_success.body = {"analyzeResult": {"content": "Azure OCR text content"}}
+    mock_az_client.analyze_layout = AsyncMock(return_value=az_success)
+
+    fake_extract = SheetExtract(
+        page_number=1,
+        text="A" * 300,
+        page_hash="def456abc123",
+        image_bytes=b"fakeimage",
+    )
+
+    with (
+        patch(
+            "aspire_orchestrator.services.blueprint.ocr_coordinator.split_pdf_to_sheets",
+            return_value=[fake_extract],
+        ),
+        patch(
+            "aspire_orchestrator.services.blueprint.ocr_coordinator.get_llamaparse_client",
+            return_value=mock_lp_client,
+        ),
+        patch(
+            "aspire_orchestrator.services.blueprint.ocr_coordinator.get_azure_doc_intel_client",
+            return_value=mock_az_client,
+        ),
+        patch("aspire_orchestrator.services.blueprint.ocr_coordinator.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        corpus = await extract_sheet_corpus(
+            b"fake-pdf-bytes",
+            correlation_id=CORR_ID,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+        )
+
+    # LlamaParse must have been called exactly ONCE (no retry on 4xx)
+    assert call_count == 1, f"4xx must not be retried — expected 1 call, got {call_count}"
+    # Fell through to Azure
+    assert corpus.sheets[0].provider == "azure_doc_intel"
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 — blueprint.pipeline.failed receipt has structured error fields
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pipeline_failed_receipt_has_structured_error_fields():
+    """Fix 5: blueprint.pipeline.failed receipt must include error_class, error_message,
+    stage, provider, and retry_count fields in redacted_outputs.
+    """
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    project_id = str(uuid.uuid4())
+    corr = "test-fix5-structured-receipt-001"
+
+    class FakeProviderError(RuntimeError):
+        provider_id = "llamaparse"
+
+    with (
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-fix5"),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch._async_ingest_pipeline",
+            AsyncMock(side_effect=FakeProviderError("llamaparse 503 transient")),
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.set_stage_progress",
+            AsyncMock(),
+        ),
+    ):
+        from aspire_orchestrator.routes.blueprint_dispatch import _run_full_pipeline
+
+        await _run_full_pipeline(
+            project_id=project_id,
+            suite_id=SUITE_A,
+            office_id=OFFICE_A,
+            filename="test.pdf",
+            pdf_bytes=_FAKE_PDF_BYTES,
+            correlation_id=corr,
+            model="gpt-5.4-mini",
+        )
+
+    receipts = _query_receipts_by_corr(corr)
+    failed = next(
+        (r for r in receipts if r["action_type"] == "blueprint.pipeline.failed"),
+        None,
+    )
+    assert failed is not None, "blueprint.pipeline.failed receipt must be emitted"
+
+    outputs = failed.get("redacted_outputs", {})
+    assert "error_class" in outputs, "error_class must be present"
+    assert "error_message" in outputs, "error_message must be present"
+    assert "stage" in outputs, "stage must be present"
+    assert "retry_count" in outputs, "retry_count must be present"
+    # error_message capped at 500 chars
+    assert len(str(outputs["error_message"])) <= 500
+
+
+# ---------------------------------------------------------------------------
+# Fix 6 — Dispatch queued response includes receipt_id
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_queued_response_includes_receipt_id():
+    """Fix 6: dispatch_blueprint queued response must include receipt_id."""
+    import aspire_orchestrator.services.receipt_store as rs
+    rs._receipts.clear()
+
+    corr = "test-fix6-receipt-id-001"
+    mock_bg = MagicMock(spec=BackgroundTasks)
+
+    with (
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.supabase_insert",
+            new_callable=AsyncMock,
+            return_value={"id": str(uuid.uuid4())},
+        ),
+        patch(
+            "aspire_orchestrator.routes.blueprint_dispatch.upload_raw_pdf",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-fix6"),
+        patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+    ):
+        from aspire_orchestrator.routes.blueprint_dispatch import dispatch_blueprint
+
+        resp = await dispatch_blueprint(mock_bg, _make_request(correlation_id=corr))
+
+    assert resp.status == "queued"
+    assert resp.receipt_id is not None, "receipt_id must be present in queued response"
+    assert len(resp.receipt_id) > 0

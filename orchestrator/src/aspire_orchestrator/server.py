@@ -197,14 +197,164 @@ async def _app_lifespan(_: FastAPI):
     from aspire_orchestrator.services.sre_triage import start_sre_triage, stop_sre_triage
     start_sre_triage()
 
+    # Fix 4 (2026-05-19): Orphan blueprint project sweeper.
+    # Catches projects where the worker died (Railway redeploy, OOM, signal) before
+    # INGEST completed.  Any project with stage_progress.ingest = "in_progress" and
+    # created_at older than 15 minutes is assumed dead — mark it failed and emit a receipt.
+    _orphan_sweeper_task: asyncio.Task[None] = asyncio.create_task(
+        _sweep_stale_blueprint_projects_loop(),
+        name="blueprint-orphan-sweeper",
+    )
+
     try:
         yield
     finally:
+        _orphan_sweeper_task.cancel()
+        try:
+            await _orphan_sweeper_task
+        except asyncio.CancelledError:
+            pass
         await stop_sre_triage()
         await stop_task_queue()
         await stop_receipt_writer()
         await close_checkpointer_runtime()
         await close_supabase_pools()
+
+
+async def _sweep_stale_blueprint_projects_loop() -> None:
+    """Fix 4: Periodic loop that calls sweep_stale_blueprint_projects every 5 minutes.
+
+    Runs indefinitely until cancelled by the lifespan teardown.
+    First sweep fires 30 seconds after startup to avoid hammering DB during cold start.
+    """
+    await asyncio.sleep(30)  # brief startup grace period
+    while True:
+        try:
+            await _sweep_stale_blueprint_projects()
+        except Exception as exc:
+            logger.warning("[blueprint-sweeper] sweep error: %s", type(exc).__name__)
+        await asyncio.sleep(5 * 60)  # sweep every 5 minutes
+
+
+async def _sweep_stale_blueprint_projects() -> None:
+    """Fix 4: Find in-progress blueprint projects older than 15 minutes and mark them failed.
+
+    Law #2: Every state change emits an immutable receipt (blueprint.pipeline.timed_out).
+    Law #6: Uses suite_id from the project row to scope all DB operations.
+    Law #3: DB errors are logged and swallowed — sweeper must not crash the server.
+
+    Detection criteria: stage_progress->>'ingest' = 'in_progress'
+                        AND created_at < NOW() - INTERVAL '15 minutes'
+    """
+    from aspire_orchestrator.services.supabase_client import (
+        SupabaseClientError,
+        supabase_select,
+        supabase_update,
+    )
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+    from aspire_orchestrator.services.receipt_store import store_receipts
+
+    _STALE_THRESHOLD_MINUTES = 15
+
+    try:
+        # Query via PostgREST: stage_progress->>'ingest' = 'in_progress'
+        # We use the jsonb text-path filter via PostgREST's ->> syntax.
+        stale_rows = await supabase_select(
+            "blueprint_projects",
+            filters="stage_progress->>ingest=eq.in_progress",
+        )
+    except SupabaseClientError as exc:
+        logger.warning("[blueprint-sweeper] DB query failed: %s", type(exc).__name__)
+        return
+
+    if not stale_rows:
+        return
+
+    from datetime import timedelta
+    now_utc = datetime.now(timezone.utc)
+    threshold = now_utc - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
+    orphaned_ids: list[str] = []
+
+    for row in stale_rows:
+        project_id = str(row.get("id", ""))
+        suite_id = str(row.get("suite_id", ""))
+        if not project_id or not suite_id:
+            continue
+
+        # Parse created_at — skip if recently created (might still be processing)
+        created_at_raw: str | None = row.get("created_at")
+        if not created_at_raw:
+            continue
+        try:
+            # Handle both offset-aware and naive timestamps
+            created_dt = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                import pytz
+                created_dt = pytz.utc.localize(created_dt)
+        except (ValueError, TypeError):
+            continue
+
+        if created_dt >= threshold:
+            continue  # Still within grace window — not yet an orphan
+
+        orphaned_ids.append(project_id)
+
+        # Mark ingest as failed (best-effort)
+        try:
+            await set_stage_progress(
+                project_id=project_id,
+                stage="ingest",
+                state="failed",
+                suite_id=suite_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[blueprint-sweeper] set_stage_progress failed project=%s: %s",
+                project_id[:8],
+                type(exc).__name__,
+            )
+
+        # Emit immutable receipt (Law #2)
+        try:
+            now_iso = now_utc.isoformat()
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "receipt_type": "blueprint.pipeline.timed_out",
+                "action_type": "blueprint.pipeline.timed_out",
+                "suite_id": suite_id,
+                "office_id": str(row.get("office_id", suite_id)),
+                "tenant_id": suite_id,
+                "outcome": "failed",
+                "tool_used": "blueprint_orphan_sweeper",
+                "risk_tier": "green",
+                "redacted_inputs": {"project_id": project_id},
+                "redacted_outputs": {
+                    "stage": "ingest",
+                    "error_class": "OrphanTimeout",
+                    "error_message": (
+                        f"Project stuck in-progress for >{_STALE_THRESHOLD_MINUTES} min; "
+                        f"worker assumed dead (Railway redeploy / OOM)"
+                    ),
+                    "created_at": created_at_raw,
+                    "elapsed_minutes": int((now_utc - created_dt).total_seconds() / 60),
+                },
+                "trace_id": "",
+                "correlation_id": str(row.get("id", "")),
+                "created_at": now_iso,
+            }])
+        except Exception as exc:
+            logger.warning(
+                "[blueprint-sweeper] receipt emit failed project=%s: %s",
+                project_id[:8],
+                type(exc).__name__,
+            )
+
+    if orphaned_ids:
+        logger.warning(
+            "[blueprint-sweeper] swept %d orphaned blueprint projects: %s",
+            len(orphaned_ids),
+            [p[:8] for p in orphaned_ids],
+        )
 
 
 app = FastAPI(

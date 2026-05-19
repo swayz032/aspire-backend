@@ -10,6 +10,13 @@ Strategy (belt-and-suspenders is appropriate here — OCR is non-deterministic):
      b. Else (scanned/image-heavy) OR LlamaParse fails → call Azure Doc Intelligence
   3. Return SheetCorpus with per-sheet text + OCR confidence + provider attribution
 
+Fix 3 (2026-05-19): Single transient retry on 5xx / timeout / connection errors.
+  - LlamaParse and Azure provider calls that raise ProviderError with a retryable
+    error code get one retry after a 1-second sleep.
+  - 4xx errors (auth / input) are NOT retried — they are permanent failures.
+  - The LlamaParse → Azure → PyMuPDF fallback chain already handles degraded-mode
+    coverage; this single-retry is purely for transient network blips.
+
 Note on no-fallback principle: The no-fallback memory rule carves out
 "non-deterministic systems (LLM instruction-following)" as appropriate for
 belt-and-suspenders. OCR quality is equally non-deterministic — a scanned sheet
@@ -24,9 +31,11 @@ Law compliance:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from aspire_orchestrator.providers.base_client import ProviderError
 from aspire_orchestrator.providers.llamaparse_client import get_llamaparse_client
 from aspire_orchestrator.providers.azure_doc_intel_client import get_azure_doc_intel_client
 from aspire_orchestrator.services.blueprint.pdf_splitter import (
@@ -37,6 +46,26 @@ from aspire_orchestrator.services.blueprint.pdf_splitter import (
 logger = logging.getLogger(__name__)
 
 _TEXT_LAYER_MIN_CHARS = 200
+_TRANSIENT_RETRY_DELAY_S = 1.0  # Fix 3: single retry delay for transient provider errors
+
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    """Return True if the exception represents a transient provider failure worth retrying.
+
+    Fix 3: Only retry on 5xx / timeout / connection errors. Never retry on 4xx.
+    Non-ProviderError exceptions are treated as transient (unexpected — may succeed on retry).
+
+    Uses InternalErrorCode.retryable property which already encodes the NETWORK/RATE/SERVER
+    category check — avoids duplicating that logic here.
+    """
+    if isinstance(exc, ProviderError):
+        try:
+            # Use the already-defined .retryable property on InternalErrorCode
+            return bool(exc.code.retryable)
+        except Exception:
+            return True  # Unknown code — be optimistic
+    # httpx-level exceptions, RuntimeError from provider setup, etc. — treat as transient
+    return True
 
 
 @dataclass(frozen=True)
@@ -129,99 +158,133 @@ async def extract_sheet_corpus(
 
         # Path A: Text-layer PDF → try LlamaParse for richer markdown structure
         if native_char_count >= _TEXT_LAYER_MIN_CHARS:
-            try:
-                if _llamaparse is None:
-                    _llamaparse = get_llamaparse_client()
-                lp_response = await _llamaparse.parse_pdf(
-                    pdf_bytes,  # LlamaParse parses full doc; we extract the matching page
-                    correlation_id=correlation_id,
-                    suite_id=suite_id,
-                    office_id=office_id,
-                )
-                if lp_response.success:
-                    # Extract the matching page from LlamaParse response
-                    pages: list[dict] = lp_response.body.get("pages", [])
-                    page_text = ""
-                    for p in pages:
-                        if p.get("page_number") == page_num:
-                            page_text = p.get("text", "")
-                            break
-                    if not page_text:
-                        # Fallback: use native text if page not found in LP result
-                        page_text = extract.text
+            _lp_attempts = 0
+            while _lp_attempts < 2:  # Fix 3: at most 1 retry (2 attempts total)
+                try:
+                    if _llamaparse is None:
+                        _llamaparse = get_llamaparse_client()
+                    lp_response = await _llamaparse.parse_pdf(
+                        pdf_bytes,  # LlamaParse parses full doc; we extract the matching page
+                        correlation_id=correlation_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
+                    )
+                    if lp_response.success:
+                        # Extract the matching page from LlamaParse response
+                        pages: list[dict] = lp_response.body.get("pages", [])
+                        page_text = ""
+                        for p in pages:
+                            if p.get("page_number") == page_num:
+                                page_text = p.get("text", "")
+                                break
+                        if not page_text:
+                            # Fallback: use native text if page not found in LP result
+                            page_text = extract.text
 
-                    ocr_result = OcrSheetResult(
-                        page_number=page_num,
-                        text=page_text,
-                        provider="llamaparse",
-                        confidence=0.9,
-                        page_hash=extract.page_hash,
-                        image_bytes=extract.image_bytes,
-                    )
-                    corpus.record_provider("llamaparse")
-                    logger.info(
-                        "ocr_coordinator: page=%d -> llamaparse (success), corr=%s",
-                        page_num,
-                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                    )
-                else:
+                        ocr_result = OcrSheetResult(
+                            page_number=page_num,
+                            text=page_text,
+                            provider="llamaparse",
+                            confidence=0.9,
+                            page_hash=extract.page_hash,
+                            image_bytes=extract.image_bytes,
+                        )
+                        corpus.record_provider("llamaparse")
+                        logger.info(
+                            "ocr_coordinator: page=%d -> llamaparse (success, attempt=%d), corr=%s",
+                            page_num,
+                            _lp_attempts + 1,
+                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                        )
+                    else:
+                        logger.warning(
+                            "ocr_coordinator: page=%d llamaparse failed (%s), falling to azure, corr=%s",
+                            page_num,
+                            lp_response.error_code.value if lp_response.error_code else "unknown",
+                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                        )
+                    break  # success or non-retryable failure — exit retry loop
+                except Exception as exc:
+                    if _lp_attempts == 0 and _is_transient_provider_error(exc):
+                        # Fix 3: single retry on transient errors — wait 1s then retry
+                        logger.warning(
+                            "ocr_coordinator: page=%d llamaparse transient error (%s), retrying once, corr=%s",
+                            page_num,
+                            type(exc).__name__,
+                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                        )
+                        await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
+                        _lp_attempts += 1
+                        continue
                     logger.warning(
-                        "ocr_coordinator: page=%d llamaparse failed (%s), falling to azure, corr=%s",
+                        "ocr_coordinator: page=%d llamaparse exception (%s, attempt=%d), falling to azure, corr=%s",
                         page_num,
-                        lp_response.error_code.value if lp_response.error_code else "unknown",
+                        type(exc).__name__,
+                        _lp_attempts + 1,
                         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                     )
-            except Exception as exc:
-                logger.warning(
-                    "ocr_coordinator: page=%d llamaparse exception (%s), falling to azure, corr=%s",
-                    page_num,
-                    type(exc).__name__,
-                    correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                )
+                    break  # Fall through to Azure
 
         # Path B: Scanned/image sheet, OR LlamaParse failed → Azure Doc Intelligence
         if ocr_result is None:
-            try:
-                if _azure is None:
-                    _azure = get_azure_doc_intel_client()
-                az_response = await _azure.analyze_layout(
-                    extract.image_bytes,
-                    correlation_id=correlation_id,
-                    suite_id=suite_id,
-                    office_id=office_id,
-                )
-                if az_response.success:
-                    analyze_result = az_response.body.get("analyzeResult", {})
-                    # Extract text from Azure content field
-                    azure_text: str = analyze_result.get("content", "")
-                    ocr_result = OcrSheetResult(
-                        page_number=page_num,
-                        text=azure_text,
-                        provider="azure_doc_intel",
-                        confidence=0.75,
-                        page_hash=extract.page_hash,
-                        image_bytes=extract.image_bytes,
+            _az_attempts = 0
+            while _az_attempts < 2:  # Fix 3: at most 1 retry (2 attempts total)
+                try:
+                    if _azure is None:
+                        _azure = get_azure_doc_intel_client()
+                    az_response = await _azure.analyze_layout(
+                        extract.image_bytes,
+                        correlation_id=correlation_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
                     )
-                    corpus.record_provider("azure_doc_intel")
-                    logger.info(
-                        "ocr_coordinator: page=%d -> azure_doc_intel (success), corr=%s",
-                        page_num,
-                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                    )
-                else:
+                    if az_response.success:
+                        analyze_result = az_response.body.get("analyzeResult", {})
+                        # Extract text from Azure content field
+                        azure_text: str = analyze_result.get("content", "")
+                        ocr_result = OcrSheetResult(
+                            page_number=page_num,
+                            text=azure_text,
+                            provider="azure_doc_intel",
+                            confidence=0.75,
+                            page_hash=extract.page_hash,
+                            image_bytes=extract.image_bytes,
+                        )
+                        corpus.record_provider("azure_doc_intel")
+                        logger.info(
+                            "ocr_coordinator: page=%d -> azure_doc_intel (success, attempt=%d), corr=%s",
+                            page_num,
+                            _az_attempts + 1,
+                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                        )
+                    else:
+                        logger.warning(
+                            "ocr_coordinator: page=%d azure failed (%s), using pymupdf native, corr=%s",
+                            page_num,
+                            az_response.error_code.value if az_response.error_code else "unknown",
+                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                        )
+                    break  # success or non-retryable failure — exit retry loop
+                except Exception as exc:
+                    if _az_attempts == 0 and _is_transient_provider_error(exc):
+                        # Fix 3: single retry on transient errors — wait 1s then retry
+                        logger.warning(
+                            "ocr_coordinator: page=%d azure transient error (%s), retrying once, corr=%s",
+                            page_num,
+                            type(exc).__name__,
+                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                        )
+                        await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
+                        _az_attempts += 1
+                        continue
                     logger.warning(
-                        "ocr_coordinator: page=%d azure failed (%s), using pymupdf native, corr=%s",
+                        "ocr_coordinator: page=%d azure exception (%s, attempt=%d), using pymupdf native, corr=%s",
                         page_num,
-                        az_response.error_code.value if az_response.error_code else "unknown",
+                        type(exc).__name__,
+                        _az_attempts + 1,
                         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                     )
-            except Exception as exc:
-                logger.warning(
-                    "ocr_coordinator: page=%d azure exception (%s), using pymupdf native, corr=%s",
-                    page_num,
-                    type(exc).__name__,
-                    correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                )
+                    break  # Fall through to PyMuPDF
 
         # Path C: Last resort — PyMuPDF native text (already extracted by splitter)
         if ocr_result is None:
