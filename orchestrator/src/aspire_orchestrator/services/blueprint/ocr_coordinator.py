@@ -35,6 +35,9 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+import uuid as _uuid_mod
+from datetime import datetime as _datetime_mod, timezone as _timezone_mod
+
 from aspire_orchestrator.providers.base_client import ProviderError
 from aspire_orchestrator.providers.llamaparse_client import get_llamaparse_client
 from aspire_orchestrator.providers.azure_doc_intel_client import get_azure_doc_intel_client
@@ -277,6 +280,33 @@ async def extract_sheet_corpus(
                             _az_attempts + 1,
                             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                         )
+                        # Law #2: emit per-sheet Azure usage receipt for observability.
+                        # Imported lazily to avoid circular dependency (ocr_coordinator
+                        # is imported inside ingest — store_receipts is a simple in-process store).
+                        try:
+                            from aspire_orchestrator.services.receipt_store import store_receipts as _sr
+                            _sr([{
+                                "id": str(_uuid_mod.uuid4()),
+                                "outcome": "success",
+                                "action_type": "blueprint.ingest.azure_doc_intel_used",
+                                "receipt_type": "blueprint.ingest.azure_doc_intel_used",
+                                "created_at": _datetime_mod.now(_timezone_mod.utc).isoformat(),
+                                "risk_tier": "GREEN",
+                                "actor_type": "WORKER",
+                                "actor_id": "skillpack:drew-blueprint",
+                                "correlation_id": correlation_id,
+                                "suite_id": suite_id,
+                                "metadata": {
+                                    "page_number": page_num,
+                                    "page_hash": extract.page_hash[:8],
+                                    "native_char_count": native_char_count,
+                                    "scanned": native_char_count < 50,
+                                    "attempt": _az_attempts + 1,
+                                    "azure_char_count": len(azure_text),
+                                },
+                            }])
+                        except Exception:
+                            pass  # Receipt emission is best-effort; never block OCR
                     else:
                         logger.warning(
                             "ocr_coordinator: page=%d azure failed (%s), using pymupdf native, corr=%s",

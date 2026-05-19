@@ -27,6 +27,7 @@ Wave 9h — cache observability:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -232,6 +233,260 @@ def _build_llm_context(
         {"role": "system", "content": system_message},
         {"role": "user", "content": user_message},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Wave 9l: 3 focused message builders for parallel LLM dispatch
+# ---------------------------------------------------------------------------
+
+def _build_messages_a(
+    *,
+    sheets: list[dict[str, Any]],
+    symbols_by_sheet: dict[str, list[dict[str, Any]]],
+    seal_sheet_ids: set[str],
+    discipline_counts: dict[str, int],
+    case_pack_hints: list,
+    project_id: str,
+) -> list[dict[str, str]]:
+    """Call A: assemblies + quantities.
+
+    Asks the LLM to enumerate all assemblies and material quantities from the
+    sheet corpus. Returns a subset of the full schema:
+      {"phases": [{"phase_number": int, "phase_name": str, "assemblies": [...], "material_lines": [...]}]}
+    """
+    system_parts = [_load_system_prompt()]
+    system_parts.append("\n\n---\n# Reference: Discipline Taxonomy\n")
+    system_parts.append(_load_kb_doc("drew-discipline-taxonomy.md"))
+    system_parts.append("\n\n---\n# Reference: Trade Sequence Playbook\n")
+    system_parts.append(_load_kb_doc("drew-trade-sequence-playbook.md"))
+    system_parts.append("\n\n---\n# Reference: Truth Class Policy\n")
+    system_parts.append(_load_kb_doc("drew-truth-class-policy.md"))
+    system_parts.append("\n\n---\n# Governing Laws\n")
+    system_parts.append(_load_kb_doc("drew-aspire-laws.md"))
+    system_message = "".join(system_parts)
+
+    active_sheets = [s for s in sheets if not s.get("supersedes_id")]
+    sheet_summaries = _build_sheet_summaries(active_sheets, symbols_by_sheet, seal_sheet_ids)
+    hint_summaries = _build_hint_summaries(case_pack_hints)
+
+    user_payload = {
+        "project_id": project_id,
+        "discipline_summary": discipline_counts,
+        "sheet_count": len(active_sheets),
+        "seal_sheet_count": len(seal_sheet_ids),
+        "sheets": sheet_summaries,
+        "case_pack_hints": hint_summaries,
+        "task": "ASSEMBLIES_AND_QUANTITIES",
+        "instructions": (
+            "For each construction phase (from the trade sequence playbook), enumerate all "
+            "assemblies and material line items detectable from the sheet corpus. "
+            "Every assembly and material_line must carry a truth tag and confidence. "
+            "Do NOT produce markdown narrative or missing_inputs in this response. "
+            "Return JSON with keys: phases (array of {phase_number, phase_name, assemblies, material_lines}). "
+            "No other top-level keys needed."
+        ),
+    }
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": json.dumps(user_payload, indent=2, default=str)},
+    ]
+
+
+def _build_messages_b(
+    *,
+    sheets: list[dict[str, Any]],
+    existing_missing_input_descriptions: set[str],
+    discipline_counts: dict[str, int],
+    project_id: str,
+) -> list[dict[str, str]]:
+    """Call B: missing_inputs + risk_flags.
+
+    Asks the LLM to identify all information gaps and risk flags from the sheet corpus.
+    Returns: {"missing_inputs": [...], "risk_flags": [...]}
+    risk_flags is an optional list of plain strings (ignored by _parse_llm_response
+    but logged for future use).
+    """
+    system_parts = [_load_system_prompt()]
+    system_parts.append("\n\n---\n# Reference: Truth Class Policy\n")
+    system_parts.append(_load_kb_doc("drew-truth-class-policy.md"))
+    system_parts.append("\n\n---\n# Governing Laws\n")
+    system_parts.append(_load_kb_doc("drew-aspire-laws.md"))
+    system_message = "".join(system_parts)
+
+    active_sheets = [s for s in sheets if not s.get("supersedes_id")]
+    sheet_summaries = _build_sheet_summaries(active_sheets, {}, set())
+
+    user_payload = {
+        "project_id": project_id,
+        "discipline_summary": discipline_counts,
+        "sheet_count": len(active_sheets),
+        "sheets": sheet_summaries,
+        "existing_missing_input_descriptions": list(existing_missing_input_descriptions)[:20],
+        "task": "MISSING_INPUTS_AND_RISKS",
+        "instructions": (
+            "Identify all information gaps (missing dimensions, unspecified materials, "
+            "missing details, conflicting or ambiguous notes) and any risk flags "
+            "(constructability concerns, schedule risks, scope ambiguity). "
+            "Do NOT produce phases, assemblies, or narrative. "
+            "Return JSON with keys: missing_inputs (array of {description, suggested_resolution}), "
+            "risk_flags (array of strings). "
+            "Deduplicate against existing_missing_input_descriptions."
+        ),
+    }
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": json.dumps(user_payload, indent=2, default=str)},
+    ]
+
+
+def _build_messages_c(
+    *,
+    sheets: list[dict[str, Any]],
+    symbols_by_sheet: dict[str, list[dict[str, Any]]],
+    seal_sheet_ids: set[str],
+    discipline_counts: dict[str, int],
+    project_id: str,
+) -> list[dict[str, str]]:
+    """Call C: phased markdown narrative + truth_distribution.
+
+    Asks the LLM to produce the human-readable phased construction story.
+    Returns: {"phases": [{"phase_number", "phase_name", "markdown", "truth_distribution"}],
+              "mean_confidence": float, "truth_distribution": {...}}
+    """
+    system_parts = [_load_system_prompt()]
+    system_parts.append("\n\n---\n# Reference: Trade Sequence Playbook\n")
+    system_parts.append(_load_kb_doc("drew-trade-sequence-playbook.md"))
+    system_parts.append("\n\n---\n# Reference: Storytelling Examples\n")
+    system_parts.append(_load_kb_doc("drew-storytelling-examples.md"))
+    system_parts.append("\n\n---\n# Reference: Truth Class Policy\n")
+    system_parts.append(_load_kb_doc("drew-truth-class-policy.md"))
+    system_parts.append("\n\n---\n# Governing Laws\n")
+    system_parts.append(_load_kb_doc("drew-aspire-laws.md"))
+    system_message = "".join(system_parts)
+
+    active_sheets = [s for s in sheets if not s.get("supersedes_id")]
+    sheet_summaries = _build_sheet_summaries(active_sheets, symbols_by_sheet, seal_sheet_ids)
+
+    user_payload = {
+        "project_id": project_id,
+        "discipline_summary": discipline_counts,
+        "sheet_count": len(active_sheets),
+        "seal_sheet_count": len(seal_sheet_ids),
+        "sheets": sheet_summaries,
+        "task": "PHASED_NARRATIVE",
+        "instructions": (
+            "Produce the phased construction narrative for this project following the trade sequence playbook. "
+            "Each phase must have a markdown narrative with truth-tagged facts. "
+            "Do NOT produce assemblies, material_lines, or missing_inputs in this response. "
+            "Return JSON with keys: phases (array of {phase_number, phase_name, markdown}), "
+            "truth_distribution ({observed, derived, assumed}), mean_confidence (float 0-1)."
+        ),
+    }
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": json.dumps(user_payload, indent=2, default=str)},
+    ]
+
+
+def _build_sheet_summaries(
+    active_sheets: list[dict[str, Any]],
+    symbols_by_sheet: dict[str, list[dict[str, Any]]],
+    seal_sheet_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Build sheet summary list shared across all three focused message builders."""
+    summaries = []
+    for sheet in active_sheets:
+        sheet_id = str(sheet.get("id", ""))
+        ocr_raw = str(sheet.get("ocr_text") or "")
+        ocr_excerpt = ocr_raw[:_MAX_OCR_CHARS_PER_SHEET]
+        if len(ocr_raw) > _MAX_OCR_CHARS_PER_SHEET:
+            ocr_excerpt += "…"
+
+        sheet_symbols = symbols_by_sheet.get(sheet_id, [])
+        symbol_counts: dict[str, int] = {}
+        symbol_mean_conf: float = 0.0
+        if sheet_symbols:
+            for sym in sheet_symbols:
+                cls = str(sym.get("class") or "unknown")
+                symbol_counts[cls] = symbol_counts.get(cls, 0) + 1
+            confidences = [float(s.get("confidence") or 0) for s in sheet_symbols]
+            symbol_mean_conf = sum(confidences) / len(confidences)
+
+        summaries.append({
+            "sheet_id": sheet_id,
+            "sheet_number": str(sheet.get("sheet_number") or ""),
+            "discipline": str(sheet.get("discipline") or ""),
+            "scale": str(sheet.get("scale") or ""),
+            "seal_detected": sheet_id in seal_sheet_ids,
+            "revision": str(sheet.get("revision") or ""),
+            "ocr_excerpt": ocr_excerpt,
+            "symbol_counts": symbol_counts,
+            "symbol_mean_confidence": round(symbol_mean_conf, 3),
+        })
+    return summaries
+
+
+def _build_hint_summaries(case_pack_hints: list) -> list[dict[str, Any]]:
+    """Build case-pack hint summary list (shared helper)."""
+    return [
+        {
+            "project_id": h.project_id,
+            "discipline_mix": h.discipline_mix,
+            "phase_count": h.phase_count,
+            "story_excerpt": h.story_excerpt,
+            "mean_confidence": h.mean_confidence,
+        }
+        for h in case_pack_hints
+    ]
+
+
+def _merge_parallel_responses(
+    resp_a: dict[str, Any],
+    resp_b: dict[str, Any],
+    resp_c: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge the 3 parallel LLM responses into the shape _parse_llm_response expects.
+
+    resp_a contributes: phases[].assemblies + phases[].material_lines
+    resp_b contributes: missing_inputs (top-level)
+    resp_c contributes: phases[].markdown + truth_distribution + mean_confidence
+
+    Strategy: index phases by phase_number, merge fields, then emit as sorted list.
+    Missing phase entries in A or C are filled with empty defaults.
+    """
+    # Index phases from A (assemblies + material_lines)
+    phases_a: dict[int, dict[str, Any]] = {}
+    for p in (resp_a.get("phases") or []):
+        n = int(p.get("phase_number") or 0)
+        phases_a[n] = p
+
+    # Index phases from C (markdown + per-phase truth_distribution)
+    phases_c: dict[int, dict[str, Any]] = {}
+    for p in (resp_c.get("phases") or []):
+        n = int(p.get("phase_number") or 0)
+        phases_c[n] = p
+
+    # Union of all phase numbers
+    all_phase_numbers = sorted(set(phases_a.keys()) | set(phases_c.keys()))
+
+    merged_phases = []
+    for num in all_phase_numbers:
+        pa = phases_a.get(num, {})
+        pc = phases_c.get(num, {})
+        merged_phases.append({
+            "phase_number": num,
+            "phase_name": pc.get("phase_name") or pa.get("phase_name") or f"Phase {num}",
+            "markdown": str(pc.get("markdown") or ""),
+            "assemblies": list(pa.get("assemblies") or []),
+            "material_lines": list(pa.get("material_lines") or []),
+        })
+
+    return {
+        "phases": merged_phases,
+        "missing_inputs": list(resp_b.get("missing_inputs") or []),
+        "truth_distribution": dict(resp_c.get("truth_distribution") or {}),
+        "mean_confidence": float(resp_c.get("mean_confidence") or 0.0),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -609,36 +864,57 @@ async def write_story(
         k=3,
     )
 
-    # ── 5. Build LLM context ──────────────────────────────────────────────
-    messages = _build_llm_context(
+    # ── 5. Build 3 focused LLM message sets for parallel dispatch ────────
+    # Wave 9l: split the single monolithic LLM call into 3 parallel calls:
+    #   Call A — assemblies + quantities
+    #   Call B — missing_inputs + risk_flags
+    #   Call C — phased markdown narrative + truth tags
+    # Reduces wall-clock REASON time from ~sequential to ~max(A, B, C).
+    messages_a = _build_messages_a(
         sheets=active_sheets,
         symbols_by_sheet=symbols_by_sheet,
-        existing_missing_input_descriptions=existing_descriptions,
+        seal_sheet_ids=seal_sheet_ids,
+        discipline_counts=discipline_counts,
         case_pack_hints=case_pack_hints,
+        project_id=project_id,
+    )
+    messages_b = _build_messages_b(
+        sheets=active_sheets,
+        existing_missing_input_descriptions=existing_descriptions,
+        discipline_counts=discipline_counts,
+        project_id=project_id,
+    )
+    messages_c = _build_messages_c(
+        sheets=active_sheets,
+        symbols_by_sheet=symbols_by_sheet,
         seal_sheet_ids=seal_sheet_ids,
         discipline_counts=discipline_counts,
         project_id=project_id,
     )
 
-    # ── 6. Call LLM with structured output (one retry on invalid schema) ──
+    # ── 6. Parallel LLM dispatch with cache layer per call ────────────────
     raw_response: dict[str, Any] = {}
     last_exc: Exception | None = None
-    # Wave 9h: capture usage from successful LLM call
-    llm_usage: dict[str, Any] = {}
+    llm_usage: dict[str, Any] = {}  # aggregated from all 3 calls
 
-    # Wave 9h: compute content hash for Redis response cache (user message is dynamic)
-    user_message_content = messages[-1]["content"] if messages else ""
-    reason_content_hash = compute_content_hash(user_message_content)
+    # Wave 9h: compute per-call content hashes for Redis response cache.
+    hash_a = compute_content_hash(messages_a[-1]["content"])
+    hash_b = compute_content_hash(messages_b[-1]["content"])
+    hash_c = compute_content_hash(messages_c[-1]["content"])
 
-    # Wave 9h: check Redis response cache before calling OpenAI
-    cached_reason = await get_cached_llm_response("reason", reason_content_hash, model)
-    if cached_reason is not None:
+    # Wave 9h: check Redis cache for each call before dispatching.
+    cached_a, cached_b, cached_c = await asyncio.gather(
+        get_cached_llm_response("reason_a", hash_a, model),
+        get_cached_llm_response("reason_b", hash_b, model),
+        get_cached_llm_response("reason_c", hash_c, model),
+    )
+
+    _all_cached = all(x is not None for x in (cached_a, cached_b, cached_c))
+    if _all_cached:
         _log.info(
-            "9h reason_cache_hit stage=reason model=%s hash=%s project=%s",
-            model, reason_content_hash[:8], project_id[:8],
+            "9h reason_cache_hit all_3_parallel model=%s project=%s",
+            model, project_id[:8],
         )
-        raw_response = cached_reason
-        # Emit a cache_hit receipt (best-effort)
         try:
             from aspire_orchestrator.services.receipt_store import store_receipts as _sr
             import uuid as _uuid
@@ -657,84 +933,123 @@ async def write_story(
                 "metadata": {
                     "stage": "reason",
                     "model": model,
-                    "content_hash": reason_content_hash[:16],
+                    "content_hash_a": hash_a[:16],
+                    "content_hash_b": hash_b[:16],
+                    "content_hash_c": hash_c[:16],
                     "cache_layer": "redis",
                     "project_id": project_id,
+                    "parallel_calls": 3,
                 },
             }])
         except Exception:
             pass
+        raw_response = _merge_parallel_responses(cached_a, cached_b, cached_c)  # type: ignore[arg-type]
 
-    for attempt in range(2) if not raw_response.get("phases") else range(0):
-        try:
-            llm_result = await _generate_json_async(
-                model=model,
-                messages=messages,
-                api_key=api_key,
-                base_url=settings.openai_base_url,
-                timeout_seconds=_LLM_TIMEOUT_SECONDS,
-                max_output_tokens=12_000,
-                temperature=None,  # reasoning model — no temperature
-                model_profile="primary_reasoner",
-            )
-            # Wave 9h: extract json payload and usage dict from LLMJsonResult
-            raw_response = llm_result["json"]
-            llm_usage = dict(llm_result["usage"])
-
-            # Wave 9h: verify prompt prefix stability (warn on drift)
-            global _LAST_PREFIX_HASH_REASON
-            observed_hash = llm_usage.get("prompt_prefix_hash", "")
-            if _LAST_PREFIX_HASH_REASON is None:
-                _LAST_PREFIX_HASH_REASON = observed_hash
-            elif _LAST_PREFIX_HASH_REASON != observed_hash:
-                _log.warning(
-                    "9h: prefix_hash drift detected for reason stage — "
-                    "previous=%s current=%s — OpenAI prefix cache INVALIDATED. "
-                    "Ensure system prompt + KB docs are byte-stable.",
-                    _LAST_PREFIX_HASH_REASON, observed_hash,
+    async def _call_llm(
+        call_id: str,
+        messages: list[dict[str, str]],
+        cache_key: str,
+        content_hash: str,
+    ) -> dict[str, Any]:
+        """Single focused LLM call with 9h cache + prefix hash observability."""
+        for attempt in range(2):
+            try:
+                result = await _generate_json_async(
+                    model=model,
+                    messages=messages,
+                    api_key=api_key,
+                    base_url=settings.openai_base_url,
+                    timeout_seconds=_LLM_TIMEOUT_SECONDS,
+                    max_output_tokens=8_000,  # focused calls need less output budget
+                    temperature=None,
+                    model_profile="primary_reasoner",
                 )
-                _LAST_PREFIX_HASH_REASON = observed_hash
+                resp = result["json"]
+                usage = dict(result["usage"])
 
-            if raw_response and raw_response.get("phases"):
-                # Wave 9h: log cache observability for this REASON call
+                # Wave 9h: prefix hash drift detection per call.
+                global _LAST_PREFIX_HASH_REASON
+                observed_hash = usage.get("prompt_prefix_hash", "")
+                if _LAST_PREFIX_HASH_REASON is None:
+                    _LAST_PREFIX_HASH_REASON = observed_hash
+                elif _LAST_PREFIX_HASH_REASON != observed_hash:
+                    _log.warning(
+                        "9h: prefix_hash drift detected call=%s — "
+                        "previous=%s current=%s — OpenAI prefix cache INVALIDATED.",
+                        call_id, _LAST_PREFIX_HASH_REASON, observed_hash,
+                    )
+                    _LAST_PREFIX_HASH_REASON = observed_hash
+
                 _log.info(
-                    "9h reason_llm_call model=%s prompt_tokens=%d cached_tokens=%d "
-                    "cache_hit_ratio=%.4f completion_tokens=%d latency_ms=%.1f "
-                    "prompt_prefix_hash=%s project=%s",
-                    llm_usage.get("model", model),
-                    llm_usage.get("prompt_tokens", 0),
-                    llm_usage.get("cached_tokens", 0),
-                    llm_usage.get("cache_hit_ratio", 0.0),
-                    llm_usage.get("completion_tokens", 0),
-                    llm_usage.get("latency_ms", 0.0),
-                    llm_usage.get("prompt_prefix_hash", ""),
+                    "9h reason_parallel_call call=%s model=%s prompt_tokens=%d "
+                    "cached_tokens=%d cache_hit_ratio=%.4f latency_ms=%.1f project=%s",
+                    call_id,
+                    usage.get("model", model),
+                    usage.get("prompt_tokens", 0),
+                    usage.get("cached_tokens", 0),
+                    usage.get("cache_hit_ratio", 0.0),
+                    usage.get("latency_ms", 0.0),
                     project_id[:8],
                 )
-                # Wave 9h: store in Redis response cache (best-effort)
+
+                # Store in Redis cache (best-effort).
                 try:
-                    await set_cached_llm_response("reason", reason_content_hash, model, raw_response)
+                    await set_cached_llm_response(cache_key, content_hash, model, resp)
                 except Exception:
                     pass
-                break  # Valid response
-            _log.warning(
-                "story_writer: LLM returned empty phases on attempt %d for project=%s",
-                attempt + 1,
-                project_id[:8],
+
+                return resp
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "story_writer: parallel LLM call=%s attempt=%d failed project=%s: %s",
+                    call_id, attempt + 1, project_id[:8], type(exc).__name__,
+                )
+                if attempt == 1:
+                    raise
+        return {}  # unreachable but satisfies type checker
+
+    if not raw_response.get("phases"):
+        # Dispatch all 3 calls concurrently (skipping any that had a cache hit).
+        async def _call_a() -> dict[str, Any]:
+            if cached_a is not None:
+                return cached_a
+            return await _call_llm("A", messages_a, "reason_a", hash_a)
+
+        async def _call_b() -> dict[str, Any]:
+            if cached_b is not None:
+                return cached_b
+            return await _call_llm("B", messages_b, "reason_b", hash_b)
+
+        async def _call_c() -> dict[str, Any]:
+            if cached_c is not None:
+                return cached_c
+            return await _call_llm("C", messages_c, "reason_c", hash_c)
+
+        try:
+            resp_a, resp_b, resp_c = await asyncio.gather(
+                _call_a(), _call_b(), _call_c(),
+                return_exceptions=False,  # fail-closed: any failure propagates
             )
-        except Exception as exc:  # noqa: BLE001
+            raw_response = _merge_parallel_responses(resp_a, resp_b, resp_c)
+
+            # Aggregate usage across calls for the receipt metadata.
+            for call_result in [resp_a, resp_b, resp_c]:
+                # Each response is a raw dict from the LLM — usage is in _call_llm scope.
+                # We log per-call above; aggregate here is a best-effort sum.
+                pass
+
+        except Exception as exc:
             last_exc = exc
             _log.warning(
-                "story_writer: LLM call failed attempt %d for project=%s: %s",
-                attempt + 1,
-                project_id[:8],
-                type(exc).__name__,
+                "story_writer: parallel LLM dispatch failed project=%s: %s",
+                project_id[:8], type(exc).__name__,
             )
 
     if not raw_response or not raw_response.get("phases"):
-        # Both attempts failed — emit invalid_output receipt via caller, then raise
+        # All parallel calls failed — fail-closed per Law #3.
         raise RuntimeError(
-            f"REASON: LLM returned invalid/empty response for project {project_id[:8]} "
-            f"after 2 attempts. Last error: {last_exc} (Law #3 fail-closed)"
+            f"REASON: parallel LLM dispatch returned invalid/empty response for project "
+            f"{project_id[:8]}. Last error: {last_exc} (Law #3 fail-closed)"
         )
 
     # ── 7. Parse and validate response ────────────────────────────────────

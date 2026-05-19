@@ -448,6 +448,241 @@ class TestSeeAgainstFixtures:
             "Signed master fixture must produce at least one seal_detected sheet"
         )
 
+# ---------------------------------------------------------------------------
+# Wave 9k — discipline skip filter
+# ---------------------------------------------------------------------------
+
+class TestSeeDisciplineSkipFilter:
+    """Wave 9k: sheets whose discipline is not symbol-producing must be skipped.
+
+    Skipped disciplines (default): Specs, Schedules, Addenda, Cover, Title, None.
+    The skip filter must:
+      1. Not call detect_symbols on those sheets (no wasted CPU).
+      2. Emit exactly one 'blueprint.see.skipped_disciplines' receipt listing them.
+    """
+
+    def test_only_symbol_producing_disciplines_run_yolo(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+        from aspire_orchestrator.services.blueprint.schemas_detection import (
+            ScaleCalibration, SealDetection,
+        )
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
+
+        # Build 38 sheets: 26 in allowed disciplines, 12 in skip set.
+        allowed = ["A", "S", "M", "E", "P", "FP", "C", "L"]
+        skip = ["Specs", "Schedules", "Addenda", "Cover", "Title", None]
+        sheets: list[dict] = []
+        extracts: list[SheetExtract] = []
+        for i in range(26):
+            h = f"{i:064x}"
+            sid = f"{(i + 1):08d}-1111-2222-3333-{(i + 1):012d}"
+            sheets.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": str(i),
+                "discipline": allowed[i % len(allowed)],
+            })
+            extracts.append(SheetExtract(
+                page_number=i, text="", image_bytes=b"x", page_hash=h,
+            ))
+        for j in range(12):
+            h = f"{(j + 100):064x}"
+            sid = f"{(j + 100):08d}-1111-2222-3333-{(j + 100):012d}"
+            sheets.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": f"S{j}",
+                "discipline": skip[j % len(skip)],
+            })
+            extracts.append(SheetExtract(
+                page_number=j + 100, text="", image_bytes=b"x", page_hash=h,
+            ))
+
+        detect_mock = AsyncMock(return_value=[])  # no detections — fast no-op
+
+        with patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+            new=AsyncMock(return_value=sheets),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+            return_value=extracts,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+            new=detect_mock,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+            return_value=ScaleCalibration(0.0, "unknown", "none", 0.0),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+            return_value=SealDetection(False, 0.0),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+            return_value=None,
+        ):
+            drew = Drew()
+            corr = "test-see-skip-" + str(uuid.uuid4())
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",  # decoded but split_pdf_to_sheets is mocked
+                },
+                corr,
+            )
+
+        assert result["status"] == "ok", f"SEE should succeed: {result}"
+
+        # Only 26 detect_symbols calls — NOT 38.
+        assert detect_mock.await_count == 26, (
+            f"Expected detect_symbols called 26 times (allowed disciplines only), "
+            f"got {detect_mock.await_count}"
+        )
+
+        # Exactly one 'blueprint.see.skipped_disciplines' receipt.
+        receipts = _query_receipts_by_corr(corr)
+        skip_receipts = [
+            r for r in receipts
+            if r.get("event_type") == "blueprint.see.skipped_disciplines"
+        ]
+        assert len(skip_receipts) == 1, (
+            f"Expected exactly one skipped_disciplines receipt, got {len(skip_receipts)}: "
+            f"{[r.get('event_type') for r in receipts]}"
+        )
+        meta = skip_receipts[0].get("metadata", {})
+        assert len(meta.get("skipped_sheet_ids", [])) == 12
+        assert meta.get("reason") == "discipline_not_symbol_producing"
+
+
+# ---------------------------------------------------------------------------
+# Wave 9k — bounded concurrency
+# ---------------------------------------------------------------------------
+
+class TestSeeConcurrency:
+    """Wave 9k: detect_symbols calls run concurrently bounded by a semaphore.
+
+    Mocks detect_symbols with an async sleep and asserts that total wall-clock
+    time is significantly less than N × per-sheet sleep.
+    """
+
+    def test_parallel_inference_under_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+        from aspire_orchestrator.services.blueprint.schemas_detection import (
+            ScaleCalibration, SealDetection,
+        )
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
+
+        # 8 sheets, all allowed discipline.
+        n_sheets = 8
+        per_sheet_sleep_s = 0.20  # 200 ms simulated YOLO per sheet
+        sheets: list[dict] = []
+        extracts: list[SheetExtract] = []
+        for i in range(n_sheets):
+            h = f"{i:064x}"
+            sid = f"{(i + 1):08d}-aaaa-bbbb-cccc-{(i + 1):012d}"
+            sheets.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": str(i),
+                "discipline": "A",
+            })
+            extracts.append(SheetExtract(
+                page_number=i, text="", image_bytes=b"x", page_hash=h,
+            ))
+
+        async def _slow_detect(*args, **kwargs):
+            import asyncio as _a
+            await _a.sleep(per_sheet_sleep_s)
+            return []
+
+        with patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+            new=AsyncMock(return_value=sheets),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+            return_value=extracts,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+            new=_slow_detect,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+            return_value=ScaleCalibration(0.0, "unknown", "none", 0.0),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+            return_value=SealDetection(False, 0.0),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+            return_value=None,
+        ):
+            drew = Drew()
+            t0 = time.monotonic()
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",
+                },
+                "test-see-conc-" + str(uuid.uuid4()),
+            )
+            elapsed = time.monotonic() - t0
+
+        assert result["status"] == "ok", f"SEE concurrency run failed: {result}"
+
+        # Sequential would be n_sheets * per_sheet_sleep_s = 1.6 s.
+        # With concurrency=4: ceil(8/4) * 0.20 = 0.40 s + overhead.
+        # Give generous slack for CI: must be < 60% of sequential time.
+        sequential_bound = n_sheets * per_sheet_sleep_s
+        assert elapsed < 0.60 * sequential_bound, (
+            f"Concurrent SEE should be < 60% of sequential. "
+            f"elapsed={elapsed:.3f}s sequential_bound={sequential_bound:.3f}s"
+        )
+
+
     @pytest.mark.xfail(reason="blocked on yolo-weights-env: real-PDF scale text not guaranteed parseable")
     def test_see_eng_c2_scale_resolves(self) -> None:
         """eng_c2_2_gsm.pdf has explicit scale notation — calibrate must resolve."""
@@ -605,7 +840,7 @@ class TestSeeConcurrency:
         import time
 
         from aspire_orchestrator.skillpacks.drew_blueprint import Drew
-        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract as _SE9l
 
         monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
         monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
@@ -614,7 +849,7 @@ class TestSeeConcurrency:
         n_sheets = 8
         per_sheet_sleep_s = 0.20  # 200 ms simulated YOLO per sheet
         sheets: list[dict] = []
-        extracts: list[SheetExtract] = []
+        extracts: list[_SE9l] = []
         for i in range(n_sheets):
             h = f"{i:064x}"
             sid = f"{(i + 1):08d}-aaaa-bbbb-cccc-{(i + 1):012d}"
@@ -625,7 +860,7 @@ class TestSeeConcurrency:
                 "sheet_number": str(i),
                 "discipline": "A",
             })
-            extracts.append(SheetExtract(
+            extracts.append(_SE9l(
                 page_number=i, text="", image_bytes=b"x", page_hash=h,
             ))
 
@@ -688,4 +923,202 @@ class TestSeeConcurrency:
         assert elapsed < 0.60 * sequential_bound, (
             f"Concurrent SEE should be < 60% of sequential. "
             f"elapsed={elapsed:.3f}s sequential_bound={sequential_bound:.3f}s"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Wave 9l — SEE image cache (skip pdf_splitter when all sheets cached)
+# ---------------------------------------------------------------------------
+
+class TestSeeImageCache:
+    """Wave 9l: _async_see_pipeline must skip split_pdf_to_sheets when all sheets
+    have image_storage_path set (full cache hit).
+
+    Tests:
+      1. All sheets cached → split_pdf_to_sheets NOT called.
+      2. Sheets missing image_storage_path → split_pdf_to_sheets IS called (fallback).
+    """
+
+    def _make_sheets_with_paths(self, n: int) -> list[dict]:
+        """Build n sheet rows, all with image_storage_path set."""
+        allowed = ["A", "S", "M", "E", "P", "FP", "C", "L"]
+        result = []
+        for i in range(n):
+            h = f"{i:064x}"
+            sid = f"{(i + 1):08d}-9l00-9l00-9l00-{(i + 1):012d}"
+            result.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": str(i),
+                "discipline": allowed[i % len(allowed)],
+                "image_storage_path": f"{SUITE_A}/{PROJECT_A}/{sid}.png",
+            })
+        return result
+
+    def test_all_cached_skips_split_pdf_to_sheets(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When all sheets have image_storage_path, split_pdf_to_sheets must NOT be called."""
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.schemas_detection import (
+            ScaleCalibration as SC9l, SealDetection as SD9l,
+        )
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
+
+        n_sheets = 4
+        sheets = self._make_sheets_with_paths(n_sheets)
+        _png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+        split_called = False
+
+        def _should_not_split(_pdf_bytes):
+            nonlocal split_called
+            split_called = True
+            raise AssertionError(
+                "split_pdf_to_sheets must NOT be called when all images are cached"
+            )
+
+        with patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+            new=AsyncMock(return_value=sheets),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+            side_effect=_should_not_split,
+        ), patch(
+            # Patch at the import source used by the lazy import inside _async_see_pipeline.
+            "aspire_orchestrator.services.blueprint.sheet_image_storage.download_sheet_image",
+            new=AsyncMock(return_value=_png),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+            return_value=SC9l(0.0, "unknown", "none", 0.0),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+            return_value=SD9l(False, 0.0),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+            return_value=None,
+        ):
+            drew = Drew()
+            corr = "test-see-cache-hit-" + str(uuid.uuid4())
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",
+                },
+                corr,
+            )
+
+        assert result["status"] == "ok", f"SEE should succeed on full cache hit: {result}"
+        assert not split_called, (
+            "split_pdf_to_sheets must NOT be called when all sheets have image_storage_path"
+        )
+
+        # Verify cache_hit_ratio receipt was emitted (Law #2).
+        receipts = _query_receipts_by_corr(corr)
+        cache_receipts = [
+            r for r in receipts
+            if r.get("action_type") == "blueprint.see.cache_hit_ratio"
+        ]
+        assert len(cache_receipts) == 1, (
+            f"Expected exactly one blueprint.see.cache_hit_ratio receipt, got {len(cache_receipts)}"
+        )
+        meta = cache_receipts[0].get("metadata", {})
+        assert meta.get("cache_hit_ratio") == pytest.approx(1.0)
+
+    def test_sheets_without_path_fall_back_to_pdf_splitter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When any sheet lacks image_storage_path, split_pdf_to_sheets IS called."""
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract as SE9lB
+        from aspire_orchestrator.services.blueprint.schemas_detection import (
+            ScaleCalibration as SC9lB, SealDetection as SD9lB,
+        )
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
+
+        sheets_without_path = [{
+            "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            "hash": "0" * 64,
+            "ocr_text": "",
+            "sheet_number": "1",
+            "discipline": "A",
+            # image_storage_path intentionally absent
+        }]
+
+        split_called = False
+
+        def _mock_split(_pdf_bytes):
+            nonlocal split_called
+            split_called = True
+            return [SE9lB(page_number=1, text="", image_bytes=b"x", page_hash="0" * 64)]
+
+        with patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+            new=AsyncMock(return_value=sheets_without_path),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+            side_effect=_mock_split,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+            return_value=SC9lB(0.0, "unknown", "none", 0.0),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+            return_value=SD9lB(False, 0.0),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+            return_value=None,
+        ):
+            drew = Drew()
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",
+                },
+                "test-see-cache-miss-" + str(uuid.uuid4()),
+            )
+
+        assert result["status"] == "ok", f"SEE should succeed on fallback path: {result}"
+        assert split_called, (
+            "split_pdf_to_sheets must be called when sheets lack image_storage_path"
         )

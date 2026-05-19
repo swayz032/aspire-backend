@@ -1137,6 +1137,9 @@ async def _async_ingest_pipeline(
     from aspire_orchestrator.services.blueprint.ocr_coordinator import extract_sheet_corpus
     from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
     from aspire_orchestrator.services.blueprint.thumbnail_storage import upload_sheet_thumbnail
+    from aspire_orchestrator.services.blueprint.sheet_image_storage import (
+        upload_sheet_image as _upload_sheet_image,
+    )
     from aspire_orchestrator.services.receipt_store import store_receipts
 
     # Idempotency check: look for existing project with same content hash.
@@ -1283,118 +1286,142 @@ async def _async_ingest_pipeline(
         await _mark_stage_failed_best_effort(project_id, "ingest", suite_id)
         raise
 
-    # Store each sheet + upload thumbnail
-    sheet_ids: list[str] = []
-    thumbnail_failures: int = 0
-    dlp_total_redactions: int = 0
+    # Wave 9l: concurrent per-sheet processing.
+    # Rasterization (asyncio.to_thread via PyMuPDF) + thumbnail + full-res image
+    # upload run up to ASPIRE_DREW_INGEST_CONCURRENCY sheets in parallel.
+    # PyMuPDF page rasterization releases the GIL, making asyncio.to_thread
+    # concurrent on multi-core Railway CPUs.
+    # Sheet_number order is preserved by gathering results indexed by position.
+    _ingest_sem = asyncio.Semaphore(int(os.getenv("ASPIRE_DREW_INGEST_CONCURRENCY", "4")))
 
-    for ocr_sheet in corpus.sheets:
-        sheet_id = str(uuid.uuid4())
+    # Pre-assign sheet IDs deterministically so the order in sheet_ids matches
+    # corpus.sheets after gather (gather preserves task order).
+    _assigned_ids: list[str] = [str(uuid.uuid4()) for _ in corpus.sheets]
 
-        # P0-10 fix: apply DLP before writing OCR text to DB (Law #9).
-        ocr_text_raw = ocr_sheet.text
-        ocr_text_clean, redaction_count = _dlp_redact(ocr_text_raw)
-        if redaction_count == -2:
-            # Law #3 / Law #9: DLP service unavailable — placeholder was stored.
-            # Emit dlp_unavailable receipt so ops can detect the gap.
-            _log.warning(
-                "drew.ingest: DLP unavailable for sheet page=%d project=%s — "
-                "placeholder stored (Law #3 fail-closed)",
-                ocr_sheet.page_number, project_id[:8],
-            )
-            store_receipts([{
-                "id": str(uuid.uuid4()),
-                "outcome": "failed",
-                "action_type": "blueprint.ingest.dlp_unavailable",
-                "receipt_type": "blueprint.ingest.dlp_unavailable",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "risk_tier": "GREEN",
-                "actor_type": "WORKER",
-                "actor_id": ACTOR_DREW,
-                "correlation_id": correlation_id,
-                "suite_id": suite_id,
-                "metadata": {
-                    "sheet_page": ocr_sheet.page_number,
-                    "project_id": project_id,
-                    "reason": "dlp_service_unavailable",
-                    "action_taken": "placeholder_stored",
-                },
-                "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
-            }])
-        else:
-            # DLP ran (redaction_count >= 0) — always emit a scan receipt.
-            # This fires whether or not any PII was found (zero-hit path included).
-            dlp_total_redactions += redaction_count
-            store_receipts([{
-                "id": str(uuid.uuid4()),
-                "outcome": "success",
-                "action_type": "blueprint.ingest.dlp_scanned",
-                "receipt_type": "blueprint.ingest.dlp_scanned",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "risk_tier": "GREEN",
-                "actor_type": "WORKER",
-                "actor_id": ACTOR_DREW,
-                "correlation_id": correlation_id,
-                "suite_id": suite_id,
-                "metadata": {
-                    "sheet_page": ocr_sheet.page_number,
-                    "project_id": project_id,
-                    "redaction_count": redaction_count,
-                    "pii_detected": redaction_count > 0,
-                },
-                "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
-            }])
+    async def _process_ingest_sheet(
+        idx: int,
+        ocr_sheet: Any,
+    ) -> dict[str, Any]:
+        """Process one OCR sheet: DLP + DB insert + thumbnail + full-res image.
 
-        try:
-            await supabase_insert(
-                "blueprint_sheets",
-                {
-                    "id": sheet_id,
-                    "suite_id": suite_id,
-                    "office_id": office_id,
-                    "project_id": project_id,
-                    "sheet_number": str(ocr_sheet.page_number),
-                    "ocr_text": ocr_text_clean,  # P0-10: write DLP-cleaned text
-                    "hash": ocr_sheet.page_hash,
+        Returns a dict with:
+          sheet_id: str | None (None if DB insert failed)
+          thumbnail_failure: bool
+          dlp_redactions: int
+        """
+        sheet_id = _assigned_ids[idx]
+        result: dict[str, Any] = {
+            "sheet_id": None,
+            "thumbnail_failure": False,
+            "dlp_redactions": 0,
+        }
+
+        async with _ingest_sem:
+            # P0-10 fix: apply DLP before writing OCR text to DB (Law #9).
+            ocr_text_raw = ocr_sheet.text
+            ocr_text_clean, redaction_count = _dlp_redact(ocr_text_raw)
+            if redaction_count == -2:
+                # Law #3 / Law #9: DLP service unavailable — placeholder was stored.
+                # Emit dlp_unavailable receipt so ops can detect the gap.
+                _log.warning(
+                    "drew.ingest: DLP unavailable for sheet page=%d project=%s — "
+                    "placeholder stored (Law #3 fail-closed)",
+                    ocr_sheet.page_number, project_id[:8],
+                )
+                store_receipts([{
+                    "id": str(uuid.uuid4()),
+                    "outcome": "failed",
+                    "action_type": "blueprint.ingest.dlp_unavailable",
+                    "receipt_type": "blueprint.ingest.dlp_unavailable",
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            sheet_ids.append(sheet_id)
-        except SupabaseClientError as exc:
-            _log.error(
-                "drew.ingest: failed to insert sheet page=%d error=%s",
-                ocr_sheet.page_number,
-                type(exc).__name__,
-            )
-            # Continue — partial ingest with error is better than total failure
-            continue
-
-        # Upload thumbnail for this sheet (soft failure — sheet is still useful)
-        if ocr_sheet.image_bytes:
-            signed_url = await upload_sheet_thumbnail(
-                suite_id=suite_id,
-                project_id=project_id,
-                sheet_id=sheet_id,
-                png_bytes=ocr_sheet.image_bytes,
-                correlation_id=correlation_id,
-            )
-            if signed_url:
-                try:
-                    await supabase_update(
-                        "blueprint_sheets",
-                        f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
-                        {"thumbnail_url": signed_url},
-                    )
-                except SupabaseClientError:
-                    _log.warning(
-                        "drew.ingest: failed to write thumbnail_url for sheet=%s",
-                        sheet_id[:8],
-                    )
+                    "risk_tier": "GREEN",
+                    "actor_type": "WORKER",
+                    "actor_id": ACTOR_DREW,
+                    "correlation_id": correlation_id,
+                    "suite_id": suite_id,
+                    "metadata": {
+                        "sheet_page": ocr_sheet.page_number,
+                        "project_id": project_id,
+                        "reason": "dlp_service_unavailable",
+                        "action_taken": "placeholder_stored",
+                    },
+                    "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                }])
             else:
-                # Thumbnail upload failed — emit receipt for observability (Law #2)
-                thumbnail_failures += 1
-                store_receipts([
+                # DLP ran (redaction_count >= 0) — always emit a scan receipt.
+                # This fires whether or not any PII was found (zero-hit path included).
+                result["dlp_redactions"] = redaction_count
+                store_receipts([{
+                    "id": str(uuid.uuid4()),
+                    "outcome": "success",
+                    "action_type": "blueprint.ingest.dlp_scanned",
+                    "receipt_type": "blueprint.ingest.dlp_scanned",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "risk_tier": "GREEN",
+                    "actor_type": "WORKER",
+                    "actor_id": ACTOR_DREW,
+                    "correlation_id": correlation_id,
+                    "suite_id": suite_id,
+                    "metadata": {
+                        "sheet_page": ocr_sheet.page_number,
+                        "project_id": project_id,
+                        "redaction_count": redaction_count,
+                        "pii_detected": redaction_count > 0,
+                    },
+                    "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                }])
+
+            # DB insert — includes image_storage_path as null initially;
+            # updated below after full-res upload.
+            try:
+                await supabase_insert(
+                    "blueprint_sheets",
                     {
+                        "id": sheet_id,
+                        "suite_id": suite_id,
+                        "office_id": office_id,
+                        "project_id": project_id,
+                        "sheet_number": str(ocr_sheet.page_number),
+                        "ocr_text": ocr_text_clean,  # P0-10: write DLP-cleaned text
+                        "hash": ocr_sheet.page_hash,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                result["sheet_id"] = sheet_id
+            except SupabaseClientError as exc:
+                _log.error(
+                    "drew.ingest: failed to insert sheet page=%d error=%s",
+                    ocr_sheet.page_number,
+                    type(exc).__name__,
+                )
+                # Continue — partial ingest better than total failure.
+                return result
+
+            if ocr_sheet.image_bytes:
+                # 1. Thumbnail upload (signed URL for UI display)
+                signed_url = await upload_sheet_thumbnail(
+                    suite_id=suite_id,
+                    project_id=project_id,
+                    sheet_id=sheet_id,
+                    png_bytes=ocr_sheet.image_bytes,
+                    correlation_id=correlation_id,
+                )
+                if signed_url:
+                    try:
+                        await supabase_update(
+                            "blueprint_sheets",
+                            f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                            {"thumbnail_url": signed_url},
+                        )
+                    except SupabaseClientError:
+                        _log.warning(
+                            "drew.ingest: failed to write thumbnail_url for sheet=%s",
+                            sheet_id[:8],
+                        )
+                else:
+                    # Thumbnail upload failed — emit receipt for observability (Law #2)
+                    result["thumbnail_failure"] = True
+                    store_receipts([{
                         "id": str(uuid.uuid4()),
                         "outcome": "failed",
                         "action_type": "blueprint.ingest.thumbnail_upload_failed",
@@ -1411,8 +1438,65 @@ async def _async_ingest_pipeline(
                             "sheet_id": sheet_id,
                             "project_id": project_id,
                         },
-                    }
-                ])
+                    }])
+
+                # Wave 9l: 2. Full-res image upload (best-effort cache for SEE stage).
+                # Runs regardless of thumbnail result — SEE cache is independent.
+                # If this fails, SEE will fall back to re-rendering the PDF.
+                image_path = await _upload_sheet_image(
+                    suite_id,
+                    project_id,
+                    sheet_id,
+                    ocr_sheet.image_bytes,
+                    correlation_id,
+                )
+                if image_path:
+                    try:
+                        await supabase_update(
+                            "blueprint_sheets",
+                            f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                            {"image_storage_path": image_path},
+                        )
+                    except SupabaseClientError:
+                        _log.warning(
+                            "drew.ingest: failed to write image_storage_path for sheet=%s — "
+                            "SEE will re-render (graceful degradation)",
+                            sheet_id[:8],
+                        )
+                else:
+                    _log.warning(
+                        "drew.ingest: full-res image upload failed sheet=%s — "
+                        "SEE will re-render (graceful degradation, corr=%s)",
+                        sheet_id[:8],
+                        correlation_id[:8],
+                    )
+
+        return result
+
+    # Run all sheets concurrently, bounded by semaphore.
+    # return_exceptions=True prevents one sheet failure from cancelling others.
+    per_sheet_ingest_results: list[Any] = await asyncio.gather(
+        *(_process_ingest_sheet(i, s) for i, s in enumerate(corpus.sheets)),
+        return_exceptions=True,
+    )
+
+    # Collect results preserving sheet_number order (gather preserves task order).
+    sheet_ids: list[str] = []
+    thumbnail_failures: int = 0
+    dlp_total_redactions: int = 0
+
+    for r in per_sheet_ingest_results:
+        if isinstance(r, BaseException):
+            _log.warning(
+                "drew.ingest: per-sheet coroutine raised %s — skipping sheet",
+                type(r).__name__,
+            )
+            continue
+        if r.get("sheet_id"):
+            sheet_ids.append(r["sheet_id"])
+        if r.get("thumbnail_failure"):
+            thumbnail_failures += 1
+        dlp_total_redactions += r.get("dlp_redactions", 0)
 
     # P0-3: mark ingest done/failed based on whether sheets were stored.
     # The stage_progress write uses try/except to remain best-effort.
@@ -1776,6 +1860,9 @@ async def _async_see_pipeline(
     from aspire_orchestrator.services.blueprint.scale_calibrator import calibrate_scale
     from aspire_orchestrator.services.blueprint.seal_detector import detect_engineer_seal
     from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+    from aspire_orchestrator.services.blueprint.sheet_image_storage import (
+        download_sheet_image as _download_sheet_image,
+    )
 
     # P1 fix: application-level mutex to guard the SELECT→DELETE→INSERT pattern
     # against concurrent SEE dispatch on the same project_id (single-replica safety).
@@ -1908,18 +1995,111 @@ async def _async_see_pipeline(
             "model_version": os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11n.pt"),
         }
 
-    # Re-render PDF to recover per-sheet 200 DPI PNG bytes.
-    try:
-        extracts = split_pdf_to_sheets(pdf_bytes)
-    except Exception as exc:  # noqa: BLE001
-        try:
-            await set_stage_progress(
-                project_id=project_id, stage="see", state="failed", suite_id=suite_id
+    # Wave 9l: Try to load per-sheet 200 DPI PNGs from the INGEST-stage cache
+    # (blueprint-sheet-images bucket) before falling back to PDF re-render.
+    # This eliminates the root-cause 520+s SEE timeout: INGEST already rasterized
+    # every sheet; SEE was throwing that work away with a redundant split_pdf_to_sheets call.
+    #
+    # Cache-hit path:  ALL sheets have image_storage_path set → skip pdf_splitter entirely.
+    # Fallback path:   Any sheet lacks image_storage_path → re-render full PDF (legacy).
+    from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract as _SheetExtract
+
+    sheets_with_path = [s for s in sheets if s.get("image_storage_path")]
+    all_cached = len(sheets_with_path) == len(sheets) and len(sheets) > 0
+
+    extracts: list[Any]  # list[SheetExtract] — populated via cache or pdf_splitter
+
+    if all_cached:
+        # Download cached PNGs concurrently (bounded by the same SEE concurrency env var).
+        _dl_sem = asyncio.Semaphore(int(os.getenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")))
+
+        async def _download_cached(sheet_row: dict[str, Any]) -> Any | None:
+            sheet_id = str(sheet_row["id"])
+            async with _dl_sem:
+                png_bytes = await _download_sheet_image(
+                    suite_id,
+                    project_id,
+                    sheet_id,
+                    correlation_id,
+                )
+            if png_bytes is None:
+                return None
+            return _SheetExtract(
+                page_number=int(sheet_row.get("sheet_number") or 0),
+                text=str(sheet_row.get("ocr_text") or ""),
+                image_bytes=png_bytes,
+                page_hash=str(sheet_row.get("hash") or ""),
             )
-        except Exception:
-            pass
-        _see_lock.release()
-        raise RuntimeError(f"pdf_splitter failed in SEE: {type(exc).__name__}") from exc
+
+        _dl_results = await asyncio.gather(
+            *(_download_cached(s) for s in sheets),
+            return_exceptions=True,
+        )
+
+        # If any download failed, fall back to PDF re-render.
+        _dl_ok = [
+            r for r in _dl_results
+            if r is not None and not isinstance(r, BaseException)
+        ]
+        _dl_hits = len(_dl_ok)
+        _dl_total = len(sheets)
+        _cache_hit_ratio = _dl_hits / _dl_total if _dl_total else 0.0
+
+        if _dl_hits == _dl_total:
+            # Full cache hit — use downloaded PNGs, skip PDF splitter entirely.
+            extracts = _dl_ok
+            _log.info(
+                "drew.see: cache_hit_ratio=1.0 all %d sheets loaded from storage — "
+                "skipping pdf_splitter, corr=%s",
+                _dl_total,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+        else:
+            # Partial cache hit — fall back to PDF re-render for correctness.
+            _log.warning(
+                "drew.see: partial cache hit (%d/%d) — falling back to pdf_splitter, corr=%s",
+                _dl_hits, _dl_total,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+            all_cached = False  # trigger fallback path below
+            extracts = []  # will be populated in fallback
+
+        # Emit cache hit ratio receipt regardless of hit/miss (Law #2 observability).
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "blueprint.see.cache_hit_ratio",
+            "receipt_type": "blueprint.see.cache_hit_ratio",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {
+                "project_id": project_id,
+                "cache_hits": _dl_hits,
+                "total_sheets": _dl_total,
+                "cache_hit_ratio": round(_cache_hit_ratio, 4),
+                "source": "blueprint-sheet-images",
+            },
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+
+    if not all_cached:
+        # Fallback: re-render PDF to recover per-sheet 200 DPI PNG bytes.
+        # Fires when: (a) no sheets have image_storage_path, or (b) partial download failures.
+        try:
+            extracts = split_pdf_to_sheets(pdf_bytes)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                await set_stage_progress(
+                    project_id=project_id, stage="see", state="failed", suite_id=suite_id
+                )
+            except Exception:
+                pass
+            _see_lock.release()
+            raise RuntimeError(f"pdf_splitter failed in SEE: {type(exc).__name__}") from exc
 
     # Index DB rows by hash (the canonical join key).
     sheet_by_hash: dict[str, dict[str, Any]] = {
