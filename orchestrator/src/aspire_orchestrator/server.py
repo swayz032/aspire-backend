@@ -255,11 +255,15 @@ async def _sweep_stale_blueprint_projects_loop() -> None:
 # Slightly larger than the hard timeouts in routes/blueprint_dispatch.py:_STAGE_TIMEOUTS
 # so we only sweep projects whose worker is truly dead (not running slowly).
 _SWEEP_STAGE_THRESHOLDS_MINUTES: dict[str, int] = {
-    "ingest": 15,    # legacy default; hard timeout is 8 min
-    "classify": 5,   # hard timeout is 2 min
-    "see": 8,        # hard timeout is 3 min
-    "reason": 5,     # hard timeout is 2 min
-    "procure": 3,    # hard timeout is 1 min
+    # Wave 9j fix: sweeper MUST be > stage hard timeout. The sweeper is a "worker
+    # died entirely" safety net; if it fires BEFORE the stage's own asyncio.wait_for
+    # timeout, it races and kills work that was on track to finish.
+    # Rule: sweeper_threshold = stage_timeout + 50% safety buffer (minimum 3 min).
+    "ingest": 15,    # stage timeout 8 min  → sweeper 15 min  (88% buffer)
+    "classify": 6,   # stage timeout 3 min  → sweeper 6 min   (100% buffer)
+    "see": 15,       # stage timeout 10 min → sweeper 15 min  (50% buffer)
+    "reason": 8,     # stage timeout 5 min  → sweeper 8 min   (60% buffer)
+    "procure": 5,    # stage timeout 2 min  → sweeper 5 min   (150% buffer)
 }
 _SWEEP_STAGES_ORDER: tuple[str, ...] = ("ingest", "classify", "see", "reason", "procure")
 
