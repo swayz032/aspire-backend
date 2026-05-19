@@ -463,3 +463,229 @@ class TestSeeAgainstFixtures:
             if calibrate_scale(s.image_bytes, s.text).confidence >= 0.70
         ]
         assert resolved, "At least one C2.2 sheet must produce a resolved scale"
+
+
+# ---------------------------------------------------------------------------
+# Wave 9k — discipline skip filter
+# ---------------------------------------------------------------------------
+
+class TestSeeDisciplineSkipFilter:
+    """Wave 9k: sheets whose discipline is not symbol-producing must be skipped.
+
+    Skipped disciplines (default): Specs, Schedules, Addenda, Cover, Title, None.
+    The skip filter must:
+      1. Not call detect_symbols on those sheets (no wasted CPU).
+      2. Emit exactly one 'blueprint.see.skipped_disciplines' receipt listing them.
+    """
+
+    def test_only_symbol_producing_disciplines_run_yolo(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
+
+        # Build 38 sheets: 26 in allowed disciplines, 12 in skip set.
+        allowed = ["A", "S", "M", "E", "P", "FP", "C", "L"]
+        skip = ["Specs", "Schedules", "Addenda", "Cover", "Title", None]
+        sheets: list[dict] = []
+        extracts: list[SheetExtract] = []
+        for i in range(26):
+            h = f"{i:064x}"
+            sid = f"{(i + 1):08d}-1111-2222-3333-{(i + 1):012d}"
+            sheets.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": str(i),
+                "discipline": allowed[i % len(allowed)],
+            })
+            extracts.append(SheetExtract(
+                page_number=i, text="", image_bytes=b"x", page_hash=h,
+            ))
+        for j in range(12):
+            h = f"{(j + 100):064x}"
+            sid = f"{(j + 100):08d}-1111-2222-3333-{(j + 100):012d}"
+            sheets.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": f"S{j}",
+                "discipline": skip[j % len(skip)],
+            })
+            extracts.append(SheetExtract(
+                page_number=j + 100, text="", image_bytes=b"x", page_hash=h,
+            ))
+
+        detect_mock = AsyncMock(return_value=[])  # no detections — fast no-op
+
+        with patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+            new=AsyncMock(return_value=sheets),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+            return_value=extracts,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+            new=detect_mock,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+            return_value=ScaleCalibration(0.0, "unknown", "none", 0.0),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+            return_value=SealDetection(False, 0.0),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+            return_value=None,
+        ):
+            drew = Drew()
+            corr = "test-see-skip-" + str(uuid.uuid4())
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",  # decoded but split_pdf_to_sheets is mocked
+                },
+                corr,
+            )
+
+        assert result["status"] == "ok", f"SEE should succeed: {result}"
+
+        # Only 26 detect_symbols calls — NOT 38.
+        assert detect_mock.await_count == 26, (
+            f"Expected detect_symbols called 26 times (allowed disciplines only), "
+            f"got {detect_mock.await_count}"
+        )
+
+        # Exactly one 'blueprint.see.skipped_disciplines' receipt.
+        receipts = _query_receipts_by_corr(corr)
+        skip_receipts = [
+            r for r in receipts
+            if r.get("event_type") == "blueprint.see.skipped_disciplines"
+        ]
+        assert len(skip_receipts) == 1, (
+            f"Expected exactly one skipped_disciplines receipt, got {len(skip_receipts)}: "
+            f"{[r.get('event_type') for r in receipts]}"
+        )
+        meta = skip_receipts[0].get("metadata", {})
+        assert len(meta.get("skipped_sheet_ids", [])) == 12
+        assert meta.get("reason") == "discipline_not_symbol_producing"
+
+
+# ---------------------------------------------------------------------------
+# Wave 9k — bounded concurrency
+# ---------------------------------------------------------------------------
+
+class TestSeeConcurrency:
+    """Wave 9k: detect_symbols calls run concurrently bounded by a semaphore.
+
+    Mocks detect_symbols with an async sleep and asserts that total wall-clock
+    time is significantly less than N × per-sheet sleep.
+    """
+
+    def test_parallel_inference_under_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "4")
+
+        # 8 sheets, all allowed discipline.
+        n_sheets = 8
+        per_sheet_sleep_s = 0.20  # 200 ms simulated YOLO per sheet
+        sheets: list[dict] = []
+        extracts: list[SheetExtract] = []
+        for i in range(n_sheets):
+            h = f"{i:064x}"
+            sid = f"{(i + 1):08d}-aaaa-bbbb-cccc-{(i + 1):012d}"
+            sheets.append({
+                "id": sid,
+                "hash": h,
+                "ocr_text": "",
+                "sheet_number": str(i),
+                "discipline": "A",
+            })
+            extracts.append(SheetExtract(
+                page_number=i, text="", image_bytes=b"x", page_hash=h,
+            ))
+
+        async def _slow_detect(*args, **kwargs):
+            import asyncio as _a
+            await _a.sleep(per_sheet_sleep_s)
+            return []
+
+        with patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+            new=AsyncMock(return_value=sheets),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+            return_value=extracts,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+            new=_slow_detect,
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+            return_value=ScaleCalibration(0.0, "unknown", "none", 0.0),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+            return_value=SealDetection(False, 0.0),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+            return_value=None,
+        ):
+            drew = Drew()
+            t0 = time.monotonic()
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",
+                },
+                "test-see-conc-" + str(uuid.uuid4()),
+            )
+            elapsed = time.monotonic() - t0
+
+        assert result["status"] == "ok", f"SEE concurrency run failed: {result}"
+
+        # Sequential would be n_sheets * per_sheet_sleep_s = 1.6 s.
+        # With concurrency=4: ceil(8/4) * 0.20 = 0.40 s + overhead.
+        # Give generous slack for CI: must be < 60% of sequential time.
+        sequential_bound = n_sheets * per_sheet_sleep_s
+        assert elapsed < 0.60 * sequential_bound, (
+            f"Concurrent SEE should be < 60% of sequential. "
+            f"elapsed={elapsed:.3f}s sequential_bound={sequential_bound:.3f}s"
+        )
