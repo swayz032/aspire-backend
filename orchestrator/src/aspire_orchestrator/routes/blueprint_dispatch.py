@@ -89,6 +89,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
@@ -99,7 +100,7 @@ from aspire_orchestrator.services import receipt_store
 from aspire_orchestrator.services.blueprint.pdf_raw_storage import upload_raw_pdf
 from aspire_orchestrator.services.blueprint.pdf_signed_upload import (
     mint_signed_upload_url,
-    stream_pdf_for_hash,
+    stream_pdf_to_temp_file,
 )
 from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
 from aspire_orchestrator.services.supabase_client import (
@@ -569,7 +570,7 @@ async def _run_full_pipeline(
     suite_id: str,
     office_id: str,
     filename: str,
-    pdf_bytes: bytes,
+    pdf_path: Path,
     correlation_id: str,
     model: str,
 ) -> None:
@@ -585,7 +586,15 @@ async def _run_full_pipeline(
     Fix 5: blueprint.pipeline.failed receipt includes structured error fields:
            error_class, error_message (capped 500 chars), stage, provider (if applicable),
            retry_count.
+
+    Wave 9f (2026-05-19): Accepts pdf_path (Path) instead of pdf_bytes (bytes).
+    Reads the temp file once at pipeline start and deletes it in a finally block
+    regardless of success or failure. This keeps the heap free of 22MB PDF buffers
+    during the HTTP response and ensures no temp files are leaked.
     """
+    # Read bytes once from disk — temp file is deleted in the finally block below.
+    pdf_bytes: bytes = pdf_path.read_bytes()
+
     _cut_receipt(
         suite_id=suite_id,
         office_id=office_id,
@@ -710,6 +719,42 @@ async def _run_full_pipeline(
             correlation_id=correlation_id,
         )
 
+    except asyncio.CancelledError as exc:
+        # P0 fix (Wave 9f): CancelledError is BaseException in Python 3.8+.
+        # FastAPI background task cancellation on server shutdown previously left
+        # stage_progress stuck as 'in_progress'. Now we:
+        #   1. Mark the current stage as failed (best-effort).
+        #   2. Emit blueprint.pipeline.cancelled receipt for observability.
+        #   3. Re-raise CancelledError — MUST NOT swallow it (breaks asyncio shutdown).
+        try:
+            await set_stage_progress(
+                project_id=project_id,
+                stage=_current_stage,
+                state="failed",
+                suite_id=suite_id,
+            )
+        except Exception:
+            pass
+        try:
+            _cut_receipt(
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                action_type="blueprint.pipeline.cancelled",
+                outcome="failed",
+                redacted_inputs={"project_id": project_id},
+                redacted_outputs={
+                    "error_class": "CancelledError",
+                    "error_message": str(exc)[:500] or "Task was cancelled",
+                    "stage": _current_stage,
+                    "provider": None,
+                    "retry_count": 0,
+                },
+            )
+        except Exception:
+            pass
+        raise  # Must re-raise CancelledError to preserve asyncio cancellation semantics
+
     except asyncio.TimeoutError:
         # TimeoutError already handled in _run_stage_with_timeout (receipt + stage=failed).
         # Emit top-level pipeline.failed receipt with structured fields (Fix 5).
@@ -773,6 +818,10 @@ async def _run_full_pipeline(
                 "retry_count": 0,
             },
         )
+    finally:
+        # Wave 9f: delete the temp file regardless of success or failure so
+        # Railway's 512MB tier is not eroded by lingering 22MB temp PDFs.
+        pdf_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1084,8 +1133,11 @@ async def blueprint_upload_complete(
     upload_id = body.upload_id
     storage_path = f"{suite_id}/{upload_id}/raw.pdf"
 
-    # --- Stream PDF from Storage to compute SHA-256 (Law #9: no full-mem load) ---
-    stream_result = await stream_pdf_for_hash(
+    # --- Stream PDF from Storage to temp file, compute SHA-256 in chunks ---
+    # Wave 9f: use stream_pdf_to_temp_file (replaces stream_pdf_for_hash) so
+    # the 22MB PDF is never fully materialized in heap memory. The temp file is
+    # owned by _run_full_pipeline which deletes it in a finally block.
+    stream_result = await stream_pdf_to_temp_file(
         suite_id=suite_id,
         upload_id=upload_id,
         correlation_id=correlation_id,
@@ -1114,10 +1166,12 @@ async def blueprint_upload_complete(
             },
         )
 
-    pdf_bytes, content_hash = stream_result
+    pdf_path, content_hash, pdf_size_bytes = stream_result
 
     # --- P1-7: Hard size enforcement (attacker could claim small size_bytes at init) ---
-    if len(pdf_bytes) > _MAX_PDF_SIZE_BYTES:
+    if pdf_size_bytes > _MAX_PDF_SIZE_BYTES:
+        # Clean up the temp file before raising — _run_full_pipeline never runs.
+        pdf_path.unlink(missing_ok=True)
         _cut_receipt(
             suite_id=suite_id,
             office_id=office_id,
@@ -1126,7 +1180,7 @@ async def blueprint_upload_complete(
             outcome="denied",
             redacted_inputs={
                 "upload_id": upload_id,
-                "size_bytes": len(pdf_bytes),
+                "size_bytes": pdf_size_bytes,
                 "max_bytes": _MAX_PDF_SIZE_BYTES,
                 "reason": "file_too_large",
             },
@@ -1138,10 +1192,13 @@ async def blueprint_upload_complete(
 
     # --- P1-6: Magic-byte file-type verification ---
     # Retrieve the MIME type recorded at /upload-init time.
+    # Read only the first 8 bytes for magic-byte check — no need to load the full PDF.
     session_info = _upload_sessions.get(upload_id)
     init_mime_type = session_info["mime_type"] if session_info else None
     if init_mime_type:
-        if not _check_magic_bytes(init_mime_type, pdf_bytes):
+        with pdf_path.open("rb") as _f:
+            _header_bytes = _f.read(8)
+        if not _check_magic_bytes(init_mime_type, _header_bytes):
             _cut_receipt(
                 suite_id=suite_id,
                 office_id=office_id,
@@ -1154,8 +1211,9 @@ async def blueprint_upload_complete(
                     "reason": "mime_magic_mismatch",
                 },
             )
-            # Remove stale session
+            # Remove stale session and temp file before raising
             _upload_sessions.pop(upload_id, None)
+            pdf_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail={
@@ -1205,6 +1263,7 @@ async def blueprint_upload_complete(
                 "reason": "db_transient_error",
             },
         )
+        pdf_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "DEDUP_CHECK_UNAVAILABLE"},
@@ -1220,7 +1279,7 @@ async def blueprint_upload_complete(
                 correlation_id=correlation_id,
                 filename=body.filename,
                 content_hash=content_hash,
-                pdf_size_bytes=len(pdf_bytes),
+                pdf_size_bytes=pdf_size_bytes,
             )
         except DedupCheckUnavailableError as _dedup_exc:
             # P1-11 fix: transient DB error inside _validate_dedup_hit —
@@ -1241,6 +1300,7 @@ async def blueprint_upload_complete(
                     "reason": "db_transient_error",
                 },
             )
+            pdf_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"error": "DEDUP_CHECK_UNAVAILABLE"},
@@ -1259,7 +1319,7 @@ async def blueprint_upload_complete(
                 redacted_inputs={
                     "filename": body.filename,
                     "content_hash_prefix": content_hash[:8],
-                    "pdf_size_bytes": len(pdf_bytes),
+                    "pdf_size_bytes": pdf_size_bytes,
                 },
                 redacted_outputs={
                     "project_id": existing_project_id,
@@ -1272,6 +1332,8 @@ async def blueprint_upload_complete(
                 content_hash[:8],
                 correlation_id[:8],
             )
+            # Dedup hit — temp file not needed (pipeline will not run)
+            pdf_path.unlink(missing_ok=True)
             return UploadCompleteResponse(
                 project_id=existing_project_id,
                 status="dedup",
@@ -1319,6 +1381,7 @@ async def blueprint_upload_complete(
             outcome="failed",
             redacted_inputs={"filename": body.filename, "reason": "db_insert_failed"},
         )
+        pdf_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "DB_INSERT_FAILED"},
@@ -1334,7 +1397,7 @@ async def blueprint_upload_complete(
         redacted_inputs={
             "filename": body.filename,
             "content_hash_prefix": content_hash[:8],
-            "pdf_size_bytes": len(pdf_bytes),
+            "pdf_size_bytes": pdf_size_bytes,
         },
         redacted_outputs={
             "project_id": project_id,
@@ -1363,13 +1426,15 @@ async def blueprint_upload_complete(
         )
 
     # --- Enqueue background pipeline (Law #7) ---
+    # Wave 9f: pass pdf_path (not pdf_bytes) — _run_full_pipeline reads and
+    # deletes the temp file, keeping the heap free during the HTTP response.
     background_tasks.add_task(
         _run_full_pipeline,
         project_id=project_id,
         suite_id=suite_id,
         office_id=office_id,
         filename=body.filename,
-        pdf_bytes=pdf_bytes,
+        pdf_path=pdf_path,
         correlation_id=correlation_id,
         model=_model,
     )

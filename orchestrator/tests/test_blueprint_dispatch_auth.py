@@ -621,30 +621,40 @@ class TestMagicByteVerification:
         # Pre-populate the session as if /upload-init ran and stored mime_type=application/pdf
         bd._upload_sessions[upload_id] = {"suite_id": SUITE_A, "mime_type": "application/pdf"}
 
-        # stream_pdf_for_hash returns the GIF bytes with a valid hash
+        # Wave 9f: stream_pdf_to_temp_file returns (Path, hash, size) — write GIF bytes
+        # to a real temp file so pdf_path.open("rb") works in the magic-byte check.
         gif_bytes = _GIF_BYTES + b"\x00" * 100
         gif_hash = hashlib.sha256(gif_bytes).hexdigest()
+        import tempfile
+        from pathlib import Path as _Path
+        _gif_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        _gif_tmp.write(gif_bytes)
+        _gif_tmp.close()
+        gif_tmp_path = _Path(_gif_tmp.name)
 
-        with (
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.stream_pdf_for_hash",
-                new_callable=AsyncMock,
-                return_value=(gif_bytes, gif_hash),
-            ),
-            patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-gif1"),
-            patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
-        ):
-            from aspire_orchestrator.routes.blueprint_dispatch import blueprint_upload_complete
+        try:
+            with (
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.stream_pdf_to_temp_file",
+                    new_callable=AsyncMock,
+                    return_value=(gif_tmp_path, gif_hash, len(gif_bytes)),
+                ),
+                patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-gif1"),
+                patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+            ):
+                from aspire_orchestrator.routes.blueprint_dispatch import blueprint_upload_complete
 
-            with pytest.raises(HTTPException) as exc_info:
-                await blueprint_upload_complete(
-                    mock_bg,
-                    _make_upload_complete_request(
-                        capability_token=valid_token,
-                        upload_id=upload_id,
-                        correlation_id=corr,
-                    ),
-                )
+                with pytest.raises(HTTPException) as exc_info:
+                    await blueprint_upload_complete(
+                        mock_bg,
+                        _make_upload_complete_request(
+                            capability_token=valid_token,
+                            upload_id=upload_id,
+                            correlation_id=corr,
+                        ),
+                    )
+        finally:
+            gif_tmp_path.unlink(missing_ok=True)
 
         assert exc_info.value.status_code == 415
         assert exc_info.value.detail["error"] == "MIME_MAGIC_MISMATCH"
@@ -676,35 +686,46 @@ class TestMagicByteVerification:
 
         pdf_content_hash = hashlib.sha256(_FAKE_PDF_BYTES).hexdigest()
 
-        with (
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.stream_pdf_for_hash",
-                new_callable=AsyncMock,
-                return_value=(_FAKE_PDF_BYTES, pdf_content_hash),
-            ),
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
-                new_callable=AsyncMock,
-                return_value=[],  # no dedup
-            ),
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.supabase_insert",
-                new_callable=AsyncMock,
-                return_value={"id": str(uuid.uuid4())},
-            ),
-            patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-vp1"),
-            patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
-        ):
-            from aspire_orchestrator.routes.blueprint_dispatch import blueprint_upload_complete
+        # Wave 9f: write PDF bytes to a real temp file so pdf_path.open("rb") works.
+        import tempfile
+        from pathlib import Path as _Path
+        _pdf_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        _pdf_tmp.write(_FAKE_PDF_BYTES)
+        _pdf_tmp.close()
+        pdf_tmp_path = _Path(_pdf_tmp.name)
 
-            resp = await blueprint_upload_complete(
-                mock_bg,
-                _make_upload_complete_request(
-                    capability_token=valid_token,
-                    upload_id=upload_id,
-                    correlation_id=corr,
+        try:
+            with (
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.stream_pdf_to_temp_file",
+                    new_callable=AsyncMock,
+                    return_value=(pdf_tmp_path, pdf_content_hash, len(_FAKE_PDF_BYTES)),
                 ),
-            )
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
+                    new_callable=AsyncMock,
+                    return_value=[],  # no dedup
+                ),
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.supabase_insert",
+                    new_callable=AsyncMock,
+                    return_value={"id": str(uuid.uuid4())},
+                ),
+                patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-vp1"),
+                patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+            ):
+                from aspire_orchestrator.routes.blueprint_dispatch import blueprint_upload_complete
+
+                resp = await blueprint_upload_complete(
+                    mock_bg,
+                    _make_upload_complete_request(
+                        capability_token=valid_token,
+                        upload_id=upload_id,
+                        correlation_id=corr,
+                    ),
+                )
+        finally:
+            pdf_tmp_path.unlink(missing_ok=True)
 
         assert resp.status == "queued"
         assert upload_id not in bd._upload_sessions  # session cleaned up after success
@@ -753,36 +774,47 @@ class TestDedupCheckUnavailable:
 
         from aspire_orchestrator.services.supabase_client import SupabaseClientError
 
-        with (
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.stream_pdf_for_hash",
-                new_callable=AsyncMock,
-                return_value=(_FAKE_PDF_BYTES, content_hash),
-            ),
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
-                new_callable=AsyncMock,
-                side_effect=_failing_select,
-            ),
-            patch(
-                "aspire_orchestrator.routes.blueprint_dispatch.supabase_update",
-                new_callable=AsyncMock,
-                return_value={},
-            ) as mock_update,
-            patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-d503c"),
-            patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
-        ):
-            from aspire_orchestrator.routes.blueprint_dispatch import blueprint_upload_complete
+        # Wave 9f: write PDF bytes to a real temp file for magic-byte check.
+        import tempfile
+        from pathlib import Path as _Path
+        _pdf_tmp3 = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        _pdf_tmp3.write(_FAKE_PDF_BYTES)
+        _pdf_tmp3.close()
+        pdf_tmp_path3 = _Path(_pdf_tmp3.name)
 
-            with pytest.raises(HTTPException) as exc_info:
-                await blueprint_upload_complete(
-                    mock_bg,
-                    _make_upload_complete_request(
-                        capability_token=valid_token,
-                        upload_id=upload_id,
-                        correlation_id=corr,
-                    ),
-                )
+        try:
+            with (
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.stream_pdf_to_temp_file",
+                    new_callable=AsyncMock,
+                    return_value=(pdf_tmp_path3, content_hash, len(_FAKE_PDF_BYTES)),
+                ),
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.supabase_select",
+                    new_callable=AsyncMock,
+                    side_effect=_failing_select,
+                ),
+                patch(
+                    "aspire_orchestrator.routes.blueprint_dispatch.supabase_update",
+                    new_callable=AsyncMock,
+                    return_value={},
+                ) as mock_update,
+                patch("aspire_orchestrator.routes.blueprint_dispatch.get_trace_id", return_value="trace-d503c"),
+                patch("aspire_orchestrator.routes.blueprint_dispatch.get_correlation_id", return_value=corr),
+            ):
+                from aspire_orchestrator.routes.blueprint_dispatch import blueprint_upload_complete
+
+                with pytest.raises(HTTPException) as exc_info:
+                    await blueprint_upload_complete(
+                        mock_bg,
+                        _make_upload_complete_request(
+                            capability_token=valid_token,
+                            upload_id=upload_id,
+                            correlation_id=corr,
+                        ),
+                    )
+        finally:
+            pdf_tmp_path3.unlink(missing_ok=True)
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.detail["error"] == "DEDUP_CHECK_UNAVAILABLE"

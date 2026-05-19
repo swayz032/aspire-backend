@@ -201,6 +201,11 @@ async def stream_pdf_for_hash(
     Law #9: Never logs raw bytes — only logs object path, size_bytes,
             hash_prefix (first 8 hex chars), and duration_ms.
     """
+    raise RuntimeError(
+        "stream_pdf_for_hash is deprecated — use stream_pdf_to_temp_file (Wave 9f, 2026-05-19). "
+        "Any caller that reaches this line has NOT been migrated and is accumulating full PDF "
+        "bytes in heap memory."
+    )
     object_path = f"{suite_id}/{upload_id}/raw.pdf"
     base = _storage_base_url()
     get_url = f"{base}/object/{_BUCKET}/{object_path}"
