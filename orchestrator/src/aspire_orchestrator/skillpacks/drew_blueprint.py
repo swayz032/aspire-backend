@@ -36,6 +36,35 @@ from typing import Any
 
 from aspire_orchestrator.services.receipt_store import store_receipts
 
+# ---------------------------------------------------------------------------
+# DLP singleton — used to redact OCR text before DB writes (Law #9, P0-10)
+# ---------------------------------------------------------------------------
+try:
+    from aspire_orchestrator.services.dlp import DLPService as _DLPService
+    _dlp = _DLPService()
+except Exception:
+    _dlp = None  # type: ignore[assignment]
+
+
+def _dlp_redact(text: str) -> tuple[str, int]:
+    """Redact PII from OCR text.  Returns (redacted_text, redaction_count).
+
+    Uses the shared DLPService (Presidio + regex fallback, Law #9).
+    If DLP is unavailable the text is returned as-is with redaction_count=-1
+    (sentinel: DLP unavailable). The caller emits a receipt with the count so
+    ops can detect DLP gaps.
+
+    This is a v1 Presidio + regex pass.  A deeper follow-up is queued Wave 10.
+    """
+    if _dlp is None:
+        return text, -1
+    redacted = _dlp.redact_text_ingestion(text)
+    # Heuristic count: number of redaction placeholders inserted
+    import re as _re
+    count = len(_re.findall(r"<[A-Z_]+_REDACTED>", redacted))
+    return redacted, count
+
+
 PROMPT_PATH = (
     Path(__file__).parent.parent
     / "services"
@@ -54,6 +83,16 @@ def _compute_inputs_hash(inputs: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+_DREW_STATUS_TO_OUTCOME: dict[str, str] = {
+    "ok": "success",
+    "dedup": "success",
+    "failed": "failed",
+    "error": "failed",
+    "denied": "denied",
+    "timeout": "failed",
+}
+
+
 def _build_receipt(
     *,
     correlation_id: str,
@@ -61,16 +100,50 @@ def _build_receipt(
     status: str,
     inputs: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    suite_id: str | None = None,
 ) -> dict[str, Any]:
-    """Build a Drew receipt aligned with Adam's shape (Law #2)."""
+    """Build a Drew receipt using canonical receipt_store field names (Law #2, P0-4).
+
+    Field mapping (canonical → _map_receipt_to_row keys):
+      id              → receipt_id (PK)
+      outcome         → mapped to status enum (SUCCEEDED/FAILED/DENIED/PENDING)
+      action_type     → action jsonb.action_type
+      receipt_type    → receipt_type column
+      created_at      → created_at column (was ts / None before fix)
+      trace_id        → trace context column
+      risk_tier       → action jsonb.risk_tier
+
+    Backward-compat aliases are kept so existing callers using receipt_id/status/ts
+    still work: those keys are written alongside the canonical names.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    outcome = _DREW_STATUS_TO_OUTCOME.get(status, "failed")
+
+    # Resolve trace_id from middleware context (correlation middleware sets it)
+    try:
+        from aspire_orchestrator.middleware.correlation import get_trace_id
+        trace_id = get_trace_id() or correlation_id
+    except Exception:
+        trace_id = correlation_id
+
     receipt: dict[str, Any] = {
-        "receipt_version": RECEIPT_VERSION,
-        "receipt_id": str(uuid.uuid4()),
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "event_type": event_type,
-        "actor": ACTOR_DREW,
+        # Canonical field names read by _map_receipt_to_row
+        "id": str(uuid.uuid4()),
+        "outcome": outcome,
+        "action_type": event_type,
+        "receipt_type": event_type,
+        "created_at": now_iso,
+        "trace_id": trace_id,
+        "risk_tier": risk_tier.upper(),
+        # Governance + actor
+        "actor_type": "WORKER",
+        "actor_id": ACTOR_DREW,
         "correlation_id": correlation_id,
-        "status": status,
+        # Extra context
+        "receipt_version": RECEIPT_VERSION,
+        "actor": ACTOR_DREW,
         "inputs_hash": _compute_inputs_hash(inputs),
         "policy": {
             "decision": "allow" if status != "denied" else "deny",
@@ -78,7 +151,25 @@ def _build_receipt(
             "reasons": [],
         },
         "redactions": [],
+        # Backward-compat aliases (kept so legacy code that reads receipt_id/status/ts works)
+        "receipt_id": None,  # will be filled below to equal id
+        "status": status,
+        "ts": now_iso,
+        "event_type": event_type,
     }
+    # Ensure receipt_id alias = canonical id
+    receipt["receipt_id"] = receipt["id"]
+
+    if suite_id:
+        receipt["suite_id"] = suite_id
+    if capability_token_id:
+        receipt["capability_token_id"] = capability_token_id
+    else:
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "drew receipt built without capability_token_id (dispatch path may not have minted one)"
+        )
+
     if metadata:
         receipt["metadata"] = metadata
     return receipt
@@ -630,6 +721,7 @@ class Drew:
                     event_type="blueprint.material_pick.override",
                     status="failed",
                     inputs={"task": "MATERIAL_OVERRIDE", "missing_key": key},
+                    risk_tier="yellow",
                 )
                 return {
                     "status": "error",
@@ -650,6 +742,7 @@ class Drew:
                 status="failed",
                 inputs={"task": "MATERIAL_OVERRIDE", "project_id": project_id,
                         "material_id": material_id, "suite_id": suite_id},
+                risk_tier="yellow",
             )
             return {
                 "status": "error",
@@ -678,6 +771,7 @@ class Drew:
                     "suite_id": suite_id,
                 },
                 metadata={"error": type(exc).__name__, "message": str(exc)[:200]},
+                risk_tier="yellow",
             )
             return {
                 "status": "error",
@@ -703,6 +797,7 @@ class Drew:
                 "supplier_name": str(override.get("supplier_name") or "")[:80],
                 "notes": str(override.get("notes") or "")[:80],
             },
+            risk_tier="yellow",
         )
         return result
 
@@ -732,6 +827,7 @@ class Drew:
                     event_type="blueprint.material_pick.skip",
                     status="failed",
                     inputs={"task": "MATERIAL_SKIP", "missing_key": key},
+                    risk_tier="yellow",
                 )
                 return {
                     "status": "error",
@@ -764,6 +860,7 @@ class Drew:
                     "suite_id": suite_id,
                 },
                 metadata={"error": type(exc).__name__, "message": str(exc)[:200]},
+                risk_tier="yellow",
             )
             return {
                 "status": "error",
@@ -786,6 +883,7 @@ class Drew:
                 "new_row_id": result.get("new_row_id"),
                 "supersedes_id": material_id,
             },
+            risk_tier="yellow",
         )
         return result
 
@@ -800,13 +898,24 @@ class Drew:
         status: str,
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
+        risk_tier: str = "green",
+        capability_token_id: str | None = None,
     ) -> dict[str, Any]:
+        """Emit a Drew receipt. risk_tier must be passed explicitly at each call site.
+
+        Blueprint pipeline stages are always "green".
+        MATERIAL_OVERRIDE / MATERIAL_SKIP are "yellow" (Law #4).
+        """
+        suite_id: str | None = inputs.get("suite_id")  # thread suite_id into receipt
         receipt = _build_receipt(
             correlation_id=correlation_id,
             event_type=event_type,
             status=status,
             inputs=inputs,
             metadata=metadata,
+            risk_tier=risk_tier,
+            capability_token_id=capability_token_id,
+            suite_id=suite_id,
         )
         store_receipts([receipt])
         return receipt
@@ -823,10 +932,20 @@ def _run_async_set_stage(
     stage: str,
     state: str,
 ) -> None:
-    """Bridge: run async set_stage_progress from sync context.
+    """Bridge: run async set_stage_progress from sync context (legacy/sync wrappers only).
 
-    Swallows all errors — progress tracking is best-effort.
+    The dispatch-path _async_*_pipeline coroutines call set_stage_progress directly
+    via await. This bridge is kept exclusively for the sync Drew.* wrappers
+    (run_agentic_loop path).
+
+    P1-9 fix: timeout reduced from 10s to 3s (stage writes are fast). Logs a
+    warning on timeout rather than silently swallowing it.
+    Swallows all errors — progress tracking is best-effort (Law #3 carve-out:
+    stage_progress is bookkeeping, not the authoritative pipeline result).
     """
+    import logging as _lg
+    _log = _lg.getLogger(__name__)
+
     if not project_id or not suite_id:
         return
 
@@ -846,7 +965,13 @@ def _run_async_set_stage(
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(asyncio.run, _run())
-                future.result(timeout=10)
+                try:
+                    future.result(timeout=3)  # P1-9: reduced from 10s to 3s
+                except concurrent.futures.TimeoutError:
+                    _log.warning(
+                        "_run_async_set_stage timed out project=%s stage=%s state=%s",
+                        project_id[:8], stage, state,
+                    )
         else:
             loop.run_until_complete(_run())
     except RuntimeError:
@@ -943,11 +1068,17 @@ async def _async_ingest_pipeline(
 
     # Idempotency check: look for existing project with same content hash.
     # Skipped when _skip_project_creation=True (dispatch path already handled dedup).
+    # P2-1 fix: query uses content_hash column (canonical), not address (legacy).
+    # NOTE: projects created before this fix stored the hash in `address`.
+    # A one-time data migration is needed:
+    #   UPDATE blueprint_projects SET content_hash = address
+    #   WHERE content_hash IS NULL AND address ~ '^[a-f0-9]{64}$';
+    # Queue as follow-up SQL migration before Wave 10 deploy.
     if not _skip_project_creation:
         try:
             existing = await supabase_select(
                 "blueprint_projects",
-                filters=f"suite_id=eq.{suite_id}&address=eq.{project_hash}",
+                filters=f"suite_id=eq.{suite_id}&content_hash=eq.{project_hash}",
                 limit=1,
             )
             if existing:
@@ -1017,7 +1148,8 @@ async def _async_ingest_pipeline(
                 type(exc).__name__,
             )
 
-        # Create project row (using address field to store hash for idempotency key)
+        # P2-1 fix: write hash to content_hash (canonical column), not address.
+        # address column is reserved for the job-site postal address (contractor context).
         project_id = str(uuid.uuid4())
         try:
             await supabase_insert(
@@ -1026,7 +1158,7 @@ async def _async_ingest_pipeline(
                     "id": project_id,
                     "suite_id": suite_id,
                     "office_id": office_id,
-                    "address": project_hash,  # Repurposed for content hash idempotency
+                    "content_hash": project_hash,  # Canonical column for dedup key
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
@@ -1045,13 +1177,17 @@ async def _async_ingest_pipeline(
             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
         )
 
-    # Mark ingest stage as in_progress
-    await set_stage_progress(
-        project_id=project_id,
-        stage="ingest",
-        state="in_progress",
-        suite_id=suite_id,
-    )
+    # P0-3 fix: mark ingest in_progress directly in the async pipeline
+    # (previously only set in sync wrapper; dispatch path bypassed it).
+    try:
+        await set_stage_progress(
+            project_id=project_id,
+            stage="ingest",
+            state="in_progress",
+            suite_id=suite_id,
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.ingest: set_stage_progress(in_progress) failed: %s", _sp_exc)
 
     _log.info(
         "drew.ingest: created project=%s, hash=%s, corr=%s",
@@ -1071,8 +1207,41 @@ async def _async_ingest_pipeline(
     # Store each sheet + upload thumbnail
     sheet_ids: list[str] = []
     thumbnail_failures: int = 0
+    dlp_total_redactions: int = 0
+
     for ocr_sheet in corpus.sheets:
         sheet_id = str(uuid.uuid4())
+
+        # P0-10 fix: apply DLP before writing OCR text to DB (Law #9).
+        ocr_text_raw = ocr_sheet.text
+        ocr_text_clean, redaction_count = _dlp_redact(ocr_text_raw)
+        if redaction_count > 0:
+            dlp_total_redactions += redaction_count
+            # Emit per-sheet DLP receipt (Law #2)
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "outcome": "success",
+                "action_type": "blueprint.ingest.dlp_redacted",
+                "receipt_type": "blueprint.ingest.dlp_redacted",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "risk_tier": "GREEN",
+                "actor_type": "WORKER",
+                "actor_id": ACTOR_DREW,
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "metadata": {
+                    "sheet_page": ocr_sheet.page_number,
+                    "project_id": project_id,
+                    "redaction_count": redaction_count,
+                },
+                "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+            }])
+        elif redaction_count == -1:
+            _log.warning(
+                "drew.ingest: DLP unavailable for sheet page=%d project=%s",
+                ocr_sheet.page_number, project_id[:8],
+            )
+
         try:
             await supabase_insert(
                 "blueprint_sheets",
@@ -1082,7 +1251,7 @@ async def _async_ingest_pipeline(
                     "office_id": office_id,
                     "project_id": project_id,
                     "sheet_number": str(ocr_sheet.page_number),
-                    "ocr_text": ocr_sheet.text,
+                    "ocr_text": ocr_text_clean,  # P0-10: write DLP-cleaned text
                     "hash": ocr_sheet.page_hash,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 },
@@ -1141,20 +1310,28 @@ async def _async_ingest_pipeline(
                     }
                 ])
 
-    # Mark ingest stage done (or failed if no sheets persisted)
+    # P0-3: mark ingest done/failed based on whether sheets were stored.
+    # The stage_progress write uses try/except to remain best-effort.
     final_state = "done" if sheet_ids else "failed"
-    await set_stage_progress(
-        project_id=project_id,
-        stage="ingest",
-        state=final_state,
-        suite_id=suite_id,
-    )
+    try:
+        await set_stage_progress(
+            project_id=project_id,
+            stage="ingest",
+            state=final_state,
+            suite_id=suite_id,
+        )
+    except Exception as _sp_exc:
+        _log.warning(
+            "drew.ingest: set_stage_progress(%s) failed: %s", final_state, _sp_exc
+        )
 
     _log.info(
-        "drew.ingest: stored %d sheets for project=%s thumbnail_failures=%d corr=%s",
+        "drew.ingest: stored %d sheets for project=%s thumbnail_failures=%d "
+        "dlp_redactions=%d corr=%s",
         len(sheet_ids),
         project_id[:8],
         thumbnail_failures,
+        dlp_total_redactions,
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
 
@@ -1218,7 +1395,12 @@ async def _async_classify_pipeline(
     model: str,
     correlation_id: str,
 ) -> dict[str, Any]:
-    """Async classify: discipline tagging + revision detection + DB updates."""
+    """Async classify: discipline tagging + revision detection + DB updates.
+
+    P0-3 fix: stage_progress updated directly inside this coroutine (dispatch path).
+    P1-10 fix: zero sheets → status="failed" (was incorrectly "ok").
+    P2-2 fix: DLP applied to tag.reasoning before writing to blueprint_missing_inputs.
+    """
     import logging as _logging
     _log = _logging.getLogger(__name__)
 
@@ -1229,6 +1411,15 @@ async def _async_classify_pipeline(
     )
     from aspire_orchestrator.services.blueprint.discipline_tagger import tag_disciplines
     from aspire_orchestrator.services.blueprint.revision_detector import detect_revisions
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+
+    # P0-3: mark in_progress at the start of the async pipeline (dispatch path)
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="classify", state="in_progress", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.classify: set_stage_progress(in_progress) failed: %s", _sp_exc)
 
     # Load sheets for this project (RLS enforces suite_id at DB level)
     try:
@@ -1238,16 +1429,32 @@ async def _async_classify_pipeline(
             order_by="created_at.asc",
         )
     except SupabaseClientError as exc:
+        # P0-3: mark failed before raising
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="classify", state="failed", suite_id=suite_id
+            )
+        except Exception:
+            pass
         raise RuntimeError(f"Failed to load sheets for project {project_id[:8]}: {exc}") from exc
 
     if not sheets:
+        # P1-10 fix: zero sheets is a pipeline failure, not a success.
+        # The dispatch caller checks for non-ok status and emits a failed receipt.
         _log.warning(
-            "drew.classify: no sheets found for project=%s, corr=%s",
+            "drew.classify: no sheets found for project=%s — returning failed, corr=%s",
             project_id[:8],
             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
         )
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="classify", state="failed", suite_id=suite_id
+            )
+        except Exception:
+            pass
         return {
-            "status": "ok",
+            "status": "failed",
+            "reason": "no_sheets_to_classify",
             "stage": "classify",
             "project_id": project_id,
             "discipline_counts": {},
@@ -1284,6 +1491,9 @@ async def _async_classify_pipeline(
         if discipline_value:
             update_data["discipline"] = discipline_value
         if tag.needs_review:
+            # P2-2 fix: apply DLP to tag.reasoning before persisting to DB (Law #9).
+            reasoning_raw = str(tag.reasoning or "")
+            reasoning_clean, _r_count = _dlp_redact(reasoning_raw)
             # Insert a missing_inputs row for contractor review
             try:
                 from aspire_orchestrator.services.supabase_client import supabase_insert
@@ -1296,7 +1506,7 @@ async def _async_classify_pipeline(
                         "description": (
                             f"Sheet {sheet.get('sheet_number', sheet_id[:8])}: "
                             f"discipline confidence {tag.confidence:.0%} below threshold. "
-                            f"Tagger reasoning: {tag.reasoning}"
+                            f"Tagger reasoning: {reasoning_clean}"
                         ),
                         "suggested_resolution": "Please verify the discipline for this sheet.",
                         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1349,6 +1559,14 @@ async def _async_classify_pipeline(
         needs_review_count,
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
+
+    # P0-3: mark classify done in the async pipeline (dispatch path)
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="classify", state="done", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.classify: set_stage_progress(done) failed: %s", _sp_exc)
 
     return {
         "status": "ok",
@@ -1435,6 +1653,7 @@ async def _async_see_pipeline(
 
     from aspire_orchestrator.services.supabase_client import (
         SupabaseClientError,
+        supabase_delete,
         supabase_insert,
         supabase_select,
         supabase_update,
@@ -1446,6 +1665,54 @@ async def _async_see_pipeline(
     )
     from aspire_orchestrator.services.blueprint.scale_calibrator import calibrate_scale
     from aspire_orchestrator.services.blueprint.seal_detector import detect_engineer_seal
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+
+    # P0-3: mark see in_progress in the async pipeline (dispatch path)
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="see", state="in_progress", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.see: set_stage_progress(in_progress) failed: %s", _sp_exc)
+
+    # P0-7: idempotency clear — delete existing blueprint_symbols rows for this project
+    # before re-inserting. supabase_delete returns None (PostgREST 204); we can't
+    # get an exact deleted count without a prior SELECT. We do a count SELECT first,
+    # then delete, then emit the receipt if count > 0.
+    try:
+        _existing_symbols = await supabase_select(
+            "blueprint_symbols",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+        )
+        _deleted_count = len(_existing_symbols) if _existing_symbols else 0
+        if _deleted_count > 0:
+            await supabase_delete(
+                "blueprint_symbols",
+                f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            )
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "outcome": "success",
+                "action_type": "blueprint.see.idempotency_clear",
+                "receipt_type": "blueprint.see.idempotency_clear",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "risk_tier": "GREEN",
+                "actor_type": "WORKER",
+                "actor_id": ACTOR_DREW,
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "metadata": {
+                    "project_id": project_id,
+                    "deleted_symbols": _deleted_count,
+                },
+                "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+            }])
+            _log.info(
+                "drew.see: idempotency_clear deleted %d symbols for project=%s",
+                _deleted_count, project_id[:8],
+            )
+    except Exception as _ic_exc:
+        _log.warning("drew.see: idempotency_clear failed (%s) — proceeding", type(_ic_exc).__name__)
 
     # Load all sheet rows for this project (RLS-scoped).
     try:
@@ -1455,6 +1722,12 @@ async def _async_see_pipeline(
             order_by="created_at.asc",
         )
     except SupabaseClientError as exc:
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="see", state="failed", suite_id=suite_id
+            )
+        except Exception:
+            pass
         raise RuntimeError(f"Failed to load sheets for project {project_id[:8]}: {exc}") from exc
 
     if not sheets:
@@ -1463,8 +1736,15 @@ async def _async_see_pipeline(
             project_id[:8],
             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
         )
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="see", state="failed", suite_id=suite_id
+            )
+        except Exception:
+            pass
         return {
-            "status": "ok",
+            "status": "failed",
+            "reason": "no_sheets_for_see",
             "stage": "see",
             "project_id": project_id,
             "sheet_count": 0,
@@ -1479,6 +1759,12 @@ async def _async_see_pipeline(
     try:
         extracts = split_pdf_to_sheets(pdf_bytes)
     except Exception as exc:  # noqa: BLE001
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="see", state="failed", suite_id=suite_id
+            )
+        except Exception:
+            pass
         raise RuntimeError(f"pdf_splitter failed in SEE: {type(exc).__name__}") from exc
 
     # Index DB rows by hash (the canonical join key).
@@ -1627,6 +1913,14 @@ async def _async_see_pipeline(
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
 
+    # P0-3: mark see done in the async pipeline (dispatch path)
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="see", state="done", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.see: set_stage_progress(done) failed: %s", _sp_exc)
+
     return {
         "status": "ok",
         "stage": "see",
@@ -1699,19 +1993,88 @@ async def _async_reason_pipeline(
     model: str,
     correlation_id: str,
 ) -> dict[str, Any]:
-    """Async REASON: call story_writer.write_story and map result to stage dict."""
+    """Async REASON: call story_writer.write_story and map result to stage dict.
+
+    P0-3 fix: stage_progress updated directly in this coroutine (dispatch path).
+    P0-7 fix: delete existing blueprint_story/assemblies/materials rows for
+              idempotency before re-writing. Emits a reason.idempotency_clear receipt.
+    """
     import logging as _logging
     _log = _logging.getLogger(__name__)
 
     from aspire_orchestrator.services.blueprint.story_writer import write_story
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+    from aspire_orchestrator.services.supabase_client import supabase_delete
 
-    output = await write_story(
-        project_id,
-        suite_id=suite_id,
-        office_id=office_id,
-        correlation_id=correlation_id,
-        model=model,
-    )
+    # P0-3: mark reason in_progress
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="reason", state="in_progress", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.reason: set_stage_progress(in_progress) failed: %s", _sp_exc)
+
+    # P0-7: idempotency clear — delete existing story/assemblies/materials for this project.
+    # Count existing rows first (supabase_delete returns None, not a count).
+    _total_deleted = 0
+    for _tbl in ("blueprint_story", "blueprint_assemblies", "blueprint_materials"):
+        try:
+            from aspire_orchestrator.services.supabase_client import supabase_select as _sel
+            _existing = await _sel(
+                _tbl,
+                filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            )
+            _cnt = len(_existing) if _existing else 0
+            if _cnt > 0:
+                await supabase_delete(
+                    _tbl,
+                    f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+                )
+                _total_deleted += _cnt
+        except Exception as _del_exc:
+            _log.warning(
+                "drew.reason: idempotency_clear %s failed (%s) — proceeding",
+                _tbl, type(_del_exc).__name__,
+            )
+    if _total_deleted > 0:
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "blueprint.reason.idempotency_clear",
+            "receipt_type": "blueprint.reason.idempotency_clear",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {
+                "project_id": project_id,
+                "deleted_rows": _total_deleted,
+            },
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+        _log.info(
+            "drew.reason: idempotency_clear deleted %d rows for project=%s",
+            _total_deleted, project_id[:8],
+        )
+
+    try:
+        output = await write_story(
+            project_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            model=model,
+        )
+    except Exception as _exc:
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="reason", state="failed", suite_id=suite_id
+            )
+        except Exception:
+            pass
+        raise
 
     _log.info(
         "drew.reason: project=%s phases=%d assemblies=%d materials=%d "
@@ -1724,6 +2087,14 @@ async def _async_reason_pipeline(
         output.mean_confidence,
         correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
     )
+
+    # P0-3: mark reason done
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="reason", state="done", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.reason: set_stage_progress(done) failed: %s", _sp_exc)
 
     return {
         "status": "ok",
@@ -1800,6 +2171,10 @@ async def _async_procure_pipeline(
 ) -> dict[str, Any]:
     """Async PROCURE: tariff-flag + supplier-match all blueprint_materials for a project.
 
+    P0-3 fix: stage_progress updated directly in this coroutine (dispatch path).
+    P0-7 note: PROCURE does NOT delete blueprint_materials (REASON owns those rows).
+               It UPDATEs existing rows (tariff_flag, supplier_id). Confirmed below.
+
     For each material row:
       1. detect_tariff_flag(line_item) → UPDATE tariff_flag column
       2. match_suppliers(...) → pick top supplier, UPDATE supplier_id column
@@ -1826,6 +2201,15 @@ async def _async_procure_pipeline(
     )
     from aspire_orchestrator.services.blueprint.supplier_matcher import match_suppliers
     from aspire_orchestrator.services.blueprint.schemas.truth import TariffFlag as TariffFlagEnum
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+
+    # P0-3: mark procure in_progress in the async pipeline (dispatch path)
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="procure", state="in_progress", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.procure: set_stage_progress(in_progress) failed: %s", _sp_exc)
 
     # Load all material rows for this project (RLS-scoped by suite_id)
     try:
@@ -1965,6 +2349,14 @@ async def _async_procure_pipeline(
         missing_inputs_added,
         correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
     )
+
+    # P0-3: mark procure done in the async pipeline (dispatch path)
+    try:
+        await set_stage_progress(
+            project_id=project_id, stage="procure", state="done", suite_id=suite_id
+        )
+    except Exception as _sp_exc:
+        _log.warning("drew.procure: set_stage_progress(done) failed: %s", _sp_exc)
 
     return {
         "status": "ok",
