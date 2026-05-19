@@ -370,10 +370,12 @@ _ACCEPTED_MIME_TYPES: frozenset[str] = frozenset({
 # On TimeoutError the pipeline stops immediately — no subsequent stages run.
 _STAGE_TIMEOUTS: dict[str, int] = {
     "ingest": 8 * 60,    # 8 minutes  — OCR + sheet DB writes
-    "classify": 2 * 60,  # 2 minutes  — LLM discipline tagging
-    "see": 3 * 60,       # 3 minutes  — YOLOv11 symbol detection
-    "reason": 2 * 60,    # 2 minutes  — assembly + story generation
-    "procure": 1 * 60,   # 1 minute   — tariff + supplier matching
+    "classify": 3 * 60,  # 3 minutes  — LLM discipline tagging (gpt-5.4 batches)
+    "see": 10 * 60,      # 10 minutes — YOLOv11 CPU inference on 38+ sheets at 200 DPI
+                         # (measured ~5s/sheet * 38 sheets ~= 190s; 3min was too tight,
+                         # Wave 10 fine-tune + parallelism can bring this back down)
+    "reason": 5 * 60,    # 5 minutes  — assembly + story generation (gpt-5.4 long context)
+    "procure": 2 * 60,   # 2 minutes  — tariff + supplier matching via Adam
 }
 
 # ---------------------------------------------------------------------------
