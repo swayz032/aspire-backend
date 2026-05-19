@@ -17,13 +17,19 @@ Law compliance:
   #3 — Fails closed when weights are missing; clear bootstrap instructions.
   #9 — Image bytes never logged; only sheet_id prefixes + detection counts.
 
-Free-tier / open-source: Ultralytics YOLOv11 (AGPL-3.0). Weights yolo11m.pt
-~50MB downloaded on first run. No paid services. ONNX fallback path
+Free-tier / open-source: Ultralytics YOLOv11 (AGPL-3.0). Default weights
+yolo11n.pt (~2.6 MB, "nano" — ~3x faster CPU inference than yolo11m).
+yolo11m.pt (~50 MB) remains available via ASPIRE_DREW_YOLO_MODEL env override
+for fine-grained A/B per project. No paid services. ONNX fallback path
 documented below if container image bloat becomes a constraint.
+
+Wave 9k: switched _DEFAULT_MODEL to yolo11n for ~3x CPU speedup at slight
+accuracy cost on dense scenes. Wave 10 fine-tune restores accuracy.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
@@ -40,8 +46,10 @@ logger = logging.getLogger(__name__)
 # Confidence floor for inserting a blueprint_symbols row. Below this we drop.
 _CONFIDENCE_FLOOR: float = 0.70
 
-# Generic pre-trained weights identifier. Override via env for tests / Wave 10.
-_DEFAULT_MODEL: str = os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11m.pt")
+# Generic pre-trained weights identifier. Wave 9k: default is yolo11n.pt (nano,
+# ~2.6 MB, ~3x faster CPU inference than yolo11m). Override via env for A/B
+# with yolo11m.pt or for Wave 10 fine-tuned weights.
+_DEFAULT_MODEL: str = os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11n.pt")
 
 # Lazy singleton — model load is ~1-2s; reuse across sheets.
 _model_singleton: Any = None
@@ -110,7 +118,7 @@ def _load_model() -> Any:
     except Exception as exc:  # noqa: BLE001
         raise SymbolDetectorError(
             f"Failed to load YOLO weights '{_DEFAULT_MODEL}' ({type(exc).__name__}). "
-            "Bootstrap: python -c \"from ultralytics import YOLO; YOLO('yolo11m.pt')\""
+            f"Bootstrap: python -c \"from ultralytics import YOLO; YOLO('{_DEFAULT_MODEL}')\""
         ) from exc
 
     return _model_singleton
@@ -176,8 +184,14 @@ async def detect_symbols(
 
     t0 = time.monotonic()
     try:
+        # Wave 9k: YOLO inference is CPU-bound and synchronous. Offload to the
+        # default thread pool via asyncio.to_thread so multiple sheets can run
+        # concurrently from _async_see_pipeline's asyncio.gather. Without this
+        # the event loop blocks on each predict() call serializing sheets.
         # verbose=False keeps Ultralytics quiet; results is a list of Results objects.
-        results = model.predict(img, conf=max(0.1, confidence_floor - 0.1), verbose=False)
+        results = await asyncio.to_thread(
+            model.predict, img, conf=max(0.1, confidence_floor - 0.1), verbose=False
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "symbol_detector: inference failed for sheet=%s (%s) — fail-soft",
