@@ -50,14 +50,21 @@ def _dlp_redact(text: str) -> tuple[str, int]:
     """Redact PII from OCR text.  Returns (redacted_text, redaction_count).
 
     Uses the shared DLPService (Presidio + regex fallback, Law #9).
-    If DLP is unavailable the text is returned as-is with redaction_count=-1
-    (sentinel: DLP unavailable). The caller emits a receipt with the count so
-    ops can detect DLP gaps.
+    If DLP is unavailable returns ("[DLP_UNAVAILABLE — content withheld]", -2)
+    so the placeholder is stored instead of raw text (Law #3 fail-closed,
+    Law #9 no PII). The caller emits a blueprint.ingest.dlp_unavailable receipt.
+
+    redaction_count sentinel values:
+      -2 = DLP service unavailable (fail-closed placeholder stored)
+      -1 = DEPRECATED (was fail-open; no longer produced)
+       0 = DLP ran, no PII detected
+      >0 = DLP ran, N redactions applied
 
     This is a v1 Presidio + regex pass.  A deeper follow-up is queued Wave 10.
     """
     if _dlp is None:
-        return text, -1
+        # Law #3: fail closed — never write unredacted text when DLP is down.
+        return "[DLP_UNAVAILABLE — content withheld]", -2
     redacted = _dlp.redact_text_ingestion(text)
     # Heuristic count: number of redaction placeholders inserted
     import re as _re
@@ -75,6 +82,66 @@ PROMPT_PATH = (
 
 ACTOR_DREW = "skillpack:drew-blueprint"
 RECEIPT_VERSION = "1.0"
+
+# ---------------------------------------------------------------------------
+# P1 fix: per-project concurrency guards for multi-statement read-modify-write
+# stages (SEE, REASON, PROCURE).
+#
+# These stages use a SELECT → DELETE → INSERT / UPDATE pattern that is not
+# safe under concurrent execution against the same project_id.  A second
+# concurrent call would observe stale rows, delete them, and re-insert,
+# effectively doubling symbol/story/material rows.
+#
+# Mitigation (single-replica):
+#   asyncio.Lock keyed by project_id.  The second concurrent coroutine on the
+#   SAME asyncio event loop blocks until the first completes.  This is safe
+#   for Railway single-replica deployments.
+#
+# Limitation: does NOT prevent duplicate execution across multiple replicas
+# (Railway autoscale or blue-green deployments).  The correct multi-replica
+# fix is a Postgres advisory lock (`pg_try_advisory_xact_lock`).  That requires
+# a migration to expose an RPC helper callable from the Supabase PostgREST
+# layer — deferred to a follow-up migration per wave scope.
+#
+# When that migration lands, replace the asyncio.Lock logic below with:
+#   result = await supabase_rpc("try_advisory_lock", {"lock_key": f"blueprint_{stage}:{project_id}"})
+#   if not result.get("acquired"):
+#       emit blueprint.<stage>.concurrent_skip receipt
+#       return {"status": "skipped", "reason": "concurrent_run"}
+# ---------------------------------------------------------------------------
+_stage_locks: dict[str, asyncio.Lock] = {}
+
+
+# ---------------------------------------------------------------------------
+# CancelledError guard helper (P0 fix, Wave 9f)
+# ---------------------------------------------------------------------------
+
+async def _mark_stage_failed_best_effort(
+    project_id: str, stage: str, suite_id: str
+) -> None:
+    """Mark a stage as failed, swallowing any errors (best-effort only).
+
+    Used as the CancelledError handler in each _async_*_pipeline so that
+    asyncio task cancellation (server shutdown, timeout) leaves stage_progress
+    in a deterministic 'failed' state rather than stuck as 'in_progress'.
+    """
+    try:
+        from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress as _ssp
+        await _ssp(project_id=project_id, stage=stage, state="failed", suite_id=suite_id)
+    except Exception:
+        pass
+
+
+def _get_stage_lock(stage: str, project_id: str) -> asyncio.Lock:
+    """Return the per-(stage, project_id) asyncio.Lock, creating it on first call.
+
+    Dict access is thread-safe in CPython (GIL), and since asyncio is single-
+    threaded, there is no race between .locked() check and lock acquisition.
+    """
+    key = f"{stage}:{project_id}"
+    if key not in _stage_locks:
+        _stage_locks[key] = asyncio.Lock()
+    return _stage_locks[key]
 
 
 def _compute_inputs_hash(inputs: dict[str, Any]) -> str:
@@ -1124,21 +1191,22 @@ async def _async_ingest_pipeline(
                         len(sheet_ids),
                     )
                     store_receipts([{
-                        "receipt_version": RECEIPT_VERSION,
-                        "receipt_id": str(uuid.uuid4()),
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "event_type": "blueprint.upload.dedup_invalid_stale",
-                        "actor": ACTOR_DREW,
+                        "id": str(uuid.uuid4()),
+                        "outcome": "failed",
+                        "action_type": "blueprint.upload.dedup_invalid_stale",
+                        "receipt_type": "blueprint.upload.dedup_invalid_stale",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "risk_tier": "GREEN",
+                        "actor_type": "WORKER",
+                        "actor_id": ACTOR_DREW,
                         "correlation_id": correlation_id,
-                        "status": "failed",
+                        "suite_id": suite_id,
                         "inputs_hash": _compute_inputs_hash({"project_hash": project_hash[:8], "suite_id": suite_id}),
                         "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
-                        "redactions": [],
                         "metadata": {
                             "stale_project_id": candidate_id,
                             "ingest_state": ingest_state,
                             "sheet_count": len(sheet_ids),
-                            "suite_id": suite_id,
                         },
                     }])
                     # Fall through — create a new project row below
@@ -1197,12 +1265,17 @@ async def _async_ingest_pipeline(
     )
 
     # OCR: extract sheet corpus
-    corpus = await extract_sheet_corpus(
-        pdf_bytes,
-        correlation_id=correlation_id,
-        suite_id=suite_id,
-        office_id=office_id,
-    )
+    try:
+        corpus = await extract_sheet_corpus(
+            pdf_bytes,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+        )
+    except asyncio.CancelledError:
+        # P0 fix (Wave 9f): mark ingest failed before re-raising on task cancellation.
+        await _mark_stage_failed_best_effort(project_id, "ingest", suite_id)
+        raise
 
     # Store each sheet + upload thumbnail
     sheet_ids: list[str] = []
@@ -1215,14 +1288,42 @@ async def _async_ingest_pipeline(
         # P0-10 fix: apply DLP before writing OCR text to DB (Law #9).
         ocr_text_raw = ocr_sheet.text
         ocr_text_clean, redaction_count = _dlp_redact(ocr_text_raw)
-        if redaction_count > 0:
+        if redaction_count == -2:
+            # Law #3 / Law #9: DLP service unavailable — placeholder was stored.
+            # Emit dlp_unavailable receipt so ops can detect the gap.
+            _log.warning(
+                "drew.ingest: DLP unavailable for sheet page=%d project=%s — "
+                "placeholder stored (Law #3 fail-closed)",
+                ocr_sheet.page_number, project_id[:8],
+            )
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "outcome": "failed",
+                "action_type": "blueprint.ingest.dlp_unavailable",
+                "receipt_type": "blueprint.ingest.dlp_unavailable",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "risk_tier": "GREEN",
+                "actor_type": "WORKER",
+                "actor_id": ACTOR_DREW,
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "metadata": {
+                    "sheet_page": ocr_sheet.page_number,
+                    "project_id": project_id,
+                    "reason": "dlp_service_unavailable",
+                    "action_taken": "placeholder_stored",
+                },
+                "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+            }])
+        else:
+            # DLP ran (redaction_count >= 0) — always emit a scan receipt.
+            # This fires whether or not any PII was found (zero-hit path included).
             dlp_total_redactions += redaction_count
-            # Emit per-sheet DLP receipt (Law #2)
             store_receipts([{
                 "id": str(uuid.uuid4()),
                 "outcome": "success",
-                "action_type": "blueprint.ingest.dlp_redacted",
-                "receipt_type": "blueprint.ingest.dlp_redacted",
+                "action_type": "blueprint.ingest.dlp_scanned",
+                "receipt_type": "blueprint.ingest.dlp_scanned",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "risk_tier": "GREEN",
                 "actor_type": "WORKER",
@@ -1233,14 +1334,10 @@ async def _async_ingest_pipeline(
                     "sheet_page": ocr_sheet.page_number,
                     "project_id": project_id,
                     "redaction_count": redaction_count,
+                    "pii_detected": redaction_count > 0,
                 },
                 "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
             }])
-        elif redaction_count == -1:
-            _log.warning(
-                "drew.ingest: DLP unavailable for sheet page=%d project=%s",
-                ocr_sheet.page_number, project_id[:8],
-            )
 
         try:
             await supabase_insert(
@@ -1292,20 +1389,21 @@ async def _async_ingest_pipeline(
                 thumbnail_failures += 1
                 store_receipts([
                     {
-                        "receipt_version": RECEIPT_VERSION,
-                        "receipt_id": str(uuid.uuid4()),
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "event_type": "blueprint.ingest.thumbnail_upload_failed",
-                        "actor": ACTOR_DREW,
+                        "id": str(uuid.uuid4()),
+                        "outcome": "failed",
+                        "action_type": "blueprint.ingest.thumbnail_upload_failed",
+                        "receipt_type": "blueprint.ingest.thumbnail_upload_failed",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "risk_tier": "GREEN",
+                        "actor_type": "WORKER",
+                        "actor_id": ACTOR_DREW,
                         "correlation_id": correlation_id,
-                        "status": "failed",
+                        "suite_id": suite_id,
                         "inputs_hash": _compute_inputs_hash({"sheet_id": sheet_id}),
                         "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
-                        "redactions": [],
                         "metadata": {
                             "sheet_id": sheet_id,
                             "project_id": project_id,
-                            "suite_id": suite_id,
                         },
                     }
                 ])
@@ -1428,6 +1526,10 @@ async def _async_classify_pipeline(
             filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
             order_by="created_at.asc",
         )
+    except asyncio.CancelledError:
+        # P0 fix (Wave 9f): mark stage failed before re-raising on task cancellation.
+        await _mark_stage_failed_best_effort(project_id, "classify", suite_id)
+        raise
     except SupabaseClientError as exc:
         # P0-3: mark failed before raising
         try:
@@ -1667,11 +1769,47 @@ async def _async_see_pipeline(
     from aspire_orchestrator.services.blueprint.seal_detector import detect_engineer_seal
     from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
 
+    # P1 fix: application-level mutex to guard the SELECT→DELETE→INSERT pattern
+    # against concurrent SEE dispatch on the same project_id (single-replica safety).
+    # Multi-replica protection requires a Postgres advisory lock migration — see
+    # _get_stage_lock docstring for the migration path.
+    _see_lock = _get_stage_lock("see", project_id)
+    if _see_lock.locked():
+        # A concurrent SEE run is already in-flight for this project_id.
+        # Emit a skip receipt and return early without touching blueprint_symbols.
+        _log.warning(
+            "drew.see: concurrent run detected for project=%s — emitting skip receipt",
+            project_id[:8],
+        )
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "failed",
+            "action_type": "blueprint.see.concurrent_skip",
+            "receipt_type": "blueprint.see.concurrent_skip",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {"project_id": project_id, "reason": "concurrent_run"},
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+        return {"status": "skipped", "reason": "concurrent_run", "stage": "see", "project_id": project_id}
+
+    # Lock is not held — acquire it for the duration of the SEE body.
+    # asyncio cooperative scheduling means no other coroutine can interleave
+    # between .locked() check and .acquire() call below (no await in between).
+    await _see_lock.acquire()
+
     # P0-3: mark see in_progress in the async pipeline (dispatch path)
     try:
         await set_stage_progress(
             project_id=project_id, stage="see", state="in_progress", suite_id=suite_id
         )
+    except asyncio.CancelledError:
+        _see_lock.release()
+        raise
     except Exception as _sp_exc:
         _log.warning("drew.see: set_stage_progress(in_progress) failed: %s", _sp_exc)
 
@@ -1721,6 +1859,11 @@ async def _async_see_pipeline(
             filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
             order_by="created_at.asc",
         )
+    except asyncio.CancelledError:
+        # P0 fix (Wave 9f): mark see failed before re-raising on task cancellation.
+        await _mark_stage_failed_best_effort(project_id, "see", suite_id)
+        _see_lock.release()
+        raise
     except SupabaseClientError as exc:
         try:
             await set_stage_progress(
@@ -1728,6 +1871,7 @@ async def _async_see_pipeline(
             )
         except Exception:
             pass
+        _see_lock.release()
         raise RuntimeError(f"Failed to load sheets for project {project_id[:8]}: {exc}") from exc
 
     if not sheets:
@@ -1742,6 +1886,7 @@ async def _async_see_pipeline(
             )
         except Exception:
             pass
+        _see_lock.release()
         return {
             "status": "failed",
             "reason": "no_sheets_for_see",
@@ -1765,6 +1910,7 @@ async def _async_see_pipeline(
             )
         except Exception:
             pass
+        _see_lock.release()
         raise RuntimeError(f"pdf_splitter failed in SEE: {type(exc).__name__}") from exc
 
     # Index DB rows by hash (the canonical join key).
@@ -1803,6 +1949,7 @@ async def _async_see_pipeline(
         except SymbolDetectorError as exc:
             # Law #3: fail-closed — weights missing is not a recoverable per-sheet failure;
             # bubble up so the orchestrator can surface a clear operational message.
+            _see_lock.release()
             raise RuntimeError(
                 f"YOLO weights unavailable: {exc}. "
                 "Run `python -c \"from ultralytics import YOLO; YOLO('yolo11m.pt')\"` to fetch."
@@ -1921,6 +2068,7 @@ async def _async_see_pipeline(
     except Exception as _sp_exc:
         _log.warning("drew.see: set_stage_progress(done) failed: %s", _sp_exc)
 
+    _see_lock.release()
     return {
         "status": "ok",
         "stage": "see",
@@ -2067,6 +2215,11 @@ async def _async_reason_pipeline(
             correlation_id=correlation_id,
             model=model,
         )
+    except asyncio.CancelledError:
+        # P0 fix (Wave 9f): mark stage failed before re-raising so sweeper does not
+        # pick up a stuck 'in_progress' row after asyncio task cancellation.
+        await _mark_stage_failed_best_effort(project_id, "reason", suite_id)
+        raise
     except Exception as _exc:
         try:
             await set_stage_progress(
@@ -2218,6 +2371,10 @@ async def _async_procure_pipeline(
             filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
             order_by="created_at.asc",
         )
+    except asyncio.CancelledError:
+        # P0 fix (Wave 9f): mark stage failed before re-raising on task cancellation.
+        await _mark_stage_failed_best_effort(project_id, "procure", suite_id)
+        raise
     except SupabaseClientError as exc:
         raise RuntimeError(f"Failed to load blueprint_materials for project {project_id[:8]}: {exc}") from exc
 
@@ -2228,6 +2385,14 @@ async def _async_procure_pipeline(
             suite_id[:8],
             correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
         )
+        # P1 fix: mark procure done even when no materials exist, so the sweeper
+        # does not treat this project as an orphan past the 3-min threshold.
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="procure", state="done", suite_id=suite_id
+            )
+        except Exception as _sp_exc:
+            _log.warning("drew.procure: set_stage_progress(done) [no-materials] failed: %s", _sp_exc)
         return {
             "status": "ok",
             "stage": "procure",
