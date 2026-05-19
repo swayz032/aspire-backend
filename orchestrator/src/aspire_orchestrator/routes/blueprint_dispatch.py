@@ -1784,13 +1784,32 @@ async def dispatch_blueprint(
         )
 
     # --- Enqueue background pipeline (Law #7: adapter queues, does not decide) ---
+    # Wave 9j FIX: _run_full_pipeline expects pdf_path: Path (Wave 9f refactor)
+    # but the /dispatch path was missed when /upload-complete was migrated.
+    # The kwarg mismatch caused FastAPI's BackgroundTasks to swallow a TypeError
+    # silently, leaving every dispatched project stuck at stage_progress.ingest
+    # = not_started forever. Write to a temp file and pass the path.
+    import tempfile as _tempfile
+    _tmp = _tempfile.NamedTemporaryFile(prefix="dispatch_", suffix=".pdf", delete=False)
+    try:
+        _tmp.write(pdf_bytes)
+        _tmp.flush()
+        _tmp.close()
+        _dispatch_pdf_path = Path(_tmp.name)
+    except Exception:
+        try:
+            Path(_tmp.name).unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
     background_tasks.add_task(
         _run_full_pipeline,
         project_id=project_id,
         suite_id=suite_id,
         office_id=office_id,
         filename=body.filename,
-        pdf_bytes=pdf_bytes,
+        pdf_path=_dispatch_pdf_path,
         correlation_id=correlation_id,
         model=model,
     )
