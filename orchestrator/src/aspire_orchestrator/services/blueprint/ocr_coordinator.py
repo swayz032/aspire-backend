@@ -142,6 +142,60 @@ async def extract_sheet_corpus(
     _llamaparse = None
     _azure = None
 
+    # P2-5 fix: hoist LlamaParse call out of the per-page loop.
+    # Previously, parse_pdf(pdf_bytes) was called once per page → O(N²) API cost.
+    # Now: parse the full PDF once, cache the result in memory for the duration of
+    # this function, and extract the per-page text from the single response.
+    # Fallback paths (Azure DocIntel → PyMuPDF) remain per-page (they need the
+    # per-page image_bytes, not the full PDF).
+    _lp_response_cache: dict | None = None  # {"pages": [...]} or None if LP failed/unavailable
+    _has_any_text_layer_page = any(
+        len(e.text.strip()) >= _TEXT_LAYER_MIN_CHARS for e in extracts
+    )
+    if _has_any_text_layer_page:
+        _lp_attempts = 0
+        while _lp_attempts < 2:
+            try:
+                if _llamaparse is None:
+                    _llamaparse = get_llamaparse_client()
+                _lp_doc_response = await _llamaparse.parse_pdf(
+                    pdf_bytes,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                )
+                if _lp_doc_response.success:
+                    _lp_response_cache = _lp_doc_response.body
+                    logger.info(
+                        "ocr_coordinator: llamaparse hoisted — parsed full PDF, pages=%d, corr=%s",
+                        len((_lp_response_cache or {}).get("pages", [])),
+                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                    )
+                else:
+                    logger.warning(
+                        "ocr_coordinator: hoisted llamaparse parse failed (%s) — per-page Azure/PyMuPDF fallback, corr=%s",
+                        _lp_doc_response.error_code.value if _lp_doc_response.error_code else "unknown",
+                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                    )
+                break
+            except Exception as _exc:
+                if _lp_attempts == 0 and _is_transient_provider_error(_exc):
+                    logger.warning(
+                        "ocr_coordinator: hoisted llamaparse transient error (%s), retrying once, corr=%s",
+                        type(_exc).__name__,
+                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                    )
+                    await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
+                    _lp_attempts += 1
+                    continue
+                logger.warning(
+                    "ocr_coordinator: hoisted llamaparse exception (%s, attempt=%d), per-page Azure/PyMuPDF fallback, corr=%s",
+                    type(_exc).__name__,
+                    _lp_attempts + 1,
+                    correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                )
+                break
+
     for extract in extracts:
         page_num = extract.page_number
         native_char_count = len(extract.text.strip())
@@ -156,74 +210,40 @@ async def extract_sheet_corpus(
 
         ocr_result: OcrSheetResult | None = None
 
-        # Path A: Text-layer PDF → try LlamaParse for richer markdown structure
-        if native_char_count >= _TEXT_LAYER_MIN_CHARS:
-            _lp_attempts = 0
-            while _lp_attempts < 2:  # Fix 3: at most 1 retry (2 attempts total)
-                try:
-                    if _llamaparse is None:
-                        _llamaparse = get_llamaparse_client()
-                    lp_response = await _llamaparse.parse_pdf(
-                        pdf_bytes,  # LlamaParse parses full doc; we extract the matching page
-                        correlation_id=correlation_id,
-                        suite_id=suite_id,
-                        office_id=office_id,
-                    )
-                    if lp_response.success:
-                        # Extract the matching page from LlamaParse response
-                        pages: list[dict] = lp_response.body.get("pages", [])
-                        page_text = ""
-                        for p in pages:
-                            if p.get("page_number") == page_num:
-                                page_text = p.get("text", "")
-                                break
-                        if not page_text:
-                            # Fallback: use native text if page not found in LP result
-                            page_text = extract.text
+        # Path A: Text-layer PDF → use hoisted LlamaParse response (P2-5 fix).
+        # If LP doc response is cached, extract this page's text from it.
+        # If the cache is None (LP failed/unavailable), fall through to Azure (Path B).
+        if native_char_count >= _TEXT_LAYER_MIN_CHARS and _lp_response_cache is not None:
+            pages_list: list[dict] = _lp_response_cache.get("pages", [])
+            page_text = ""
+            for p in pages_list:
+                if p.get("page_number") == page_num:
+                    page_text = p.get("text", "")
+                    break
+            if not page_text:
+                page_text = extract.text  # fallback to native text
 
-                        ocr_result = OcrSheetResult(
-                            page_number=page_num,
-                            text=page_text,
-                            provider="llamaparse",
-                            confidence=0.9,
-                            page_hash=extract.page_hash,
-                            image_bytes=extract.image_bytes,
-                        )
-                        corpus.record_provider("llamaparse")
-                        logger.info(
-                            "ocr_coordinator: page=%d -> llamaparse (success, attempt=%d), corr=%s",
-                            page_num,
-                            _lp_attempts + 1,
-                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                        )
-                    else:
-                        logger.warning(
-                            "ocr_coordinator: page=%d llamaparse failed (%s), falling to azure, corr=%s",
-                            page_num,
-                            lp_response.error_code.value if lp_response.error_code else "unknown",
-                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                        )
-                    break  # success or non-retryable failure — exit retry loop
-                except Exception as exc:
-                    if _lp_attempts == 0 and _is_transient_provider_error(exc):
-                        # Fix 3: single retry on transient errors — wait 1s then retry
-                        logger.warning(
-                            "ocr_coordinator: page=%d llamaparse transient error (%s), retrying once, corr=%s",
-                            page_num,
-                            type(exc).__name__,
-                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                        )
-                        await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
-                        _lp_attempts += 1
-                        continue
-                    logger.warning(
-                        "ocr_coordinator: page=%d llamaparse exception (%s, attempt=%d), falling to azure, corr=%s",
-                        page_num,
-                        type(exc).__name__,
-                        _lp_attempts + 1,
-                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                    )
-                    break  # Fall through to Azure
+            ocr_result = OcrSheetResult(
+                page_number=page_num,
+                text=page_text,
+                provider="llamaparse",
+                confidence=0.9,
+                page_hash=extract.page_hash,
+                image_bytes=extract.image_bytes,
+            )
+            corpus.record_provider("llamaparse")
+            logger.info(
+                "ocr_coordinator: page=%d -> llamaparse (hoisted cache), corr=%s",
+                page_num,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+        elif native_char_count >= _TEXT_LAYER_MIN_CHARS:
+            # LP cache is None (LP failed) — fall through to Azure below
+            logger.info(
+                "ocr_coordinator: page=%d — LP cache unavailable, falling to azure, corr=%s",
+                page_num,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
 
         # Path B: Scanned/image sheet, OR LlamaParse failed → Azure Doc Intelligence
         if ocr_result is None:
