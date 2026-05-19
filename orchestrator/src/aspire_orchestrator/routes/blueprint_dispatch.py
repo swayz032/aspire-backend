@@ -855,7 +855,27 @@ async def _validate_dedup_hit(
         else "not_started"
     )
 
-    if ingest_state == "done":
+    # Wave 9g+: any FAILED stage = broken project, NOT a valid dedup target.
+    # Previous behavior honored dedup as long as ingest=done; a project that
+    # later failed in SEE/REASON/PROCURE got returned to new uploads and the
+    # frontend briefly flashed sheets before re-rendering as failed. Treat
+    # any failed-stage candidate as stale -> NULL hash -> fresh project.
+    failed_stages: list[str] = []
+    if isinstance(candidate_progress, dict):
+        failed_stages = [
+            stage for stage, state in candidate_progress.items() if state == "failed"
+        ]
+    if failed_stages:
+        logger.info(
+            "blueprint_dispatch: dedup candidate has failed stages — treating as stale "
+            "project=%s failed_stages=%s corr=%s",
+            existing_project_id[:8],
+            failed_stages,
+            correlation_id[:8],
+        )
+        ingest_state = f"failed:{','.join(failed_stages)}"
+        # Fall through to the stale-emit + content_hash NULL path below.
+    elif ingest_state == "done":
         try:
             existing_sheets = await supabase_select(
                 "blueprint_sheets",
