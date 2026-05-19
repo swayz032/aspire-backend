@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import tempfile
 import time
+from pathlib import Path
 
 import httpx
 
@@ -173,9 +175,18 @@ async def stream_pdf_for_hash(
 ) -> tuple[bytes, str] | None:
     """Stream the uploaded PDF from Storage, compute SHA-256 in chunks.
 
-    Downloads the object at {suite_id}/{upload_id}/raw.pdf using streaming
-    so the full bytes are never held in memory simultaneously during hashing.
-    After hashing, the accumulated bytes are returned for pipeline dispatch.
+    DEPRECATED (P1-5, 2026-05-19): This helper still materializes the full
+    PDF in memory because it accumulates chunks into a list and joins them
+    before returning. The earlier docstring claim that "full bytes are never
+    held in memory simultaneously" was false. Under concurrent uploads of
+    large PDFs this is an OOM hazard.
+
+    New callers MUST use `stream_pdf_to_temp_file` instead, which streams to
+    disk and returns a temp-file path + hex digest + size without ever
+    creating a single contiguous in-memory buffer of the full PDF.
+
+    This shim is retained for backward compatibility with `routes/blueprint_dispatch.py`
+    callers until they are migrated in a follow-up wave.
 
     Args:
         suite_id:       Tenant UUID — path prefix (Law #6).
@@ -255,4 +266,133 @@ async def stream_pdf_for_hash(
             type(exc).__name__,
             correlation_id[:8],
         )
+        return None
+
+
+async def stream_pdf_to_temp_file(
+    suite_id: str,
+    upload_id: str,
+    correlation_id: str,
+) -> tuple[Path, str, int] | None:
+    """True streaming download: hash + size, persist bytes to a temp file.
+
+    P1-5 (2026-05-19): Replaces stream_pdf_for_hash for callers that need
+    bytes-after-hash. Streams the PDF from Supabase Storage chunk-by-chunk,
+    updates the SHA-256 hasher incrementally, counts bytes, and writes each
+    chunk to a NamedTemporaryFile (delete=False). At no point is a single
+    contiguous in-memory buffer of the full PDF created.
+
+    Args:
+        suite_id:       Tenant UUID — path prefix (Law #6).
+        upload_id:      UUID v4 that was used in /upload-init.
+        correlation_id: Request correlation ID for log tracing.
+
+    Returns:
+        (temp_path, hex_digest, size_bytes) on success. The caller owns
+        the temp file and is responsible for deleting it (use
+        try/finally with temp_path.unlink(missing_ok=True)).
+
+        None if the object cannot be fetched (missing, auth error, timeout).
+
+    Law #9: Never logs raw bytes — only object path, size_bytes,
+            hash_prefix, and duration_ms.
+    """
+    object_path = f"{suite_id}/{upload_id}/raw.pdf"
+    base = _storage_base_url()
+    get_url = f"{base}/object/{_BUCKET}/{object_path}"
+
+    start = time.monotonic()
+    hasher = hashlib.sha256()
+    size_bytes = 0
+
+    # tempfile.NamedTemporaryFile with delete=False so we can close the handle
+    # while keeping the file on disk for the caller to read/move/delete.
+    tmp = tempfile.NamedTemporaryFile(
+        prefix=f"blueprint_{upload_id[:8]}_",
+        suffix=".pdf",
+        delete=False,
+    )
+    tmp_path = Path(tmp.name)
+
+    try:
+        hdrs = _service_headers()
+
+        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+            async with client.stream("GET", get_url, headers=hdrs) as resp:
+                if resp.status_code == 404:
+                    logger.warning(
+                        "pdf_signed_upload: object not found upload_id=%s corr=%s",
+                        upload_id[:8],
+                        correlation_id[:8],
+                    )
+                    tmp.close()
+                    tmp_path.unlink(missing_ok=True)
+                    return None
+
+                if resp.status_code not in (200, 206):
+                    logger.warning(
+                        "pdf_signed_upload: stream GET failed upload_id=%s status=%d corr=%s",
+                        upload_id[:8],
+                        resp.status_code,
+                        correlation_id[:8],
+                    )
+                    tmp.close()
+                    tmp_path.unlink(missing_ok=True)
+                    return None
+
+                async for chunk in resp.aiter_bytes(chunk_size=_STREAM_CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    hasher.update(chunk)
+                    size_bytes += len(chunk)
+                    tmp.write(chunk)
+
+        tmp.flush()
+        tmp.close()
+
+        hex_digest = hasher.hexdigest()
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+
+        # Law #9: never log bytes — log only size + hash prefix
+        logger.info(
+            "pdf_signed_upload: streamed-to-temp upload_id=%s size_bytes=%d hash_prefix=%s duration_ms=%.1f corr=%s",
+            upload_id[:8],
+            size_bytes,
+            hex_digest[:8],
+            duration_ms,
+            correlation_id[:8],
+        )
+        return tmp_path, hex_digest, size_bytes
+
+    except httpx.TimeoutException:
+        logger.warning(
+            "pdf_signed_upload: stream-to-temp timed out upload_id=%s corr=%s",
+            upload_id[:8],
+            correlation_id[:8],
+        )
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        tmp_path.unlink(missing_ok=True)
+        return None
+    except SupabaseClientError:
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        tmp_path.unlink(missing_ok=True)
+        raise  # Missing credentials
+    except Exception as exc:
+        logger.warning(
+            "pdf_signed_upload: stream-to-temp error upload_id=%s error=%s corr=%s",
+            upload_id[:8],
+            type(exc).__name__,
+            correlation_id[:8],
+        )
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        tmp_path.unlink(missing_ok=True)
         return None
