@@ -571,7 +571,7 @@ class Drew:
                 "mean_confidence": result.get("mean_confidence", 0.0),
                 "seal_sheets": result.get("seal_sheets", 0),
                 "missing_inputs": result.get("missing_inputs", 0),
-                "model_version": result.get("model_version", "yolo11m.pt"),
+                "model_version": result.get("model_version", os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11n.pt")),
             },
         )
         # Wave 2.5: mark stage done/failed based on result
@@ -1905,7 +1905,7 @@ async def _async_see_pipeline(
             "mean_confidence": 0.0,
             "seal_sheets": 0,
             "missing_inputs": 0,
-            "model_version": "yolo11m.pt",
+            "model_version": os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11n.pt"),
         }
 
     # Re-render PDF to recover per-sheet 200 DPI PNG bytes.
@@ -1926,133 +1926,235 @@ async def _async_see_pipeline(
         str(row.get("hash")): row for row in sheets if row.get("hash")
     }
 
+    # ───── Wave 9k: per-discipline skip filter ─────
+    # Cover/Title/Specs/Schedule/Addenda sheets carry zero detectable symbols
+    # (text-heavy spec docs / title blocks). Skipping them eliminates wasted
+    # YOLO inference time. Symbol-producing disciplines configurable via env.
+    _disciplines_env = os.getenv("ASPIRE_DREW_SEE_DISCIPLINES", "A,S,M,E,P,FP,C,L")
+    _allowed_disciplines: set[str] = {
+        d.strip() for d in _disciplines_env.split(",") if d.strip()
+    }
+
+    skipped_sheet_ids: list[str] = []
+    skipped_disciplines: dict[str, int] = {}
+    extracts_to_process: list[Any] = []
+    for extract in extracts:
+        sheet_row = sheet_by_hash.get(extract.page_hash)
+        if not sheet_row:
+            continue
+        discipline = sheet_row.get("discipline")
+        if discipline in _allowed_disciplines:
+            extracts_to_process.append(extract)
+        else:
+            skipped_sheet_ids.append(str(sheet_row["id"]))
+            key = str(discipline) if discipline else "unknown"
+            skipped_disciplines[key] = skipped_disciplines.get(key, 0) + 1
+
+    if skipped_sheet_ids:
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "blueprint.see.skipped_disciplines",
+            "receipt_type": "blueprint.see.skipped_disciplines",
+            "event_type": "blueprint.see.skipped_disciplines",
+            "status": "success",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {
+                "project_id": project_id,
+                "skipped_sheet_ids": skipped_sheet_ids,
+                "skipped_disciplines": skipped_disciplines,
+                "reason": "discipline_not_symbol_producing",
+                "allowed_disciplines": sorted(_allowed_disciplines),
+            },
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+        _log.info(
+            "drew.see: skipped %d sheets (disciplines=%s) for project=%s",
+            len(skipped_sheet_ids), skipped_disciplines, project_id[:8],
+        )
+
+    # ───── Wave 9k: bounded concurrent per-sheet inference ─────
+    # YOLO inference is CPU-bound; symbol_detector.detect_symbols offloads
+    # model.predict via asyncio.to_thread, so a bounded gather here yields
+    # genuine parallelism on multi-core CPU (Railway shared CPU benefits
+    # because the event loop is freed for the next sheet while one waits
+    # on its predict thread).
+    _max_concurrency = int(os.getenv("ASPIRE_DREW_SEE_CONCURRENCY", "4"))
+    _max_concurrency = max(1, _max_concurrency)
+    _sem = asyncio.Semaphore(_max_concurrency)
+
+    default_model_version = os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11n.pt")
+
+    async def _process_sheet(extract: Any) -> dict[str, Any]:
+        """Process one sheet: YOLO + scale + seal + DB writes. Returns per-sheet stats."""
+        sheet_row = sheet_by_hash.get(extract.page_hash)
+        # Shouldn't be None — extracts_to_process was filtered — but guard.
+        if not sheet_row:
+            return {"symbols": 0, "conf_sum": 0.0, "conf_count": 0, "seal": 0, "missing": 0, "model": default_model_version}
+        sheet_id = str(sheet_row["id"])
+
+        async with _sem:
+            # ───── 1. YOLO symbol detection ─────
+            try:
+                detections = await detect_symbols(
+                    extract.image_bytes,
+                    sheet_id=sheet_id,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    confidence_floor=confidence_floor,
+                )
+            except SymbolDetectorError as exc:
+                raise RuntimeError(
+                    f"YOLO weights unavailable: {exc}. "
+                    f"Run `python -c \"from ultralytics import YOLO; YOLO('{default_model_version}')\"` to fetch."
+                ) from exc
+
+            local_symbols = 0
+            local_conf_sum = 0.0
+            local_conf_count = 0
+            local_model = default_model_version
+
+            for det in detections:
+                try:
+                    await supabase_insert(
+                        "blueprint_symbols",
+                        {
+                            "id": str(uuid.uuid4()),
+                            "suite_id": suite_id,
+                            "office_id": office_id,
+                            "sheet_id": sheet_id,
+                            "class": det.class_name,
+                            "bbox": det.bbox,
+                            "confidence": det.confidence,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    local_symbols += 1
+                    local_conf_sum += det.confidence
+                    local_conf_count += 1
+                    local_model = det.model_version
+                except SupabaseClientError as exc:
+                    _log.warning(
+                        "drew.see: failed to insert symbol sheet=%s (%s)",
+                        sheet_id[:8],
+                        type(exc).__name__,
+                    )
+
+            # ───── 2. Scale calibration ─────
+            sheet_text: str = str(sheet_row.get("ocr_text") or extract.text or "")
+            calibration = calibrate_scale(extract.image_bytes, sheet_text)
+            local_missing = 0
+            if calibration.scale_factor > 0 and calibration.confidence >= 0.70:
+                scale_str = (
+                    calibration.text_match
+                    or f"{calibration.scale_factor:.6f}{calibration.units}/px"
+                )
+                try:
+                    await supabase_update(
+                        "blueprint_sheets",
+                        f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                        {"scale": scale_str[:120]},
+                    )
+                except SupabaseClientError as exc:
+                    _log.warning(
+                        "drew.see: failed to update scale sheet=%s (%s)",
+                        sheet_id[:8],
+                        type(exc).__name__,
+                    )
+            elif calibration.method != "none" and calibration.confidence < 0.50:
+                try:
+                    await supabase_insert(
+                        "blueprint_missing_inputs",
+                        {
+                            "id": str(uuid.uuid4()),
+                            "suite_id": suite_id,
+                            "project_id": project_id,
+                            "description": (
+                                f"Sheet {sheet_row.get('sheet_number', sheet_id[:8])}: "
+                                f"scale calibration confidence {calibration.confidence:.0%} "
+                                f"(method={calibration.method}). Please confirm drawing scale."
+                            ),
+                            "suggested_resolution": (
+                                "Enter the explicit drawing scale (e.g. 1/4\" = 1'-0\" or 1:50)."
+                            ),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    local_missing = 1
+                except SupabaseClientError as exc:
+                    _log.warning(
+                        "drew.see: failed to insert scale missing_input sheet=%s (%s)",
+                        sheet_id[:8],
+                        type(exc).__name__,
+                    )
+
+            # ───── 3. Engineer-seal detection ─────
+            seal = detect_engineer_seal(extract.image_bytes)
+            local_seal = 0
+            if seal.seal_detected:
+                local_seal = 1
+                try:
+                    await supabase_update(
+                        "blueprint_sheets",
+                        f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                        {"seal_detected": True},
+                    )
+                except SupabaseClientError as exc:
+                    _log.warning(
+                        "drew.see: failed to set seal_detected sheet=%s (%s)",
+                        sheet_id[:8],
+                        type(exc).__name__,
+                    )
+
+            return {
+                "symbols": local_symbols,
+                "conf_sum": local_conf_sum,
+                "conf_count": local_conf_count,
+                "seal": local_seal,
+                "missing": local_missing,
+                "model": local_model,
+            }
+
+    # Run all in-scope sheets concurrently bounded by _max_concurrency.
+    # return_exceptions=True so a single sheet failure doesn't kill the batch;
+    # CancelledError propagates correctly when the outer wait_for fires.
+    per_sheet_results = await asyncio.gather(
+        *(_process_sheet(e) for e in extracts_to_process),
+        return_exceptions=True,
+    )
+
+    # If the outer wait_for cancelled us, every task above has been cancelled
+    # too. Re-raise so the stage-failed receipt path in see() runs.
+    for r in per_sheet_results:
+        if isinstance(r, asyncio.CancelledError):
+            _see_lock.release()
+            raise r
+
     total_symbols = 0
     seal_sheets = 0
     missing_inputs = 0
     confidence_sum = 0.0
     confidence_count = 0
-    model_version = "yolo11m.pt"
-
-    for extract in extracts:
-        sheet_row = sheet_by_hash.get(extract.page_hash)
-        if not sheet_row:
-            _log.info(
-                "drew.see: no DB row matches hash=%s page=%d (likely page added post-INGEST)",
-                extract.page_hash[:8],
-                extract.page_number,
-            )
-            continue
-        sheet_id = str(sheet_row["id"])
-
-        # ───── 1. YOLO symbol detection ─────
-        try:
-            detections = await detect_symbols(
-                extract.image_bytes,
-                sheet_id=sheet_id,
-                correlation_id=correlation_id,
-                suite_id=suite_id,
-                office_id=office_id,
-                confidence_floor=confidence_floor,
-            )
-        except SymbolDetectorError as exc:
-            # Law #3: fail-closed — weights missing is not a recoverable per-sheet failure;
-            # bubble up so the orchestrator can surface a clear operational message.
+    model_version = default_model_version
+    for r in per_sheet_results:
+        if isinstance(r, BaseException):
+            # SymbolDetectorError wrapped as RuntimeError surfaces here; fail-closed
+            # per Law #3 — bubble up so see() can mark the stage failed.
             _see_lock.release()
-            raise RuntimeError(
-                f"YOLO weights unavailable: {exc}. "
-                "Run `python -c \"from ultralytics import YOLO; YOLO('yolo11m.pt')\"` to fetch."
-            ) from exc
-
-        for det in detections:
-            try:
-                await supabase_insert(
-                    "blueprint_symbols",
-                    {
-                        "id": str(uuid.uuid4()),
-                        "suite_id": suite_id,
-                        "office_id": office_id,
-                        "sheet_id": sheet_id,
-                        "class": det.class_name,
-                        "bbox": det.bbox,
-                        "confidence": det.confidence,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
-                total_symbols += 1
-                confidence_sum += det.confidence
-                confidence_count += 1
-                model_version = det.model_version
-            except SupabaseClientError as exc:
-                _log.warning(
-                    "drew.see: failed to insert symbol sheet=%s (%s)",
-                    sheet_id[:8],
-                    type(exc).__name__,
-                )
-
-        # ───── 2. Scale calibration ─────
-        sheet_text: str = str(sheet_row.get("ocr_text") or extract.text or "")
-        calibration = calibrate_scale(extract.image_bytes, sheet_text)
-        if calibration.scale_factor > 0 and calibration.confidence >= 0.70:
-            scale_str = (
-                calibration.text_match
-                or f"{calibration.scale_factor:.6f}{calibration.units}/px"
-            )
-            try:
-                await supabase_update(
-                    "blueprint_sheets",
-                    f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
-                    {"scale": scale_str[:120]},
-                )
-            except SupabaseClientError as exc:
-                _log.warning(
-                    "drew.see: failed to update scale sheet=%s (%s)",
-                    sheet_id[:8],
-                    type(exc).__name__,
-                )
-        elif calibration.method != "none" and calibration.confidence < 0.50:
-            # Low-confidence or disagreement → contractor must confirm.
-            try:
-                await supabase_insert(
-                    "blueprint_missing_inputs",
-                    {
-                        "id": str(uuid.uuid4()),
-                        "suite_id": suite_id,
-                        "project_id": project_id,
-                        "description": (
-                            f"Sheet {sheet_row.get('sheet_number', sheet_id[:8])}: "
-                            f"scale calibration confidence {calibration.confidence:.0%} "
-                            f"(method={calibration.method}). Please confirm drawing scale."
-                        ),
-                        "suggested_resolution": (
-                            "Enter the explicit drawing scale (e.g. 1/4\" = 1'-0\" or 1:50)."
-                        ),
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
-                missing_inputs += 1
-            except SupabaseClientError as exc:
-                _log.warning(
-                    "drew.see: failed to insert scale missing_input sheet=%s (%s)",
-                    sheet_id[:8],
-                    type(exc).__name__,
-                )
-
-        # ───── 3. Engineer-seal detection ─────
-        seal = detect_engineer_seal(extract.image_bytes)
-        if seal.seal_detected:
-            seal_sheets += 1
-            try:
-                await supabase_update(
-                    "blueprint_sheets",
-                    f"id=eq.{sheet_id}&suite_id=eq.{suite_id}",
-                    {"seal_detected": True},
-                )
-            except SupabaseClientError as exc:
-                _log.warning(
-                    "drew.see: failed to set seal_detected sheet=%s (%s)",
-                    sheet_id[:8],
-                    type(exc).__name__,
-                )
+            raise r
+        total_symbols += r["symbols"]
+        seal_sheets += r["seal"]
+        missing_inputs += r["missing"]
+        confidence_sum += r["conf_sum"]
+        confidence_count += r["conf_count"]
+        if r["model"]:
+            model_version = r["model"]
 
     mean_conf = (confidence_sum / confidence_count) if confidence_count else 0.0
 
