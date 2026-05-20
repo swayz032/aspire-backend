@@ -44,9 +44,13 @@ _model_cache: dict = {}
 @app.function(
     image=image,
     gpu="T4",
-    max_containers=10,       # cap so we don't accidentally fan out infinitely
-    scaledown_window=300,    # keep warm 5 min between calls
-    timeout=60,              # hard ceiling per call
+    max_containers=10,        # cap so we don't accidentally fan out infinitely
+    min_containers=2,         # Wave 10b: 2 always warm — kills the 6-8s cold-start tax
+                              # on the first sheet of every pipeline run.
+    scaledown_window=300,     # keep warm 5 min between calls (above min_containers)
+    enable_memory_snapshot=True,  # Wave 10b: GPU memory snapshot → 10x faster cold-start
+                                  # when scaling above keep_warm (39-sheet bursts).
+    timeout=60,               # hard ceiling per call
 )
 @modal.fastapi_endpoint(method="POST")
 async def detect_symbols(request) -> dict:

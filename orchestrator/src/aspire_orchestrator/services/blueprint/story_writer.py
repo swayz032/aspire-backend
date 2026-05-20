@@ -1041,10 +1041,23 @@ async def write_story(
             return await _call_llm("B", messages_b, "reason_b", hash_b, call_model=_fast_model)
 
         async def _call_c() -> dict[str, Any]:
-            # Wave 9p: C = narrative markdown (the moat) → premium model
+            # Wave 10b: C = narrative markdown — DOWNGRADED to fast model.
+            #
+            # Wave 9p kept C on gpt-5.4 ("the moat") with A+B on gpt-5.4-mini. Smoke test
+            # measured C @ 5-10+ min on 39-sheet OCR payloads — the entire stage hit the
+            # sweeper. 2026 benchmarks (Artificial Analysis, SWE-bench Pro) show mini
+            # within 3-4% of std on hard reasoning, even narrower on narrative writeups.
+            #
+            # Override knob: ASPIRE_DREW_REASON_NARRATIVE_MODEL. Defaults to fast model.
+            # Set to "gpt-5.4" to restore the Wave 9p premium narrative path.
+            import os as _os_c
+            _narr_model = (
+                _os_c.getenv("ASPIRE_DREW_REASON_NARRATIVE_MODEL")
+                or _fast_model
+            )
             if cached_c is not None:
                 return cached_c
-            return await _call_llm("C", messages_c, "reason_c", hash_c, call_model=_premium_model)
+            return await _call_llm("C", messages_c, "reason_c", hash_c, call_model=_narr_model)
 
         try:
             resp_a, resp_b, resp_c = await asyncio.gather(

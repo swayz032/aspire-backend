@@ -371,12 +371,13 @@ _ACCEPTED_MIME_TYPES: frozenset[str] = frozenset({
 _STAGE_TIMEOUTS: dict[str, int] = {
     "ingest": 8 * 60,    # 8 minutes  — OCR + sheet DB writes
     "classify": 3 * 60,  # 3 minutes  — LLM discipline tagging (gpt-5.4 batches)
-    "see": 10 * 60,      # 10 minutes — YOLOv11 CPU inference on 38+ sheets at 200 DPI
-                         # (measured ~5s/sheet * 38 sheets ~= 190s; 3min was too tight,
-                         # Wave 10 fine-tune + parallelism can bring this back down)
-    "reason": 10 * 60,   # 10 minutes — gpt-5.4 takes ~5min per parallel call on 39-sheet
-                         # payloads; the 3-parallel architecture (Wave 9l) caps stage at
-                         # max(call_A, call_B, call_C) so 10 min covers worst-case headroom.
+    "see": 5 * 60,       # Wave 10b: 5 minutes — Modal T4 GPU at ~300ms/sheet with 10
+                         # parallel containers + 2 always-warm. Local-CPU fallback path
+                         # still fits in 5 min on yolo11n for 39 sheets.
+    "reason": 5 * 60,    # Wave 10b: 5 minutes — map-reduce architecture caps stage at
+                         # max(per-discipline maps ~90s) + reduce (~60s) = ~150s. 5min
+                         # is 2x safety. Bumped down from 10min to surface real failures
+                         # faster (sweeper used to mask hung gpt-5.4 calls).
     "procure": 2 * 60,   # 2 minutes  — tariff + supplier matching via Adam
 }
 

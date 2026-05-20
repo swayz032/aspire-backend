@@ -141,6 +141,7 @@ async def detect_symbols(
     suite_id: str,
     office_id: str | None = None,
     confidence_floor: float = _CONFIDENCE_FLOOR,
+    emit_provider_receipt: bool = True,
 ) -> list[SymbolDetection]:
     """Run YOLOv11 on a sheet image and return filtered detections.
 
@@ -209,6 +210,42 @@ async def detect_symbols(
                 modal_result.elapsed_ms,
                 correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
             )
+            # Wave 10b: per-sheet Modal-invoked receipt so we know GPU was actually
+            # called (was flying blind before). Cheap (one receipt per sheet) and
+            # gated behind emit_provider_receipt so unit tests can skip.
+            if emit_provider_receipt:
+                try:
+                    import uuid as _uuid
+                    from datetime import datetime as _dt, timezone as _tz
+                    from aspire_orchestrator.services.receipt_store import store_receipts as _store_receipts
+                    _store_receipts([{
+                        "id": str(_uuid.uuid4()),
+                        "outcome": "success",
+                        "action_type": "blueprint.see.modal_invoked",
+                        "receipt_type": "blueprint.see.modal_invoked",
+                        "created_at": _dt.now(_tz.utc).isoformat(),
+                        "risk_tier": "GREEN",
+                        "actor_type": "WORKER",
+                        "actor_id": "drew",
+                        "correlation_id": correlation_id,
+                        "suite_id": suite_id,
+                        "office_id": office_id,
+                        "metadata": {
+                            "sheet_id": sheet_id,
+                            "provider": "modal",
+                            "model_version": modal_result.model_version,
+                            "elapsed_ms": modal_result.elapsed_ms,
+                            "detection_count": len(detections),
+                            "image_size": list(modal_result.image_size),
+                        },
+                        "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                    }])
+                except Exception as _rec_exc:  # noqa: BLE001 — receipt emission must never break inference
+                    logger.warning(
+                        "symbol_detector[modal]: receipt emission failed (%s) sheet=%s",
+                        type(_rec_exc).__name__,
+                        sheet_id[:8] if len(sheet_id) > 8 else sheet_id,
+                    )
             return detections
         # else: fall through to local CPU inference
 

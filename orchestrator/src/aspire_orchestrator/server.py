@@ -261,8 +261,8 @@ _SWEEP_STAGE_THRESHOLDS_MINUTES: dict[str, int] = {
     # Rule: sweeper_threshold = stage_timeout + 50% safety buffer (minimum 3 min).
     "ingest": 15,    # stage timeout 8 min  → sweeper 15 min  (88% buffer)
     "classify": 6,   # stage timeout 3 min  → sweeper 6 min   (100% buffer)
-    "see": 15,       # stage timeout 10 min → sweeper 15 min  (50% buffer)
-    "reason": 15,    # stage timeout 10 min → sweeper 15 min  (50% buffer)
+    "see": 8,        # Wave 10b: stage timeout 5 min → sweeper 8 min (60% buffer)
+    "reason": 8,     # Wave 10b: stage timeout 5 min → sweeper 8 min (60% buffer)
     "procure": 5,    # stage timeout 2 min  → sweeper 5 min   (150% buffer)
 }
 _SWEEP_STAGES_ORDER: tuple[str, ...] = ("ingest", "classify", "see", "reason", "procure")
