@@ -669,57 +669,107 @@ async def _run_full_pipeline(
             correlation_id=correlation_id,
         )
 
-        # SEE — YOLOv11 symbol detection + scale + seal
-        _current_stage = "see"
-        await _run_stage_with_timeout(
-            stage="see",
-            coro=_async_see_pipeline(
-                project_id=project_id,
-                suite_id=suite_id,
-                office_id=office_id,
-                pdf_bytes=pdf_bytes,
-                confidence_floor=0.70,
-                correlation_id=correlation_id,
-            ),
-            project_id=project_id,
+        # Wave 9o — Progressive Pipeline fan-out.
+        # After CLASSIFY completes, SEE runs in parallel with REASON+PROCURE.
+        # The contractor's story (REASON output) arrives without waiting for
+        # SEE's CPU YOLO inference. All 5 stages still run — no removal.
+        _current_stage = "see_reason_procure_fan_out"
+        _fan_out_at = datetime.now(timezone.utc).isoformat()
+        _cut_receipt(
             suite_id=suite_id,
             office_id=office_id,
             correlation_id=correlation_id,
+            action_type="blueprint.pipeline.progressive_dispatch",
+            outcome="success",
+            redacted_inputs={"project_id": project_id},
+            redacted_outputs={
+                "see_branch_started_at": _fan_out_at,
+                "reason_branch_started_at": _fan_out_at,
+                "see_timeout_s": _STAGE_TIMEOUTS["see"],
+                "reason_timeout_s": _STAGE_TIMEOUTS["reason"],
+                "procure_timeout_s": _STAGE_TIMEOUTS["procure"],
+            },
         )
 
-        # REASON — story_writer (the moat)
-        _current_stage = "reason"
-        await _run_stage_with_timeout(
-            stage="reason",
-            coro=_async_reason_pipeline(
+        async def _see_branch() -> None:
+            await _run_stage_with_timeout(
+                stage="see",
+                coro=_async_see_pipeline(
+                    project_id=project_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    pdf_bytes=pdf_bytes,
+                    confidence_floor=0.70,
+                    correlation_id=correlation_id,
+                ),
                 project_id=project_id,
                 suite_id=suite_id,
                 office_id=office_id,
-                model=model,
                 correlation_id=correlation_id,
-            ),
-            project_id=project_id,
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
+            )
+
+        async def _reason_procure_branch() -> None:
+            # REASON first (story is the moat — contractor sees this at ~3:30)
+            await _run_stage_with_timeout(
+                stage="reason",
+                coro=_async_reason_pipeline(
+                    project_id=project_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    model=model,
+                    correlation_id=correlation_id,
+                ),
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+            )
+            # PROCURE chains after REASON (it reads material lines REASON produces).
+            # PROCURE does NOT wait for SEE — supplier match doesn't need symbols.
+            await _run_stage_with_timeout(
+                stage="procure",
+                coro=_async_procure_pipeline(
+                    project_id=project_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    geofence_miles=25.0,
+                    correlation_id=correlation_id,
+                ),
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+            )
+
+        # Run both branches concurrently. return_exceptions=True so a SEE failure
+        # doesn't kill REASON+PROCURE, and vice versa. Each branch's
+        # _run_stage_with_timeout has already emitted its own per-stage failure
+        # receipt before raising.
+        _branch_results = await asyncio.gather(
+            _see_branch(),
+            _reason_procure_branch(),
+            return_exceptions=True,
         )
 
-        # PROCURE — tariff flags + supplier match
-        _current_stage = "procure"
-        await _run_stage_with_timeout(
-            stage="procure",
-            coro=_async_procure_pipeline(
-                project_id=project_id,
-                suite_id=suite_id,
-                office_id=office_id,
-                geofence_miles=25.0,
-                correlation_id=correlation_id,
-            ),
-            project_id=project_id,
-            suite_id=suite_id,
-            office_id=office_id,
-            correlation_id=correlation_id,
-        )
+        # CancelledError check FIRST — must re-raise to honor asyncio shutdown
+        # contract (Python 3.8+ treats CancelledError as BaseException; gather
+        # with return_exceptions=True will catch it but we must not swallow it).
+        for _r in _branch_results:
+            if isinstance(_r, asyncio.CancelledError):
+                raise _r
+
+        # Log any other branch failures — receipts were already emitted inside
+        # _run_stage_with_timeout, this is just operational logging.
+        _branch_names = ("see", "reason_procure")
+        for _i, _r in enumerate(_branch_results):
+            if isinstance(_r, Exception):
+                logger.warning(
+                    "blueprint_dispatch: %s branch failed project=%s corr=%s error=%s",
+                    _branch_names[_i],
+                    project_id[:8],
+                    correlation_id[:8],
+                    type(_r).__name__,
+                )
 
     except asyncio.CancelledError as exc:
         # P0 fix (Wave 9f): CancelledError is BaseException in Python 3.8+.
