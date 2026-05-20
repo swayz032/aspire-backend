@@ -128,19 +128,44 @@ async def _resolve_el_scope(
     # The legacy provider_connections table doesn't exist in this Supabase
     # project; the canonical mapping lives on tenant_phone_numbers.
     # attached_to_agent_id (set when an agent is wired to a phone number).
+    #
+    # Law #6 (Tenant Isolation): when the same EL agent is shared across
+    # multiple tenant phone numbers (e.g. a shared Sarah-Receptionist agent),
+    # an agent-only lookup is AMBIGUOUS and we cannot safely pick a suite.
+    # We FAIL CLOSED (Law #3) rather than deterministically attribute the
+    # call to whichever suite was purchased first. This prevents cross-tenant
+    # leakage when EL's webhook payload omits called_number.
     if agent_id:
         try:
             rows = await supabase_select(
                 table="tenant_phone_numbers",
                 filters={"attached_to_agent_id": agent_id, "status": "active"},
-                limit=1,
+                limit=10,  # fetch enough to detect ambiguity, not just the first
             )
             if rows:
-                row = rows[0]
-                return ScopedIdentity(
-                    tenant_id=UUID(row["tenant_id"]),
-                    suite_id=UUID(row["suite_id"]),
-                    office_id=UUID(row["office_id"]),
+                distinct_suites = {str(r["suite_id"]) for r in rows if r.get("suite_id")}
+                if len(distinct_suites) == 1:
+                    row = rows[0]
+                    return ScopedIdentity(
+                        tenant_id=UUID(row["tenant_id"]),
+                        suite_id=UUID(row["suite_id"]),
+                        office_id=UUID(row["office_id"]),
+                    )
+                # Multiple suites share this agent — refuse to guess.
+                logger.error(
+                    "el_scope_ambiguous_agent agent_id=%s suites=%s called_number=%s "
+                    "— refusing to attribute call (Law #6 fail-closed)",
+                    agent_id,
+                    sorted(distinct_suites),
+                    called_number,
+                )
+                raise IngestionError(
+                    f"ElevenLabs agent {agent_id!r} is attached to multiple "
+                    f"tenants ({len(distinct_suites)} suites) and the webhook "
+                    f"payload did not include a called_number to disambiguate "
+                    f"(called_number={called_number!r}).",
+                    code="AMBIGUOUS_AGENT_NO_CALLED_NUMBER",
+                    status_code=422,
                 )
         except SupabaseClientError as exc:
             logger.warning(

@@ -131,6 +131,64 @@ class TestELResolveScope:
                 await _resolve_el_scope(None, "agent_unknown")
         assert exc_info.value.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_shared_agent_without_called_number_fails_closed(self) -> None:
+        """Law #6 regression: a shared EL agent with no called_number must
+        FAIL CLOSED rather than silently attribute the call to the first
+        suite (which previously caused cross-tenant leakage).
+        """
+        suite_b = UUID("bb000000-0000-0000-0000-000000000002")
+        phone_row_b = {
+            "tenant_id": "bb000000-0000-0000-0000-000000000001",
+            "suite_id": str(suite_b),
+            "office_id": "bb000000-0000-0000-0000-000000000003",
+            "phone_number": "+10000000001",
+            "attached_to_agent_id": "agent_shared",
+            "status": "active",
+        }
+        phone_row_a = {
+            **PHONE_ROW_A,
+            "attached_to_agent_id": "agent_shared",
+            "status": "active",
+        }
+
+        # called_number is None so Step 1 is skipped entirely — the FIRST
+        # supabase_select call is the agent_id lookup, which must return
+        # both rows so the ambiguity check trips.
+        with patch(
+            "aspire_orchestrator.services.ingestion.elevenlabs_ingestion.supabase_select",
+            new=AsyncMock(return_value=[phone_row_a, phone_row_b]),
+        ):
+            with pytest.raises(IngestionError) as exc_info:
+                await _resolve_el_scope(None, "agent_shared")
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.code == "AMBIGUOUS_AGENT_NO_CALLED_NUMBER"
+
+    @pytest.mark.asyncio
+    async def test_single_suite_agent_still_resolves(self) -> None:
+        """Single-tenant agent (most common case) must still resolve cleanly
+        even when multiple phone rows exist for the same suite.
+        """
+        row_one = {
+            **PHONE_ROW_A,
+            "attached_to_agent_id": "agent_single",
+            "status": "active",
+        }
+        row_two = {
+            **PHONE_ROW_A,
+            "phone_number": "+12125550199",
+            "attached_to_agent_id": "agent_single",
+            "status": "active",
+        }
+
+        with patch(
+            "aspire_orchestrator.services.ingestion.elevenlabs_ingestion.supabase_select",
+            new=AsyncMock(return_value=[row_one, row_two]),
+        ):
+            scope = await _resolve_el_scope(None, "agent_single")
+        assert scope.suite_id == SUITE_A
+
 
 class TestELIngest:
 
