@@ -17,6 +17,14 @@ Fix 3 (2026-05-19): Single transient retry on 5xx / timeout / connection errors.
   - The LlamaParse → Azure → PyMuPDF fallback chain already handles degraded-mode
     coverage; this single-retry is purely for transient network blips.
 
+Wave 9n (2026-05-20): Parallel Azure DocIntel via asyncio.gather + Semaphore.
+  - The sequential per-sheet for-loop is replaced by a concurrent gather.
+  - ASPIRE_DREW_OCR_CONCURRENCY (default 8) limits concurrent Azure requests.
+  - Azure S0 tier allows 15 req/s per region; 8 concurrent is safe headroom.
+  - Sheet order is preserved: gather returns results in task-submission order.
+  - All existing receipt emissions (azure_doc_intel_used, dlp_scanned) are
+    preserved inside the per-sheet coroutine.
+
 Note on no-fallback principle: The no-fallback memory rule carves out
 "non-deterministic systems (LLM instruction-following)" as appropriate for
 belt-and-suspenders. OCR quality is equally non-deterministic — a scanned sheet
@@ -155,6 +163,12 @@ async def extract_sheet_corpus(
     if _primary_ocr not in ("azure", "llamaparse"):
         _primary_ocr = "azure"
 
+    # Wave 9n: per-sheet OCR concurrency limit.
+    # Azure S0 allows 15 req/s per region; default 8 is safe headroom.
+    _ocr_concurrency = int(_os_mod.getenv("ASPIRE_DREW_OCR_CONCURRENCY", "8"))
+    _ocr_concurrency = max(1, _ocr_concurrency)
+    _ocr_sem = asyncio.Semaphore(_ocr_concurrency)
+
     # P2-5 fix: hoist LlamaParse call out of the per-page loop (O(N²) → O(N)).
     # Only relevant when LlamaParse is the primary provider. When Azure is
     # primary the LP hoist is skipped — LP is still available as a fallback
@@ -207,7 +221,18 @@ async def extract_sheet_corpus(
                 )
                 break
 
-    for extract in extracts:
+    # Wave 9n: per-sheet OCR coroutine — runs Azure (or LP cache / PyMuPDF fallback)
+    # for a single SheetExtract. Returns OcrSheetResult.
+    # All receipt emissions are preserved here; gather order matches extracts order.
+    async def _ocr_one_sheet(extract: SheetExtract) -> OcrSheetResult:
+        """Process a single sheet through the OCR provider chain.
+
+        Runs inside asyncio.gather with _ocr_sem to bound concurrency.
+        Provider chain:
+          Path A — LlamaParse hoisted cache (only when _primary_ocr=llamaparse)
+          Path B — Azure Doc Intelligence (primary when _primary_ocr=azure)
+          Path C — PyMuPDF native text (last resort)
+        """
         page_num = extract.page_number
         native_char_count = len(extract.text.strip())
 
@@ -223,18 +248,11 @@ async def extract_sheet_corpus(
 
         # Wave 9m Path 0 (NEW PRIMARY when ASPIRE_DREW_OCR_PROVIDER=azure):
         # Run Azure Doc Intelligence on every sheet first. LP cache + PyMuPDF
-        # below act as fallbacks only when Azure fails for this sheet. The
-        # Azure block (Path B, lines ~270+) handles the actual call + retry +
-        # blueprint.ingest.azure_doc_intel_used receipt emission. We just
-        # short-circuit Path A here so Azure gets the first chance.
+        # below act as fallbacks only when Azure fails for this sheet.
         if _primary_ocr == "azure":
             # Skip Path A entirely — fall directly through to Path B (Azure).
-            # If Azure fails, Path B sets ocr_result=None and Path C (PyMuPDF
-            # native) runs as the final safety net.
             pass
         # Path A: Text-layer PDF → use hoisted LlamaParse response (P2-5 fix).
-        # If LP doc response is cached, extract this page's text from it.
-        # If the cache is None (LP failed/unavailable), fall through to Azure (Path B).
         if native_char_count >= _TEXT_LAYER_MIN_CHARS and _lp_response_cache is not None:
             pages_list: list[dict] = _lp_response_cache.get("pages", [])
             page_text = ""
@@ -243,8 +261,7 @@ async def extract_sheet_corpus(
                     page_text = p.get("text", "")
                     break
             if not page_text:
-                page_text = extract.text  # fallback to native text
-
+                page_text = extract.text
             ocr_result = OcrSheetResult(
                 page_number=page_num,
                 text=page_text,
@@ -268,92 +285,92 @@ async def extract_sheet_corpus(
             )
 
         # Path B: Scanned/image sheet, OR LlamaParse failed → Azure Doc Intelligence
+        # Wave 9n: _ocr_sem gates Azure calls so at most _ocr_concurrency are in-flight.
         if ocr_result is None:
-            _az_attempts = 0
-            while _az_attempts < 2:  # Fix 3: at most 1 retry (2 attempts total)
-                try:
-                    if _azure is None:
-                        _azure = get_azure_doc_intel_client()
-                    az_response = await _azure.analyze_layout(
-                        extract.image_bytes,
-                        correlation_id=correlation_id,
-                        suite_id=suite_id,
-                        office_id=office_id,
-                    )
-                    if az_response.success:
-                        analyze_result = az_response.body.get("analyzeResult", {})
-                        # Extract text from Azure content field
-                        azure_text: str = analyze_result.get("content", "")
-                        ocr_result = OcrSheetResult(
-                            page_number=page_num,
-                            text=azure_text,
-                            provider="azure_doc_intel",
-                            confidence=0.75,
-                            page_hash=extract.page_hash,
-                            image_bytes=extract.image_bytes,
+            async with _ocr_sem:
+                # Re-check inside semaphore: another coroutine may have set the Azure
+                # client while this one was waiting — that's fine, the client is stateless.
+                _az_client = get_azure_doc_intel_client()
+                _az_attempts = 0
+                while _az_attempts < 2:  # Fix 3: at most 1 retry (2 attempts total)
+                    try:
+                        az_response = await _az_client.analyze_layout(
+                            extract.image_bytes,
+                            correlation_id=correlation_id,
+                            suite_id=suite_id,
+                            office_id=office_id,
                         )
-                        corpus.record_provider("azure_doc_intel")
-                        logger.info(
-                            "ocr_coordinator: page=%d -> azure_doc_intel (success, attempt=%d), corr=%s",
+                        if az_response.success:
+                            analyze_result = az_response.body.get("analyzeResult", {})
+                            azure_text: str = analyze_result.get("content", "")
+                            ocr_result = OcrSheetResult(
+                                page_number=page_num,
+                                text=azure_text,
+                                provider="azure_doc_intel",
+                                confidence=0.75,
+                                page_hash=extract.page_hash,
+                                image_bytes=extract.image_bytes,
+                            )
+                            corpus.record_provider("azure_doc_intel")
+                            logger.info(
+                                "ocr_coordinator: page=%d -> azure_doc_intel (success, attempt=%d), corr=%s",
+                                page_num,
+                                _az_attempts + 1,
+                                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                            )
+                            # Law #2: emit per-sheet Azure usage receipt for observability.
+                            try:
+                                from aspire_orchestrator.services.receipt_store import store_receipts as _sr
+                                _sr([{
+                                    "id": str(_uuid_mod.uuid4()),
+                                    "outcome": "success",
+                                    "action_type": "blueprint.ingest.azure_doc_intel_used",
+                                    "receipt_type": "blueprint.ingest.azure_doc_intel_used",
+                                    "created_at": _datetime_mod.now(_timezone_mod.utc).isoformat(),
+                                    "risk_tier": "GREEN",
+                                    "actor_type": "WORKER",
+                                    "actor_id": "skillpack:drew-blueprint",
+                                    "correlation_id": correlation_id,
+                                    "suite_id": suite_id,
+                                    "metadata": {
+                                        "page_number": page_num,
+                                        "page_hash": extract.page_hash[:8],
+                                        "native_char_count": native_char_count,
+                                        "scanned": native_char_count < 50,
+                                        "attempt": _az_attempts + 1,
+                                        "azure_char_count": len(azure_text),
+                                    },
+                                }])
+                            except Exception:
+                                pass  # Receipt emission is best-effort; never block OCR
+                        else:
+                            logger.warning(
+                                "ocr_coordinator: page=%d azure failed (%s), using pymupdf native, corr=%s",
+                                page_num,
+                                az_response.error_code.value if az_response.error_code else "unknown",
+                                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                            )
+                        break  # success or non-retryable failure — exit retry loop
+                    except Exception as exc:
+                        if _az_attempts == 0 and _is_transient_provider_error(exc):
+                            # Fix 3: single retry on transient errors — wait 1s then retry
+                            logger.warning(
+                                "ocr_coordinator: page=%d azure transient error (%s), retrying once, corr=%s",
+                                page_num,
+                                type(exc).__name__,
+                                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+                            )
+                            await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
+                            _az_attempts += 1
+                            continue
+                        logger.warning(
+                            "ocr_coordinator: page=%d azure exception (%s, attempt=%d), using pymupdf native, corr=%s",
                             page_num,
+                            type(exc).__name__,
                             _az_attempts + 1,
                             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                         )
-                        # Law #2: emit per-sheet Azure usage receipt for observability.
-                        # Imported lazily to avoid circular dependency (ocr_coordinator
-                        # is imported inside ingest — store_receipts is a simple in-process store).
-                        try:
-                            from aspire_orchestrator.services.receipt_store import store_receipts as _sr
-                            _sr([{
-                                "id": str(_uuid_mod.uuid4()),
-                                "outcome": "success",
-                                "action_type": "blueprint.ingest.azure_doc_intel_used",
-                                "receipt_type": "blueprint.ingest.azure_doc_intel_used",
-                                "created_at": _datetime_mod.now(_timezone_mod.utc).isoformat(),
-                                "risk_tier": "GREEN",
-                                "actor_type": "WORKER",
-                                "actor_id": "skillpack:drew-blueprint",
-                                "correlation_id": correlation_id,
-                                "suite_id": suite_id,
-                                "metadata": {
-                                    "page_number": page_num,
-                                    "page_hash": extract.page_hash[:8],
-                                    "native_char_count": native_char_count,
-                                    "scanned": native_char_count < 50,
-                                    "attempt": _az_attempts + 1,
-                                    "azure_char_count": len(azure_text),
-                                },
-                            }])
-                        except Exception:
-                            pass  # Receipt emission is best-effort; never block OCR
-                    else:
-                        logger.warning(
-                            "ocr_coordinator: page=%d azure failed (%s), using pymupdf native, corr=%s",
-                            page_num,
-                            az_response.error_code.value if az_response.error_code else "unknown",
-                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                        )
-                    break  # success or non-retryable failure — exit retry loop
-                except Exception as exc:
-                    if _az_attempts == 0 and _is_transient_provider_error(exc):
-                        # Fix 3: single retry on transient errors — wait 1s then retry
-                        logger.warning(
-                            "ocr_coordinator: page=%d azure transient error (%s), retrying once, corr=%s",
-                            page_num,
-                            type(exc).__name__,
-                            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                        )
-                        await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
-                        _az_attempts += 1
-                        continue
-                    logger.warning(
-                        "ocr_coordinator: page=%d azure exception (%s, attempt=%d), using pymupdf native, corr=%s",
-                        page_num,
-                        type(exc).__name__,
-                        _az_attempts + 1,
-                        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-                    )
-                    break  # Fall through to PyMuPDF
+                        break  # Fall through to PyMuPDF
 
         # Path C: Last resort — PyMuPDF native text (already extracted by splitter)
         if ocr_result is None:
@@ -372,7 +389,37 @@ async def extract_sheet_corpus(
                 correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
             )
 
-        corpus.sheets.append(ocr_result)
+        return ocr_result
+
+    # Wave 9n: run all sheets concurrently, preserving order.
+    # return_exceptions=True lets a single sheet failure degrade to PyMuPDF
+    # rather than abort the entire corpus.
+    _sheet_results = await asyncio.gather(
+        *(_ocr_one_sheet(e) for e in extracts),
+        return_exceptions=True,
+    )
+
+    for _idx, _res in enumerate(_sheet_results):
+        if isinstance(_res, BaseException):
+            # Unexpected coroutine failure — fall back to PyMuPDF native for this sheet.
+            _extract = extracts[_idx]
+            logger.warning(
+                "ocr_coordinator: page=%d sheet-coroutine raised %s — using pymupdf fallback, corr=%s",
+                _extract.page_number,
+                type(_res).__name__,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+            corpus.sheets.append(OcrSheetResult(
+                page_number=_extract.page_number,
+                text=_extract.text,
+                provider="pymupdf",
+                confidence=0.5,
+                page_hash=_extract.page_hash,
+                image_bytes=_extract.image_bytes,
+            ))
+            corpus.record_provider("pymupdf")
+        else:
+            corpus.sheets.append(_res)
 
     logger.info(
         "ocr_coordinator: corpus complete, pages=%d, provider_mix=%s, corr=%s",

@@ -1122,3 +1122,155 @@ class TestSeeImageCache:
         assert split_called, (
             "split_pdf_to_sheets must be called when sheets lack image_storage_path"
         )
+
+
+# ---------------------------------------------------------------------------
+# Wave 9n Fix 4 — SupabaseClientError logging + receipt emission
+# ---------------------------------------------------------------------------
+
+class TestSeeSupabaseErrorObservability:
+    """Wave 9n: symbol insert failures must log the error message (not just class)
+    and emit a 'blueprint.see.symbol_insert_failed' receipt for audit.
+
+    Context: today's smoke-test logs showed only 'SupabaseClientError' with no
+    detail. RLS policy checks, column mismatches, and PK conflicts all surface
+    as SupabaseClientError — without str(exc) in the log, ops cannot diagnose.
+    """
+
+    def test_symbol_insert_failure_logs_message_and_emits_receipt(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When blueprint_symbols INSERT fails with SupabaseClientError:
+          1. The warning log includes the actual error message (not just class name).
+          2. A 'blueprint.see.symbol_insert_failed' receipt is emitted with
+             error_type and error_message metadata.
+        """
+        import logging
+        from unittest.mock import AsyncMock, patch
+
+        from aspire_orchestrator.skillpacks.drew_blueprint import Drew
+        from aspire_orchestrator.services.blueprint.pdf_splitter import SheetExtract
+        from aspire_orchestrator.services.blueprint.schemas_detection import (
+            ScaleCalibration,
+            SealDetection,
+            SymbolDetection,
+        )
+        from aspire_orchestrator.services.supabase_client import SupabaseClientError
+
+        monkeypatch.delenv("ASPIRE_DREW_SEE_DISCIPLINES", raising=False)
+        monkeypatch.setenv("ASPIRE_DREW_SEE_CONCURRENCY", "1")
+
+        SHEET_ID = "55555555-5555-5555-5555-555555555555"
+        HASH = "b" * 64
+        FAKE_ERROR_MSG = "new row violates row-level security policy for table blueprint_symbols"
+
+        sheets = [{
+            "id": SHEET_ID,
+            "hash": HASH,
+            "ocr_text": "",
+            "sheet_number": "1",
+            "discipline": "A",
+        }]
+
+        insert_call_count: list[int] = [0]
+
+        async def _failing_insert(table: str, data: dict) -> dict:
+            if table == "blueprint_symbols":
+                insert_call_count[0] += 1
+                raise SupabaseClientError(FAKE_ERROR_MSG)
+            return {}
+
+        with caplog.at_level(logging.WARNING, logger="aspire_orchestrator.skillpacks.drew_blueprint"), \
+            patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.supabase_select",
+                new=AsyncMock(return_value=sheets),
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.supabase_insert",
+                new=_failing_insert,
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.supabase_update",
+                new=AsyncMock(return_value={}),
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.supabase_delete",
+                new=AsyncMock(return_value=None),
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.split_pdf_to_sheets",
+                return_value=[SheetExtract(
+                    page_number=1, text="", image_bytes=b"x", page_hash=HASH,
+                )],
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.detect_symbols",
+                new=AsyncMock(return_value=[
+                    SymbolDetection(
+                        sheet_id=SHEET_ID,
+                        class_name="circular_callout",
+                        confidence=0.85,
+                        bbox={"x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0},
+                        model_version="yolo11n.pt",
+                    )
+                ]),
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.calibrate_scale",
+                return_value=ScaleCalibration(0.0, "unknown", "none", 0.0),
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint.detect_engineer_seal",
+                return_value=SealDetection(False, 0.0),
+            ), patch(
+                "aspire_orchestrator.services.blueprint.stage_progress.set_stage_progress",
+                new=AsyncMock(return_value=None),
+            ), patch(
+                "aspire_orchestrator.skillpacks.drew_blueprint._run_async_set_stage",
+                return_value=None,
+            ):
+            drew = Drew()
+            corr = "test-see-supabase-err-" + str(uuid.uuid4())
+            result = drew.run_agentic_loop(
+                "SEE",
+                {
+                    "suite_id": SUITE_A,
+                    "office_id": OFFICE_A,
+                    "project_id": PROJECT_A,
+                    "pdf_bytes": "AAAA",
+                },
+                corr,
+            )
+
+        # SEE pipeline must still return ok (symbol insert failure is non-fatal).
+        assert result["status"] == "ok", f"SEE should succeed despite symbol insert failure: {result}"
+        # symbol_count must be 0 since the insert failed.
+        assert result["symbol_count"] == 0
+
+        # Assert: INSERT was attempted.
+        assert insert_call_count[0] >= 1
+
+        # Assert 1: The warning log must contain the actual error message text.
+        symbol_insert_warnings = [
+            r.message for r in caplog.records
+            if "failed to insert symbol" in r.getMessage()
+        ]
+        assert symbol_insert_warnings, "Expected at least one 'failed to insert symbol' warning"
+        warning_text = symbol_insert_warnings[0]
+        assert FAKE_ERROR_MSG in warning_text, (
+            f"Log must include actual error message. Got: {warning_text!r}"
+        )
+
+        # Assert 2: A 'blueprint.see.symbol_insert_failed' receipt must be emitted.
+        receipts = _query_receipts_by_corr(corr)
+        fail_receipts = [
+            r for r in receipts
+            if r.get("action_type") == "blueprint.see.symbol_insert_failed"
+        ]
+        assert len(fail_receipts) >= 1, (
+            f"Expected at least one blueprint.see.symbol_insert_failed receipt. "
+            f"All receipt types: {[r.get('action_type') for r in receipts]}"
+        )
+        meta = fail_receipts[0].get("metadata", {})
+        assert meta.get("error_type") == "SupabaseClientError", (
+            f"Receipt metadata must include error_type. Got: {meta}"
+        )
+        assert FAKE_ERROR_MSG in (meta.get("error_message") or ""), (
+            f"Receipt metadata must include error_message. Got: {meta}"
+        )
+        assert meta.get("sheet_id") == SHEET_ID, (
+            f"Receipt must identify the failed sheet. Got: {meta}"
+        )

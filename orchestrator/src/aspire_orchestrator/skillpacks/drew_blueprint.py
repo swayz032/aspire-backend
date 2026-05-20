@@ -1440,16 +1440,53 @@ async def _async_ingest_pipeline(
                         },
                     }])
 
-                # Wave 9l: 2. Full-res image upload (best-effort cache for SEE stage).
-                # Runs regardless of thumbnail result — SEE cache is independent.
-                # If this fails, SEE will fall back to re-rendering the PDF.
-                image_path = await _upload_sheet_image(
-                    suite_id,
-                    project_id,
-                    sheet_id,
-                    ocr_sheet.image_bytes,
-                    correlation_id,
-                )
+                # Wave 9n Fix 2: Full-res image upload — REQUIRED for SEE cache.
+                # SEE stage runs in 30-60s when all sheets are cached; without the
+                # cache SEE falls back to PDF re-render (~50s extra).
+                # Strategy: try once; if None or raises, retry once after 0.5s.
+                # If second attempt also fails, emit image_cache_failed receipt and
+                # set image_storage_path=None (SEE will re-render this sheet only).
+                image_path: str | None = None
+                _img_attempts = 0
+                while _img_attempts < 2:
+                    try:
+                        image_path = await _upload_sheet_image(
+                            suite_id,
+                            project_id,
+                            sheet_id,
+                            ocr_sheet.image_bytes,
+                            correlation_id,
+                        )
+                        if image_path is not None:
+                            break  # Success
+                        # upload returned None (storage error without raising)
+                        if _img_attempts == 0:
+                            _log.warning(
+                                "drew.ingest: full-res upload returned None sheet=%s, retrying once",
+                                sheet_id[:8],
+                            )
+                            await asyncio.sleep(0.5)
+                            _img_attempts += 1
+                        else:
+                            break  # Second attempt also returned None
+                    except Exception as _img_exc:
+                        if _img_attempts == 0:
+                            _log.warning(
+                                "drew.ingest: full-res upload raised %s sheet=%s, retrying once",
+                                type(_img_exc).__name__,
+                                sheet_id[:8],
+                            )
+                            await asyncio.sleep(0.5)
+                            _img_attempts += 1
+                        else:
+                            _log.warning(
+                                "drew.ingest: full-res upload failed twice sheet=%s (%s) — "
+                                "SEE will re-render this sheet",
+                                sheet_id[:8],
+                                type(_img_exc).__name__,
+                            )
+                            break
+
                 if image_path:
                     try:
                         await supabase_update(
@@ -1464,12 +1501,33 @@ async def _async_ingest_pipeline(
                             sheet_id[:8],
                         )
                 else:
+                    # Law #2: emit image_cache_failed receipt so ops can audit
+                    # which sheets will force PDF re-render during SEE.
                     _log.warning(
-                        "drew.ingest: full-res image upload failed sheet=%s — "
-                        "SEE will re-render (graceful degradation, corr=%s)",
+                        "drew.ingest: full-res image upload failed after retry sheet=%s — "
+                        "emitting image_cache_failed receipt, SEE will re-render (corr=%s)",
                         sheet_id[:8],
                         correlation_id[:8],
                     )
+                    store_receipts([{
+                        "id": str(uuid.uuid4()),
+                        "outcome": "failed",
+                        "action_type": "blueprint.ingest.image_cache_failed",
+                        "receipt_type": "blueprint.ingest.image_cache_failed",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "risk_tier": "GREEN",
+                        "actor_type": "WORKER",
+                        "actor_id": ACTOR_DREW,
+                        "correlation_id": correlation_id,
+                        "suite_id": suite_id,
+                        "metadata": {
+                            "sheet_id": sheet_id,
+                            "project_id": project_id,
+                            "page_number": ocr_sheet.page_number,
+                            "reason": "upload_failed_after_retry",
+                        },
+                        "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                    }])
 
         return result
 
@@ -2220,11 +2278,35 @@ async def _async_see_pipeline(
                     local_conf_count += 1
                     local_model = det.model_version
                 except SupabaseClientError as exc:
+                    # Wave 9n Fix 4: log the actual error message (not just class name)
+                    # so Supabase RLS/column errors are visible in Railway logs.
                     _log.warning(
-                        "drew.see: failed to insert symbol sheet=%s (%s)",
+                        "drew.see: failed to insert symbol sheet=%s (%s: %s)",
                         sheet_id[:8],
                         type(exc).__name__,
+                        str(exc)[:200],
                     )
+                    # Law #2: emit a receipt for audit — ops can query these to find
+                    # RLS or schema mismatches without digging through log streams.
+                    store_receipts([{
+                        "id": str(uuid.uuid4()),
+                        "outcome": "failed",
+                        "action_type": "blueprint.see.symbol_insert_failed",
+                        "receipt_type": "blueprint.see.symbol_insert_failed",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "risk_tier": "GREEN",
+                        "actor_type": "WORKER",
+                        "actor_id": ACTOR_DREW,
+                        "correlation_id": correlation_id,
+                        "suite_id": suite_id,
+                        "metadata": {
+                            "sheet_id": sheet_id,
+                            "project_id": project_id,
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc)[:200],
+                        },
+                        "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                    }])
 
             # ───── 2. Scale calibration ─────
             sheet_text: str = str(sheet_row.get("ocr_text") or extract.text or "")
@@ -2242,10 +2324,12 @@ async def _async_see_pipeline(
                         {"scale": scale_str[:120]},
                     )
                 except SupabaseClientError as exc:
+                    # Wave 9n Fix 4: include actual error message for RLS/schema diagnosis.
                     _log.warning(
-                        "drew.see: failed to update scale sheet=%s (%s)",
+                        "drew.see: failed to update scale sheet=%s (%s: %s)",
                         sheet_id[:8],
                         type(exc).__name__,
+                        str(exc)[:200],
                     )
             elif calibration.method != "none" and calibration.confidence < 0.50:
                 try:
@@ -2286,10 +2370,12 @@ async def _async_see_pipeline(
                         {"seal_detected": True},
                     )
                 except SupabaseClientError as exc:
+                    # Wave 9n Fix 4: include actual error message for RLS/schema diagnosis.
                     _log.warning(
-                        "drew.see: failed to set seal_detected sheet=%s (%s)",
+                        "drew.see: failed to set seal_detected sheet=%s (%s: %s)",
                         sheet_id[:8],
                         type(exc).__name__,
+                        str(exc)[:200],
                     )
 
             return {
