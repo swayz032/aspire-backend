@@ -374,7 +374,9 @@ _STAGE_TIMEOUTS: dict[str, int] = {
     "see": 10 * 60,      # 10 minutes — YOLOv11 CPU inference on 38+ sheets at 200 DPI
                          # (measured ~5s/sheet * 38 sheets ~= 190s; 3min was too tight,
                          # Wave 10 fine-tune + parallelism can bring this back down)
-    "reason": 5 * 60,    # 5 minutes  — assembly + story generation (gpt-5.4 long context)
+    "reason": 10 * 60,   # 10 minutes — gpt-5.4 takes ~5min per parallel call on 39-sheet
+                         # payloads; the 3-parallel architecture (Wave 9l) caps stage at
+                         # max(call_A, call_B, call_C) so 10 min covers worst-case headroom.
     "procure": 2 * 60,   # 2 minutes  — tariff + supplier matching via Adam
 }
 
