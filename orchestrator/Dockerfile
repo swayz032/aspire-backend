@@ -49,6 +49,15 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os, urllib.request; port = os.getenv('PORT', '8000'); urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz')" || exit 1
 
+# Wave 10b: route YOLO + matplotlib config writes to /tmp so the non-root
+# "aspire" user doesn't hit "Permission denied" trying to write
+# /home/aspire/.config/{Ultralytics,matplotlib}/. Those errors didn't crash
+# the worker but slowed CPU-fallback YOLO inference by retrying writes on
+# every model load.
+ENV YOLO_CONFIG_DIR=/tmp/ultralytics
+ENV MPLCONFIGDIR=/tmp/matplotlib
+ENV HOME=/tmp
+
 USER aspire
 
 # Run with uvicorn

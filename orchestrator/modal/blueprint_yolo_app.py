@@ -19,6 +19,7 @@ Idle timeout: 5 min (keeps weights warm between bursts).
 """
 
 import modal
+from fastapi import Request
 
 app = modal.App("aspire-drew-yolo")
 
@@ -48,12 +49,13 @@ _model_cache: dict = {}
     min_containers=2,         # Wave 10b: 2 always warm — kills the 6-8s cold-start tax
                               # on the first sheet of every pipeline run.
     scaledown_window=300,     # keep warm 5 min between calls (above min_containers)
-    enable_memory_snapshot=True,  # Wave 10b: GPU memory snapshot → 10x faster cold-start
-                                  # when scaling above keep_warm (39-sheet bursts).
+    # enable_memory_snapshot=True,  # Wave 10b: TEMPORARILY DISABLED — snapshots were
+    # preserving the broken function signature across redeploys (422 errors persisted
+    # even after typing fixes). Re-enable once the new signature is verified live.
     timeout=60,               # hard ceiling per call
 )
 @modal.fastapi_endpoint(method="POST")
-async def detect_symbols(request) -> dict:
+async def detect_symbols(request: Request) -> dict:
     """Run YOLOv11n on a single sheet PNG. Returns raw xyxy detections.
 
     Request body: raw PNG bytes (Content-Type: application/octet-stream).
@@ -76,7 +78,7 @@ async def detect_symbols(request) -> dict:
 
     Errors return {"error": "<reason>"} with 4xx/5xx status.
     """
-    from fastapi import HTTPException
+    from fastapi import HTTPException, Request  # noqa: F401 — Request used in type hint
     from ultralytics import YOLO
     from PIL import Image
     import io
