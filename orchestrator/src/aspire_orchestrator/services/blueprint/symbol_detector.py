@@ -39,12 +39,21 @@ from typing import Any
 
 import yaml
 
+from aspire_orchestrator.providers.modal_yolo_client import (
+    detect_symbols_modal,
+    modal_enabled,
+)
 from aspire_orchestrator.services.blueprint.schemas_detection import SymbolDetection
 
 logger = logging.getLogger(__name__)
 
 # Confidence floor for inserting a blueprint_symbols row. Below this we drop.
 _CONFIDENCE_FLOOR: float = 0.70
+
+# Wave 10: route SEE to Modal GPU when ASPIRE_DREW_SEE_PROVIDER=modal and
+# ASPIRE_DREW_MODAL_YOLO_URL is set. Any other value (default "local") runs
+# Ultralytics on Railway CPU. Modal failures fall back to local CPU per sheet.
+_SEE_PROVIDER: str = os.getenv("ASPIRE_DREW_SEE_PROVIDER", "local").strip().lower()
 
 # Generic pre-trained weights identifier. Wave 9k: default is yolo11n.pt (nano,
 # ~2.6 MB, ~3x faster CPU inference than yolo11m). Override via env for A/B
@@ -159,8 +168,51 @@ async def detect_symbols(
         )
         return []
 
-    model = _load_model()
     class_map = _load_class_map()
+
+    # Wave 10: Modal GPU offload. When ASPIRE_DREW_SEE_PROVIDER=modal and the
+    # endpoint URL is set, POST PNG bytes to Modal and translate the result.
+    # Modal failures fall through to local CPU (fail-soft per sheet — SEE is
+    # advisory; REASON uses OCR text as primary signal anyway).
+    if _SEE_PROVIDER == "modal" and modal_enabled():
+        modal_result = await detect_symbols_modal(
+            sheet_image_bytes,
+            sheet_id=sheet_id,
+            correlation_id=correlation_id,
+            confidence_floor=max(0.1, confidence_floor - 0.1),
+        )
+        if modal_result is not None:
+            detections: list[SymbolDetection] = []
+            for d in modal_result.detections:
+                if d.confidence < confidence_floor:
+                    continue
+                aspire_name = class_map.get(d.class_name, f"unmapped:{d.class_name}")
+                x1, y1, x2, y2 = d.bbox_xyxy
+                detections.append(
+                    SymbolDetection(
+                        sheet_id=sheet_id,
+                        class_name=aspire_name,
+                        confidence=d.confidence,
+                        bbox={
+                            "x": x1,
+                            "y": y1,
+                            "w": max(0.0, x2 - x1),
+                            "h": max(0.0, y2 - y1),
+                        },
+                        model_version=modal_result.model_version,
+                    )
+                )
+            logger.info(
+                "symbol_detector[modal]: sheet=%s detections=%d (%dms) corr=%s",
+                sheet_id[:8] if len(sheet_id) > 8 else sheet_id,
+                len(detections),
+                modal_result.elapsed_ms,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+            return detections
+        # else: fall through to local CPU inference
+
+    model = _load_model()
 
     # Wrap bytes as a PIL-compatible source. Ultralytics accepts a path, URL,
     # numpy array, PIL Image, or BytesIO. We use PIL.Image to avoid touching disk.
