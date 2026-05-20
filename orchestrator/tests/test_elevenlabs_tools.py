@@ -327,3 +327,220 @@ async def test_request_callback_window_slot_conflict():
     for alt in result["alternatives"]:
         alt_start = datetime.fromisoformat(alt["start_iso"].replace("Z", "+00:00"))
         assert alt_start >= slot_end, f"Alternative {alt['start_iso']} is before conflict end"
+
+
+# ---------------------------------------------------------------------------
+# lookup_caller_appointment — happy path: phone matches event participant
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lookup_caller_appointment_phone_match():
+    from aspire_orchestrator.routes.elevenlabs_tools import (
+        LookupCallerAppointmentReq,
+        lookup_caller_appointment,
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    start_dt = now_utc + timedelta(hours=1)
+
+    caller_phone = "+19416818610"
+    fake_event = {
+        "id": str(uuid.uuid4()),
+        "suite_id": SUITE_ID,
+        "title": "Bathroom paint job",
+        "description": "Touch-up second-floor bathroom",
+        "start_time": start_dt.isoformat(),
+        "end_time": (start_dt + timedelta(hours=2)).isoformat(),
+        "location": "123 Main St",
+        "participants": [caller_phone, "Mike Johnson"],
+        "status": "confirmed",
+    }
+
+    async def mock_select(table, filters, *, order_by=None, limit=None):
+        if table == "tenant_phone_numbers":
+            return [{"tenant_id": TENANT_ID, "suite_id": SUITE_ID, "office_id": OFFICE_ID,
+                     "phone_number": CALLED_NUMBER, "status": "active"}]
+        if table == "frontdesk_contacts":
+            return [{"display_name": "Mike Johnson", "phone_e164": caller_phone}]
+        if table == "front_desk_configs":
+            return [_fake_config()]
+        if table == "calendar_events":
+            return [fake_event]
+        return []
+
+    req = LookupCallerAppointmentReq(
+        called_number=CALLED_NUMBER,
+        caller_phone=caller_phone,
+        window_hours=24,
+    )
+
+    with (
+        patch("aspire_orchestrator.routes.elevenlabs_tools.supabase_select", side_effect=mock_select),
+        patch("aspire_orchestrator.routes.elevenlabs_tools._cut_receipt", return_value=str(uuid.uuid4())),
+        patch("aspire_orchestrator.routes.elevenlabs_tools.receipt_store.store_receipts"),
+    ):
+        resp = await lookup_caller_appointment(req)
+
+    assert resp["found"] is True
+    assert resp["contact_name"] == "Mike Johnson"
+    assert resp["appointment"]["title"] == "Bathroom paint job"
+    assert resp["appointment"]["match_method"] == "phone"
+    assert resp["appointment"]["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_lookup_caller_appointment_name_match():
+    from aspire_orchestrator.routes.elevenlabs_tools import (
+        LookupCallerAppointmentReq,
+        lookup_caller_appointment,
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    start_dt = now_utc + timedelta(hours=3)
+
+    fake_event = {
+        "id": str(uuid.uuid4()),
+        "suite_id": SUITE_ID,
+        "title": "Estimate for Tonio Scott",
+        "description": "",
+        "start_time": start_dt.isoformat(),
+        "end_time": (start_dt + timedelta(hours=1)).isoformat(),
+        "participants": [],
+        "status": "pending",
+    }
+
+    async def mock_select(table, filters, *, order_by=None, limit=None):
+        if table == "tenant_phone_numbers":
+            return [{"tenant_id": TENANT_ID, "suite_id": SUITE_ID, "office_id": OFFICE_ID,
+                     "phone_number": CALLED_NUMBER, "status": "active"}]
+        if table == "frontdesk_contacts":
+            return [{"display_name": "Tonio Scott", "phone_e164": "+14709675965"}]
+        if table == "front_desk_configs":
+            return [_fake_config()]
+        if table == "calendar_events":
+            return [fake_event]
+        return []
+
+    req = LookupCallerAppointmentReq(
+        called_number=CALLED_NUMBER,
+        caller_phone="+14709675965",
+        window_hours=24,
+    )
+
+    with (
+        patch("aspire_orchestrator.routes.elevenlabs_tools.supabase_select", side_effect=mock_select),
+        patch("aspire_orchestrator.routes.elevenlabs_tools._cut_receipt", return_value=str(uuid.uuid4())),
+        patch("aspire_orchestrator.routes.elevenlabs_tools.receipt_store.store_receipts"),
+    ):
+        resp = await lookup_caller_appointment(req)
+
+    assert resp["found"] is True
+    assert resp["appointment"]["match_method"] == "name"
+    assert resp["appointment"]["title"] == "Estimate for Tonio Scott"
+
+
+@pytest.mark.asyncio
+async def test_lookup_caller_appointment_no_match():
+    from aspire_orchestrator.routes.elevenlabs_tools import (
+        LookupCallerAppointmentReq,
+        lookup_caller_appointment,
+    )
+
+    now_utc = datetime.now(timezone.utc)
+    start_dt = now_utc + timedelta(hours=2)
+
+    unrelated_event = {
+        "id": str(uuid.uuid4()),
+        "suite_id": SUITE_ID,
+        "title": "Internal team sync",
+        "description": "",
+        "start_time": start_dt.isoformat(),
+        "end_time": (start_dt + timedelta(minutes=30)).isoformat(),
+        "participants": ["staff@example.com"],
+        "status": "pending",
+    }
+
+    async def mock_select(table, filters, *, order_by=None, limit=None):
+        if table == "tenant_phone_numbers":
+            return [{"tenant_id": TENANT_ID, "suite_id": SUITE_ID, "office_id": OFFICE_ID,
+                     "phone_number": CALLED_NUMBER, "status": "active"}]
+        if table == "frontdesk_contacts":
+            return []
+        if table == "front_desk_configs":
+            return [_fake_config()]
+        if table == "calendar_events":
+            return [unrelated_event]
+        return []
+
+    req = LookupCallerAppointmentReq(
+        called_number=CALLED_NUMBER,
+        caller_phone="+15555555555",
+        window_hours=24,
+    )
+
+    with (
+        patch("aspire_orchestrator.routes.elevenlabs_tools.supabase_select", side_effect=mock_select),
+        patch("aspire_orchestrator.routes.elevenlabs_tools._cut_receipt", return_value=str(uuid.uuid4())),
+        patch("aspire_orchestrator.routes.elevenlabs_tools.receipt_store.store_receipts"),
+    ):
+        resp = await lookup_caller_appointment(req)
+
+    assert resp["found"] is False
+    assert resp["appointment"] is None
+    assert resp["contact_name"] is None
+    assert "No matching appointment" in (resp["note"] or "")
+
+
+@pytest.mark.asyncio
+async def test_lookup_caller_appointment_phone_normalization():
+    from aspire_orchestrator.routes.elevenlabs_tools import (
+        LookupCallerAppointmentReq,
+        lookup_caller_appointment,
+        _normalize_phone,
+    )
+
+    assert _normalize_phone("4709675965") == "+14709675965"
+    assert _normalize_phone("1-470-967-5965") == "+14709675965"
+    assert _normalize_phone("+14709675965") == "+14709675965"
+
+    now_utc = datetime.now(timezone.utc)
+    start_dt = now_utc + timedelta(hours=1)
+    fake_event = {
+        "id": str(uuid.uuid4()),
+        "suite_id": SUITE_ID,
+        "title": "Paint job",
+        "description": "",
+        "start_time": start_dt.isoformat(),
+        "end_time": (start_dt + timedelta(hours=1)).isoformat(),
+        "participants": ["+14709675965"],
+        "status": "confirmed",
+    }
+
+    async def mock_select(table, filters, *, order_by=None, limit=None):
+        if table == "tenant_phone_numbers":
+            return [{"tenant_id": TENANT_ID, "suite_id": SUITE_ID, "office_id": OFFICE_ID,
+                     "phone_number": CALLED_NUMBER, "status": "active"}]
+        if table == "frontdesk_contacts":
+            return [{"display_name": "Tonio Scott", "phone_e164": "+14709675965"}]
+        if table == "front_desk_configs":
+            return [_fake_config()]
+        if table == "calendar_events":
+            return [fake_event]
+        return []
+
+    req = LookupCallerAppointmentReq(
+        called_number=CALLED_NUMBER,
+        caller_phone="470-967-5965",
+        window_hours=24,
+    )
+
+    with (
+        patch("aspire_orchestrator.routes.elevenlabs_tools.supabase_select", side_effect=mock_select),
+        patch("aspire_orchestrator.routes.elevenlabs_tools._cut_receipt", return_value=str(uuid.uuid4())),
+        patch("aspire_orchestrator.routes.elevenlabs_tools.receipt_store.store_receipts"),
+    ):
+        resp = await lookup_caller_appointment(req)
+
+    assert resp["found"] is True
+    assert resp["appointment"]["match_method"] == "phone"

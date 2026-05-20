@@ -861,3 +861,203 @@ async def get_owner_availability(body: GetOwnerAvailabilityReq) -> dict[str, Any
         "found_count": found_count,
         "note": note,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/elevenlabs/tools/lookup_caller_appointment
+# ---------------------------------------------------------------------------
+
+
+class LookupCallerAppointmentReq(BaseModel):
+    called_number: str = Field(..., description="The Aspire number that was called (tenant resolution)")
+    caller_phone: str = Field(..., description="Caller's phone (E.164 if available, otherwise raw)")
+    window_hours: int = Field(48, ge=1, le=336, description="Hours into the future to search")
+
+
+class LookupCallerAppointmentResp(BaseModel):
+    found: bool
+    appointment: dict[str, Any] | None
+    contact_name: str | None
+    note: str | None = None
+
+
+def _normalize_phone(phone: str) -> str:
+    """Best-effort E.164 normalization. Returns input unchanged if already E.164."""
+    if not phone:
+        return ""
+    p = phone.strip()
+    if _E164.match(p):
+        return p
+    digits = re.sub(r"[^0-9]", "", p)
+    if not digits:
+        return ""
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return f"+{digits}" if digits else ""
+
+
+def _appointment_label(start_dt: datetime, now_local: datetime) -> str:
+    """Human-friendly label for an appointment start time."""
+    delta = start_dt - now_local
+    hours = delta.total_seconds() / 3600
+    local_time = start_dt.strftime("%I:%M %p").lstrip("0")
+    if -0.5 <= hours <= 1.5:
+        if hours < 0:
+            return f"started {local_time}"
+        if hours < 1:
+            return f"in about {int(delta.total_seconds() / 60)} minutes ({local_time})"
+        return f"in about 1 hour ({local_time})"
+    if start_dt.date() == now_local.date():
+        return f"today at {local_time}"
+    if start_dt.date() == (now_local + timedelta(days=1)).date():
+        return f"tomorrow at {local_time}"
+    return f"{_DAY_FULL[start_dt.weekday()]} at {local_time}"
+
+
+@router.post(
+    "/lookup_caller_appointment",
+    dependencies=[Depends(_verify_el_tool_secret)],
+    response_model=LookupCallerAppointmentResp,
+)
+async def lookup_caller_appointment(body: LookupCallerAppointmentReq) -> dict[str, Any]:
+    """Return the caller's upcoming appointment with the owner, if any.
+
+    Flow:
+      1. Resolve tenant scope from called_number.
+      2. Normalize caller_phone to E.164.
+      3. Look up the contact in frontdesk_contacts to get display_name.
+      4. Query calendar_events for upcoming events in the window where the
+         contact's name or phone appears in title/description/participants.
+      5. Return the soonest match.
+
+    Receipt: appointment_lookup_queried (Green — read-only, no state change).
+    """
+    scope = await _resolve_tenant_from_called_number(body.called_number) or {}
+    suite_id = scope.get("suite_id", "")
+
+    caller_phone_e164 = _normalize_phone(body.caller_phone)
+    digits_only = re.sub(r"[^0-9]", "", body.caller_phone or "")
+
+    contact_name: str | None = None
+    if suite_id and caller_phone_e164:
+        try:
+            rows = await supabase_select(
+                "frontdesk_contacts",
+                {"suite_id": suite_id, "phone_e164": caller_phone_e164},
+                limit=1,
+            )
+            if rows:
+                contact_name = rows[0].get("display_name") or None
+        except SupabaseClientError as exc:
+            logger.warning("lookup_caller_appointment contact_lookup_failed: %s", exc)
+
+    # Determine office timezone for label formatting
+    office_tz_str = "America/New_York"
+    if suite_id:
+        try:
+            cfg_rows = await supabase_select(
+                "front_desk_configs",
+                {"suite_id": suite_id, "is_current": "true"},
+                order_by="version_no.desc",
+                limit=1,
+            )
+            if cfg_rows:
+                office_tz_str = cfg_rows[0].get("timezone") or office_tz_str
+        except SupabaseClientError:
+            pass
+
+    try:
+        office_tz = ZoneInfo(office_tz_str)
+    except (ZoneInfoNotFoundError, KeyError):
+        office_tz = ZoneInfo("America/New_York")
+
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(office_tz)
+    window_end_utc = now_utc + timedelta(hours=body.window_hours)
+
+    appointment: dict[str, Any] | None = None
+    note: str | None = None
+
+    if suite_id:
+        try:
+            events = await supabase_select(
+                "calendar_events",
+                f"suite_id=eq.{suite_id}"
+                f"&start_time=gte.{now_utc.isoformat()}"
+                f"&start_time=lt.{window_end_utc.isoformat()}"
+                f"&status=in.(pending,confirmed)",
+                order_by="start_time.asc",
+                limit=50,
+            ) or []
+        except SupabaseClientError as exc:
+            logger.warning("lookup_caller_appointment events_lookup_failed: %s", exc)
+            events = []
+
+        match_phone_variants = {v for v in [caller_phone_e164, digits_only, body.caller_phone] if v}
+        name_lower = contact_name.lower() if contact_name else None
+
+        for ev in events:
+            title = (ev.get("title") or "")
+            description = (ev.get("description") or "")
+            location = (ev.get("location") or "")
+            participants = ev.get("participants") or []
+            participants_blob = " ".join(str(p) for p in participants).lower()
+            haystack = f"{title} {description} {participants_blob} {location}".lower()
+
+            phone_hit = any(v and v in haystack for v in match_phone_variants)
+            name_hit = bool(name_lower) and name_lower in haystack
+
+            if phone_hit or name_hit:
+                start_str = ev.get("start_time") or ""
+                try:
+                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    start_local = start_dt.astimezone(office_tz)
+                except (ValueError, AttributeError):
+                    start_local = now_local
+                appointment = {
+                    "title": title,
+                    "start_iso": start_str,
+                    "label": _appointment_label(start_local, now_local),
+                    "local_time": start_local.strftime("%I:%M %p").lstrip("0"),
+                    "day_of_week": _DAY_FULL[start_local.weekday()],
+                    "location": location or None,
+                    "status": ev.get("status") or "pending",
+                    "match_method": "phone" if phone_hit else "name",
+                }
+                break
+
+        if not appointment:
+            if not contact_name and not caller_phone_e164:
+                note = "Caller phone not recognized."
+            elif not events:
+                note = f"No upcoming appointments in the next {body.window_hours} hours."
+            else:
+                note = "No matching appointment for this caller."
+
+    receipt_id = _cut_receipt(
+        receipt_type="appointment_lookup_queried",
+        scope=scope,
+        outcome="success" if appointment else "no_match",
+        risk_tier="green",
+        redacted_inputs={
+            "caller_phone": _redact_phone(caller_phone_e164),
+            "window_hours": body.window_hours,
+        },
+        redacted_outputs={
+            "found": appointment is not None,
+            "contact_known": contact_name is not None,
+        },
+    )
+    logger.info(
+        "lookup_caller_appointment suite_id=%s caller=%s found=%s receipt=%s",
+        suite_id, _redact_phone(caller_phone_e164), appointment is not None, receipt_id,
+    )
+
+    return {
+        "found": appointment is not None,
+        "appointment": appointment,
+        "contact_name": contact_name,
+        "note": note,
+    }
