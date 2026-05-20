@@ -68,3 +68,4 @@ models/
 
 # Misc
 *.log
+scripts/labeling_workspace/raw_images/
