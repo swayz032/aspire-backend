@@ -1967,19 +1967,34 @@ async def _async_see_pipeline(
         _log.warning("drew.see: set_stage_progress(in_progress) failed: %s", _sp_exc)
 
     # P0-7: idempotency clear — delete existing blueprint_symbols rows for this project
-    # before re-inserting. supabase_delete returns None (PostgREST 204); we can't
-    # get an exact deleted count without a prior SELECT. We do a count SELECT first,
-    # then delete, then emit the receipt if count > 0.
+    # before re-inserting.
+    #
+    # Wave 10c schema fix: blueprint_symbols has NO project_id column — it joins to
+    # the project via blueprint_sheets.project_id (see migration 20260517000001).
+    # The old `project_id=eq.<id>` filter returned a 400 every SEE run, polluting
+    # logs and (correctly) failing the idempotency clear silently. Now we resolve
+    # sheet IDs first then filter symbols by `sheet_id=in.(...)`.
     try:
-        _existing_symbols = await supabase_select(
-            "blueprint_symbols",
+        _project_sheets = await supabase_select(
+            "blueprint_sheets",
             filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
-        )
-        _deleted_count = len(_existing_symbols) if _existing_symbols else 0
-        if _deleted_count > 0:
+        ) or []
+        _sheet_ids = [s["id"] for s in _project_sheets if s.get("id")]
+
+        _existing_symbols = []
+        if _sheet_ids:
+            # PostgREST `in.(uuid1,uuid2,...)` — parenthesized, comma-separated, no spaces.
+            _id_list = ",".join(_sheet_ids)
+            _existing_symbols = await supabase_select(
+                "blueprint_symbols",
+                filters=f"sheet_id=in.({_id_list})&suite_id=eq.{suite_id}",
+            ) or []
+        _deleted_count = len(_existing_symbols)
+        if _deleted_count > 0 and _sheet_ids:
+            _id_list = ",".join(_sheet_ids)
             await supabase_delete(
                 "blueprint_symbols",
-                f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+                f"sheet_id=in.({_id_list})&suite_id=eq.{suite_id}",
             )
             store_receipts([{
                 "id": str(uuid.uuid4()),
@@ -2436,13 +2451,52 @@ async def _async_see_pipeline(
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
 
-    # P0-3: mark see done in the async pipeline (dispatch path)
+    # Wave 10c: ground-truth completion receipt BEFORE state mutation. Receipts are
+    # immutable (Law #2), so even if set_stage_progress fails, ops can query
+    # `receipts WHERE receipt_type='blueprint.see.completed' AND metadata->>'project_id'=...`
+    # to determine real completion. Aligned with 2026 outbox-pattern recommendation:
+    # the entity emits a domain event first, the state writer runs separately with retries.
     try:
-        await set_stage_progress(
-            project_id=project_id, stage="see", state="done", suite_id=suite_id
-        )
-    except Exception as _sp_exc:
-        _log.warning("drew.see: set_stage_progress(done) failed: %s", _sp_exc)
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "blueprint.see.completed",
+            "receipt_type": "blueprint.see.completed",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "metadata": {
+                "project_id": project_id,
+                "sheet_count": len(sheets),
+                "symbol_count": total_symbols,
+                "mean_confidence": round(mean_conf, 4),
+                "seal_sheets": seal_sheets,
+                "missing_inputs": missing_inputs,
+            },
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+    except Exception as _rec_exc:  # noqa: BLE001 — receipt emission must never block stage completion
+        _log.warning("drew.see: completed receipt emission failed (%s)", type(_rec_exc).__name__)
+
+    # P0-3: mark see done in the async pipeline (dispatch path)
+    # Wave 10c: retry once on transient Supabase errors so a single hiccup doesn't
+    # leave stage_progress out-of-sync with the ground-truth receipt above.
+    for _attempt in range(2):
+        try:
+            await set_stage_progress(
+                project_id=project_id, stage="see", state="done", suite_id=suite_id
+            )
+            break
+        except Exception as _sp_exc:
+            if _attempt == 0:
+                _log.warning("drew.see: set_stage_progress(done) attempt 1 failed (%s) — retrying", type(_sp_exc).__name__)
+                await asyncio.sleep(0.5)
+                continue
+            _log.error("drew.see: set_stage_progress(done) failed after 2 attempts: %s — ground-truth receipt blueprint.see.completed has been emitted, ops can backfill stage_progress from receipts", _sp_exc)
 
     _see_lock.release()
     return {
