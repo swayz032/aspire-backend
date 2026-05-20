@@ -945,17 +945,35 @@ async def write_story(
             pass
         raw_response = _merge_parallel_responses(cached_a, cached_b, cached_c)  # type: ignore[arg-type]
 
+    # Wave 9p: per-call model selection. Calls A (assemblies) and B (missing_inputs)
+    # are structured JSON outputs — gpt-5.4-mini is 3-5x faster and quality is
+    # indistinguishable on these schemas. Call C (narrative) uses the premium model
+    # because the story is the user-facing moat.
+    import os as _os_p
+    _fast_model = (
+        _os_p.getenv("ASPIRE_DREW_REASON_STRUCTURED_MODEL")
+        or _os_p.getenv("ASPIRE_DREW_MODEL_DEV")
+        or "gpt-5.4-mini"
+    )
+    _premium_model = model  # the model passed in via env (gpt-5.4)
+
     async def _call_llm(
         call_id: str,
         messages: list[dict[str, str]],
         cache_key: str,
         content_hash: str,
+        call_model: str | None = None,
     ) -> dict[str, Any]:
-        """Single focused LLM call with 9h cache + prefix hash observability."""
+        """Single focused LLM call with 9h cache + prefix hash observability.
+
+        Wave 9p: call_model override lets A/B (structured) use a faster model
+        than C (narrative). Defaults to outer `model` if not specified.
+        """
+        _effective_model = call_model or model
         for attempt in range(2):
             try:
                 result = await _generate_json_async(
-                    model=model,
+                    model=_effective_model,
                     messages=messages,
                     api_key=api_key,
                     base_url=settings.openai_base_url,
@@ -1011,19 +1029,22 @@ async def write_story(
     if not raw_response.get("phases"):
         # Dispatch all 3 calls concurrently (skipping any that had a cache hit).
         async def _call_a() -> dict[str, Any]:
+            # Wave 9p: A = assemblies (structured JSON) → fast model
             if cached_a is not None:
                 return cached_a
-            return await _call_llm("A", messages_a, "reason_a", hash_a)
+            return await _call_llm("A", messages_a, "reason_a", hash_a, call_model=_fast_model)
 
         async def _call_b() -> dict[str, Any]:
+            # Wave 9p: B = missing_inputs + risk_flags (structured JSON) → fast model
             if cached_b is not None:
                 return cached_b
-            return await _call_llm("B", messages_b, "reason_b", hash_b)
+            return await _call_llm("B", messages_b, "reason_b", hash_b, call_model=_fast_model)
 
         async def _call_c() -> dict[str, Any]:
+            # Wave 9p: C = narrative markdown (the moat) → premium model
             if cached_c is not None:
                 return cached_c
-            return await _call_llm("C", messages_c, "reason_c", hash_c)
+            return await _call_llm("C", messages_c, "reason_c", hash_c, call_model=_premium_model)
 
         try:
             resp_a, resp_b, resp_c = await asyncio.gather(
