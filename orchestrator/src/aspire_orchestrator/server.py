@@ -2835,8 +2835,16 @@ async def agents_invoke_sync(request: Request) -> JSONResponse:
             _inv_seq = _random.randint(1000, 9999)
             invoice_number = f"INV-{_inv_date}-{_inv_seq}" if not is_quote else f"QTE-{_inv_date}-{_inv_seq}"
 
-            # Build line item description from parsed data (NOT address)
-            line_item_desc = ", ".join(items_summary) if items_summary else notes or "Services rendered"
+            # Build line item description for Stripe — just the clean item
+            # names. items_summary ("1 Roofing at 2500.00 each") is for
+            # VOICE NARRATION ONLY, NEVER for the Stripe Description column.
+            # Stripe renders Qty + Unit Price in their own columns; embedding
+            # them in the description causes duplication in the invoice PDF
+            # (Description="1 Roofing at 2500.00 each" PLUS Qty=1 PLUS
+            # Unit Price=$2500). Production transcript 2026-05-20 22698af9
+            # caught this — user complained Description had qty/price baked in.
+            line_item_descriptions = [item.get("description", "item") for item in line_items]
+            line_item_desc = ", ".join(line_item_descriptions) if line_item_descriptions else (notes or "Services rendered")
 
             stripe_result = await execute_stripe_invoice_create(
                 payload={
