@@ -145,17 +145,25 @@ async def extract_sheet_corpus(
     _llamaparse = None
     _azure = None
 
-    # P2-5 fix: hoist LlamaParse call out of the per-page loop.
-    # Previously, parse_pdf(pdf_bytes) was called once per page → O(N²) API cost.
-    # Now: parse the full PDF once, cache the result in memory for the duration of
-    # this function, and extract the per-page text from the single response.
-    # Fallback paths (Azure DocIntel → PyMuPDF) remain per-page (they need the
-    # per-page image_bytes, not the full PDF).
-    _lp_response_cache: dict | None = None  # {"pages": [...]} or None if LP failed/unavailable
+    # Wave 9m: ASPIRE_DREW_OCR_PROVIDER controls which provider runs as
+    # PRIMARY on every sheet. Default "azure" because Azure Doc Intelligence
+    # layout model extracts structured tables/paragraphs that LlamaParse and
+    # PyMuPDF miss — critical for REASON to read door/panel schedules.
+    # Values: "azure" (default), "llamaparse" (legacy, hoist + cache).
+    import os as _os_mod
+    _primary_ocr = _os_mod.getenv("ASPIRE_DREW_OCR_PROVIDER", "azure").lower().strip()
+    if _primary_ocr not in ("azure", "llamaparse"):
+        _primary_ocr = "azure"
+
+    # P2-5 fix: hoist LlamaParse call out of the per-page loop (O(N²) → O(N)).
+    # Only relevant when LlamaParse is the primary provider. When Azure is
+    # primary the LP hoist is skipped — LP is still available as a fallback
+    # per-sheet but parsed lazily inside the loop only when Azure fails.
+    _lp_response_cache: dict | None = None
     _has_any_text_layer_page = any(
         len(e.text.strip()) >= _TEXT_LAYER_MIN_CHARS for e in extracts
     )
-    if _has_any_text_layer_page:
+    if _primary_ocr == "llamaparse" and _has_any_text_layer_page:
         _lp_attempts = 0
         while _lp_attempts < 2:
             try:
@@ -213,6 +221,17 @@ async def extract_sheet_corpus(
 
         ocr_result: OcrSheetResult | None = None
 
+        # Wave 9m Path 0 (NEW PRIMARY when ASPIRE_DREW_OCR_PROVIDER=azure):
+        # Run Azure Doc Intelligence on every sheet first. LP cache + PyMuPDF
+        # below act as fallbacks only when Azure fails for this sheet. The
+        # Azure block (Path B, lines ~270+) handles the actual call + retry +
+        # blueprint.ingest.azure_doc_intel_used receipt emission. We just
+        # short-circuit Path A here so Azure gets the first chance.
+        if _primary_ocr == "azure":
+            # Skip Path A entirely — fall directly through to Path B (Azure).
+            # If Azure fails, Path B sets ocr_result=None and Path C (PyMuPDF
+            # native) runs as the final safety net.
+            pass
         # Path A: Text-layer PDF → use hoisted LlamaParse response (P2-5 fix).
         # If LP doc response is cached, extract this page's text from it.
         # If the cache is None (LP failed/unavailable), fall through to Azure (Path B).
