@@ -1,0 +1,168 @@
+# Aspire Drew SEE — fine-tuned class taxonomy v1 (Wave 11a).
+#
+# Designed for YOLOv11n fine-tune on Aspire's real fixture corpus
+# (electrical_e1-e4, plumbing_p1, light_pole, concrete_mangonia, eng_rev1).
+#
+# Class IDs are positional (zero-indexed). Order is locked once labeling
+# begins — never renumber, only append. Renumbering breaks the trained
+# weights file.
+#
+# Industry benchmark (SkeySpot, arxiv 2508.10449): YOLOv8 fine-tune on
+# electrical symbols hits 82.5% mAP. We target ≥80% mAP across these classes.
+#
+# Labeling target: 200-500 instances per class minimum, evenly distributed
+# across our 11 real fixtures + augmentations.
+
+# Total classes: 14. Keep this count <=20 for v1 to avoid sparse classes.
+classes:
+  # ────────────────── ELECTRICAL ──────────────────
+  - id: 0
+    name: electrical_outlet
+    description: "Wall duplex outlet, GFCI outlet, dedicated circuit outlet"
+    discipline: E
+    examples: ["E-1 through E-4"]
+
+  - id: 1
+    name: electrical_panel
+    description: "Main panel, sub-panel, MDP — typically square with schedule"
+    discipline: E
+    examples: ["E-1", "panel_schedule_callouts"]
+
+  - id: 2
+    name: electrical_switch
+    description: "Light switch, 3-way, 4-way, dimmer"
+    discipline: E
+
+  - id: 3
+    name: light_fixture
+    description: "Recessed can, surface-mount, pendant, troffer"
+    discipline: E
+
+  - id: 4
+    name: light_pole
+    description: "Exterior pole-mounted fixture — concrete base or direct-bury"
+    discipline: LP
+    examples: ["light_pole_lp1_r1", "light_pole_revised"]
+
+  - id: 5
+    name: electrical_conduit_run
+    description: "Conduit centerline arrows or dashed routing — for length measurement"
+    discipline: E
+
+  # ────────────────── PLUMBING ──────────────────
+  - id: 6
+    name: plumbing_fixture_wc
+    description: "Water closet (toilet)"
+    discipline: P
+    examples: ["P-1"]
+
+  - id: 7
+    name: plumbing_fixture_lav
+    description: "Lavatory (sink) — wall-hung or vanity-top"
+    discipline: P
+
+  - id: 8
+    name: plumbing_floor_drain
+    description: "Floor drain — round symbol with FD label nearby"
+    discipline: P
+
+  - id: 9
+    name: plumbing_riser
+    description: "Vertical pipe riser — circle with cross-hair on plan view"
+    discipline: P
+
+  # ────────────────── ARCHITECTURAL ──────────────────
+  - id: 10
+    name: door
+    description: "Door swing arc — single, double, sliding"
+    discipline: A
+
+  - id: 11
+    name: window
+    description: "Window symbol on wall — sliders, casements, fixed"
+    discipline: A
+
+  # ────────────────── STRUCTURAL ──────────────────
+  - id: 12
+    name: structural_column
+    description: "Column callout — typically square or round in concrete/steel plans"
+    discipline: S
+    examples: ["concrete_mangonia_park", "eng_rev1_signed_master"]
+
+  - id: 13
+    name: rebar_callout
+    description: "Rebar size annotation — '#4 @ 12 OC' bubble or arrow"
+    discipline: S
+    examples: ["concrete_mangonia_park"]
+
+# Tariff trigger map — REASON+PROCURE uses this to flag Section 232 / softwood
+# lumber exposure when a symbol of these classes appears at quantity.
+tariff_triggers:
+  - class: electrical_conduit_run
+    tariff: "Section 232 — aluminum/steel conduit, 50%"
+  - class: rebar_callout
+    tariff: "Section 232 — steel rebar, 50%"
+  - class: electrical_panel
+    tariff: "Section 232 — steel/aluminum panel enclosure, 50%"
+  - class: structural_column
+    tariff: "Section 232 — steel column, 50% (if steel; concrete exempt)"
+
+# Confidence floors per class — looser on hard-to-detect classes.
+# REASON treats anything below floor as missing_input rather than fact.
+confidence_floors:
+  electrical_outlet: 0.65
+  electrical_panel: 0.70
+  electrical_switch: 0.65
+  light_fixture: 0.65
+  light_pole: 0.70
+  electrical_conduit_run: 0.60   # thin lines are hard
+  plumbing_fixture_wc: 0.70
+  plumbing_fixture_lav: 0.70
+  plumbing_floor_drain: 0.65
+  plumbing_riser: 0.60
+  door: 0.65
+  window: 0.65
+  structural_column: 0.70
+  rebar_callout: 0.55            # tiny text annotations
+
+# Per-discipline sheet filter (matches drew.see skipped_disciplines logic).
+# If a sheet's discipline isn't in this map, SEE skips it entirely.
+discipline_skip:
+  Addenda: true          # text-only addenda, no symbols
+  Specs: true            # text-only specifications
+  Schedules: true        # text-only schedules (door/window/finish/equipment)
+
+# Training hyperparameters (Wave 11a Modal A100 training).
+training:
+  base_weights: yolo11n.pt    # 2.6MB nano — keep small for Modal warm-pool latency
+  epochs: 100                  # SkeySpot used 100; converges around 60-80
+  batch_size: 16
+  img_size: 1280               # construction symbols benefit from extra resolution
+  optimizer: AdamW
+  lr0: 0.001
+  weight_decay: 0.0005
+  patience: 20                 # early stop if val mAP plateaus
+  augmentations:
+    - mosaic: 1.0
+    - mixup: 0.15
+    - copy_paste: 0.3          # critical for sparse symbol classes
+    - hsv_h: 0.015
+    - hsv_s: 0.7
+    - hsv_v: 0.4
+    - degrees: 5.0
+    - translate: 0.1
+    - scale: 0.5
+    - fliplr: 0.5              # blueprints aren't usually flipped, but augment for robustness
+
+# Where the trained weights live.
+weights:
+  output_dir: "models/blueprint_yolo/"
+  versioned_filename: "yolo11n_aspire_v{version}.pt"
+  modal_volume_path: "/models/aspire_v{version}.pt"
+
+# Validation thresholds — Wave 11a ships only if these are hit.
+ship_thresholds:
+  overall_map_50: 0.75         # 75% mAP@0.50 across all 14 classes
+  electrical_outlet_recall: 0.80  # most common class must work
+  per_class_map_min: 0.55      # no class below 55% mAP (sparse classes ok lower)
+  inference_latency_p95_ms: 600  # T4 GPU on 1280px image
