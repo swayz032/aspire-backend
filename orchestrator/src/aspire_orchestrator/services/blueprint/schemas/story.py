@@ -40,3 +40,8 @@ class StoryOutput(BaseModel):
     model_version: str
     # Wave 9h: LLM cache observability — included in REASON receipt metadata
     llm_usage: dict[str, Any] = {}
+    # Wave 17b.5: assembly-typing observability — feeds drew.reason.assembly_typed receipt
+    typed_assembly_count: int = 0
+    missing_assembly_count: int = 0
+    distinct_assembly_types: int = 0
+    assembly_type_breakdown: dict[str, int] = {}
