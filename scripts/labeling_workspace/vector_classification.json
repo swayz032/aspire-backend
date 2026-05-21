@@ -1,0 +1,1727 @@
+[
+  {
+    "file": "concrete_mangonia_park.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 130889,
+        "primitive_types": {
+          "c": 3026,
+          "l": 127566,
+          "qu": 288,
+          "re": 9
+        },
+        "drawing_groups": 89409,
+        "image_count": 1,
+        "raster_coverage_pct": 3.9,
+        "text_chars": 5616,
+        "text_blocks": 416,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 67202,
+        "primitive_types": {
+          "l": 66024,
+          "qu": 237,
+          "c": 936,
+          "re": 5
+        },
+        "drawing_groups": 36015,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 6299,
+        "text_blocks": 150,
+        "category": "VECTOR_NATIVE",
+        "page_number": 2
+      }
+    ],
+    "page_count": 2,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 2
+    }
+  },
+  {
+    "file": "electrical_e1.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 95429,
+        "primitive_types": {
+          "l": 93036,
+          "c": 1931,
+          "qu": 460,
+          "re": 2
+        },
+        "drawing_groups": 23006,
+        "image_count": 1,
+        "raster_coverage_pct": 0.2,
+        "text_chars": 6216,
+        "text_blocks": 138,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "electrical_e2.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 102547,
+        "primitive_types": {
+          "l": 100455,
+          "c": 1787,
+          "qu": 305
+        },
+        "drawing_groups": 42416,
+        "image_count": 1,
+        "raster_coverage_pct": 0.2,
+        "text_chars": 3824,
+        "text_blocks": 90,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "electrical_e3.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 198296,
+        "primitive_types": {
+          "l": 195696,
+          "qu": 673,
+          "c": 1927
+        },
+        "drawing_groups": 38631,
+        "image_count": 1,
+        "raster_coverage_pct": 0.2,
+        "text_chars": 332,
+        "text_blocks": 9,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "electrical_e4.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 48813,
+        "primitive_types": {
+          "c": 729,
+          "l": 48028,
+          "qu": 56
+        },
+        "drawing_groups": 7919,
+        "image_count": 13,
+        "raster_coverage_pct": 65.2,
+        "text_chars": 163,
+        "text_blocks": 6,
+        "category": "HYBRID",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "HYBRID",
+    "category_distribution": {
+      "HYBRID": 1
+    }
+  },
+  {
+    "file": "electrical_site_29187p_es.pdf",
+    "pages": [
+      {
+        "page_size": [
+          1224.0,
+          772.1
+        ],
+        "primitive_count": 80440,
+        "primitive_types": {
+          "l": 80021,
+          "qu": 419
+        },
+        "drawing_groups": 24496,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 5,
+        "text_blocks": 1,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 18546,
+        "primitive_types": {
+          "qu": 375,
+          "l": 18171
+        },
+        "drawing_groups": 5642,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 2
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 43959,
+        "primitive_types": {
+          "qu": 505,
+          "l": 43454
+        },
+        "drawing_groups": 9661,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 3
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 20046,
+        "primitive_types": {
+          "qu": 146,
+          "l": 19900
+        },
+        "drawing_groups": 5565,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 4
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 20576,
+        "primitive_types": {
+          "qu": 260,
+          "l": 20315,
+          "re": 1
+        },
+        "drawing_groups": 5565,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 3,
+        "text_blocks": 1,
+        "category": "VECTOR_NATIVE",
+        "page_number": 5
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 19926,
+        "primitive_types": {
+          "qu": 260,
+          "l": 19666
+        },
+        "drawing_groups": 5415,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 6
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 19538,
+        "primitive_types": {
+          "qu": 244,
+          "l": 19294
+        },
+        "drawing_groups": 5469,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 7
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 19651,
+        "primitive_types": {
+          "qu": 244,
+          "l": 19407
+        },
+        "drawing_groups": 5470,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 8
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 19176,
+        "primitive_types": {
+          "qu": 237,
+          "l": 18939
+        },
+        "drawing_groups": 5041,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 9
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 25376,
+        "primitive_types": {
+          "qu": 74,
+          "l": 25302
+        },
+        "drawing_groups": 7617,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 10
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 51916,
+        "primitive_types": {
+          "qu": 219,
+          "l": 51697
+        },
+        "drawing_groups": 15527,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 11
+      },
+      {
+        "page_size": [
+          1224.0,
+          792.0
+        ],
+        "primitive_count": 39361,
+        "primitive_types": {
+          "qu": 197,
+          "l": 39164
+        },
+        "drawing_groups": 14435,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 0,
+        "text_blocks": 0,
+        "category": "VECTOR_NATIVE",
+        "page_number": 12
+      }
+    ],
+    "page_count": 12,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 12
+    }
+  },
+  {
+    "file": "eng_c2_2_gsm.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 74957,
+        "primitive_types": {
+          "l": 73760,
+          "qu": 268,
+          "c": 919,
+          "re": 10
+        },
+        "drawing_groups": 22789,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 2161,
+        "text_blocks": 121,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "eng_c2_2_gsm_duplicate.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 74957,
+        "primitive_types": {
+          "l": 73760,
+          "qu": 268,
+          "c": 919,
+          "re": 10
+        },
+        "drawing_groups": 22789,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 2161,
+        "text_blocks": 121,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "eng_rev1_signed_master.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 870503,
+        "primitive_types": {
+          "qu": 3,
+          "l": 869654,
+          "c": 119,
+          "re": 727
+        },
+        "drawing_groups": 9034,
+        "image_count": 3,
+        "raster_coverage_pct": 8.9,
+        "text_chars": 8974,
+        "text_blocks": 86,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 96965,
+        "primitive_types": {
+          "l": 95894,
+          "qu": 223,
+          "c": 738,
+          "re": 110
+        },
+        "drawing_groups": 33746,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 3302,
+        "text_blocks": 301,
+        "category": "VECTOR_NATIVE",
+        "page_number": 2
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 83235,
+        "primitive_types": {
+          "l": 82247,
+          "qu": 272,
+          "c": 564,
+          "re": 152
+        },
+        "drawing_groups": 31263,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 2097,
+        "text_blocks": 120,
+        "category": "VECTOR_NATIVE",
+        "page_number": 3
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 115795,
+        "primitive_types": {
+          "l": 114789,
+          "qu": 391,
+          "c": 490,
+          "re": 125
+        },
+        "drawing_groups": 38642,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 2110,
+        "text_blocks": 121,
+        "category": "VECTOR_NATIVE",
+        "page_number": 4
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 84018,
+        "primitive_types": {
+          "qu": 819,
+          "l": 82359,
+          "c": 353,
+          "re": 487
+        },
+        "drawing_groups": 16067,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 965,
+        "text_blocks": 41,
+        "category": "VECTOR_NATIVE",
+        "page_number": 5
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 24955,
+        "primitive_types": {
+          "qu": 2,
+          "l": 24921,
+          "c": 12,
+          "re": 20
+        },
+        "drawing_groups": 437,
+        "image_count": 20,
+        "raster_coverage_pct": 64.9,
+        "text_chars": 818,
+        "text_blocks": 28,
+        "category": "HYBRID",
+        "page_number": 6
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 25141,
+        "primitive_types": {
+          "qu": 2,
+          "l": 25107,
+          "c": 12,
+          "re": 20
+        },
+        "drawing_groups": 437,
+        "image_count": 20,
+        "raster_coverage_pct": 64.9,
+        "text_chars": 818,
+        "text_blocks": 28,
+        "category": "HYBRID",
+        "page_number": 7
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 25218,
+        "primitive_types": {
+          "qu": 2,
+          "l": 25184,
+          "c": 12,
+          "re": 20
+        },
+        "drawing_groups": 437,
+        "image_count": 20,
+        "raster_coverage_pct": 64.9,
+        "text_chars": 818,
+        "text_blocks": 28,
+        "category": "HYBRID",
+        "page_number": 8
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 24917,
+        "primitive_types": {
+          "qu": 2,
+          "l": 24883,
+          "c": 12,
+          "re": 20
+        },
+        "drawing_groups": 437,
+        "image_count": 20,
+        "raster_coverage_pct": 64.9,
+        "text_chars": 818,
+        "text_blocks": 28,
+        "category": "HYBRID",
+        "page_number": 9
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 25121,
+        "primitive_types": {
+          "qu": 2,
+          "l": 25087,
+          "c": 12,
+          "re": 20
+        },
+        "drawing_groups": 437,
+        "image_count": 20,
+        "raster_coverage_pct": 64.9,
+        "text_chars": 818,
+        "text_blocks": 28,
+        "category": "HYBRID",
+        "page_number": 10
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 110555,
+        "primitive_types": {
+          "l": 110047,
+          "qu": 108,
+          "c": 293,
+          "re": 107
+        },
+        "drawing_groups": 30757,
+        "image_count": 1,
+        "raster_coverage_pct": 0.4,
+        "text_chars": 3317,
+        "text_blocks": 253,
+        "category": "VECTOR_NATIVE",
+        "page_number": 11
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 124099,
+        "primitive_types": {
+          "qu": 307,
+          "l": 123756,
+          "c": 12,
+          "re": 24
+        },
+        "drawing_groups": 20282,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 842,
+        "text_blocks": 32,
+        "category": "VECTOR_NATIVE",
+        "page_number": 12
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 127539,
+        "primitive_types": {
+          "qu": 324,
+          "l": 127140,
+          "c": 12,
+          "re": 63
+        },
+        "drawing_groups": 21526,
+        "image_count": 2,
+        "raster_coverage_pct": 0.9,
+        "text_chars": 830,
+        "text_blocks": 32,
+        "category": "VECTOR_NATIVE",
+        "page_number": 13
+      }
+    ],
+    "page_count": 13,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 8,
+      "HYBRID": 5
+    }
+  },
+  {
+    "file": "gavnn_addendum_1.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 3641,
+        "primitive_types": {
+          "l": 3515,
+          "re": 126
+        },
+        "drawing_groups": 674,
+        "image_count": 1,
+        "raster_coverage_pct": 7.5,
+        "text_chars": 2586,
+        "text_blocks": 41,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 11486,
+        "primitive_types": {
+          "l": 11291,
+          "re": 24,
+          "c": 171
+        },
+        "drawing_groups": 2468,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 5707,
+        "text_blocks": 75,
+        "category": "VECTOR_NATIVE",
+        "page_number": 2
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 14874,
+        "primitive_types": {
+          "l": 13321,
+          "re": 1382,
+          "c": 171
+        },
+        "drawing_groups": 9333,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 15509,
+        "text_blocks": 169,
+        "category": "VECTOR_NATIVE",
+        "page_number": 3
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 17576,
+        "primitive_types": {
+          "l": 17192,
+          "re": 211,
+          "qu": 2,
+          "c": 171
+        },
+        "drawing_groups": 7528,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 3218,
+        "text_blocks": 196,
+        "category": "VECTOR_NATIVE",
+        "page_number": 4
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 9707,
+        "primitive_types": {
+          "l": 9325,
+          "qu": 14,
+          "re": 197,
+          "c": 171
+        },
+        "drawing_groups": 3907,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 3186,
+        "text_blocks": 194,
+        "category": "VECTOR_NATIVE",
+        "page_number": 5
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 9759,
+        "primitive_types": {
+          "l": 9458,
+          "re": 130,
+          "c": 171
+        },
+        "drawing_groups": 3152,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 2400,
+        "text_blocks": 67,
+        "category": "VECTOR_NATIVE",
+        "page_number": 6
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 478704,
+        "primitive_types": {
+          "l": 478453,
+          "qu": 7,
+          "re": 73,
+          "c": 171
+        },
+        "drawing_groups": 441500,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 4571,
+        "text_blocks": 110,
+        "category": "VECTOR_NATIVE",
+        "page_number": 7
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 20889,
+        "primitive_types": {
+          "l": 20569,
+          "re": 149,
+          "c": 171
+        },
+        "drawing_groups": 6800,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 2746,
+        "text_blocks": 70,
+        "category": "VECTOR_NATIVE",
+        "page_number": 8
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 66690,
+        "primitive_types": {
+          "l": 66386,
+          "qu": 16,
+          "re": 117,
+          "c": 171
+        },
+        "drawing_groups": 34431,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 2492,
+        "text_blocks": 74,
+        "category": "VECTOR_NATIVE",
+        "page_number": 9
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 32636,
+        "primitive_types": {
+          "l": 32418,
+          "qu": 2,
+          "re": 45,
+          "c": 171
+        },
+        "drawing_groups": 22437,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 998,
+        "text_blocks": 42,
+        "category": "VECTOR_NATIVE",
+        "page_number": 10
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 137804,
+        "primitive_types": {
+          "l": 137517,
+          "qu": 5,
+          "re": 111,
+          "c": 171
+        },
+        "drawing_groups": 41972,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 3016,
+        "text_blocks": 127,
+        "category": "VECTOR_NATIVE",
+        "page_number": 11
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 38307,
+        "primitive_types": {
+          "l": 37990,
+          "re": 146,
+          "c": 171
+        },
+        "drawing_groups": 27469,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 4039,
+        "text_blocks": 73,
+        "category": "VECTOR_NATIVE",
+        "page_number": 12
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 85538,
+        "primitive_types": {
+          "l": 85268,
+          "qu": 2,
+          "re": 97,
+          "c": 171
+        },
+        "drawing_groups": 33935,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 2782,
+        "text_blocks": 167,
+        "category": "VECTOR_NATIVE",
+        "page_number": 13
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 101491,
+        "primitive_types": {
+          "l": 101277,
+          "re": 43,
+          "c": 171
+        },
+        "drawing_groups": 89831,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 972,
+        "text_blocks": 69,
+        "category": "VECTOR_NATIVE",
+        "page_number": 14
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 12328,
+        "primitive_types": {
+          "l": 12041,
+          "re": 116,
+          "c": 171
+        },
+        "drawing_groups": 4960,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 5722,
+        "text_blocks": 119,
+        "category": "VECTOR_NATIVE",
+        "page_number": 15
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 125187,
+        "primitive_types": {
+          "l": 124979,
+          "qu": 5,
+          "re": 32,
+          "c": 171
+        },
+        "drawing_groups": 62590,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 1454,
+        "text_blocks": 95,
+        "category": "VECTOR_NATIVE",
+        "page_number": 16
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 78769,
+        "primitive_types": {
+          "l": 78566,
+          "qu": 2,
+          "re": 30,
+          "c": 171
+        },
+        "drawing_groups": 40482,
+        "image_count": 1,
+        "raster_coverage_pct": 0.1,
+        "text_chars": 1090,
+        "text_blocks": 66,
+        "category": "VECTOR_NATIVE",
+        "page_number": 17
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 5399,
+        "primitive_types": {
+          "l": 5310,
+          "c": 61,
+          "qu": 21,
+          "re": 7
+        },
+        "drawing_groups": 835,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 21417,
+        "text_blocks": 92,
+        "category": "VECTOR_NATIVE",
+        "page_number": 18
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 15822,
+        "primitive_types": {
+          "l": 15033,
+          "c": 715,
+          "qu": 63,
+          "re": 11
+        },
+        "drawing_groups": 4665,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 10152,
+        "text_blocks": 172,
+        "category": "VECTOR_NATIVE",
+        "page_number": 19
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 53746,
+        "primitive_types": {
+          "l": 47942,
+          "qu": 808,
+          "c": 4989,
+          "re": 7
+        },
+        "drawing_groups": 16810,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1317,
+        "text_blocks": 98,
+        "category": "VECTOR_NATIVE",
+        "page_number": 20
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 51953,
+        "primitive_types": {
+          "l": 47226,
+          "qu": 796,
+          "c": 3924,
+          "re": 7
+        },
+        "drawing_groups": 15959,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1549,
+        "text_blocks": 86,
+        "category": "VECTOR_NATIVE",
+        "page_number": 21
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 79767,
+        "primitive_types": {
+          "l": 71766,
+          "c": 6778,
+          "qu": 1216,
+          "re": 7
+        },
+        "drawing_groups": 25347,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 2411,
+        "text_blocks": 166,
+        "category": "VECTOR_NATIVE",
+        "page_number": 22
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 10423,
+        "primitive_types": {
+          "l": 8693,
+          "qu": 76,
+          "c": 1647,
+          "re": 7
+        },
+        "drawing_groups": 3859,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 3147,
+        "text_blocks": 229,
+        "category": "VECTOR_NATIVE",
+        "page_number": 23
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 5317,
+        "primitive_types": {
+          "l": 5230,
+          "c": 61,
+          "qu": 19,
+          "re": 7
+        },
+        "drawing_groups": 753,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 20303,
+        "text_blocks": 71,
+        "category": "VECTOR_NATIVE",
+        "page_number": 24
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 50323,
+        "primitive_types": {
+          "l": 45917,
+          "qu": 790,
+          "c": 3609,
+          "re": 7
+        },
+        "drawing_groups": 15289,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1505,
+        "text_blocks": 73,
+        "category": "VECTOR_NATIVE",
+        "page_number": 25
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 35307,
+        "primitive_types": {
+          "l": 33783,
+          "qu": 223,
+          "c": 1294,
+          "re": 7
+        },
+        "drawing_groups": 24989,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1518,
+        "text_blocks": 148,
+        "category": "VECTOR_NATIVE",
+        "page_number": 26
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 30378,
+        "primitive_types": {
+          "l": 29273,
+          "qu": 151,
+          "c": 947,
+          "re": 7
+        },
+        "drawing_groups": 23821,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 966,
+        "text_blocks": 81,
+        "category": "VECTOR_NATIVE",
+        "page_number": 27
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 5493,
+        "primitive_types": {
+          "l": 5405,
+          "c": 61,
+          "qu": 20,
+          "re": 7
+        },
+        "drawing_groups": 922,
+        "image_count": 3,
+        "raster_coverage_pct": 2.1,
+        "text_chars": 6188,
+        "text_blocks": 129,
+        "category": "VECTOR_NATIVE",
+        "page_number": 28
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 9226,
+        "primitive_types": {
+          "l": 8626,
+          "c": 544,
+          "qu": 49,
+          "re": 7
+        },
+        "drawing_groups": 2885,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 3693,
+        "text_blocks": 110,
+        "category": "VECTOR_NATIVE",
+        "page_number": 29
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 5305,
+        "primitive_types": {
+          "l": 5217,
+          "c": 61,
+          "qu": 20,
+          "re": 7
+        },
+        "drawing_groups": 742,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 21813,
+        "text_blocks": 59,
+        "category": "VECTOR_NATIVE",
+        "page_number": 30
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 26786,
+        "primitive_types": {
+          "l": 26203,
+          "qu": 413,
+          "c": 163,
+          "re": 7
+        },
+        "drawing_groups": 8874,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 3587,
+        "text_blocks": 592,
+        "category": "VECTOR_NATIVE",
+        "page_number": 31
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 31382,
+        "primitive_types": {
+          "l": 30657,
+          "qu": 156,
+          "c": 562,
+          "re": 7
+        },
+        "drawing_groups": 23765,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1628,
+        "text_blocks": 192,
+        "category": "VECTOR_NATIVE",
+        "page_number": 32
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 69996,
+        "primitive_types": {
+          "l": 63492,
+          "qu": 1202,
+          "c": 5295,
+          "re": 7
+        },
+        "drawing_groups": 23204,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1558,
+        "text_blocks": 85,
+        "category": "VECTOR_NATIVE",
+        "page_number": 33
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 25584,
+        "primitive_types": {
+          "l": 24411,
+          "qu": 149,
+          "c": 1017,
+          "re": 7
+        },
+        "drawing_groups": 4467,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 4017,
+        "text_blocks": 422,
+        "category": "VECTOR_NATIVE",
+        "page_number": 34
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 27382,
+        "primitive_types": {
+          "l": 26622,
+          "qu": 328,
+          "c": 425,
+          "re": 7
+        },
+        "drawing_groups": 7804,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 2077,
+        "text_blocks": 132,
+        "category": "VECTOR_NATIVE",
+        "page_number": 35
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 6713,
+        "primitive_types": {
+          "l": 6546,
+          "c": 137,
+          "qu": 23,
+          "re": 7
+        },
+        "drawing_groups": 921,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 5830,
+        "text_blocks": 126,
+        "category": "VECTOR_NATIVE",
+        "page_number": 36
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 5290,
+        "primitive_types": {
+          "l": 5198,
+          "c": 65,
+          "qu": 20,
+          "re": 7
+        },
+        "drawing_groups": 726,
+        "image_count": 8,
+        "raster_coverage_pct": 48.4,
+        "text_chars": 533,
+        "text_blocks": 45,
+        "category": "HYBRID",
+        "page_number": 37
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 5677,
+        "primitive_types": {
+          "c": 69,
+          "l": 5579,
+          "qu": 22,
+          "re": 7
+        },
+        "drawing_groups": 1039,
+        "image_count": 6,
+        "raster_coverage_pct": 36.7,
+        "text_chars": 1291,
+        "text_blocks": 65,
+        "category": "HYBRID",
+        "page_number": 38
+      },
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 85798,
+        "primitive_types": {
+          "l": 79396,
+          "qu": 912,
+          "c": 5483,
+          "re": 7
+        },
+        "drawing_groups": 48135,
+        "image_count": 2,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 2807,
+        "text_blocks": 207,
+        "category": "VECTOR_NATIVE",
+        "page_number": 39
+      }
+    ],
+    "page_count": 39,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 37,
+      "HYBRID": 2
+    }
+  },
+  {
+    "file": "light_pole_lp1_r1.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 119845,
+        "primitive_types": {
+          "l": 115621,
+          "c": 3729,
+          "qu": 489,
+          "re": 6
+        },
+        "drawing_groups": 27019,
+        "image_count": 1,
+        "raster_coverage_pct": 1.9,
+        "text_chars": 5382,
+        "text_blocks": 272,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "light_pole_revised.pdf",
+    "pages": [
+      {
+        "page_size": [
+          1728.0,
+          2592.0
+        ],
+        "primitive_count": 55966,
+        "primitive_types": {
+          "l": 55528,
+          "c": 283,
+          "qu": 153,
+          "re": 2
+        },
+        "drawing_groups": 39953,
+        "image_count": 0,
+        "raster_coverage_pct": 0.0,
+        "text_chars": 5254,
+        "text_blocks": 79,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "plumbing_p1.pdf",
+    "pages": [
+      {
+        "page_size": [
+          2592.0,
+          1728.0
+        ],
+        "primitive_count": 47276,
+        "primitive_types": {
+          "l": 45536,
+          "qu": 422,
+          "c": 1303,
+          "re": 15
+        },
+        "drawing_groups": 8395,
+        "image_count": 1,
+        "raster_coverage_pct": 0.4,
+        "text_chars": 856,
+        "text_blocks": 38,
+        "category": "VECTOR_NATIVE",
+        "page_number": 1
+      }
+    ],
+    "page_count": 1,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "VECTOR_NATIVE": 1
+    }
+  },
+  {
+    "file": "precast_drainage.pdf",
+    "pages": [
+      {
+        "page_size": [
+          792.0,
+          612.0
+        ],
+        "primitive_count": 17740,
+        "primitive_types": {
+          "l": 17736,
+          "re": 4
+        },
+        "drawing_groups": 19,
+        "image_count": 2,
+        "raster_coverage_pct": 44.3,
+        "text_chars": 9628,
+        "text_blocks": 31,
+        "category": "HYBRID",
+        "page_number": 1
+      },
+      {
+        "page_size": [
+          792.0,
+          612.0
+        ],
+        "primitive_count": 1425,
+        "primitive_types": {
+          "l": 1330,
+          "c": 86,
+          "qu": 9
+        },
+        "drawing_groups": 513,
+        "image_count": 5,
+        "raster_coverage_pct": 0.7,
+        "text_chars": 348,
+        "text_blocks": 13,
+        "category": "VECTOR_NATIVE",
+        "page_number": 2
+      },
+      {
+        "page_size": [
+          792.0,
+          612.0
+        ],
+        "primitive_count": 2347,
+        "primitive_types": {
+          "l": 2313,
+          "qu": 3,
+          "c": 28,
+          "re": 3
+        },
+        "drawing_groups": 718,
+        "image_count": 1,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 923,
+        "text_blocks": 59,
+        "category": "VECTOR_NATIVE",
+        "page_number": 3
+      },
+      {
+        "page_size": [
+          792.0,
+          612.0
+        ],
+        "primitive_count": 2922,
+        "primitive_types": {
+          "l": 2880,
+          "qu": 3,
+          "c": 36,
+          "re": 3
+        },
+        "drawing_groups": 838,
+        "image_count": 1,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1023,
+        "text_blocks": 62,
+        "category": "VECTOR_NATIVE",
+        "page_number": 4
+      },
+      {
+        "page_size": [
+          792.0,
+          612.0
+        ],
+        "primitive_count": 2922,
+        "primitive_types": {
+          "l": 2880,
+          "qu": 3,
+          "c": 36,
+          "re": 3
+        },
+        "drawing_groups": 838,
+        "image_count": 1,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 1023,
+        "text_blocks": 62,
+        "category": "VECTOR_NATIVE",
+        "page_number": 5
+      },
+      {
+        "page_size": [
+          792.0,
+          612.0
+        ],
+        "primitive_count": 2565,
+        "primitive_types": {
+          "l": 2531,
+          "qu": 3,
+          "c": 28,
+          "re": 3
+        },
+        "drawing_groups": 754,
+        "image_count": 1,
+        "raster_coverage_pct": 0.6,
+        "text_chars": 922,
+        "text_blocks": 59,
+        "category": "VECTOR_NATIVE",
+        "page_number": 6
+      }
+    ],
+    "page_count": 6,
+    "dominant_category": "VECTOR_NATIVE",
+    "category_distribution": {
+      "HYBRID": 1,
+      "VECTOR_NATIVE": 5
+    }
+  }
+]
