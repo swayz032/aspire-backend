@@ -56,11 +56,11 @@ _CATEGORY_PATTERNS: list[tuple[MissingInputCategory, re.Pattern[str]]] = [
         re.IGNORECASE,
     )),
     (MissingInputCategory.ADDENDA, re.compile(
-        r"\baddend\b|\brevision\s+hierarch\b|\bsupersess\b|\brev(?:ision)?\s+block\b",
+        r"\baddend(?:um|a)?\b|\brevision\s+hierarch|\bsupersess|\brev(?:ision)?\s+block\b",
         re.IGNORECASE,
     )),
     (MissingInputCategory.DIMENSION, re.compile(
-        r"\bdimension\b|\broom\s+size\b|\bfloor\s+plan\b|\bsquare\s+foot\b|\bsf\b",
+        r"\bdimension|\broom\s+size\b|\bfloor\s+plan\b|\bsquare\s+foot|\bsf\b",
         re.IGNORECASE,
     )),
     (MissingInputCategory.DETAIL, re.compile(

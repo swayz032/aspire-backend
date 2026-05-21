@@ -34,9 +34,9 @@ from aspire_orchestrator.services.blueprint.resolvers.base import (
 _log = logging.getLogger(__name__)
 _TIMEOUT_S: float = 15.0
 
-# Room dimension patterns in OCR: "10'-6" x 12'-0"" or "10.5' × 12'"
+# Room dimension patterns in OCR: 10'-6" x 12'-0" or 10.5' x 12'
 _ROOM_DIM_PATTERN = re.compile(
-    r"(\d{1,3})\s*[\'-]\s*(?:(\d{1,2})\s*[\""])?\s*[xX×]\s*(\d{1,3})\s*[\'-]\s*(?:(\d{1,2})\s*[\""])?",
+    r'(\d{1,3})\s*[\'`-]\s*(?:(\d{1,2})\s*")?\s*[xX]\s*(\d{1,3})\s*[\'`-]\s*(?:(\d{1,2})\s*")?',
 )
 
 

@@ -42,9 +42,9 @@ _REFERENCE_OBJECTS: list[tuple[str, float, re.Pattern[str]]] = [
 
 _RENDER_DPI: float = 200.0
 
-# Dimension callout: "10'-6"" or "10.5'" or "2600mm"
+# Dimension callout: 10'-6" or 10.5' or 2600mm
 _DIM_CALLOUT_FT_IN = re.compile(
-    r"(\d{1,3})\s*[\'`]\s*(?:-?\s*(\d{1,2})\s*[\""])?",
+    r'(\d{1,3})\s*[\'`]\s*(?:-?\s*(\d{1,2})\s*")?',
     re.IGNORECASE,
 )
 _DIM_CALLOUT_MM = re.compile(r"(\d{3,5})\s*mm", re.IGNORECASE)
