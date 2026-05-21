@@ -2281,6 +2281,50 @@ async def _async_see_pipeline(
         # Fail-soft: VGSE is additive. Never block the rest of SEE.
         _log.warning("drew.see[vgse]: pipeline failed (%s) — proceeding with YOLO only", type(_vgse_exc).__name__)
 
+    # ─────────────────────────────────────────────────────────────────
+    # Wave 18 — Wave 11g-v2 SEE integration (feature-flagged).
+    # Vector → graph → WL-mine → cascade-resolve → blueprint_symbols.
+    # Default OFF; flip ASPIRE_USE_WAVE_11G2=true on Railway to enable.
+    # Runs additively; VGSE rows above are untouched.
+    # ─────────────────────────────────────────────────────────────────
+    try:
+        from aspire_orchestrator.services.blueprint import wave_11g2_see as _w11g2
+        if _w11g2.is_enabled():
+            _wl_sheet_ids_by_page: dict[int, str] = {}
+            _wl_discipline_by_page: dict[int, str | None] = {}
+            for _s in sheets:
+                try:
+                    _pn = int(_s.get("sheet_number") or 0)
+                except (ValueError, KeyError, TypeError):
+                    continue
+                _wl_sheet_ids_by_page[_pn] = str(_s["id"])
+                _wl_discipline_by_page[_pn] = _s.get("discipline")
+            _wl_summary = await _w11g2.run_wave_11g2_see_for_project(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                pdf_bytes=pdf_bytes,
+                sheet_ids_by_page=_wl_sheet_ids_by_page,
+                correlation_id=correlation_id,
+                discipline_by_page=_wl_discipline_by_page,
+            )
+            _log.info(
+                "drew.see[11g2]: project=%s pages=%d motifs=%d instances=%d rows=%d",
+                project_id[:8],
+                _wl_summary.get("pages_processed", 0),
+                _wl_summary.get("total_motifs", 0),
+                _wl_summary.get("total_instances", 0),
+                _wl_summary.get("rows_inserted", 0),
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as _wl_exc:  # noqa: BLE001
+        # Fail-soft: Wave 11g-v2 is additive. Never block the rest of SEE.
+        _log.warning(
+            "drew.see[11g2]: pipeline failed (%s) — proceeding without WL motifs",
+            type(_wl_exc).__name__,
+        )
+
     # Wave 9l: Try to load per-sheet 200 DPI PNGs from the INGEST-stage cache
     # (blueprint-sheet-images bucket) before falling back to PDF re-render.
     # This eliminates the root-cause 520+s SEE timeout: INGEST already rasterized
