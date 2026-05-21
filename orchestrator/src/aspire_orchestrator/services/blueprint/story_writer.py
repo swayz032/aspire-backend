@@ -38,6 +38,12 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+# Wave 17b.5: canonical assembly-type taxonomy. Imported at module load so the
+# strict-typing path in _parse_llm_response has zero per-call import cost.
+from aspire_orchestrator.services.blueprint.assembly_types import (  # noqa: E402
+    normalize_assembly_type as _normalize_assembly_type,
+)
+
 # Wave 9h: module-level caches for KB docs and system prompt.
 # Loading these once per process keeps the system-message prefix byte-identical
 # across all LLM calls, maximising OpenAI prefix cache reuse.
@@ -269,6 +275,9 @@ def _build_messages_a(
     sheet_summaries = _build_sheet_summaries(active_sheets, symbols_by_sheet, seal_sheet_ids)
     hint_summaries = _build_hint_summaries(case_pack_hints)
 
+    # Wave 17b.5: inject the canonical assembly-type taxonomy so the LLM must
+    # pick one of these strings (or the row will be dropped to missing_input).
+    from aspire_orchestrator.services.blueprint.assembly_types import ASSEMBLY_TYPES
     user_payload = {
         "project_id": project_id,
         "discipline_summary": discipline_counts,
@@ -277,10 +286,17 @@ def _build_messages_a(
         "sheets": sheet_summaries,
         "case_pack_hints": hint_summaries,
         "task": "ASSEMBLIES_AND_QUANTITIES",
+        "allowed_assembly_types": sorted(ASSEMBLY_TYPES),
         "instructions": (
             "For each construction phase (from the trade sequence playbook), enumerate all "
             "assemblies and material line items detectable from the sheet corpus. "
             "Every assembly and material_line must carry a truth tag and confidence. "
+            "EVERY assembly.type MUST be one of the strings in allowed_assembly_types (exact match, "
+            "snake_case). Do NOT invent new type strings, do NOT emit 'general', do NOT leave type empty. "
+            "If you cannot confidently match an assembly to an allowed type, OMIT it from this response "
+            "(it will be surfaced via the missing-inputs call instead). "
+            "EVERY material_line.line_item MUST be a specific spec string (e.g. 'GFCI Receptacle 20A 125V Duplex'). "
+            "Do NOT emit empty or whitespace-only line_item values. "
             "Do NOT produce markdown narrative or missing_inputs in this response. "
             "Return JSON with keys: phases (array of {phase_number, phase_name, assemblies, material_lines}). "
             "No other top-level keys needed."
@@ -580,13 +596,38 @@ def _parse_llm_response(
                 truth_dist["missing"] += 1
                 continue
 
+            # Wave 17b.5: STRICT assembly typing — refuse 'general' / empty.
+            # LLM-emitted type must match the canonical taxonomy. If it doesn't,
+            # the row becomes a missing_input rather than a type='general' placeholder.
+            raw_type = asm.get("type")
+            canonical_type = _normalize_assembly_type(raw_type)
+            if canonical_type is None:
+                desc = (
+                    f"Assembly with non-canonical type '{str(raw_type)[:60]}' on phase "
+                    f"{phase_number} — requires taxonomy mapping or scope clarification."
+                )
+                missing_input_rows.append({
+                    "id": str(uuid.uuid4()),
+                    "suite_id": suite_id,
+                    "office_id": office_id,
+                    "project_id": project_id,
+                    "description": desc,
+                    "suggested_resolution": (
+                        "Map this assembly to a canonical type in assembly_types.ASSEMBLY_TYPES "
+                        "or confirm scope from drawings."
+                    ),
+                    "created_at": now_iso,
+                })
+                truth_dist["missing"] += 1
+                continue
+
             tariff_flag = _normalize_tariff_flag(asm.get("tariff_flag"))
             assembly_rows.append({
                 "id": str(uuid.uuid4()),
                 "suite_id": suite_id,
                 "office_id": office_id,
                 "project_id": project_id,
-                "type": str(asm.get("type") or ""),
+                "type": canonical_type,
                 "quantity": _maybe_float(asm.get("quantity")),
                 "unit": _maybe_str(asm.get("unit")),
                 "truth": truth_tag,
@@ -621,13 +662,36 @@ def _parse_llm_response(
                 truth_dist["missing"] += 1
                 continue
 
+            # Wave 17b.5: refuse empty line_item rows — they are the smoking gun
+            # behind the "52 placeholder rows" production bug. Empty/whitespace-only
+            # line_item → missing_input rather than a junk row.
+            raw_line = str(mat.get("line_item") or "").strip()
+            if not raw_line:
+                missing_input_rows.append({
+                    "id": str(uuid.uuid4()),
+                    "suite_id": suite_id,
+                    "office_id": office_id,
+                    "project_id": project_id,
+                    "description": (
+                        f"Material on phase {phase_number} emitted with empty line_item — "
+                        "specification required."
+                    ),
+                    "suggested_resolution": (
+                        "Re-run REASON with richer OCR context or add the material via "
+                        "supplier lookup in PROCURE."
+                    ),
+                    "created_at": now_iso,
+                })
+                truth_dist["missing"] += 1
+                continue
+
             tariff_flag = _normalize_tariff_flag(mat.get("tariff_flag"))
             material_rows.append({
                 "id": str(uuid.uuid4()),
                 "suite_id": suite_id,
                 "office_id": office_id,
                 "project_id": project_id,
-                "line_item": str(mat.get("line_item") or ""),
+                "line_item": raw_line,
                 "quantity": _maybe_float(mat.get("quantity")),
                 "unit": _maybe_str(mat.get("unit")),
                 "truth": truth_tag,
@@ -676,6 +740,18 @@ def _parse_llm_response(
             project_id[:8],
         )
 
+    # Wave 17b.5: assembly type breakdown (canonical types only, since
+    # non-canonical was already filtered to missing_inputs).
+    assembly_type_breakdown: dict[str, int] = {}
+    for row in assembly_rows:
+        t = str(row.get("type") or "")
+        if t:
+            assembly_type_breakdown[t] = assembly_type_breakdown.get(t, 0) + 1
+    missing_assembly_count = sum(
+        1 for mi in missing_input_rows
+        if "non-canonical type" in str(mi.get("description") or "").lower()
+    )
+
     return {
         "story_rows": story_rows,
         "assembly_rows": assembly_rows,
@@ -684,6 +760,11 @@ def _parse_llm_response(
         "truth_distribution": truth_dist,
         "mean_confidence": round(mean_conf, 4),
         "dropped_untagged": dropped_untagged,
+        # Wave 17b.5 typing observability
+        "typed_assembly_count": len(assembly_rows),
+        "missing_assembly_count": missing_assembly_count,
+        "distinct_assembly_types": len(assembly_type_breakdown),
+        "assembly_type_breakdown": assembly_type_breakdown,
     }
 
 
@@ -1184,4 +1265,9 @@ async def write_story(
         truth_distribution=truth_dist,
         model_version=model,
         llm_usage=llm_usage,  # Wave 9h: propagated to receipt metadata by Drew.reason
+        # Wave 17b.5: typing observability passes through to Drew.reason receipt.
+        typed_assembly_count=int(parsed.get("typed_assembly_count", 0)),
+        missing_assembly_count=int(parsed.get("missing_assembly_count", 0)),
+        distinct_assembly_types=int(parsed.get("distinct_assembly_types", 0)),
+        assembly_type_breakdown=dict(parsed.get("assembly_type_breakdown", {})),
     )

@@ -2785,6 +2785,32 @@ async def _async_reason_pipeline(
         correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
     )
 
+    # Wave 17b.5: stage receipt for assembly typing observability.
+    # Emitted on every REASON run, regardless of count, so dashboards can graph
+    # taxonomy coverage over time.
+    store_receipts([{
+        "id": str(uuid.uuid4()),
+        "outcome": "success",
+        "action_type": "drew.reason.assembly_typed",
+        "receipt_type": "drew.reason.assembly_typed",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "risk_tier": "GREEN",
+        "actor_type": "WORKER",
+        "actor_id": ACTOR_DREW,
+        "correlation_id": correlation_id,
+        "suite_id": suite_id,
+        "metadata": {
+            "project_id": project_id,
+            "typed_count": output.typed_assembly_count,
+            "missing_count": output.missing_assembly_count,
+            "distinct_types": output.distinct_assembly_types,
+            "type_breakdown_sample": dict(
+                list(output.assembly_type_breakdown.items())[:10]
+            ),
+        },
+        "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+    }])
+
     # P0-3: mark reason done
     try:
         await set_stage_progress(
@@ -2809,6 +2835,10 @@ async def _async_reason_pipeline(
         "llm_cached_tokens": output.llm_usage.get("cached_tokens", 0),
         "llm_cache_hit_ratio": output.llm_usage.get("cache_hit_ratio", 0.0),
         "llm_completion_tokens": output.llm_usage.get("completion_tokens", 0),
+        # Wave 17b.5: typing observability for parent receipt
+        "typed_assembly_count": output.typed_assembly_count,
+        "missing_assembly_count": output.missing_assembly_count,
+        "distinct_assembly_types": output.distinct_assembly_types,
     }
 
 
@@ -2895,6 +2925,7 @@ async def _async_procure_pipeline(
         SupabaseClientError,
         supabase_select,
         supabase_update,
+        supabase_insert,
     )
     from aspire_orchestrator.services.blueprint.tariff_engine import (
         TariffFlag,
@@ -2904,6 +2935,9 @@ async def _async_procure_pipeline(
     from aspire_orchestrator.services.blueprint.supplier_matcher import match_suppliers
     from aspire_orchestrator.services.blueprint.schemas.truth import TariffFlag as TariffFlagEnum
     from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+    from aspire_orchestrator.services.blueprint.symbol_aggregator import (
+        aggregate_symbols_to_materials,
+    )
 
     # P0-3: mark procure in_progress in the async pipeline (dispatch path)
     try:
@@ -2912,6 +2946,142 @@ async def _async_procure_pipeline(
         )
     except Exception as _sp_exc:
         _log.warning("drew.procure: set_stage_progress(in_progress) failed: %s", _sp_exc)
+
+    # ── Wave 17b.5: symbol-aggregation pass ──────────────────────────────
+    # If REASON left blueprint_materials empty or full of placeholder rows,
+    # PROCURE seeds the table from the SEE stage's blueprint_symbols rows
+    # (aggregated by class). This makes the materials surface deterministic
+    # and reproducible from the diagnostic data, instead of LLM-only.
+    #
+    # Symbols are joined to sheets to filter by project_id (symbols table has
+    # no project_id column — only sheet_id).
+    aggregated_inserted = 0
+    aggregated_unmapped_classes: dict[str, int] = {}
+    aggregated_missing_inputs = 0
+    try:
+        project_sheets = await supabase_select(
+            "blueprint_sheets",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+        )
+        project_sheet_ids = [str(s["id"]) for s in (project_sheets or [])]
+
+        all_symbols: list[dict[str, Any]] = []
+        for sheet_id in project_sheet_ids:
+            try:
+                syms = await supabase_select(
+                    "blueprint_symbols",
+                    filters=f"sheet_id=eq.{sheet_id}&suite_id=eq.{suite_id}",
+                )
+                if syms:
+                    all_symbols.extend(syms)
+            except SupabaseClientError:
+                # Non-fatal — skip this sheet but continue.
+                continue
+
+        if all_symbols:
+            agg = aggregate_symbols_to_materials(all_symbols)
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            # Existing line_items for this project — used to dedup so re-running
+            # PROCURE is idempotent.
+            try:
+                existing_mats = await supabase_select(
+                    "blueprint_materials",
+                    filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+                )
+                existing_line_items = {
+                    str(m.get("line_item") or "").strip()
+                    for m in (existing_mats or [])
+                    if str(m.get("line_item") or "").strip()
+                }
+            except SupabaseClientError:
+                existing_line_items = set()
+
+            for am in agg.materials:
+                if am.line_item.strip() in existing_line_items:
+                    continue  # idempotency — already on the table
+                flag = detect_tariff_flag(am.line_item)
+                row = am.to_row(
+                    row_id=str(uuid.uuid4()),
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    project_id=project_id,
+                    created_at=now_iso,
+                    tariff_flag=flag.value,
+                    assembly_id=None,  # FK populated by future assembly→material linker
+                )
+                try:
+                    await supabase_insert("blueprint_materials", row)
+                    aggregated_inserted += 1
+                except SupabaseClientError as _exc:
+                    _log.warning(
+                        "drew.procure: aggregated material insert failed class=%s err=%s",
+                        am.symbol_class[:40], type(_exc).__name__,
+                    )
+
+            # Surface unmapped classes as missing_inputs so a human reviews them.
+            aggregated_unmapped_classes = dict(agg.unmapped_classes)
+            for cls, n in agg.unmapped_classes.items():
+                desc = (
+                    f"Symbol class '{cls[:60]}' appeared {n} times across the sheet set "
+                    "but is not mapped to a material spec. Add a mapping in "
+                    "symbol_aggregator._CLASS_TO_SPEC or confirm the YOLO label."
+                )
+                try:
+                    await supabase_insert("blueprint_missing_inputs", {
+                        "id": str(uuid.uuid4()),
+                        "suite_id": suite_id,
+                        "office_id": office_id,
+                        "project_id": project_id,
+                        "description": desc,
+                        "suggested_resolution": (
+                            "Add the class → (discipline, unit, line_item) entry to "
+                            "symbol_aggregator._CLASS_TO_SPEC and re-run PROCURE."
+                        ),
+                        "created_at": now_iso,
+                    })
+                    aggregated_missing_inputs += 1
+                except SupabaseClientError:
+                    pass
+
+            # Wave 17b.5 stage receipt: drew.procure.material_lines
+            try:
+                tariff_flagged_count = sum(
+                    1 for am in agg.materials if detect_tariff_flag(am.line_item) != TariffFlag.NONE
+                )
+                total_qty = float(sum(am.quantity for am in agg.materials))
+                store_receipts([{
+                    "id": str(uuid.uuid4()),
+                    "outcome": "success",
+                    "action_type": "drew.procure.material_lines",
+                    "receipt_type": "drew.procure.material_lines",
+                    "created_at": now_iso,
+                    "risk_tier": "GREEN",
+                    "actor_type": "WORKER",
+                    "actor_id": ACTOR_DREW,
+                    "correlation_id": correlation_id,
+                    "suite_id": suite_id,
+                    "metadata": {
+                        "project_id": project_id,
+                        "distinct_line_items": len(agg.materials),
+                        "total_quantity": total_qty,
+                        "tariff_flagged_count": tariff_flagged_count,
+                        "aggregated_inserted": aggregated_inserted,
+                        "unmapped_classes": len(agg.unmapped_classes),
+                        "total_symbols_processed": agg.total_symbols_processed,
+                    },
+                    "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+                }])
+            except Exception:
+                pass
+
+    except Exception as _agg_exc:
+        # Aggregation is best-effort — never break the existing tariff/supplier
+        # update loop if symbols are unavailable.
+        _log.warning(
+            "drew.procure: symbol aggregation skipped project=%s err=%s",
+            project_id[:8], type(_agg_exc).__name__,
+        )
 
     # Load all material rows for this project (RLS-scoped by suite_id)
     try:
@@ -3081,7 +3251,10 @@ async def _async_procure_pipeline(
         "tariff_breakdown": tariff_breakdown,
         "suppliers_matched": suppliers_matched,
         "supplier_match_rate": supplier_match_rate,
-        "missing_inputs_added": missing_inputs_added,
+        "missing_inputs_added": missing_inputs_added + aggregated_missing_inputs,
+        # Wave 17b.5 aggregation observability
+        "aggregated_inserted": aggregated_inserted,
+        "unmapped_symbol_classes": len(aggregated_unmapped_classes),
     }
 
 

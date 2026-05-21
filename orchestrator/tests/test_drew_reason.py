@@ -115,9 +115,11 @@ def _make_llm_response(
     include_untagged_fact: bool = False,
 ) -> dict:
     """Build a realistic LLM structured output."""
+    # Wave 17b.5: types must be canonical snake_case from assembly_types.ASSEMBLY_TYPES
+    # or the row drops to missing_input. Older free-form strings were the production bug.
     assemblies = [
         {
-            "type": "Demising wall, 3-5/8\" MTL STUD / GWB both sides, 10'-0\" ht",
+            "type": "wall_demising_gwb_mr_both_sides",
             "quantity": 84.0,
             "unit": "LF",
             "truth": "derived",
@@ -126,7 +128,7 @@ def _make_llm_response(
             "tariff_flag": None,
         },
         {
-            "type": "Door opening, Type A",
+            "type": "door_hm_3070",
             "quantity": 3.0,
             "unit": "ea",
             "truth": "observed",
@@ -138,7 +140,7 @@ def _make_llm_response(
 
     if include_low_confidence_assumed:
         assemblies.append({
-            "type": "Ceiling height 9-ft assumed",
+            "type": "ceiling_gwb",
             "quantity": None,
             "unit": "ft",
             "truth": "assumed",
