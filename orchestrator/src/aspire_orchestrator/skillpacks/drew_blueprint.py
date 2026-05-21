@@ -1829,10 +1829,14 @@ async def _async_classify_pipeline(
             # Law #9: DLP-redact before persisting the description.
             reason_clean, _rc = _dlp_redact(verdict.missing_input_reason)
             try:
-                from aspire_orchestrator.services.supabase_client import supabase_insert
-                await supabase_insert(
+                from aspire_orchestrator.services.supabase_client import (
+                    supabase_insert_batch_ignore_conflicts,
+                )
+                # Wave 19a: ON CONFLICT (project_id, description_hash) DO NOTHING
+                # prevents exact-text duplicates from discipline_verifier re-runs.
+                await supabase_insert_batch_ignore_conflicts(
                     "blueprint_missing_inputs",
-                    {
+                    [{
                         "id": str(uuid.uuid4()),
                         "suite_id": suite_id,
                         "project_id": project_id,
@@ -1842,7 +1846,8 @@ async def _async_classify_pipeline(
                             "the assignment manually."
                         ),
                         "created_at": datetime.now(timezone.utc).isoformat(),
-                    },
+                    }],
+                    conflict_target="project_id,description_hash",
                 )
             except SupabaseClientError as exc:
                 _log.warning(

@@ -65,10 +65,12 @@ except ImportError:
 try:
     from aspire_orchestrator.services.supabase_client import (  # noqa: F401
         supabase_insert,
+        supabase_insert_batch_ignore_conflicts,
         supabase_select,
     )
 except ImportError:
     supabase_insert = None  # type: ignore[assignment]
+    supabase_insert_batch_ignore_conflicts = None  # type: ignore[assignment]
     supabase_select = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
@@ -1229,13 +1231,30 @@ async def write_story(
                 type(exc).__name__,
             )
 
-    # Missing inputs (deduplicated)
-    for row in new_missing_input_rows:
+    # Missing inputs — Wave 19a: batch insert with ON CONFLICT DO NOTHING on
+    # (project_id, description_hash) to prevent exact-text duplicates from
+    # discipline_verifier and story_writer._call_b() landing twice for the
+    # same description text on the same project.
+    if new_missing_input_rows:
         try:
-            await _supabase_insert("blueprint_missing_inputs", row)
+            from aspire_orchestrator.services.supabase_client import (
+                supabase_insert_batch_ignore_conflicts,
+            )
+            _inserted_mis, _skipped_mis = await supabase_insert_batch_ignore_conflicts(
+                "blueprint_missing_inputs",
+                new_missing_input_rows,
+                conflict_target="project_id,description_hash",
+            )
+            if _skipped_mis:
+                _log.info(
+                    "story_writer: skipped %d duplicate missing_input rows "
+                    "(exact-text dedup) for project=%s",
+                    _skipped_mis,
+                    project_id[:8],
+                )
         except SupabaseClientError as exc:
             _log.warning(
-                "story_writer: failed to insert missing_input for project=%s: %s",
+                "story_writer: failed to insert missing_inputs for project=%s: %s",
                 project_id[:8],
                 type(exc).__name__,
             )
