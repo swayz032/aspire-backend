@@ -102,6 +102,7 @@ class DimensionResolver(MissingInputResolver):
 
             for sheet in plan_sheets:
                 image_url = sheet.get("thumbnail_url") or sheet.get("image_url")
+                # OpenAI Responses API uses "input_image" type (not "image_url").
                 messages = [
                     {
                         "role": "system",
@@ -117,11 +118,11 @@ class DimensionResolver(MissingInputResolver):
                         "role": "user",
                         "content": [
                             {
-                                "type": "image_url",
-                                "image_url": {"url": image_url, "detail": "high"},
+                                "type": "input_image",
+                                "image_url": image_url,
                             },
                             {
-                                "type": "text",
+                                "type": "input_text",
                                 "text": "Extract all room dimensions visible in this floor plan.",
                             },
                         ],

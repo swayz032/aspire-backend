@@ -105,11 +105,13 @@ async def _mark_resolved(
         return True
     try:
         from aspire_orchestrator.services.supabase_client import supabase_update
+        # resolved_by is uuid FK (auth.users) — NULL for automated cascade.
+        # resolved_method is the Wave 19 text column for the resolver method.
         await supabase_update(
             "blueprint_missing_inputs",
             f"id=eq.{mi_id}&suite_id=eq.{suite_id}",
             {
-                "resolved_by": f"cascade:wave19:{method}",
+                "resolved_method": f"cascade:wave19:{method}",
                 "resolved_at": datetime.now(timezone.utc).isoformat(),
             },
         )

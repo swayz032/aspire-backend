@@ -176,6 +176,7 @@ class DisciplineResolver(MissingInputResolver):
             )
 
             # 1 vision pass per sheet per cascade run (cost control)
+            # OpenAI Responses API uses "input_image" type (not "image_url").
             messages = [
                 {
                     "role": "system",
@@ -190,11 +191,11 @@ class DisciplineResolver(MissingInputResolver):
                     "role": "user",
                     "content": [
                         {
-                            "type": "image_url",
-                            "image_url": {"url": image_url, "detail": "low"},
+                            "type": "input_image",
+                            "image_url": image_url,
                         },
                         {
-                            "type": "text",
+                            "type": "input_text",
                             "text": "What is the engineering discipline of this blueprint sheet?",
                         },
                     ],

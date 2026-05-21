@@ -219,12 +219,14 @@ async def _run_missing_input_cascade(
 
             if outcome.resolved:
                 # Mark resolved in DB
+                # resolved_by is uuid (auth.users FK) — use NULL for automated cascade.
+                # resolved_method is the new text column added in Wave 19.
                 try:
                     await _upd(
                         "blueprint_missing_inputs",
                         f"id=eq.{outcome.missing_input_id}&suite_id=eq.{suite_id}",
                         {
-                            "resolved_by": f"cascade:wave19:{outcome.best_result.method if outcome.best_result else 'unknown'}",
+                            "resolved_method": f"cascade:wave19:{outcome.best_result.method if outcome.best_result else 'unknown'}",
                             "resolved_at": datetime.now(timezone.utc).isoformat(),
                         },
                     )
