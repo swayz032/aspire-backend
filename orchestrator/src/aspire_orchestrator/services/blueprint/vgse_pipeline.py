@@ -103,14 +103,79 @@ async def run_vgse_for_project(
         "detections": [],
         "page_categories": {},
         "spatial_binding_by_discipline": {},
+        # Wave 17b.4 — legend telemetry
+        "legend_regions_found": 0,
+        "legend_pairs_extracted": 0,
+        "legend_signatures_matched": 0,
+        "legend_signatures_unmatched": 0,
+        "legend_pages_with_region": 0,
+        "legend_memory_upserts": 0,
     }
     discipline_by_page = discipline_by_page or {}
 
     with fitz.open(pdf_path) as doc:
+        # ─── Wave 17b.4 PASS 1 ────────────────────────────────────────────
+        # Extract legend signatures from EVERY page first. A legend on page 2
+        # can name a symbol that appears on pages 5, 8, 12... so we build a
+        # project-wide signature→canonical_name table BEFORE resolving motifs.
+        project_legend_map: dict[str, str] = {}
+        page_results: dict[int, VGSEPageResult] = {}
+        legend_source_page: dict[str, int] = {}
         for page_idx, page in enumerate(doc):
             page_number = page_idx + 1
-            page_result: VGSEPageResult = process_page(page)
+            page_disc = discipline_by_page.get(page_number)
+            page_result = process_page(page, discipline=page_disc)
+            page_results[page_number] = page_result
             summary["page_categories"][page_number] = page_result.category
+            if page_result.legend_entries:
+                summary["legend_pages_with_region"] += 1
+                summary["legend_pairs_extracted"] += len(page_result.legend_entries)
+                for entry in page_result.legend_entries:
+                    sig = entry["signature_hash"]
+                    label = entry["label"]
+                    # First page that names a signature wins. We don't reassign
+                    # if a later page proposes a different label — legends are
+                    # supposed to be consistent within a project.
+                    if sig not in project_legend_map:
+                        project_legend_map[sig] = label
+                        legend_source_page[sig] = page_number
+
+            # Count regions independently of pair extraction so we report what
+            # we *saw* even if no pairs got matched.
+            try:
+                from aspire_orchestrator.services.blueprint.vgse import find_legend_regions
+                summary["legend_regions_found"] += len(find_legend_regions(page))
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ─── Persist project-wide legend → memory (Wave 17b.4 step B) ────
+        # Push every legend-derived (signature → name) pair to blueprint_symbol_memory
+        # so future projects from the same architect get instant matches AND
+        # subsequent sheets within THIS project benefit from the propagation.
+        for sig, label in project_legend_map.items():
+            try:
+                await symbol_memory.upsert_observation(
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    signature_hash=sig,
+                    canonical_name=label,
+                    category=None,
+                    source="legend",
+                    project_id=project_id,
+                    instances_observed=0,  # no per-instance count yet — pass 2 will add
+                    confidence=0.95,
+                )
+                summary["legend_memory_upserts"] += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "vgse: legend memory upsert failed (%s) sig=%s",
+                    type(exc).__name__, sig[:8],
+                )
+
+        # ─── PASS 2 — resolve motifs with project-wide legend map ─────────
+        signatures_matched: set[str] = set()
+        for page_number in sorted(page_results.keys()):
+            page_result = page_results[page_number]
 
             if page_result.category in ("RASTER_SCAN", "UNKNOWN_LOW_CONTENT"):
                 summary["raster_pages"] += 1
@@ -120,8 +185,12 @@ async def run_vgse_for_project(
             if not page_result.motifs:
                 continue
 
-            # Legend map from the page (already in page_result.motifs.name_source='legend')
-            legend_map = {e["signature_hash"]: e["label"] for e in page_result.legend_entries}
+            # Build effective legend map: per-page legend ∪ project-wide.
+            # Per-page entries naturally already match this page's signatures;
+            # project-wide entries cover cross-page propagation.
+            per_page_legend = {e["signature_hash"]: e["label"] for e in page_result.legend_entries}
+            legend_map: dict[str, str] = dict(project_legend_map)
+            legend_map.update(per_page_legend)  # current page wins on duplicates
 
             # Tenant memory takes priority over page legend
             resolved = await symbol_memory.resolve_motif_names(
@@ -147,6 +216,10 @@ async def run_vgse_for_project(
             page_bind_results: dict[str, BindResult] = {}
             if unanchored_motifs:
                 try:
+                    # Wave 17b.4: pass 2 lost the `page` from the original
+                    # enumerate loop — re-fetch by index from `doc` which is
+                    # still open in this context.
+                    page = doc[page_number - 1]
                     words = extract_words_with_pymupdf(page)
                 except Exception as _word_exc:  # noqa: BLE001
                     logger.warning(
@@ -184,6 +257,8 @@ async def run_vgse_for_project(
                     )
 
             for motif in resolved:
+                if motif.name_source == "legend":
+                    signatures_matched.add(motif.signature_hash)
                 # Apply spatial bind if available (only for previously-unanchored motifs)
                 if motif.name_source == "unanchored" and motif.signature_hash in page_bind_results:
                     bind = page_bind_results[motif.signature_hash]
@@ -247,6 +322,41 @@ async def run_vgse_for_project(
     summary["elapsed_ms"] = elapsed_ms
     summary["correlation_id"] = correlation_id
 
+    # Wave 17b.4: finalize legend metrics. unmatched = legend signatures that
+    # had a label but no motif on any page ended up resolving to them.
+    summary["legend_signatures_matched"] = len(signatures_matched)
+    summary["legend_signatures_unmatched"] = max(
+        0, len(project_legend_map) - len(signatures_matched)
+    )
+
+    # Wave 17b.4 — emit legend extraction receipt (Law #2). Best-effort.
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts as _sr_legend
+        _sr_legend([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "drew.see.legend_extracted",
+            "receipt_type": "drew.see.legend_extracted",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": "skillpack:drew-blueprint",
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {
+                "project_id": project_id,
+                "legend_regions_found": summary["legend_regions_found"],
+                "legend_pages_with_region": summary["legend_pages_with_region"],
+                "legend_pairs_extracted": summary["legend_pairs_extracted"],
+                "legend_signatures_matched": summary["legend_signatures_matched"],
+                "legend_signatures_unmatched": summary["legend_signatures_unmatched"],
+                "legend_memory_upserts": summary["legend_memory_upserts"],
+                "motif_legend_resolutions": summary["legend_hits"],
+            },
+        }])
+    except Exception:  # noqa: BLE001
+        pass
+
     # Wave 17b.2 — emit spatial binding receipt (Law #2). Best-effort: never block
     # the pipeline on receipt persistence.
     try:
@@ -277,7 +387,9 @@ async def run_vgse_for_project(
 
     logger.info(
         "vgse: project=%s pages=%d vector=%d raster=%d motifs=%d instances=%d "
-        "memory=%d legend=%d spatial_ocr=%d unanchored=%d (%dms)",
+        "memory=%d legend=%d spatial_ocr=%d unanchored=%d "
+        "[legend_regions=%d pairs=%d sigs_matched=%d sigs_unmatched=%d upserts=%d] "
+        "(%dms)",
         project_id[:8],
         summary["vector_pages"] + summary["raster_pages"],
         summary["vector_pages"],
@@ -288,6 +400,11 @@ async def run_vgse_for_project(
         summary["legend_hits"],
         summary["spatial_ocr_hits"],
         summary["unanchored"],
+        summary["legend_regions_found"],
+        summary["legend_pairs_extracted"],
+        summary["legend_signatures_matched"],
+        summary["legend_signatures_unmatched"],
+        summary["legend_memory_upserts"],
         elapsed_ms,
     )
 
