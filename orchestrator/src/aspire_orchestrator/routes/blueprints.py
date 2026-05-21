@@ -928,7 +928,7 @@ async def get_blueprint_story(
 
     try:
         rows = await supabase_select(
-            "blueprint_stories",
+            "blueprint_story",
             filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}&supersedes_id=is.null",
             order_by="phase.asc",
         )
