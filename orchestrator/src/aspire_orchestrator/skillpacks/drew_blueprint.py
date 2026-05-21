@@ -2068,6 +2068,90 @@ async def _async_see_pipeline(
             "model_version": os.getenv("ASPIRE_DREW_YOLO_MODEL", "yolo11n.pt"),
         }
 
+    # ─────────────────────────────────────────────────────────────────
+    # Wave 11j: VGSE (Vector Graph Symbol Extraction) — additive primary
+    # detector for vector-native PDFs. Runs BEFORE YOLO/CPU inference and
+    # writes deterministic-signature detections to blueprint_symbols.
+    # YOLO continues unchanged below as supplement / raster fallback.
+    # ─────────────────────────────────────────────────────────────────
+    try:
+        from aspire_orchestrator.services.blueprint.vgse_pipeline import (
+            detections_to_blueprint_symbol_rows,
+            run_vgse_for_project,
+        )
+        import tempfile as _tf
+        with _tf.NamedTemporaryFile(delete=False, suffix=".pdf") as _vgse_tmp:
+            _vgse_tmp.write(pdf_bytes)
+            _vgse_pdf_path = _vgse_tmp.name
+        _vgse_sheet_ids_by_page: dict[int, str] = {}
+        for _s in sheets:
+            try:
+                _vgse_sheet_ids_by_page[int(_s.get("sheet_number") or 0)] = str(_s["id"])
+            except (ValueError, KeyError, TypeError):
+                continue
+        _vgse_summary = await run_vgse_for_project(
+            pdf_path=_vgse_pdf_path,
+            suite_id=suite_id,
+            office_id=office_id,
+            project_id=project_id,
+            sheet_ids_by_page=_vgse_sheet_ids_by_page,
+            correlation_id=correlation_id,
+        )
+        _vgse_rows = detections_to_blueprint_symbol_rows(_vgse_summary.get("detections", []))
+        _vgse_inserted = 0
+        for _row in _vgse_rows:
+            try:
+                await supabase_insert("blueprint_symbols", _row)
+                _vgse_inserted += 1
+            except SupabaseClientError as _vgse_exc:
+                _log.warning("drew.see[vgse]: insert failed (%s) sig=%s",
+                            type(_vgse_exc).__name__, _row.get("bbox", {}).get("signature_hash", "?")[:8])
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "blueprint.see.vgse.completed",
+            "receipt_type": "blueprint.see.vgse.completed",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "metadata": {
+                "project_id": project_id,
+                "vector_pages": _vgse_summary.get("vector_pages", 0),
+                "raster_pages": _vgse_summary.get("raster_pages", 0),
+                "motifs_found": _vgse_summary.get("total_motifs_found", 0),
+                "total_instances": _vgse_summary.get("total_instances", 0),
+                "memory_hits": _vgse_summary.get("memory_hits", 0),
+                "legend_hits": _vgse_summary.get("legend_hits", 0),
+                "unanchored": _vgse_summary.get("unanchored", 0),
+                "rows_inserted": _vgse_inserted,
+                "elapsed_ms": _vgse_summary.get("elapsed_ms", 0),
+            },
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+        _log.info(
+            "drew.see[vgse]: project=%s motifs=%d instances=%d rows=%d (memory=%d legend=%d unanchored=%d)",
+            project_id[:8],
+            _vgse_summary.get("total_motifs_found", 0),
+            _vgse_summary.get("total_instances", 0),
+            _vgse_inserted,
+            _vgse_summary.get("memory_hits", 0),
+            _vgse_summary.get("legend_hits", 0),
+            _vgse_summary.get("unanchored", 0),
+        )
+        try:
+            os.unlink(_vgse_pdf_path)
+        except OSError:
+            pass
+    except asyncio.CancelledError:
+        raise
+    except Exception as _vgse_exc:  # noqa: BLE001
+        # Fail-soft: VGSE is additive. Never block the rest of SEE.
+        _log.warning("drew.see[vgse]: pipeline failed (%s) — proceeding with YOLO only", type(_vgse_exc).__name__)
+
     # Wave 9l: Try to load per-sheet 200 DPI PNGs from the INGEST-stage cache
     # (blueprint-sheet-images bucket) before falling back to PDF re-render.
     # This eliminates the root-cause 520+s SEE timeout: INGEST already rasterized
