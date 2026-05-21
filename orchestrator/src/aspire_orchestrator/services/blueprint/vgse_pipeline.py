@@ -24,6 +24,14 @@ from typing import Any
 import fitz
 
 from aspire_orchestrator.services.blueprint import symbol_memory
+from aspire_orchestrator.services.blueprint.spatial_ocr_binder import (
+    BindResult,
+    OcrWord,
+    SymbolBox,
+    bind_symbols_to_ocr,
+    extract_words_with_pymupdf,
+    summarize_binds,
+)
 from aspire_orchestrator.services.blueprint.vgse import (
     MotifDetection,
     VGSEPageResult,
@@ -59,6 +67,7 @@ async def run_vgse_for_project(
     project_id: str,
     sheet_ids_by_page: dict[int, str],
     correlation_id: str,
+    discipline_by_page: dict[int, str | None] | None = None,
 ) -> dict[str, Any]:
     """Run VGSE for every page in the PDF.
 
@@ -89,10 +98,13 @@ async def run_vgse_for_project(
         "total_instances": 0,
         "memory_hits": 0,
         "legend_hits": 0,
+        "spatial_ocr_hits": 0,
         "unanchored": 0,
         "detections": [],
         "page_categories": {},
+        "spatial_binding_by_discipline": {},
     }
+    discipline_by_page = discipline_by_page or {}
 
     with fitz.open(pdf_path) as doc:
         for page_idx, page in enumerate(doc):
@@ -126,13 +138,73 @@ async def run_vgse_for_project(
                 )
                 continue
 
+            # Wave 17b.2 — spatial OCR binding. For motifs that fell through to
+            # 'unanchored', try to bind a real label from the nearest OCR word
+            # before emitting. Words come from PyMuPDF (free, exact PDF-pt
+            # bboxes) since Azure's flat 'content' string discards geometry.
+            page_discipline = discipline_by_page.get(page_number)
+            unanchored_motifs = [m for m in resolved if m.name_source == "unanchored"]
+            page_bind_results: dict[str, BindResult] = {}
+            if unanchored_motifs:
+                try:
+                    words = extract_words_with_pymupdf(page)
+                except Exception as _word_exc:  # noqa: BLE001
+                    logger.warning(
+                        "vgse: word extract failed page=%d (%s)",
+                        page_number, type(_word_exc).__name__,
+                    )
+                    words = []
+                if words:
+                    sym_boxes: list[SymbolBox] = []
+                    for m in unanchored_motifs:
+                        if not m.bboxes:
+                            continue
+                        bx0, by0, bx1, by1 = m.bboxes[0]
+                        sym_boxes.append(SymbolBox(
+                            symbol_id=m.signature_hash,
+                            x=float(bx0),
+                            y=float(by0),
+                            w=float(bx1 - bx0),
+                            h=float(by1 - by0),
+                            signature_hash=m.signature_hash,
+                        ))
+                    binds = bind_symbols_to_ocr(
+                        sym_boxes,
+                        words,
+                        discipline=page_discipline,
+                    )
+                    for b in binds:
+                        if b.label is not None:
+                            page_bind_results[b.symbol_id] = b
+                if page_bind_results:
+                    disc_key = page_discipline or "unknown"
+                    summary["spatial_binding_by_discipline"][disc_key] = (
+                        summary["spatial_binding_by_discipline"].get(disc_key, 0)
+                        + len(page_bind_results)
+                    )
+
             for motif in resolved:
+                # Apply spatial bind if available (only for previously-unanchored motifs)
+                if motif.name_source == "unanchored" and motif.signature_hash in page_bind_results:
+                    bind = page_bind_results[motif.signature_hash]
+                    motif = MotifDetection(
+                        signature_hash=motif.signature_hash,
+                        count=motif.count,
+                        sample_item_count=motif.sample_item_count,
+                        sample_size_pt=motif.sample_size_pt,
+                        spatial_entropy=motif.spatial_entropy,
+                        bboxes=motif.bboxes,
+                        canonical_name=bind.label or motif.canonical_name,
+                        name_source="spatial_ocr",
+                    )
                 summary["total_motifs_found"] += 1
                 summary["total_instances"] += motif.count
                 if motif.name_source == "tenant_memory":
                     summary["memory_hits"] += 1
                 elif motif.name_source == "legend":
                     summary["legend_hits"] += 1
+                elif motif.name_source == "spatial_ocr":
+                    summary["spatial_ocr_hits"] += 1
                 else:
                     summary["unanchored"] += 1
 
@@ -175,9 +247,37 @@ async def run_vgse_for_project(
     summary["elapsed_ms"] = elapsed_ms
     summary["correlation_id"] = correlation_id
 
+    # Wave 17b.2 — emit spatial binding receipt (Law #2). Best-effort: never block
+    # the pipeline on receipt persistence.
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts as _sr
+        _sr([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "drew.see.spatial_binding",
+            "receipt_type": "drew.see.spatial_binding",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": "skillpack:drew-blueprint",
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {
+                "project_id": project_id,
+                "symbols_total": summary["total_motifs_found"],
+                "spatial_ocr_bound": summary["spatial_ocr_hits"],
+                "unbound": summary["unanchored"],
+                "memory_hits": summary["memory_hits"],
+                "legend_hits": summary["legend_hits"],
+                "by_discipline": summary["spatial_binding_by_discipline"],
+            },
+        }])
+    except Exception:  # noqa: BLE001
+        pass  # receipt emission is best-effort
+
     logger.info(
         "vgse: project=%s pages=%d vector=%d raster=%d motifs=%d instances=%d "
-        "memory=%d legend=%d unanchored=%d (%dms)",
+        "memory=%d legend=%d spatial_ocr=%d unanchored=%d (%dms)",
         project_id[:8],
         summary["vector_pages"] + summary["raster_pages"],
         summary["vector_pages"],
@@ -186,6 +286,7 @@ async def run_vgse_for_project(
         summary["total_instances"],
         summary["memory_hits"],
         summary["legend_hits"],
+        summary["spatial_ocr_hits"],
         summary["unanchored"],
         elapsed_ms,
     )
@@ -230,7 +331,14 @@ def detections_to_blueprint_symbol_rows(
         sheet_id = d["sheet_id"]
         # Apply interpretable fallback only for opaque names — real names
         # (tenant_memory / legend hits) pass through unchanged.
-        confidence = 0.95 if d.get("name_source") in ("tenant_memory", "legend") else 0.60
+        # Wave 17b.2 — spatial_ocr names are anchored to architect text → 0.85.
+        _source = d.get("name_source")
+        if _source in ("tenant_memory", "legend"):
+            confidence = 0.95
+        elif _source == "spatial_ocr":
+            confidence = 0.85
+        else:
+            confidence = 0.60
         if is_opaque_name(original_class):
             class_name = interpretable_fallback(
                 original_class,
