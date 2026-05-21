@@ -1724,26 +1724,47 @@ async def _async_classify_pipeline(
     discipline_counts: dict[str, int] = {}
     needs_review_count = 0
 
+    # ---------------------------------------------------------------
+    # Wave 17b.6 — load symbols once for Signal 2 of the verifier.
+    # blueprint_symbols has no project_id column; it joins via sheet_id.
+    # ---------------------------------------------------------------
+    from aspire_orchestrator.services.blueprint.discipline_verifier import (
+        verify_classification,
+    )
+
+    sheet_ids_csv = ",".join(str(s["id"]) for s in sheets)
+    symbols_by_sheet: dict[str, list[dict[str, Any]]] = {}
+    if sheet_ids_csv:
+        try:
+            symbol_rows = await supabase_select(
+                "blueprint_symbols",
+                filters=f"sheet_id=in.({sheet_ids_csv})&suite_id=eq.{suite_id}",
+            )
+            for row in symbol_rows or []:
+                sid = str(row.get("sheet_id") or "")
+                if not sid:
+                    continue
+                symbols_by_sheet.setdefault(sid, []).append(row)
+        except SupabaseClientError as exc:
+            _log.warning(
+                "drew.classify: failed to load symbols for verifier: %s",
+                type(exc).__name__,
+            )
+
+    verify_promoted = 0
+    verify_confirmed = 0
+    verify_flagged = 0
+    verify_demoted = 0
+
     for sheet in sheets:
         sheet_id = str(sheet["id"])
         tag = tag_index.get(sheet_id)
         if not tag:
             continue
 
-        discipline_value = tag.discipline
-        if discipline_value:
-            discipline_counts[discipline_value] = discipline_counts.get(discipline_value, 0) + 1
-        if tag.needs_review:
-            needs_review_count += 1
-
-        # Update sheet row with discipline
-        update_data: dict[str, Any] = {}
-        if discipline_value:
-            update_data["discipline"] = discipline_value
-
         # Wave 11p: extract sheet_code + sheet_title from OCR title block.
-        # Pure regex — no LLM cost. If the column already has a value we
-        # leave it alone (a manual override would have set it).
+        # Done BEFORE verification so the verifier sees the latest sheet_code.
+        update_data: dict[str, Any] = {}
         try:
             from aspire_orchestrator.services.blueprint.sheet_code_extractor import (
                 extract_sheet_code_title,
@@ -1755,19 +1776,58 @@ async def _async_classify_pipeline(
                 extracted = extract_sheet_code_title(sheet.get("ocr_text"))
                 if extracted.sheet_code and not existing_code:
                     update_data["sheet_code"] = extracted.sheet_code
+                    sheet["sheet_code"] = extracted.sheet_code  # feed verifier
                 if extracted.sheet_title and not existing_title:
                     update_data["sheet_title"] = extracted.sheet_title
+                    sheet["sheet_title"] = extracted.sheet_title
         except Exception as exc:
             _log.warning(
                 "drew.classify: sheet_code extract failed sheet=%s err=%s",
                 sheet_id[:8],
                 type(exc).__name__,
             )
-        if tag.needs_review:
-            # P2-2 fix: apply DLP to tag.reasoning before persisting to DB (Law #9).
-            reasoning_raw = str(tag.reasoning or "")
-            reasoning_clean, _r_count = _dlp_redact(reasoning_raw)
-            # Insert a missing_inputs row for contractor review
+
+        # Wave 17b.6 — run cross-check verifier.
+        verdict = verify_classification(
+            sheet_id=sheet_id,
+            sheet_number=sheet.get("sheet_number"),
+            discipline_assigned=tag.discipline,
+            sheet_code=sheet.get("sheet_code"),
+            ocr_text=sheet.get("ocr_text"),
+            symbols_on_sheet=symbols_by_sheet.get(sheet_id, []),
+            neighbor_sheets=[s for s in sheets if str(s["id"]) != sheet_id],
+        )
+
+        if verdict.verdict == "promote":
+            verify_promoted += 1
+        elif verdict.verdict == "confirm":
+            verify_confirmed += 1
+        elif verdict.verdict == "flag":
+            verify_flagged += 1
+        else:
+            verify_demoted += 1
+
+        # Apply verdict to the sheet row.
+        final_discipline = verdict.discipline_final
+        if final_discipline:
+            discipline_counts[final_discipline] = (
+                discipline_counts.get(final_discipline, 0) + 1
+            )
+            update_data["discipline"] = final_discipline
+        # Demote: clear the discipline column when no signal upholds it.
+        # supabase_update will write NULL when the column is in update_data
+        # with a None value; only do this if there was previously a value.
+        elif tag.discipline is not None and verdict.verdict == "demote":
+            update_data["discipline"] = None
+
+        # Record needs_review for callers (truth != field_confirmed/derived).
+        if verdict.truth in ("assumed", "missing_input"):
+            needs_review_count += 1
+
+        # When verdict flags or demotes, persist a SPECIFIC missing_input row.
+        if verdict.missing_input_reason is not None:
+            # Law #9: DLP-redact before persisting the description.
+            reason_clean, _rc = _dlp_redact(verdict.missing_input_reason)
             try:
                 from aspire_orchestrator.services.supabase_client import supabase_insert
                 await supabase_insert(
@@ -1776,18 +1836,18 @@ async def _async_classify_pipeline(
                         "id": str(uuid.uuid4()),
                         "suite_id": suite_id,
                         "project_id": project_id,
-                        "description": (
-                            f"Sheet {sheet.get('sheet_number', sheet_id[:8])}: "
-                            f"discipline confidence {tag.confidence:.0%} below threshold. "
-                            f"Tagger reasoning: {reasoning_clean}"
+                        "description": reason_clean,
+                        "suggested_resolution": (
+                            "Open the sheet, verify the discipline, and update "
+                            "the assignment manually."
                         ),
-                        "suggested_resolution": "Please verify the discipline for this sheet.",
                         "created_at": datetime.now(timezone.utc).isoformat(),
                     },
                 )
             except SupabaseClientError as exc:
                 _log.warning(
-                    "drew.classify: failed to insert missing_inputs for sheet %s: %s",
+                    "drew.classify: failed to insert verifier missing_input "
+                    "for sheet %s: %s",
                     sheet_id[:8],
                     type(exc).__name__,
                 )
@@ -1805,6 +1865,37 @@ async def _async_classify_pipeline(
                     sheet_id[:8],
                     type(exc).__name__,
                 )
+
+    # Emit Wave 17b.6 verifier receipt (Law #2). Best-effort.
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts as _store_receipts
+        store_receipts_payload = [{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "drew.classify.verified",
+            "receipt_type": "drew.classify.verified",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": "skillpack:drew-blueprint",
+            "correlation_id": correlation_id,
+            "metadata": {
+                "stage": "classify",
+                "project_id": project_id,
+                "promoted_to_confirmed": verify_promoted,
+                "confirmed_count": verify_confirmed,
+                "flagged_count": verify_flagged,
+                "demoted_to_missing": verify_demoted,
+                "agreed_count": verify_promoted + verify_confirmed,
+                "disagreed_count": verify_flagged + verify_demoted,
+            },
+        }]
+        _store_receipts(store_receipts_payload)
+    except Exception as _r_exc:
+        _log.warning(
+            "drew.classify: failed to emit verified receipt: %s",
+            type(_r_exc).__name__,
+        )
 
     # Revision detection
     revision_links = detect_revisions(sheets)
