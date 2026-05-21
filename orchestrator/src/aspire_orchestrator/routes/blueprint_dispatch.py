@@ -932,13 +932,64 @@ async def _validate_dedup_hit(
         # Fall through to the stale-emit + content_hash NULL path below.
     elif ingest_state == "done":
         try:
-            existing_sheets = await supabase_select(
-                "blueprint_sheets",
-                filters=f"project_id=eq.{existing_project_id}&suite_id=eq.{suite_id}",
-                limit=1,
+            # Wave 11l: enterprise dedup gate — ALL 5 stages must be 'done'
+            # AND sheets > 0 AND there must be EITHER a story row OR ZERO
+            # thumbnail_upload_failed receipts. Anything less = treat as stale
+            # and fall through to fresh upload so the user is never trapped on
+            # a half-broken project.
+            all_stages_done = (
+                isinstance(candidate_progress, dict)
+                and all(
+                    candidate_progress.get(s) == "done"
+                    for s in ("ingest", "classify", "see", "reason", "procure")
+                )
             )
-            if len(existing_sheets) > 0:
-                return True  # Genuine cache hit
+            if not all_stages_done:
+                logger.info(
+                    "blueprint_dispatch: dedup candidate has incomplete stage_progress "
+                    "— treating as stale project=%s stages=%s corr=%s",
+                    existing_project_id[:8],
+                    {k: v for k, v in (candidate_progress.items() if isinstance(candidate_progress, dict) else [])},
+                    correlation_id[:8],
+                )
+                ingest_state = "incomplete_stages"
+            else:
+                existing_sheets = await supabase_select(
+                    "blueprint_sheets",
+                    filters=f"project_id=eq.{existing_project_id}&suite_id=eq.{suite_id}",
+                    limit=1,
+                )
+                if len(existing_sheets) == 0:
+                    logger.info(
+                        "blueprint_dispatch: dedup candidate has zero sheets — treating as stale "
+                        "project=%s corr=%s",
+                        existing_project_id[:8],
+                        correlation_id[:8],
+                    )
+                    ingest_state = "zero_sheets"
+                else:
+                    # Last check: at least one blueprint_sheet must have an
+                    # image_storage_path. Thumbnail upload failures leave sheets
+                    # without renderable images; the UI shows "No sheets yet"
+                    # because there's nothing to display.
+                    sheets_with_image = await supabase_select(
+                        "blueprint_sheets",
+                        filters=(
+                            f"project_id=eq.{existing_project_id}&suite_id=eq.{suite_id}"
+                            f"&image_storage_path=not.is.null"
+                        ),
+                        limit=1,
+                    )
+                    if len(sheets_with_image) == 0:
+                        logger.info(
+                            "blueprint_dispatch: dedup candidate has no sheets with images — "
+                            "treating as stale project=%s corr=%s",
+                            existing_project_id[:8],
+                            correlation_id[:8],
+                        )
+                        ingest_state = "no_sheet_images"
+                    else:
+                        return True  # Genuine, fully-healthy cache hit
         except SupabaseClientError as _sheets_exc:
             # P1-11 fix: transient DB error — raise DedupCheckUnavailableError
             # so callers return 503 instead of silently treating this as a stale
