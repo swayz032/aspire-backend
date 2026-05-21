@@ -315,6 +315,10 @@ _RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
     "sheets_tried",
     "schedule_sheets_found",
     "schedule_sheets_with_png",
+    # Wave 19.1c (Commit 2.7) — table_structure_parse diagnostics
+    "active_sheets_total",
+    "schedule_sheets_with_rows",
+    "schedule_sheets_with_zero_rows",
     "table_rows_parsed",
     "total_rows_extracted",
     "tables_found",
@@ -326,6 +330,7 @@ _RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
     "png_source",
     "error",
     "timeout_s",
+    "matched_sheet_ids_sample",  # comma-separated 8-char UUID prefixes
 })
 
 

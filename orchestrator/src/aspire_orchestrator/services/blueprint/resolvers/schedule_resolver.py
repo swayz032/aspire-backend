@@ -63,11 +63,32 @@ from aspire_orchestrator.services.blueprint.resolvers.base import (
 )
 
 _log = logging.getLogger(__name__)
-_TIMEOUT_S: float = 15.0
+
+# Wave 19.1c (Commit 2.7) — per-method timeout raised 15s → 85s.
+#
+# Why 85s: Azure Document Intelligence prebuilt-layout is an async pipeline
+# (POST 202 + Operation-Location header, then poll until ``status=succeeded``).
+# Real-world latency on sealed engineering PDFs is 10-30s per sheet. The old
+# 15s cap killed every Azure call mid-poll — diagnostic receipts on the
+# Gulfstream backfill showed ``timeout`` recorded as the only method outcome,
+# with ``azure_premium_ocr`` entirely absent because the coroutine was
+# cancelled before it could attach evidence.
+#
+# 85s sits one tick under the cascade's outer ``_CASCADE_TIMEOUT_S=90s``
+# (missing_input_cascade.py:43) so the per-method timeout always fires first
+# and emits a clean ``timeout`` evidence record before the outer cap kicks in.
+#
+# Per-sheet Azure spend is bounded by the underlying client's poll-loop cap
+# (_POLL_MAX_S in azure_doc_intel_client.py — raised 30s → 60s in this commit).
+# Multiple sheets are now dispatched concurrently via asyncio.gather so 4-8
+# sheets complete in ~30s wall-clock rather than 4-8 × 25s sequentially.
+_TIMEOUT_S: float = 85.0
 
 # Wave 19.1b: raise per-cascade Azure call cap from 2 → 8. Each call hits the
 # Azure prebuilt-layout async pipeline (submit + poll). At list pricing this
 # is ~$0.01-0.03 USD per page; 8 sheets ≈ $0.08-0.24/cascade. Pre-authorized.
+# Wave 19.1c (Commit 2.7): sheets are now dispatched concurrently — the cap
+# bounds parallel fan-out, not sequential latency.
 _AZURE_SHEETS_PER_CASCADE_CAP: int = 8
 
 # Detect schedule sheets by title keywords
@@ -107,6 +128,40 @@ class ScheduleResolver(MissingInputResolver):
             except Exception as exc:  # noqa: BLE001
                 results.append(self._safe_result("schedule_resolve", exc))
         return results
+
+    async def _resolve_png_for_sheet(
+        self,
+        sheet: dict[str, Any],
+        candidate: MissingInputCandidate,
+    ) -> tuple[str, bytes | None, str]:
+        """Fetch PNG bytes for a single sheet using provider → legacy fallback.
+
+        Returns ``(sheet_id, png_bytes_or_None, source_tag)`` where
+        ``source_tag`` is ``"provider"``, ``"legacy"``, or ``"none"``.
+        Never raises — caller iterates the result list. Pulled out of the
+        loop so ``asyncio.gather`` can dispatch all PNG fetches in parallel.
+        """
+        sheet_id = str(sheet.get("id") or "")
+        if not sheet_id:
+            return ("", None, "none")
+
+        provider = candidate.data_provider
+        if provider is not None:
+            try:
+                png = await provider.get_sheet_png(sheet_id)
+                if png:
+                    return (sheet_id, png, "provider")
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "schedule_resolver.png provider fetch failed sheet=%s err=%s",
+                    sheet_id[:8], type(exc).__name__,
+                )
+
+        legacy = sheet.get("image_bytes")
+        if isinstance(legacy, (bytes, bytearray)) and legacy:
+            return (sheet_id, bytes(legacy), "legacy")
+
+        return (sheet_id, None, "none")
 
     async def _method_azure_premium_ocr(
         self, candidate: MissingInputCandidate
@@ -183,47 +238,54 @@ class ScheduleResolver(MissingInputResolver):
             )
 
             client = get_azure_doc_intel_client()
+
+            # Wave 19.1c (Commit 2.7) — process Azure calls CONCURRENTLY.
+            # Previously sequential: 4-8 sheets × 25s wall-clock each ≈ 100-200s,
+            # which blew the 15s per-method timeout every single time. Now we
+            # dispatch all PNG fetches + Azure submits in parallel via
+            # asyncio.gather. Wall-clock ≈ max(per-sheet latency) ≈ 25-30s,
+            # comfortably under the 85s per-method timeout.
+            png_results = await asyncio.gather(
+                *[self._resolve_png_for_sheet(s, candidate) for s in capped_sheets],
+                return_exceptions=False,  # _resolve_png_for_sheet catches its own
+            )
+
+            # png_results: list[tuple[str sheet_id, bytes|None png, str source]]
+            png_sources_seen: set[str] = {src for _, png, src in png_results if png}
+            png_source_used: str = (
+                "provider" if "provider" in png_sources_seen
+                else ("legacy" if "legacy" in png_sources_seen else "none")
+            )
+
+            azure_dispatch = [
+                (sheet_id, png) for sheet_id, png, _ in png_results if png
+            ]
+
+            azure_responses = await asyncio.gather(
+                *[
+                    client.analyze_layout(
+                        pdf_bytes=png,
+                        correlation_id="",
+                        suite_id=candidate.suite_id,
+                        office_id=candidate.office_id or "",
+                    )
+                    for _, png in azure_dispatch
+                ],
+                return_exceptions=True,
+            )
+
+            azure_calls_made = len(azure_responses)
             all_schedule_rows: list[dict[str, Any]] = []
             sheets_processed = 0
-            azure_calls_made = 0
-            png_source_used: str = "none"  # "provider" | "legacy" | "none"
 
-            for sheet in capped_sheets:
-                # --- Resolve PNG bytes for this sheet ---
-                image_bytes: bytes | None = None
-
-                provider = candidate.data_provider
-                sheet_id = str(sheet.get("id") or "")
-                if provider is not None and sheet_id:
-                    try:
-                        image_bytes = await provider.get_sheet_png(sheet_id)
-                        if image_bytes:
-                            png_source_used = "provider"
-                    except Exception as exc:  # noqa: BLE001
-                        _log.warning(
-                            "schedule_resolver.png provider fetch failed sheet=%s err=%s",
-                            sheet_id[:8] if sheet_id else "", type(exc).__name__,
-                        )
-                        image_bytes = None
-
-                if not image_bytes:
-                    legacy = sheet.get("image_bytes")
-                    if isinstance(legacy, (bytes, bytearray)) and legacy:
-                        image_bytes = bytes(legacy)
-                        if png_source_used == "none":
-                            png_source_used = "legacy"
-
-                if not image_bytes:
+            for (sheet_id, _png), response in zip(azure_dispatch, azure_responses):
+                if isinstance(response, Exception):
+                    _log.warning(
+                        "schedule_resolver.azure raised sheet=%s err=%s",
+                        sheet_id[:8] if sheet_id else "",
+                        type(response).__name__,
+                    )
                     continue
-
-                # --- Call Azure ---
-                azure_calls_made += 1
-                response = await client.analyze_layout(
-                    pdf_bytes=image_bytes,
-                    correlation_id="",
-                    suite_id=candidate.suite_id,
-                    office_id=candidate.office_id or "",
-                )
 
                 if not response.success:
                     _log.info(
@@ -236,6 +298,7 @@ class ScheduleResolver(MissingInputResolver):
 
                 analyze_result = response.body.get("analyzeResult") or {}
                 tables = analyze_result.get("tables") or []
+                sheet_had_rows = False
                 for table in tables:
                     cells = table.get("cells") or []
                     if cells:
@@ -248,7 +311,9 @@ class ScheduleResolver(MissingInputResolver):
                             "column_count": int(table.get("columnCount") or table.get("column_count") or 0),
                             "cell_count": len(cells),
                         })
-                sheets_processed += 1
+                        sheet_had_rows = True
+                if sheet_had_rows:
+                    sheets_processed += 1
 
             row_count = sum(r.get("row_count", 0) for r in all_schedule_rows)
 
@@ -303,6 +368,12 @@ class ScheduleResolver(MissingInputResolver):
         try:
             total_rows = 0
             schedule_sheets_found = 0
+            sheets_with_rows = 0
+            sheets_with_zero_rows = 0
+            # First 3 sheet ids (PII-safe — UUIDs) that matched the schedule
+            # regex, for diagnosing "no_schedule_sheets" surprises like
+            # "do these sheets actually exist in active_sheets?"
+            matched_sheet_ids_sample: list[str] = []
 
             for sheet in candidate.sheets:
                 sheet_title = str(sheet.get("sheet_title") or "")
@@ -315,14 +386,46 @@ class ScheduleResolver(MissingInputResolver):
                     continue
 
                 schedule_sheets_found += 1
+                if len(matched_sheet_ids_sample) < 3:
+                    matched_sheet_ids_sample.append(
+                        str(sheet.get("id") or "")[:8]
+                    )
                 rows = _TABLE_ROW_PATTERN.findall(ocr)
                 total_rows += len(rows)
+                if rows:
+                    sheets_with_rows += 1
+                else:
+                    sheets_with_zero_rows += 1
 
+            # Wave 19.1c (Commit 2.7) — diagnostic evidence on the skip path.
+            # Previous skip emitted a single skip_reason string that could
+            # not disambiguate between:
+            #   (a) regex matched nothing (no schedule-ish sheets exist),
+            #   (b) regex matched N sheets but none had parseable rows,
+            #   (c) candidate.sheets itself was empty (cascade plumbing).
+            # The new evidence keys make each case distinguishable from a
+            # single receipt query — see the SQL spot-check in the PR body.
             if total_rows == 0:
+                if schedule_sheets_found == 0:
+                    skip_reason = (
+                        "no_schedule_sheets_matched"
+                        if candidate.sheets
+                        else "no_sheets_in_context"
+                    )
+                else:
+                    skip_reason = "schedule_sheets_found_but_no_table_rows"
+
                 return ResolverResult(
                     resolved=False, value=None, confidence=0.0,
                     method="table_structure_parse",
-                    evidence={"skip_reason": "no_schedule_sheets_or_table_rows"},
+                    evidence={
+                        "skip_reason": skip_reason,
+                        "active_sheets_total": len(candidate.sheets),
+                        "schedule_sheets_found": schedule_sheets_found,
+                        "schedule_sheets_with_rows": sheets_with_rows,
+                        "schedule_sheets_with_zero_rows": sheets_with_zero_rows,
+                        "matched_sheet_ids_sample": ",".join(matched_sheet_ids_sample),
+                    },
                     category=self.category,
                 )
 
@@ -333,7 +436,10 @@ class ScheduleResolver(MissingInputResolver):
                 confidence=confidence,
                 method="table_structure_parse",
                 evidence={
+                    "active_sheets_total": len(candidate.sheets),
                     "schedule_sheets_found": schedule_sheets_found,
+                    "schedule_sheets_with_rows": sheets_with_rows,
+                    "schedule_sheets_with_zero_rows": sheets_with_zero_rows,
                     "table_rows_parsed": total_rows,
                 },
                 category=self.category,

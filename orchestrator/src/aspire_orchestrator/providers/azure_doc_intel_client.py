@@ -48,7 +48,13 @@ logger = logging.getLogger(__name__)
 
 _API_VERSION = "2024-11-30"
 _POLL_INTERVAL_S: float = 2.0
-_POLL_MAX_S: float = 30.0
+# Wave 19.1c (Commit 2.7) — raise poll cap 30s → 60s. Sealed engineering PDFs
+# (Gulfstream-class) at 200 DPI routinely take 25-40s in Azure prebuilt-layout's
+# async pipeline. The earlier 30s cap surrendered before tables came back,
+# returning NETWORK_TIMEOUT even though Azure would have succeeded. Caller-side
+# per-method timeout in schedule_resolver is now 85s, so 60s here leaves
+# headroom for concurrent dispatch + submit + poll without preempting itself.
+_POLL_MAX_S: float = 60.0
 
 
 class AzureDocIntelClient(BaseProviderClient):
