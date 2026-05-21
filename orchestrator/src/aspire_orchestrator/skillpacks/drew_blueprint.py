@@ -116,6 +116,142 @@ _stage_locks: dict[str, asyncio.Lock] = {}
 # CancelledError guard helper (P0 fix, Wave 9f)
 # ---------------------------------------------------------------------------
 
+async def _run_missing_input_cascade(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Wave 19c: Run the self-resolution cascade on all unresolved missing_inputs.
+
+    Loads all unresolved rows for this project, builds MissingInputCandidate
+    objects with full project context (sheets + OCR + symbols), dispatches
+    cascade in parallel, and marks resolved rows in the DB.
+
+    This is called by _async_reason_pipeline AFTER write_story returns.
+    Also called by classify pipeline after discipline_verifier flags.
+
+    Returns a summary dict: {resolved: int, unresolved: int, skipped: int}
+
+    Law compliance:
+      Law #1 — Returns outcome; Drew decides persistence.
+      Law #2 — Each cascade run emits its own receipt via resolve_or_emit.
+      Law #3 — Never raises; any cascade error is caught and logged.
+      Law #6 — All queries filter by suite_id (RLS).
+    """
+    import logging as _logging
+    _casclog = _logging.getLogger(__name__)
+
+    try:
+        from aspire_orchestrator.services.supabase_client import (
+            supabase_select as _sel,
+            supabase_update as _upd,
+        )
+        from aspire_orchestrator.services.blueprint.missing_input_cascade import (
+            build_candidate,
+            resolve_or_emit,
+        )
+
+        # Load unresolved missing_inputs for this project
+        unresolved_rows = await _sel(
+            "blueprint_missing_inputs",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}&resolved_at=is.null",
+        )
+        if not unresolved_rows:
+            return {"resolved": 0, "unresolved": 0, "skipped": 0}
+
+        # Load project context once for all candidates
+        sheets = await _sel(
+            "blueprint_sheets",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            order_by="created_at.asc",
+        )
+        active_sheets = [s for s in (sheets or []) if not s.get("supersedes_id")]
+
+        # Build symbols_by_sheet index
+        from aspire_orchestrator.services.supabase_client import SupabaseClientError as _SCE
+        symbols_by_sheet: dict[str, list[dict[str, Any]]] = {}
+        sheet_ids_csv = ",".join(str(s["id"]) for s in active_sheets if s.get("id"))
+        if sheet_ids_csv:
+            try:
+                sym_rows = await _sel(
+                    "blueprint_symbols",
+                    filters=f"sheet_id=in.({sheet_ids_csv})&suite_id=eq.{suite_id}",
+                )
+                for row in (sym_rows or []):
+                    sid = str(row.get("sheet_id") or "")
+                    if sid:
+                        symbols_by_sheet.setdefault(sid, []).append(row)
+            except _SCE:
+                pass  # non-fatal — resolvers degrade gracefully
+
+        # Build ocr_by_sheet from already-loaded sheets
+        ocr_by_sheet: dict[str, str] = {
+            str(s["id"]): str(s.get("ocr_text") or "")
+            for s in active_sheets if s.get("id")
+        }
+
+        # Build candidates
+        candidates = [
+            build_candidate(row, active_sheets, symbols_by_sheet, ocr_by_sheet)
+            for row in unresolved_rows
+        ]
+
+        # Dispatch all candidates in parallel
+        outcomes = await asyncio.gather(
+            *[resolve_or_emit(c, correlation_id) for c in candidates],
+            return_exceptions=True,
+        )
+
+        resolved_count = 0
+        unresolved_count = 0
+        skipped_count = 0
+
+        for outcome, row in zip(outcomes, unresolved_rows):
+            if isinstance(outcome, Exception):
+                _casclog.warning(
+                    "drew.cascade: outcome exception for mi_id=%s: %s",
+                    str(row.get("id") or "")[:8], type(outcome).__name__,
+                )
+                skipped_count += 1
+                continue
+
+            if outcome.resolved:
+                # Mark resolved in DB
+                try:
+                    await _upd(
+                        "blueprint_missing_inputs",
+                        f"id=eq.{outcome.missing_input_id}&suite_id=eq.{suite_id}",
+                        {
+                            "resolved_by": f"cascade:wave19:{outcome.best_result.method if outcome.best_result else 'unknown'}",
+                            "resolved_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    resolved_count += 1
+                except Exception as _upd_exc:
+                    _casclog.warning(
+                        "drew.cascade: failed to mark resolved mi_id=%s: %s",
+                        outcome.missing_input_id[:8], type(_upd_exc).__name__,
+                    )
+                    skipped_count += 1
+            else:
+                unresolved_count += 1
+
+        _casclog.info(
+            "drew.cascade: project=%s resolved=%d unresolved=%d skipped=%d",
+            project_id[:8], resolved_count, unresolved_count, skipped_count,
+        )
+        return {
+            "resolved": resolved_count,
+            "unresolved": unresolved_count,
+            "skipped": skipped_count,
+        }
+
+    except Exception as exc:  # noqa: BLE001
+        return {"resolved": 0, "unresolved": 0, "skipped": 0, "error": type(exc).__name__}
+
+
 async def _mark_stage_failed_best_effort(
     project_id: str, stage: str, suite_id: str
 ) -> None:
@@ -1937,6 +2073,23 @@ async def _async_classify_pipeline(
     except Exception as _sp_exc:
         _log.warning("drew.classify: set_stage_progress(done) failed: %s", _sp_exc)
 
+    # Wave 19c: cascade self-resolution — run on discipline-flagged missing_inputs
+    # immediately after classify so they don't wait until REASON.
+    # office_id not carried through classify pipeline — pass None (cascade is
+    # suite-scoped and RLS handles isolation without office_id).
+    try:
+        await _run_missing_input_cascade(
+            project_id=project_id,
+            suite_id=suite_id,
+            office_id=None,
+            correlation_id=correlation_id,
+        )
+    except Exception as _casc_exc:
+        _log.warning(
+            "drew.classify: cascade self-resolution failed (non-blocking) project=%s: %s",
+            project_id[:8], type(_casc_exc).__name__,
+        )
+
     # Wave 9h: cache_hit_ratio and token counts are logged inside tag_disciplines.
     # No separate accumulation needed here — stage summary log is in the tagger.
     return {
@@ -3027,6 +3180,22 @@ async def _async_reason_pipeline(
         output.mean_confidence,
         correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
     )
+
+    # Wave 19c: cascade self-resolution — attempt to resolve all unresolved
+    # missing_inputs before returning. Runs async, non-blocking; any cascade
+    # failure is logged and skipped (never blocks REASON from completing).
+    try:
+        await _run_missing_input_cascade(
+            project_id=project_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+        )
+    except Exception as _casc_exc:
+        _log.warning(
+            "drew.reason: cascade self-resolution failed (non-blocking) project=%s: %s",
+            project_id[:8], type(_casc_exc).__name__,
+        )
 
     # Wave 17b.5: stage receipt for assembly typing observability.
     # Emitted on every REASON run, regardless of count, so dashboards can graph
