@@ -257,6 +257,18 @@ async def run_backfill(project_id: str, *, dry_run: bool = False) -> None:
                 "actor_id": "script:wave19_backfill",
                 "correlation_id": correlation_id,
                 "suite_id": suite_id,
+                # Wave 19.1c (Commit 2.6) — receipt_store harvests
+                # ``redacted_outputs`` into the persisted ``result`` jsonb
+                # column. ``metadata`` is silently dropped by the mapper.
+                "redacted_outputs": {
+                    "project_id": project_id,
+                    "before_count": len(unresolved),
+                    "resolved_count": resolved_count,
+                    "unresolved_count": unresolved_count,
+                    "error_count": error_count,
+                    "category_stats": category_stats,
+                    "provider_cache_stats": batch.provider_cache_stats,
+                },
                 "metadata": {
                     "project_id": project_id,
                     "before_count": len(unresolved),
@@ -264,8 +276,6 @@ async def run_backfill(project_id: str, *, dry_run: bool = False) -> None:
                     "unresolved_count": unresolved_count,
                     "error_count": error_count,
                     "category_stats": category_stats,
-                    # Wave 19.1c (Commit 2.5) — provider diagnostics so
-                    # operators can verify the data plane is wired.
                     "provider_cache_stats": batch.provider_cache_stats,
                 },
             }])

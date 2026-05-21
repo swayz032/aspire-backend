@@ -379,6 +379,24 @@ def _emit_receipt(
             }
             for r in all_results
         }
+        # Wave 19.1c (Commit 2.6) — receipt_store._map_receipt_to_row
+        # harvests ``redacted_outputs`` into the persisted ``result`` jsonb
+        # column. The earlier cascade code wrote to ``metadata`` which the
+        # mapper silently dropped, producing 24+ receipts with empty
+        # ``result {}``. The convention across the codebase
+        # (providers/*, services/server.py, services/call_logger.py) is
+        # to write to ``redacted_outputs``. Cascade evidence is already
+        # DLP-safe via the ``_safe_evidence_for_receipt`` allow-list.
+        cascade_result: dict[str, Any] = {
+            "missing_input_id": candidate.missing_input_id,
+            "project_id": candidate.project_id,
+            "category": candidate.category.value,
+            "resolved": resolved,
+            "best_method": best_result.method if best_result else None,
+            "best_confidence": round(best_result.confidence, 3) if best_result else None,
+            "method_count": len(all_results),
+            "method_summary": method_summary,
+        }
         store_receipts([{
             "id": receipt_id,
             "outcome": outcome,
@@ -390,16 +408,11 @@ def _emit_receipt(
             "actor_id": "skillpack:drew-blueprint",
             "correlation_id": correlation_id,
             "suite_id": candidate.suite_id,
-            "metadata": {
-                "missing_input_id": candidate.missing_input_id,
-                "project_id": candidate.project_id,
-                "category": candidate.category.value,
-                "resolved": resolved,
-                "best_method": best_result.method if best_result else None,
-                "best_confidence": round(best_result.confidence, 3) if best_result else None,
-                "method_count": len(all_results),
-                "method_summary": method_summary,
-            },
+            # Persisted into receipts.result via receipt_store's harvest.
+            "redacted_outputs": cascade_result,
+            # Kept for in-process consumers that read the dict before
+            # mapping (back-compat — costs nothing).
+            "metadata": cascade_result,
         }])
     except Exception as exc:  # noqa: BLE001
         _log.warning(

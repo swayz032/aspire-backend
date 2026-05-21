@@ -358,6 +358,62 @@ class TestCascadeCallCap:
         assert result.evidence["azure_calls_made"] == 3
         assert result.evidence["skip_reason"] == "no_table_rows_extracted"
 
+    @pytest.mark.asyncio
+    async def test_cap_is_per_cascade_run_not_per_batch(self) -> None:
+        """Wave 19.1c (Commit 2.6) regression test.
+
+        Bug 2 from the Gulfstream backfill was the hypothesis that
+        ``_AZURE_SHEETS_PER_CASCADE_CAP`` was being enforced once across
+        a whole batch (so 6 schedule candidates × 8 sheets/cap = only 8
+        Azure calls total instead of up to 48). This test feeds the
+        resolver THREE separate candidates, each with 20 eligible sheets,
+        and asserts the resolver issues 8 calls per candidate (24 total) —
+        proving the cap is local to each ``_method_azure_premium_ocr``
+        invocation, not a shared counter across the batch.
+        """
+        resolver = ScheduleResolver()  # one instance, simulating the
+                                       # module-level registry singleton
+
+        # Three independent candidates — each with 20 schedule sheets.
+        candidates = []
+        provider = MagicMock()
+        provider.get_sheet_png = AsyncMock(return_value=b"PNG")
+        for ci in range(3):
+            cand = _candidate(
+                sheets=[
+                    _schedule_sheet(f"c{ci}-sheet-{i:03d}") for i in range(20)
+                ],
+                provider=provider,
+            )
+            candidates.append(cand)
+
+        fake = _fake_client(_FakeAzureResponse(body=_azure_tables_body(row_counts=[3])))
+
+        with patch(
+            "aspire_orchestrator.config.settings.settings.azure_doc_intel_endpoint",
+            "https://example.azure.com",
+        ), patch(
+            "aspire_orchestrator.config.settings.settings.azure_doc_intel_key",
+            "key",
+        ), patch(
+            "aspire_orchestrator.providers.azure_doc_intel_client.get_azure_doc_intel_client",
+            return_value=fake,
+        ):
+            results = []
+            for cand in candidates:
+                result = await resolver._method_azure_premium_ocr(cand)
+                results.append(result)
+
+        # PROOF: 3 candidates × 8-sheet cap = 24 total Azure calls.
+        # Each per-candidate evidence reports 8 calls (the cap reset).
+        assert fake.analyze_layout.await_count == 24, (
+            f"cap leaked across candidates! Expected 24 calls (3×8), "
+            f"got {fake.analyze_layout.await_count}. Cap is shared state."
+        )
+        for r in results:
+            assert r.evidence["azure_calls_made"] == 8
+            assert r.evidence["azure_calls_capped_at"] == _AZURE_SHEETS_PER_CASCADE_CAP
+
 
 # ---------------------------------------------------------------------------
 # Table-structure fallback (provider-independent)
