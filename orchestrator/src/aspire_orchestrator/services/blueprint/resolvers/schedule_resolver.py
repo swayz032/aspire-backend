@@ -1,25 +1,50 @@
-"""Schedule resolver — Wave 19b.
+"""Schedule resolver — Wave 19b (cap=2, broken provider call), 19.1b (wired).
 
 Re-OCRs schedule regions with Azure Document Intelligence for sheets that
 had truncated or illegible schedule data.
 
 Methods:
-  1. azure_premium_ocr — re-OCR using Azure Doc Intel with premium tier if
-                          ASPIRE_AZURE_OCR_TIER=premium, else base tier.
+  1. azure_premium_ocr — re-OCR using Azure Doc Intel's prebuilt-layout
+                          model (which is already the premium tier — see
+                          ``providers/azure_doc_intel_client.py:174``).
+                          ``ASPIRE_AZURE_OCR_TIER`` is recorded as evidence
+                          but does not currently change provider behavior.
   2. table_structure_parse — fallback: parse tabular structure from existing
                               OCR text using whitespace/pipe alignment.
 
-Confidence:
-  Azure succeeded, >= 3 schedule rows extracted  → 0.90
+Wave 19.1b changes
+------------------
+* PNG source: pulls from ``candidate.data_provider.get_sheet_png(sheet_id)``
+  (Supabase Storage) instead of the always-empty
+  ``sheet["image_bytes"]`` legacy field. Legacy field is still consulted
+  as a fallback for pre-19.1 unit-test fixtures that hand-build candidates
+  without a provider — those callers continue to work unchanged.
+* Cap raised: 2 → 8 schedule sheets per cascade run (pre-authorized by
+  founder; ~$0.08-0.24 per cascade at Azure prebuilt-layout rates).
+* API bug fixes: the prior implementation called ``client.execute()`` with
+  a ``ProviderRequest(action=..., parameters=..., capability_token=...)``
+  that does not match either ``ProviderRequest``'s real fields nor any
+  method on ``AzureDocIntelClient``. The method was guarded by an
+  always-empty sheet filter so the bug never fired in production. Now
+  rewritten to call ``client.analyze_layout(pdf_bytes, correlation_id,
+  suite_id, office_id)`` and read ``response.body["analyzeResult"]``.
+* Cost counter: ``azure_calls_made`` is recorded in ``ResolverResult.evidence``
+  and lifted onto the cascade receipt by the receipt allow-list in
+  ``missing_input_cascade._safe_evidence_for_receipt``.
+
+Confidence (unchanged from Wave 19b):
+  Azure succeeded, >= 3 schedule rows extracted  → 0.90 (resolves)
   Azure succeeded, 1-2 rows                      → 0.75 (below threshold)
   Table structure parse, >= 5 rows               → 0.80 (below threshold)
 
 Env:
   ASPIRE_AZURE_OCR_TIER: "base" (default) | "premium"
-    Set to "premium" in production for higher-accuracy schedule OCR.
+    Recorded as evidence only; current provider always uses prebuilt-layout.
 
 Law compliance:
   Law #3 — Fail-closed on missing Azure creds; skip gracefully.
+  Law #6 — Provider scopes PNG reads to suite_id/project_id; resolver does
+           not bypass that scoping when falling back to the legacy field.
   Law #9 — Schedule row values not logged; only row counts.
 """
 from __future__ import annotations
@@ -39,6 +64,11 @@ from aspire_orchestrator.services.blueprint.resolvers.base import (
 
 _log = logging.getLogger(__name__)
 _TIMEOUT_S: float = 15.0
+
+# Wave 19.1b: raise per-cascade Azure call cap from 2 → 8. Each call hits the
+# Azure prebuilt-layout async pipeline (submit + poll). At list pricing this
+# is ~$0.01-0.03 USD per page; 8 sheets ≈ $0.08-0.24/cascade. Pre-authorized.
+_AZURE_SHEETS_PER_CASCADE_CAP: int = 8
 
 # Detect schedule sheets by title keywords
 _SCHEDULE_TITLE_PATTERN = re.compile(
@@ -81,7 +111,22 @@ class ScheduleResolver(MissingInputResolver):
     async def _method_azure_premium_ocr(
         self, candidate: MissingInputCandidate
     ) -> ResolverResult:
-        """Re-OCR schedule sheets with Azure Doc Intel (tier from env)."""
+        """Re-OCR schedule sheets with Azure Doc Intel prebuilt-layout.
+
+        Wave 19.1b rewrite:
+        * Pulls PNG bytes from ``candidate.data_provider`` (Supabase Storage)
+          when available. Falls back to the legacy ``sheet["image_bytes"]``
+          field for pre-19.1 fixtures that hand-build candidates without a
+          provider.
+        * Calls ``AzureDocIntelClient.analyze_layout(pdf_bytes, ...)`` —
+          the real provider API. The prior implementation called a
+          non-existent ``client.execute()`` with a misshapen
+          ``ProviderRequest``; that bug was masked by an always-empty
+          sheet filter.
+        * Caps Azure calls at :data:`_AZURE_SHEETS_PER_CASCADE_CAP` (8).
+        * Records ``azure_calls_made`` and ``png_source`` on
+          ``ResolverResult.evidence`` for receipt audit.
+        """
         try:
             from aspire_orchestrator.config.settings import settings
 
@@ -91,65 +136,122 @@ class ScheduleResolver(MissingInputResolver):
                 return ResolverResult(
                     resolved=False, value=None, confidence=0.0,
                     method="azure_premium_ocr",
-                    evidence={"skip_reason": "azure_creds_missing"},
+                    evidence={
+                        "skip_reason": "azure_creds_missing",
+                        "azure_calls_made": 0,
+                    },
                     category=self.category,
                 )
 
             ocr_tier = os.getenv("ASPIRE_AZURE_OCR_TIER", "base")
 
-            # Find schedule sheets with stored image bytes
-            schedule_sheets = [
+            # ----------------------------------------------------------
+            # Pick candidate schedule sheets and resolve PNG source per sheet.
+            # ----------------------------------------------------------
+            # Title/OCR match for schedule-ish sheets. We do NOT pre-filter
+            # on whether image_bytes exists like the old code did — that
+            # gate excluded everything because no row carries image_bytes
+            # in production. Instead we walk through and try each PNG source
+            # (provider first, legacy field second) and skip if neither
+            # gives us bytes.
+            candidate_sheets = [
                 s for s in candidate.sheets
                 if _SCHEDULE_TITLE_PATTERN.search(
-                    str(s.get("sheet_title") or "") + str(s.get("ocr_text") or "")[:200]
+                    str(s.get("sheet_title") or "")
+                    + str(s.get("ocr_text") or "")[:200]
                 )
-                and s.get("image_bytes")
-            ][:2]  # Cap at 2 sheets — each Azure call is billed
+            ]
 
-            if not schedule_sheets:
+            if not candidate_sheets:
                 return ResolverResult(
                     resolved=False, value=None, confidence=0.0,
                     method="azure_premium_ocr",
-                    evidence={"skip_reason": "no_schedule_sheets_with_images"},
+                    evidence={
+                        "skip_reason": "no_schedule_sheets_matched",
+                        "azure_calls_made": 0,
+                        "schedule_sheets_found": 0,
+                    },
                     category=self.category,
                 )
 
-            from aspire_orchestrator.providers.azure_doc_intel_client import AzureDocIntelClient
-            from aspire_orchestrator.providers.base_client import ProviderRequest
+            # Cap BEFORE issuing PNG downloads / Azure calls so we don't
+            # pay for sheets we'll discard.
+            capped_sheets = candidate_sheets[:_AZURE_SHEETS_PER_CASCADE_CAP]
 
-            client = AzureDocIntelClient()
+            from aspire_orchestrator.providers.azure_doc_intel_client import (
+                get_azure_doc_intel_client,
+            )
+
+            client = get_azure_doc_intel_client()
             all_schedule_rows: list[dict[str, Any]] = []
             sheets_processed = 0
+            azure_calls_made = 0
+            png_source_used: str = "none"  # "provider" | "legacy" | "none"
 
-            for sheet in schedule_sheets:
-                image_bytes = sheet.get("image_bytes") or b""
+            for sheet in capped_sheets:
+                # --- Resolve PNG bytes for this sheet ---
+                image_bytes: bytes | None = None
+
+                provider = candidate.data_provider
+                sheet_id = str(sheet.get("id") or "")
+                if provider is not None and sheet_id:
+                    try:
+                        image_bytes = await provider.get_sheet_png(sheet_id)
+                        if image_bytes:
+                            png_source_used = "provider"
+                    except Exception as exc:  # noqa: BLE001
+                        _log.warning(
+                            "schedule_resolver.png provider fetch failed sheet=%s err=%s",
+                            sheet_id[:8] if sheet_id else "", type(exc).__name__,
+                        )
+                        image_bytes = None
+
+                if not image_bytes:
+                    legacy = sheet.get("image_bytes")
+                    if isinstance(legacy, (bytes, bytearray)) and legacy:
+                        image_bytes = bytes(legacy)
+                        if png_source_used == "none":
+                            png_source_used = "legacy"
+
                 if not image_bytes:
                     continue
 
-                req = ProviderRequest(
-                    action="analyze_layout",
-                    parameters={"pdf_bytes": image_bytes, "tier": ocr_tier},
-                    capability_token=None,  # Green-tier internal call; no token required
+                # --- Call Azure ---
+                azure_calls_made += 1
+                response = await client.analyze_layout(
+                    pdf_bytes=image_bytes,
+                    correlation_id="",
                     suite_id=candidate.suite_id,
                     office_id=candidate.office_id or "",
-                    correlation_id="",
-                    idempotency_key=f"schedule_resolver_{sheet.get('id', '')[:8]}",
                 )
 
-                result = await client.execute(req)
-                if result.success and result.data:
-                    tables = result.data.get("tables") or []
-                    for table in tables:
-                        cells = table.get("cells") or []
-                        if cells:
-                            all_schedule_rows.append({
-                                "row_count": table.get("row_count", 0),
-                                "column_count": table.get("column_count", 0),
-                                "cell_count": len(cells),
-                            })
-                    sheets_processed += 1
+                if not response.success:
+                    _log.info(
+                        "schedule_resolver.azure non-success sheet=%s status=%d err=%s",
+                        sheet_id[:8] if sheet_id else "",
+                        response.status_code,
+                        response.error_code.value if response.error_code else "n/a",
+                    )
+                    continue
+
+                analyze_result = response.body.get("analyzeResult") or {}
+                tables = analyze_result.get("tables") or []
+                for table in tables:
+                    cells = table.get("cells") or []
+                    if cells:
+                        # row_count/column_count are top-level on the Azure
+                        # ``DocumentTable`` shape. Cells carry rowIndex /
+                        # columnIndex if we ever need them, but we keep
+                        # the receipt-safe summary here.
+                        all_schedule_rows.append({
+                            "row_count": int(table.get("rowCount") or table.get("row_count") or 0),
+                            "column_count": int(table.get("columnCount") or table.get("column_count") or 0),
+                            "cell_count": len(cells),
+                        })
+                sheets_processed += 1
 
             row_count = sum(r.get("row_count", 0) for r in all_schedule_rows)
+
             if row_count == 0:
                 return ResolverResult(
                     resolved=False, value=None, confidence=0.0,
@@ -157,7 +259,16 @@ class ScheduleResolver(MissingInputResolver):
                     evidence={
                         "sheets_processed": sheets_processed,
                         "ocr_tier": ocr_tier,
-                        "skip_reason": "no_table_rows_extracted",
+                        "skip_reason": (
+                            "no_table_rows_extracted"
+                            if azure_calls_made > 0
+                            else "no_png_bytes_available"
+                        ),
+                        "azure_calls_made": azure_calls_made,
+                        "azure_calls_capped_at": _AZURE_SHEETS_PER_CASCADE_CAP,
+                        "schedule_sheets_found": len(candidate_sheets),
+                        "schedule_sheets_with_png": sheets_processed,
+                        "png_source": png_source_used,
                     },
                     category=self.category,
                 )
@@ -173,6 +284,11 @@ class ScheduleResolver(MissingInputResolver):
                     "sheets_processed": sheets_processed,
                     "total_rows_extracted": row_count,
                     "tables_found": len(all_schedule_rows),
+                    "azure_calls_made": azure_calls_made,
+                    "azure_calls_capped_at": _AZURE_SHEETS_PER_CASCADE_CAP,
+                    "schedule_sheets_found": len(candidate_sheets),
+                    "schedule_sheets_with_png": sheets_processed,
+                    "png_source": png_source_used,
                 },
                 category=self.category,
             )

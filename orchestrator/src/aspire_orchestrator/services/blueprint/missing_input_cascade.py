@@ -249,6 +249,56 @@ async def resolve_or_emit(
 # Receipt emission
 # ---------------------------------------------------------------------------
 
+# Allow-list of evidence keys that are safe to surface on the cascade receipt.
+# Numeric counters (call counts, sheets processed, row counts) and short
+# enum-like strings (skip reasons, OCR tier) only. Anything else is dropped
+# to avoid leaking raw OCR, PII, or large payloads onto receipts.
+_RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
+    # Numeric counters
+    "azure_calls_made",
+    "azure_calls_capped_at",
+    "vision_tokens_used",
+    "vision_calls_made",
+    "sheets_processed",
+    "sheets_tried",
+    "schedule_sheets_found",
+    "schedule_sheets_with_png",
+    "table_rows_parsed",
+    "total_rows_extracted",
+    "tables_found",
+    "best_confidence",
+    "doors_detected",
+    # Enum-like short strings
+    "ocr_tier",
+    "skip_reason",
+    "png_source",
+    "error",
+    "timeout_s",
+})
+
+
+def _safe_evidence_for_receipt(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Return an allow-listed subset of resolver evidence for the cascade receipt.
+
+    Drops any key not in :data:`_RECEIPT_EVIDENCE_KEY_ALLOWLIST` and any value
+    that is not a primitive (int/float/bool/str/None). Strings longer than
+    120 chars are truncated. This is a Law #9 guard: receipts never carry
+    raw OCR text or table payloads.
+    """
+    if not isinstance(evidence, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in evidence.items():
+        if k not in _RECEIPT_EVIDENCE_KEY_ALLOWLIST:
+            continue
+        if isinstance(v, bool) or isinstance(v, (int, float)) or v is None:
+            out[k] = v
+        elif isinstance(v, str):
+            out[k] = v if len(v) <= 120 else v[:117] + "..."
+        # Anything else (lists, dicts, bytes) is dropped.
+    return out
+
+
 def _emit_receipt(
     *,
     receipt_id: str,
@@ -267,6 +317,13 @@ def _emit_receipt(
             r.method: {
                 "confidence": round(r.confidence, 3),
                 "resolved": r.resolved,
+                # Wave 19.1b — Surface a safe-typed subset of resolver
+                # evidence on the cascade receipt so cost/cap counters
+                # (e.g. ``azure_calls_made``, ``vision_tokens_used`` in
+                # Wave 19.2) are auditable without per-resolver receipt
+                # code. We allow only numeric counts and short string
+                # skip reasons; raw OCR / row payloads are stripped.
+                "evidence": _safe_evidence_for_receipt(r.evidence),
             }
             for r in all_results
         }
