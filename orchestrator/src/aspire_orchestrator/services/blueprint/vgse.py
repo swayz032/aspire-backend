@@ -49,14 +49,32 @@ DEFAULT_QUANTIZE_GRID = 12
 
 _LEGEND_KEYWORDS = [
     r"\bLEGEND\b", r"\bSYMBOL\s+LEGEND\b", r"\bSYMBOL\s+LIST\b",
+    r"\bSYMBOL\s+KEY\b",
     r"\bSYMBOLS?\b\s+AND\s+ABBREVIATIONS", r"\bFIXTURE\s+SCHEDULE\b",
     r"\bLIGHTING\s+FIXTURE\s+SCHEDULE\b", r"\bELECTRICAL\s+LEGEND\b",
-    r"\bPLUMBING\s+LEGEND\b", r"\bABBREVIATIONS?\b", r"\bKEY\s+NOTES?\b",
+    r"\bPLUMBING\s+LEGEND\b", r"\bMECHANICAL\s+LEGEND\b",
+    r"\bHVAC\s+LEGEND\b", r"\bFIRE\s+PROTECTION\s+LEGEND\b",
+    r"\bPANEL\s+LEGEND\b",
+    r"\bABBREVIATIONS?\b", r"\bKEY\s+NOTES?\b",
     r"\bPANEL\s+SCHEDULE\b", r"\bPANELBOARD\s+\w+\s+SCHEDULE\b",
     r"\bFIXTURE\s+TYPE\b", r"\bRECEPTACLE\s+SCHEDULE\b",
     r"\bDEVICE\s+SCHEDULE\b", r"\bEQUIPMENT\s+SCHEDULE\b",
+    r"\bELECTRICAL\s+SYMBOLS?\b", r"\bPLUMBING\s+SYMBOLS?\b",
+    r"\bMECHANICAL\s+SYMBOLS?\b",
 ]
 _LEGEND_RE = re.compile("|".join(_LEGEND_KEYWORDS), re.IGNORECASE)
+
+# Wave 17b.4 — heading-style phrases that terminate a legend region when found
+# below the legend header. Used by `find_legend_regions` to bound the region
+# instead of extending blindly to the page edge.
+_REGION_TERMINATORS = [
+    r"\bGENERAL\s+NOTES?\b", r"\bSHEET\s+NOTES?\b", r"\bKEYNOTES?\b",
+    r"\bDETAILS?\b", r"\bSCHEDULES?\b", r"\bSPECIFICATIONS?\b",
+    r"\bSCALE\b", r"\bDRAWN\s+BY\b", r"\bPLOT\s+PLAN\b",
+    r"\bENLARGED\s+PLAN\b", r"\bSITE\s+PLAN\b",
+    r"\bELEVATIONS?\b", r"\bSECTIONS?\b",
+]
+_TERMINATOR_RE = re.compile("|".join(_REGION_TERMINATORS), re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -269,22 +287,87 @@ def extract_motifs(page: fitz.Page,
 # ─────────────────────────────────────────────────────────────────────
 
 def find_legend_regions(page: fitz.Page) -> list[fitz.Rect]:
+    """Locate legend / schedule / key regions on the page.
+
+    Wave 17b.4 retune: searches the full page (not only PyMuPDF text blocks,
+    which often collapse a header into a tiny bbox), expands the region
+    generously below+right of the heading, and bounds the region at the next
+    major heading (so the legend doesn't bleed into "GENERAL NOTES").
+    """
     page_rect = page.rect
     page_w, page_h = page_rect.width, page_rect.height
-    text_blocks = page.get_text("blocks")
-    regions: list[fitz.Rect] = []
-    for block in text_blocks:
+
+    # Pull every text span (PyMuPDF "dict") so a "LEGEND" word inside a wider
+    # block is still detected. Blocks alone miss compact headers.
+    raw = page.get_text("dict")
+    candidates: list[tuple[float, float, float, float]] = []  # x0,y0,x1,y1 of header span
+    for block in raw.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                t = (span.get("text") or "").strip()
+                if not t:
+                    continue
+                if not _LEGEND_RE.search(t):
+                    continue
+                bb = span.get("bbox") or []
+                if len(bb) < 4:
+                    continue
+                candidates.append((float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])))
+
+    # Also harvest "blocks" — some PDFs report the heading only as a block.
+    for block in page.get_text("blocks"):
         if len(block) < 5:
             continue
         x0, y0, x1, y1, text = block[0], block[1], block[2], block[3], block[4]
         if not isinstance(text, str) or not _LEGEND_RE.search(text):
             continue
-        margin_x = 60.0
-        expand_down = min(page_h * 0.45, 360.0)
+        candidates.append((float(x0), float(y0), float(x1), float(y1)))
+
+    if not candidates:
+        return []
+
+    # Collect every text span for terminator lookup (sorted by Y).
+    all_spans: list[tuple[float, float, float, float, str]] = []
+    for block in raw.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                t = (span.get("text") or "").strip()
+                if not t:
+                    continue
+                bb = span.get("bbox") or []
+                if len(bb) < 4:
+                    continue
+                all_spans.append((float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3]), t))
+
+    regions: list[fitz.Rect] = []
+    for x0, y0, x1, y1 in candidates:
+        # Generous lateral expansion — legend rows often extend the full
+        # column width. Default to ~220pt right of the heading and ~80pt left
+        # (in case the column starts before the heading bbox).
+        margin_left = 80.0
+        margin_right = 240.0
+        # Find next major-heading Y below this heading to cap downward extent.
+        cap_y = page_h
+        for sx0, sy0, sx1, sy1, txt in all_spans:
+            if sy0 <= y1 + 4.0:
+                continue  # not below the heading
+            # Only consider candidates that look like another section heading,
+            # AND are not themselves another legend keyword (multiple legends
+            # are valid; we shouldn't terminate the first on the second).
+            if _TERMINATOR_RE.search(txt) and not _LEGEND_RE.search(txt):
+                cap_y = min(cap_y, sy0 - 4.0)
+                # Don't break — keep finding closest terminator.
+        # Cap downward expansion at min(remaining page, 600pt).
+        expand_down = min(cap_y - y1, 600.0, page_h - y1)
+        expand_down = max(60.0, expand_down)  # always at least 60pt below heading
         regions.append(fitz.Rect(
-            max(0.0, x0 - margin_x), max(0.0, y0 - 8.0),
-            min(page_w, x1 + margin_x), min(page_h, y1 + expand_down),
+            max(0.0, x0 - margin_left),
+            max(0.0, y0 - 10.0),
+            min(page_w, x1 + margin_right),
+            min(page_h, y1 + expand_down),
         ))
+
+    # Merge overlapping regions
     merged: list[fitz.Rect] = []
     for r in regions:
         joined = False
@@ -296,12 +379,27 @@ def find_legend_regions(page: fitz.Page) -> list[fitz.Rect]:
     return merged
 
 
-def extract_legend_signatures(page: fitz.Page) -> dict[str, str]:
-    """Return {signature_hash: label} for symbols inside legend regions.
+def extract_legend_signatures(
+    page: fitz.Page,
+    *,
+    discipline: str | None = None,
+) -> dict[str, str]:
+    """Return {signature_hash: canonical_label} for symbols inside legend regions.
 
-    Best-effort. Returns empty dict when no clean matches found. The production
-    pipeline gracefully falls back to tenant memory + 'unknown_motif' naming.
+    Wave 17b.4: passes harvested labels through ``symbol_lexicon.lookup`` so
+    legend rows containing "GFCI", "WC", "PNL" are stored as the canonical
+    Aspire names ("gfci_receptacle", ...). Raw label is kept when the lexicon
+    has no entry — better than nothing for downstream propagation.
+
+    The pair extractor:
+      * Widens Y-baseline tolerance to 14pt (legend symbols vary in vertical
+        centre vs row text more than the old 12pt allowed).
+      * Widens rightward search to 200pt (long legend rows are common).
+      * Accepts text to the LEFT of the symbol up to 60pt (some legends are
+        right-aligned with the symbol on the right side of the row).
     """
+    from aspire_orchestrator.services.blueprint import symbol_lexicon
+
     regions = find_legend_regions(page)
     if not regions:
         return {}
@@ -312,7 +410,7 @@ def extract_legend_signatures(page: fitz.Page) -> dict[str, str]:
         for line in block.get("lines", []):
             for span in line.get("spans", []):
                 t = (span.get("text") or "").strip()
-                if len(t) < 2:
+                if len(t) < 1:
                     continue
                 bb = span.get("bbox")
                 if not bb or len(bb) < 4:
@@ -331,35 +429,82 @@ def extract_legend_signatures(page: fitz.Page) -> dict[str, str]:
         cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
         if not any(r.x0 <= cx <= r.x1 and r.y0 <= cy <= r.y1 for r in regions):
             continue
+        # Filter: legend symbol must be small (real symbols, not borders).
+        bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if max(bw, bh) > 60.0 or max(bw, bh) < 1.5:
+            continue
         sig = _drawing_signature(items, bbox)
-        # Find nearest non-heading text span to the right
         drawing_cy = (bbox[1] + bbox[3]) / 2
+        # Two passes: prefer text to the RIGHT (most common legend layout),
+        # then fall back to LEFT-of-symbol text if nothing matched right.
         best: tuple[float, str] | None = None
-        for span in text_spans:
-            sx0, sy0, sx1, sy1 = span["bbox"]
-            if _LEGEND_RE.search(span["text"]):
-                continue
-            if sx0 < bbox[0]:
-                continue
-            sy_mid = (sy0 + sy1) / 2
-            if abs(sy_mid - drawing_cy) > 12.0:
-                continue
-            dx = sx0 - bbox[2]
-            if dx < -2.0 or dx > 120.0:
-                continue
-            score = dx + abs(sy_mid - drawing_cy) * 0.5
-            if best is None or score < best[0]:
-                best = (score, span["text"])
-        if best and sig not in sig_to_label:
-            sig_to_label[sig] = best[1]
+        for direction in ("right", "left"):
+            for span in text_spans:
+                sx0, sy0, sx1, sy1 = span["bbox"]
+                txt = span["text"]
+                if _LEGEND_RE.search(txt):
+                    continue  # never bind the heading itself
+                if _TERMINATOR_RE.search(txt):
+                    continue
+                sy_mid = (sy0 + sy1) / 2
+                if abs(sy_mid - drawing_cy) > 14.0:
+                    continue
+                if direction == "right":
+                    if sx0 < bbox[2] - 2.0:
+                        continue
+                    dx = sx0 - bbox[2]
+                    if dx > 200.0:
+                        continue
+                else:
+                    if sx1 > bbox[0] + 2.0:
+                        continue
+                    dx = bbox[0] - sx1
+                    if dx > 60.0:
+                        continue
+                score = dx + abs(sy_mid - drawing_cy) * 0.5
+                if best is None or score < best[0]:
+                    best = (score, txt)
+            if best is not None:
+                break
+        if best is None or sig in sig_to_label:
+            continue
+        raw_label = best[1]
+        # Canonicalise via lexicon when possible. Fall back to raw text so
+        # downstream code at least has a name (the contractor can edit it).
+        canonical = symbol_lexicon.lookup(raw_label, discipline=discipline)
+        sig_to_label[sig] = canonical or raw_label.strip()
     return sig_to_label
+
+
+# Wave 17b.4 — richer return for telemetry. Used by the pipeline to populate
+# receipt metadata without re-scanning the page.
+def extract_legend_signatures_with_meta(
+    page: fitz.Page,
+    *,
+    discipline: str | None = None,
+) -> dict[str, Any]:
+    """Same as ``extract_legend_signatures`` but returns regions + counts."""
+    regions = find_legend_regions(page)
+    pairs = extract_legend_signatures(page, discipline=discipline)
+    return {
+        "regions_found": len(regions),
+        "pairs_extracted": len(pairs),
+        "region_bboxes_pt": [
+            [round(r.x0, 1), round(r.y0, 1), round(r.x1, 1), round(r.y1, 1)] for r in regions
+        ],
+        "sig_to_label": pairs,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────
 # Page-level entry point
 # ─────────────────────────────────────────────────────────────────────
 
-def process_page(page: fitz.Page) -> VGSEPageResult:
+def process_page(
+    page: fitz.Page,
+    *,
+    discipline: str | None = None,
+) -> VGSEPageResult:
     """One-call extraction: classify, mine motifs, attempt legend matching."""
     classification = classify_page(page)
     result = VGSEPageResult(
@@ -372,7 +517,7 @@ def process_page(page: fitz.Page) -> VGSEPageResult:
         return result  # caller falls back to Modal YOLO
 
     motifs = extract_motifs(page)
-    legend = extract_legend_signatures(page)
+    legend = extract_legend_signatures(page, discipline=discipline)
     result.legend_entries = [{"signature_hash": s, "label": l} for s, l in legend.items()]
 
     # Resolve names against page legend (tenant memory lookup happens upstream)
