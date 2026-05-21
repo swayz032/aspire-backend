@@ -148,10 +148,10 @@ async def _run_missing_input_cascade(
             supabase_select as _sel,
             supabase_update as _upd,
         )
-        from aspire_orchestrator.services.blueprint.missing_input_cascade import (
-            build_candidate,
-            resolve_or_emit,
-        )
+        # Note: ``build_candidate`` + ``resolve_or_emit`` are no longer
+        # imported here — Wave 19.1c (Commit 2.5) moved dispatch to
+        # ``resolve_batch`` which owns provider construction and per-
+        # candidate building. See the import inside the dispatch block below.
 
         # Load unresolved missing_inputs for this project
         unresolved_rows = await _sel(
@@ -192,53 +192,30 @@ async def _run_missing_input_cascade(
             for s in active_sheets if s.get("id")
         }
 
-        # Wave 19.1a — construct ONE SheetDataProvider per cascade dispatch so
-        # resolvers in later waves (Commit 2: schedule, Commit 3: scale) can
-        # pull PNG bytes from Supabase Storage and YOLO detections from
-        # blueprint_symbols without re-querying per resolver method. Provider
-        # caches reads in-memory for this dispatch only and is discarded when
-        # the function returns. Behavior is identical to pre-19.1 in this
-        # commit because no resolver consumes the provider yet.
-        from aspire_orchestrator.services.blueprint.resolvers.sheet_data_provider import (
-            SheetDataProvider,
+        # Wave 19.1c (Commit 2.5) — dispatch via ``resolve_batch`` so the
+        # cascade owns SheetDataProvider construction and shares ONE provider
+        # across all candidates in the dispatch. The earlier Wave 19.1a/b
+        # path constructed the provider here in Drew; the standalone backfill
+        # script lacked the same wiring and silently degraded every resolver
+        # to no-PNG mode. ``resolve_batch`` closes that gap for all callers.
+        from aspire_orchestrator.services.blueprint.missing_input_cascade import (
+            resolve_batch as _resolve_batch,
         )
-        _data_provider = SheetDataProvider(
+        batch = await _resolve_batch(
+            unresolved_rows,
             suite_id=suite_id,
             project_id=project_id,
             correlation_id=correlation_id,
-        )
-
-        # Build candidates
-        candidates = [
-            build_candidate(
-                row,
-                active_sheets,
-                symbols_by_sheet,
-                ocr_by_sheet,
-                data_provider=_data_provider,
-            )
-            for row in unresolved_rows
-        ]
-
-        # Dispatch all candidates in parallel
-        outcomes = await asyncio.gather(
-            *[resolve_or_emit(c, correlation_id) for c in candidates],
-            return_exceptions=True,
+            active_sheets=active_sheets,
+            symbols_by_sheet=symbols_by_sheet,
+            ocr_by_sheet=ocr_by_sheet,
         )
 
         resolved_count = 0
         unresolved_count = 0
-        skipped_count = 0
+        skipped_count = batch.skipped_count  # dropped/no-resolver outcomes
 
-        for outcome, row in zip(outcomes, unresolved_rows):
-            if isinstance(outcome, Exception):
-                _casclog.warning(
-                    "drew.cascade: outcome exception for mi_id=%s: %s",
-                    str(row.get("id") or "")[:8], type(outcome).__name__,
-                )
-                skipped_count += 1
-                continue
-
+        for outcome in batch.outcomes:
             if outcome.resolved:
                 # Mark resolved in DB
                 # resolved_by is uuid (auth.users FK) — use NULL for automated cascade.
@@ -259,12 +236,17 @@ async def _run_missing_input_cascade(
                         outcome.missing_input_id[:8], type(_upd_exc).__name__,
                     )
                     skipped_count += 1
+            elif outcome.best_result is None and not outcome.all_results:
+                # Already counted in batch.skipped_count above; don't double.
+                pass
             else:
                 unresolved_count += 1
 
         _casclog.info(
-            "drew.cascade: project=%s resolved=%d unresolved=%d skipped=%d",
+            "drew.cascade: project=%s resolved=%d unresolved=%d skipped=%d "
+            "provider_cache=%s",
             project_id[:8], resolved_count, unresolved_count, skipped_count,
+            batch.provider_cache_stats,
         )
         return {
             "resolved": resolved_count,

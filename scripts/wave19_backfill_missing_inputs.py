@@ -144,28 +144,45 @@ async def run_backfill(project_id: str, *, dry_run: bool = False) -> None:
     )
     _log.info("Loaded %d active sheets for context", len(active_sheets))
 
+    # Wave 19.1c (Commit 2.5): use ``resolve_batch`` so the cascade owns
+    # SheetDataProvider construction. The earlier Wave 19.1b backfill ran
+    # via direct ``resolve_or_emit`` calls and silently degraded every
+    # resolver to no-PNG mode (Gulfstream: 0/6 schedule rows resolved).
     from aspire_orchestrator.services.blueprint.missing_input_cascade import (
         build_candidate,
-        resolve_or_emit,
+        resolve_batch,
     )
 
     correlation_id = str(uuid.uuid4())
     _log.info("Cascade correlation_id=%s", correlation_id[:8])
 
-    candidates = [
+    # Build candidates only for category-routing visibility (logs below).
+    # The actual dispatch goes through ``resolve_batch`` which builds its
+    # own candidates with the shared provider attached.
+    preview_candidates = [
         build_candidate(row, active_sheets, symbols_by_sheet, ocr_by_sheet)
         for row in unresolved
     ]
 
     # Print category routing
     _log.info("\nCategory routing:")
-    for c, row in zip(candidates, unresolved):
+    for c, row in zip(preview_candidates, unresolved):
         _log.info("  %s -> %s", row["id"][:8], c.category.value)
 
-    _log.info("\nDispatching cascade (90s per candidate)...")
-    outcomes = await asyncio.gather(
-        *[resolve_or_emit(c, correlation_id) for c in candidates],
-        return_exceptions=True,
+    _log.info("\nDispatching cascade via resolve_batch (one provider for batch)...")
+    batch = await resolve_batch(
+        unresolved,
+        suite_id=suite_id,
+        project_id=project_id,
+        correlation_id=correlation_id,
+        active_sheets=active_sheets,
+        symbols_by_sheet=symbols_by_sheet,
+        ocr_by_sheet=ocr_by_sheet,
+    )
+    outcomes = batch.outcomes
+    _log.info(
+        "Provider cache stats: %s",
+        batch.provider_cache_stats,
     )
 
     resolved_count = 0
@@ -173,15 +190,19 @@ async def run_backfill(project_id: str, *, dry_run: bool = False) -> None:
     error_count = 0
     category_stats: dict[str, dict[str, int]] = {}
 
-    _log.info("\nResults:")
-    for outcome, row in zip(outcomes, unresolved):
-        mi_id = str(row.get("id") or "")
-        cat = str(row.get("description") or "")[:40]
+    # ``resolve_batch`` may drop candidates that raised inside the cascade,
+    # so outcomes can be shorter than ``unresolved``. Index rows by id for
+    # safe lookup. Rows present in ``unresolved`` but absent from outcomes
+    # are reported as ERRORs.
+    rows_by_id = {str(r["id"]): r for r in unresolved}
+    seen_ids: set[str] = set()
 
-        if isinstance(outcome, Exception):
-            _log.error("  ERROR %s: %s", mi_id[:8], type(outcome).__name__)
-            error_count += 1
-            continue
+    _log.info("\nResults:")
+    for outcome in outcomes:
+        mi_id = str(outcome.missing_input_id or "")
+        seen_ids.add(mi_id)
+        row = rows_by_id.get(mi_id, {})
+        cat = str(row.get("description") or "")[:40]
 
         cat_name = outcome.category.value
         if cat_name not in category_stats:
@@ -210,6 +231,17 @@ async def run_backfill(project_id: str, *, dry_run: bool = False) -> None:
             unresolved_count += 1
             category_stats[cat_name]["unresolved"] += 1
 
+    # Report any rows dropped by the cascade (raised inside resolve_or_emit
+    # or excluded by suite_id mismatch in resolve_batch).
+    for mi_id, row in rows_by_id.items():
+        if mi_id in seen_ids:
+            continue
+        _log.error(
+            "  ERROR %s: dropped by cascade (no outcome returned)",
+            mi_id[:8],
+        )
+        error_count += 1
+
     # Emit backfill receipt
     if not dry_run:
         try:
@@ -232,6 +264,9 @@ async def run_backfill(project_id: str, *, dry_run: bool = False) -> None:
                     "unresolved_count": unresolved_count,
                     "error_count": error_count,
                     "category_stats": category_stats,
+                    # Wave 19.1c (Commit 2.5) — provider diagnostics so
+                    # operators can verify the data plane is wired.
+                    "provider_cache_stats": batch.provider_cache_stats,
                 },
             }])
         except Exception as exc:
