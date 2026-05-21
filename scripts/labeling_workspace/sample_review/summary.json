@@ -1,0 +1,1636 @@
+{
+  "class_totals": {
+    "electrical_outlet": 127,
+    "electrical_panel": 206,
+    "electrical_switch": 66,
+    "light_fixture": 99,
+    "light_pole": 49,
+    "electrical_conduit_run": 276,
+    "plumbing_fixture_wc": 156,
+    "plumbing_fixture_lav": 98,
+    "plumbing_floor_drain": 62,
+    "plumbing_riser": 262,
+    "door": 203,
+    "window": 285,
+    "structural_column": 108,
+    "rebar_callout": 467
+  },
+  "per_image": [
+    {
+      "image": "concrete_mangonia_park_p1.png",
+      "total_labels": 37,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 4,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 5,
+        "door": 3,
+        "window": 5,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "concrete_mangonia_park_p2.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 1,
+        "window": 2,
+        "structural_column": 0,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "electrical_e1_p1.png",
+      "total_labels": 24,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 2,
+        "window": 3,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "electrical_e2_p1.png",
+      "total_labels": 53,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 7,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 6,
+        "door": 6,
+        "window": 10,
+        "structural_column": 1,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "electrical_e3_p1.png",
+      "total_labels": 28,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 1,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 5,
+        "door": 1,
+        "window": 4,
+        "structural_column": 0,
+        "rebar_callout": 9
+      }
+    },
+    {
+      "image": "electrical_e4_p1.png",
+      "total_labels": 20,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 0,
+        "electrical_switch": 0,
+        "light_fixture": 3,
+        "light_pole": 3,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 4,
+        "door": 0,
+        "window": 0,
+        "structural_column": 1,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p1.png",
+      "total_labels": 17,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 0,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 1,
+        "window": 1,
+        "structural_column": 0,
+        "rebar_callout": 4
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p10.png",
+      "total_labels": 21,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 2,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 0,
+        "window": 0,
+        "structural_column": 1,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p11.png",
+      "total_labels": 18,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 1,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 0,
+        "window": 1,
+        "structural_column": 1,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p12.png",
+      "total_labels": 21,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 1,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 1,
+        "window": 1,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p2.png",
+      "total_labels": 7,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 1,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 0,
+        "window": 0,
+        "structural_column": 0,
+        "rebar_callout": 1
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p3.png",
+      "total_labels": 12,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 1,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 1,
+        "door": 0,
+        "window": 1,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p4.png",
+      "total_labels": 27,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 3,
+        "electrical_switch": 0,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 7,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 2,
+        "structural_column": 1,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p5.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 1,
+        "door": 2,
+        "window": 2,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p6.png",
+      "total_labels": 28,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 4,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 2,
+        "window": 2,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p7.png",
+      "total_labels": 37,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 6,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 3,
+        "window": 4,
+        "structural_column": 3,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p8.png",
+      "total_labels": 36,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 6,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 4,
+        "window": 4,
+        "structural_column": 3,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "electrical_site_29187p_es_p9.png",
+      "total_labels": 24,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 4,
+        "window": 2,
+        "structural_column": 2,
+        "rebar_callout": 2
+      }
+    },
+    {
+      "image": "eng_c2_2_gsm_p1.png",
+      "total_labels": 42,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 4,
+        "light_pole": 1,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 5,
+        "window": 4,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p1.png",
+      "total_labels": 39,
+      "per_class": {
+        "electrical_outlet": 4,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 4,
+        "door": 2,
+        "window": 4,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p10.png",
+      "total_labels": 30,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 4,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p11.png",
+      "total_labels": 33,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 1,
+        "electrical_switch": 2,
+        "light_fixture": 4,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 3,
+        "window": 4,
+        "structural_column": 3,
+        "rebar_callout": 2
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p12.png",
+      "total_labels": 24,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 5,
+        "door": 3,
+        "window": 2,
+        "structural_column": 0,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p13.png",
+      "total_labels": 21,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 5,
+        "door": 2,
+        "window": 2,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p2.png",
+      "total_labels": 38,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 2,
+        "electrical_switch": 2,
+        "light_fixture": 2,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 4,
+        "door": 5,
+        "window": 6,
+        "structural_column": 1,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p3.png",
+      "total_labels": 43,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 3,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 5,
+        "window": 5,
+        "structural_column": 2,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p4.png",
+      "total_labels": 40,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 3,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 5,
+        "door": 7,
+        "window": 5,
+        "structural_column": 2,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p5.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 1,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 1,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 6,
+        "door": 1,
+        "window": 4,
+        "structural_column": 0,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p6.png",
+      "total_labels": 30,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 2,
+        "electrical_switch": 2,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 5,
+        "door": 1,
+        "window": 3,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p7.png",
+      "total_labels": 22,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 0,
+        "window": 3,
+        "structural_column": 2,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p8.png",
+      "total_labels": 24,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 0,
+        "window": 2,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "eng_rev1_signed_master_p9.png",
+      "total_labels": 37,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 2,
+        "window": 3,
+        "structural_column": 3,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p1.png",
+      "total_labels": 34,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 3,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 2,
+        "door": 3,
+        "window": 3,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p10.png",
+      "total_labels": 31,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 2,
+        "door": 3,
+        "window": 3,
+        "structural_column": 2,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p11.png",
+      "total_labels": 28,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 1,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 1,
+        "door": 2,
+        "window": 3,
+        "structural_column": 3,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p12.png",
+      "total_labels": 31,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 1,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 4,
+        "door": 1,
+        "window": 4,
+        "structural_column": 2,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p13.png",
+      "total_labels": 28,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 4,
+        "window": 4,
+        "structural_column": 4,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p14.png",
+      "total_labels": 28,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 0,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 4,
+        "window": 3,
+        "structural_column": 2,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p15.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 5,
+        "door": 0,
+        "window": 1,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p16.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 1,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 1,
+        "window": 3,
+        "structural_column": 2,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p17.png",
+      "total_labels": 31,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 3,
+        "window": 4,
+        "structural_column": 2,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p18.png",
+      "total_labels": 22,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 0,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 2,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p19.png",
+      "total_labels": 24,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 0,
+        "window": 3,
+        "structural_column": 0,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p2.png",
+      "total_labels": 20,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 1,
+        "window": 1,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p20.png",
+      "total_labels": 39,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 4,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 0,
+        "window": 7,
+        "structural_column": 2,
+        "rebar_callout": 10
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p21.png",
+      "total_labels": 42,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 4,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 6,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 5,
+        "door": 1,
+        "window": 6,
+        "structural_column": 2,
+        "rebar_callout": 10
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p22.png",
+      "total_labels": 35,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 1,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 1,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 5,
+        "door": 2,
+        "window": 6,
+        "structural_column": 0,
+        "rebar_callout": 9
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p23.png",
+      "total_labels": 31,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 5,
+        "door": 0,
+        "window": 3,
+        "structural_column": 0,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p24.png",
+      "total_labels": 24,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 2,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 2,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p25.png",
+      "total_labels": 52,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 5,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 4,
+        "door": 4,
+        "window": 6,
+        "structural_column": 5,
+        "rebar_callout": 9
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p26.png",
+      "total_labels": 36,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 4,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 4,
+        "window": 8,
+        "structural_column": 1,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p27.png",
+      "total_labels": 39,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 5,
+        "window": 6,
+        "structural_column": 1,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p28.png",
+      "total_labels": 21,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 2,
+        "electrical_conduit_run": 1,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 2,
+        "structural_column": 2,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p29.png",
+      "total_labels": 29,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 1,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 4,
+        "window": 4,
+        "structural_column": 0,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p3.png",
+      "total_labels": 18,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 0,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 0,
+        "window": 1,
+        "structural_column": 0,
+        "rebar_callout": 4
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p30.png",
+      "total_labels": 23,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 2,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 2,
+        "structural_column": 2,
+        "rebar_callout": 3
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p31.png",
+      "total_labels": 40,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 5,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 4,
+        "window": 6,
+        "structural_column": 1,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p32.png",
+      "total_labels": 36,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 5,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 8,
+        "structural_column": 0,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p33.png",
+      "total_labels": 54,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 6,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 0,
+        "electrical_conduit_run": 6,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 5,
+        "door": 5,
+        "window": 8,
+        "structural_column": 2,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p34.png",
+      "total_labels": 46,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 6,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 4,
+        "door": 5,
+        "window": 8,
+        "structural_column": 3,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p35.png",
+      "total_labels": 35,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 2,
+        "light_pole": 1,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 4,
+        "window": 5,
+        "structural_column": 1,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p36.png",
+      "total_labels": 34,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 2,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 3,
+        "window": 4,
+        "structural_column": 3,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p37.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 1,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 0,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 2,
+        "window": 2,
+        "structural_column": 1,
+        "rebar_callout": 13
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p38.png",
+      "total_labels": 25,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 0,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 1,
+        "window": 2,
+        "structural_column": 1,
+        "rebar_callout": 9
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p39.png",
+      "total_labels": 46,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 5,
+        "electrical_switch": 2,
+        "light_fixture": 1,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 4,
+        "door": 6,
+        "window": 7,
+        "structural_column": 3,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p4.png",
+      "total_labels": 3,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 0,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 0,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 0,
+        "window": 0,
+        "structural_column": 0,
+        "rebar_callout": 1
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p5.png",
+      "total_labels": 16,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 1,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 4,
+        "door": 0,
+        "window": 2,
+        "structural_column": 0,
+        "rebar_callout": 2
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p6.png",
+      "total_labels": 10,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 0,
+        "electrical_switch": 1,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 0,
+        "plumbing_fixture_wc": 0,
+        "plumbing_fixture_lav": 0,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 4,
+        "door": 1,
+        "window": 1,
+        "structural_column": 0,
+        "rebar_callout": 1
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p7.png",
+      "total_labels": 26,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 2,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 3,
+        "window": 3,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p8.png",
+      "total_labels": 34,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 5,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 1,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 2,
+        "door": 4,
+        "window": 4,
+        "structural_column": 3,
+        "rebar_callout": 7
+      }
+    },
+    {
+      "image": "gavnn_addendum_1_p9.png",
+      "total_labels": 40,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 5,
+        "electrical_switch": 0,
+        "light_fixture": 0,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 0,
+        "plumbing_riser": 3,
+        "door": 3,
+        "window": 6,
+        "structural_column": 2,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "light_pole_lp1_r1_p1.png",
+      "total_labels": 29,
+      "per_class": {
+        "electrical_outlet": 0,
+        "electrical_panel": 5,
+        "electrical_switch": 0,
+        "light_fixture": 1,
+        "light_pole": 1,
+        "electrical_conduit_run": 2,
+        "plumbing_fixture_wc": 4,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 4,
+        "window": 3,
+        "structural_column": 0,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "light_pole_revised_p1.png",
+      "total_labels": 32,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 2,
+        "light_pole": 0,
+        "electrical_conduit_run": 4,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 3,
+        "window": 3,
+        "structural_column": 2,
+        "rebar_callout": 5
+      }
+    },
+    {
+      "image": "plumbing_p1_p1.png",
+      "total_labels": 36,
+      "per_class": {
+        "electrical_outlet": 1,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 1,
+        "light_pole": 2,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 1,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 2,
+        "door": 3,
+        "window": 5,
+        "structural_column": 3,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "precast_drainage_p1.png",
+      "total_labels": 44,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 4,
+        "electrical_switch": 0,
+        "light_fixture": 2,
+        "light_pole": 2,
+        "electrical_conduit_run": 3,
+        "plumbing_fixture_wc": 5,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 7,
+        "window": 3,
+        "structural_column": 1,
+        "rebar_callout": 8
+      }
+    },
+    {
+      "image": "precast_drainage_p2.png",
+      "total_labels": 43,
+      "per_class": {
+        "electrical_outlet": 4,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 3,
+        "light_pole": 2,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 3,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 1,
+        "plumbing_riser": 3,
+        "door": 3,
+        "window": 3,
+        "structural_column": 3,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "precast_drainage_p3.png",
+      "total_labels": 43,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 2,
+        "electrical_switch": 1,
+        "light_fixture": 4,
+        "light_pole": 1,
+        "electrical_conduit_run": 6,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 2,
+        "door": 5,
+        "window": 5,
+        "structural_column": 1,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "precast_drainage_p4.png",
+      "total_labels": 47,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 3,
+        "electrical_switch": 2,
+        "light_fixture": 4,
+        "light_pole": 0,
+        "electrical_conduit_run": 6,
+        "plumbing_fixture_wc": 5,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 4,
+        "door": 5,
+        "window": 6,
+        "structural_column": 0,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "precast_drainage_p5.png",
+      "total_labels": 44,
+      "per_class": {
+        "electrical_outlet": 2,
+        "electrical_panel": 4,
+        "electrical_switch": 2,
+        "light_fixture": 4,
+        "light_pole": 0,
+        "electrical_conduit_run": 5,
+        "plumbing_fixture_wc": 5,
+        "plumbing_fixture_lav": 2,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 3,
+        "door": 5,
+        "window": 4,
+        "structural_column": 0,
+        "rebar_callout": 6
+      }
+    },
+    {
+      "image": "precast_drainage_p6.png",
+      "total_labels": 46,
+      "per_class": {
+        "electrical_outlet": 3,
+        "electrical_panel": 3,
+        "electrical_switch": 1,
+        "light_fixture": 4,
+        "light_pole": 1,
+        "electrical_conduit_run": 6,
+        "plumbing_fixture_wc": 2,
+        "plumbing_fixture_lav": 3,
+        "plumbing_floor_drain": 2,
+        "plumbing_riser": 2,
+        "door": 5,
+        "window": 5,
+        "structural_column": 2,
+        "rebar_callout": 7
+      }
+    }
+  ],
+  "thresholds": {
+    "electrical_outlet": 0.3,
+    "electrical_panel": 0.3,
+    "electrical_switch": 0.3,
+    "light_fixture": 0.3,
+    "light_pole": 0.3,
+    "electrical_conduit_run": 0.25,
+    "plumbing_fixture_wc": 0.3,
+    "plumbing_fixture_lav": 0.3,
+    "plumbing_floor_drain": 0.3,
+    "plumbing_riser": 0.25,
+    "door": 0.3,
+    "window": 0.3,
+    "structural_column": 0.3,
+    "rebar_callout": 0.2
+  }
+}

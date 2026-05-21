@@ -373,6 +373,8 @@ async def list_blueprint_sheets(
         BlueprintSheetRead(
             id=row["id"],
             sheet_number=row.get("sheet_number"),
+            sheet_code=row.get("sheet_code"),
+            sheet_title=row.get("sheet_title"),
             discipline=row.get("discipline"),
             scale=row.get("scale"),
             revision=row.get("revision"),

@@ -23,6 +23,10 @@ from fastapi import Request
 
 app = modal.App("aspire-drew-yolo")
 
+# Wave 11a-v3: tenant-aware model loaded from this volume.
+# Falls back to bundled yolo11n.pt if the volume mount is missing.
+models_volume = modal.Volume.from_name("aspire-blueprint-models", create_if_missing=True)
+
 # Image: Python 3.11 + ultralytics + Pillow. Weights baked in so cold-start
 # doesn't pay the 5.4 MB download cost.
 image = (
@@ -53,6 +57,7 @@ _model_cache: dict = {}
     # preserving the broken function signature across redeploys (422 errors persisted
     # even after typing fixes). Re-enable once the new signature is verified live.
     timeout=60,               # hard ceiling per call
+    volumes={"/models": models_volume},  # Wave 11a-v3: Aspire fine-tuned weights
 )
 @modal.fastapi_endpoint(method="POST")
 async def detect_symbols(request: Request) -> dict:
@@ -84,8 +89,19 @@ async def detect_symbols(request: Request) -> dict:
     import io
 
     # Lazy-load model (cached after first call per warm container).
+    # Wave 11a-v3: prefer Aspire fine-tuned weights from /models/aspire_v1.pt
+    # (trained on 3,235 blueprint images, 11,735 labels, 4 classes:
+    #  plumbing_fixture_wc, plumbing_fixture_lav, door, window —
+    #  87.75% mAP@0.50). Falls back to generic yolo11n.pt if missing.
     if "model" not in _model_cache:
-        _model_cache["model"] = YOLO("yolo11n.pt")
+        import os as _os_yolo
+        _aspire_weights = "/models/aspire_v1.pt"
+        if _os_yolo.path.exists(_aspire_weights):
+            _model_cache["model"] = YOLO(_aspire_weights)
+            _model_cache["weights_source"] = "aspire_v1"
+        else:
+            _model_cache["model"] = YOLO("yolo11n.pt")
+            _model_cache["weights_source"] = "coco_fallback"
     model = _model_cache["model"]
 
     # Read raw PNG bytes from request body
@@ -124,11 +140,12 @@ async def detect_symbols(request: Request) -> dict:
                 "bbox_xyxy": [float(v) for v in box.xyxy[0].tolist()],
             })
 
+    _src = _model_cache.get("weights_source", "unknown")
     return {
         "detections": detections,
         "image_size": [img.width, img.height],
-        "model": "yolo11n.pt",
-        "model_version": "ultralytics-yolo11n-v1",
+        "model": "aspire_v1.pt" if _src == "aspire_v1" else "yolo11n.pt",
+        "model_version": "aspire-blueprint-v1" if _src == "aspire_v1" else "ultralytics-yolo11n-v1",
     }
 
 

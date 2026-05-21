@@ -14,6 +14,8 @@ class BlueprintSheetRead(BaseModel):
 
     id: UUID
     sheet_number: str | None = None
+    sheet_code: str | None = None
+    sheet_title: str | None = None
     discipline: str | None = None
     scale: str | None = None
     revision: str | None = None

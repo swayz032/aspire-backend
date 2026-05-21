@@ -1740,6 +1740,29 @@ async def _async_classify_pipeline(
         update_data: dict[str, Any] = {}
         if discipline_value:
             update_data["discipline"] = discipline_value
+
+        # Wave 11p: extract sheet_code + sheet_title from OCR title block.
+        # Pure regex — no LLM cost. If the column already has a value we
+        # leave it alone (a manual override would have set it).
+        try:
+            from aspire_orchestrator.services.blueprint.sheet_code_extractor import (
+                extract_sheet_code_title,
+            )
+
+            existing_code = sheet.get("sheet_code")
+            existing_title = sheet.get("sheet_title")
+            if not existing_code or not existing_title:
+                extracted = extract_sheet_code_title(sheet.get("ocr_text"))
+                if extracted.sheet_code and not existing_code:
+                    update_data["sheet_code"] = extracted.sheet_code
+                if extracted.sheet_title and not existing_title:
+                    update_data["sheet_title"] = extracted.sheet_title
+        except Exception as exc:
+            _log.warning(
+                "drew.classify: sheet_code extract failed sheet=%s err=%s",
+                sheet_id[:8],
+                type(exc).__name__,
+            )
         if tag.needs_review:
             # P2-2 fix: apply DLP to tag.reasoning before persisting to DB (Law #9).
             reasoning_raw = str(tag.reasoning or "")

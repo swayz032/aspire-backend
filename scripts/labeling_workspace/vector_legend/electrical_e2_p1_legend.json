@@ -1,0 +1,21 @@
+{
+  "file": "electrical_e2.pdf",
+  "page": 1,
+  "legend_regions_found": 2,
+  "legend_region_bboxes": [
+    [
+      1429.6,
+      1742.5,
+      1740.7,
+      1728.0
+    ],
+    [
+      822.2,
+      1741.7,
+      1542.4,
+      1728.0
+    ]
+  ],
+  "entry_count": 0,
+  "entries": []
+}

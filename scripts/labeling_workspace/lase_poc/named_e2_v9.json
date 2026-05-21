@@ -1,0 +1,272 @@
+[
+  {
+    "cluster_id": 38,
+    "count": 219,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.33,
+    "entropy": 1.048,
+    "top3_candidates": [
+      {
+        "name": "triangle/triangular marker",
+        "category": "annotation",
+        "confidence": 0.33
+      },
+      {
+        "name": "triangular symbol",
+        "category": "unknown",
+        "confidence": 0.22
+      },
+      {
+        "name": "structural brace/connector symbol",
+        "category": "structural",
+        "confidence": 0.15
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 32,
+    "count": 92,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.42,
+    "entropy": 1.077,
+    "top3_candidates": [
+      {
+        "name": "B label / grid or keynote marker",
+        "category": "annotation",
+        "confidence": 0.42
+      },
+      {
+        "name": "Letter B (text callout)",
+        "category": "text",
+        "confidence": 0.33
+      },
+      {
+        "name": "Unknown symbol",
+        "category": "unknown",
+        "confidence": 0.25
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 41,
+    "count": 86,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.28,
+    "entropy": 1.068,
+    "top3_candidates": [
+      {
+        "name": "unknown triangular symbol",
+        "category": "unknown",
+        "confidence": 0.28
+      },
+      {
+        "name": "triangular brace / gusset-like detail",
+        "category": "structural",
+        "confidence": 0.22
+      },
+      {
+        "name": "triangular callout marker",
+        "category": "annotation",
+        "confidence": 0.15
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 35,
+    "count": 47,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.28,
+    "entropy": 1.038,
+    "top3_candidates": [
+      {
+        "name": "triangular marker / symbol (unclear)",
+        "category": "unknown",
+        "confidence": 0.28
+      },
+      {
+        "name": "architectural reference marker",
+        "category": "architectural",
+        "confidence": 0.17
+      },
+      {
+        "name": "electrical device/symbol (unclear)",
+        "category": "electrical",
+        "confidence": 0.12
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 4,
+    "count": 30,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.26,
+    "entropy": 1.052,
+    "top3_candidates": [
+      {
+        "name": "Unknown X-mark / cross symbol",
+        "category": "unknown",
+        "confidence": 0.26
+      },
+      {
+        "name": "Cross mark / reference marker",
+        "category": "annotation",
+        "confidence": 0.19
+      },
+      {
+        "name": "X-shaped ceiling/device symbol",
+        "category": "electrical",
+        "confidence": 0.12
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 0,
+    "count": 24,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.18,
+    "entropy": 0.984,
+    "top3_candidates": [
+      {
+        "name": "unknown",
+        "category": "unknown",
+        "confidence": 0.18
+      },
+      {
+        "name": "revision cloud edge / irregular boundary",
+        "category": "annotation",
+        "confidence": 0.08
+      },
+      {
+        "name": "filled/hatched area boundary",
+        "category": "hatch",
+        "confidence": 0.06
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 18,
+    "count": 24,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.24,
+    "entropy": 1.061,
+    "top3_candidates": [
+      {
+        "name": "unknown loop/link symbol",
+        "category": "unknown",
+        "confidence": 0.24
+      },
+      {
+        "name": "electrical device/connection symbol",
+        "category": "electrical",
+        "confidence": 0.18
+      },
+      {
+        "name": "mechanical piping/duct loop symbol",
+        "category": "mechanical",
+        "confidence": 0.12
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  },
+  {
+    "cluster_id": 21,
+    "count": 23,
+    "name": "detail callout tag (D3)",
+    "category": "annotation",
+    "confidence": 0.66,
+    "entropy": 0.867,
+    "top3_candidates": [
+      {
+        "name": "detail callout tag (D3)",
+        "category": "annotation",
+        "confidence": 0.66
+      },
+      {
+        "name": "drawing reference tag / keyed note bubble",
+        "category": "annotation",
+        "confidence": 0.21
+      },
+      {
+        "name": "unknown boxed label symbol",
+        "category": "unknown",
+        "confidence": 0.13
+      }
+    ],
+    "provenance": "vlm_categorized",
+    "error": null
+  },
+  {
+    "cluster_id": 20,
+    "count": 22,
+    "name": "detail/reference callout number 13",
+    "category": "annotation",
+    "confidence": 0.55,
+    "entropy": 0.9,
+    "top3_candidates": [
+      {
+        "name": "detail/reference callout number 13",
+        "category": "annotation",
+        "confidence": 0.55
+      },
+      {
+        "name": "sheet note or keynote tag",
+        "category": "annotation",
+        "confidence": 0.22
+      },
+      {
+        "name": "unknown symbol",
+        "category": "unknown",
+        "confidence": 0.11
+      }
+    ],
+    "provenance": "vlm_categorized",
+    "error": null
+  },
+  {
+    "cluster_id": 55,
+    "count": 22,
+    "name": "unknown",
+    "category": "unknown",
+    "confidence": 0.34,
+    "entropy": 1.065,
+    "top3_candidates": [
+      {
+        "name": "triangular callout/marker",
+        "category": "annotation",
+        "confidence": 0.34
+      },
+      {
+        "name": "delta/triangle symbol",
+        "category": "architectural",
+        "confidence": 0.24
+      },
+      {
+        "name": "unknown triangular symbol",
+        "category": "unknown",
+        "confidence": 0.18
+      }
+    ],
+    "provenance": "vlm_low_confidence",
+    "error": null
+  }
+]

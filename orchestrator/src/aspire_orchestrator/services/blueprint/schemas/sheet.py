@@ -17,6 +17,8 @@ class BlueprintSheet(BaseModel):
     office_id: UUID | None = None
     project_id: UUID
     sheet_number: str | None = None
+    sheet_code: str | None = None
+    sheet_title: str | None = None
     discipline: Discipline | None = None
     scale: str | None = None
     revision: str | None = None

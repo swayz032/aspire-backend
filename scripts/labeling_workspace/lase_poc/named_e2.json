@@ -1,0 +1,82 @@
+[
+  {
+    "cluster_id": 5,
+    "count": 628,
+    "name": "triangle symbol",
+    "category": "other",
+    "confidence": 0.18,
+    "error": null
+  },
+  {
+    "cluster_id": 0,
+    "count": 192,
+    "name": "grid line number 61",
+    "category": "annotation",
+    "confidence": 0.9,
+    "error": null
+  },
+  {
+    "cluster_id": 6,
+    "count": 29,
+    "name": "slope arrow",
+    "category": "architectural",
+    "confidence": 0.61,
+    "error": null
+  },
+  {
+    "cluster_id": 3,
+    "count": 27,
+    "name": "oval tag",
+    "category": "annotation",
+    "confidence": 0.41,
+    "error": null
+  },
+  {
+    "cluster_id": 2,
+    "count": 21,
+    "name": "cross mark",
+    "category": "annotation",
+    "confidence": 0.34,
+    "error": null
+  },
+  {
+    "cluster_id": 4,
+    "count": 18,
+    "name": "keynote reference bubble",
+    "category": "annotation",
+    "confidence": 0.22,
+    "error": null
+  },
+  {
+    "cluster_id": 7,
+    "count": 11,
+    "name": "detail section symbol",
+    "category": "architectural",
+    "confidence": 0.24,
+    "error": null
+  },
+  {
+    "cluster_id": 11,
+    "count": 11,
+    "name": "revision cloud tag",
+    "category": "annotation",
+    "confidence": 0.15,
+    "error": null
+  },
+  {
+    "cluster_id": 9,
+    "count": 10,
+    "name": "detail reference number",
+    "category": "annotation",
+    "confidence": 0.41,
+    "error": null
+  },
+  {
+    "cluster_id": 1,
+    "count": 8,
+    "name": "section callout A",
+    "category": "annotation",
+    "confidence": 0.83,
+    "error": null
+  }
+]
