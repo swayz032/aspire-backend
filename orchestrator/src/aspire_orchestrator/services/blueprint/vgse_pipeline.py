@@ -196,6 +196,7 @@ async def run_vgse_for_project(
 def detections_to_blueprint_symbol_rows(
     detections: list[dict],
     actor_id: str = "drew",
+    discipline_by_sheet_id: dict[str, str | None] | None = None,
 ) -> list[dict]:
     """Convert VGSEDetection list to blueprint_symbols rows.
 
@@ -204,31 +205,58 @@ def detections_to_blueprint_symbol_rows(
 
     Each motif inserts ONE representative row per sheet — the contractor's
     Takeoff tab UI can drill into bboxes for the full count.
+
+    Wave 17b.3: when a motif name is opaque ('unknown_motif_*'), apply the
+    interpretable fallback so the contractor sees e.g. 'electrical_symbol_high'
+    instead of a raw hash. The original VGSE name + signature_hash are kept
+    in bbox.original_class / bbox.signature_hash for Wave 18 spatial OCR
+    binding to dedupe against.
     """
+    from aspire_orchestrator.services.blueprint.see_naming import (
+        interpretable_fallback,
+        is_opaque_name,
+    )
+
+    discipline_by_sheet_id = discipline_by_sheet_id or {}
     rows: list[dict] = []
     now = datetime.now(timezone.utc).isoformat()
     for d in detections:
         bbox = d.get("bbox_pt", [0, 0, 0, 0])
         x0, y0, x1, y1 = (bbox + [0, 0, 0, 0])[:4]
+        # class string: prefer canonical_name (set by tenant memory or legend),
+        # fall back to a 'sig:<8>' placeholder which the naming pass below
+        # will rewrite into an interpretable string.
+        original_class = d.get("canonical_name") or f"sig:{d['signature_hash'][:8]}"
+        sheet_id = d["sheet_id"]
+        # Apply interpretable fallback only for opaque names — real names
+        # (tenant_memory / legend hits) pass through unchanged.
+        confidence = 0.95 if d.get("name_source") in ("tenant_memory", "legend") else 0.60
+        if is_opaque_name(original_class):
+            class_name = interpretable_fallback(
+                original_class,
+                discipline_by_sheet_id.get(sheet_id),
+                confidence,
+            )
+        else:
+            class_name = original_class
         rows.append({
             "id": str(uuid.uuid4()),
             "suite_id": d["suite_id"],
             "office_id": d.get("office_id"),
-            "sheet_id": d["sheet_id"],
-            # class string carries the signature for traceability;
-            # canonical name is what UI shows.
-            "class": d.get("canonical_name") or f"sig:{d['signature_hash'][:8]}",
+            "sheet_id": sheet_id,
+            "class": class_name,
             "bbox": {
                 "x": x0,
                 "y": y0,
                 "w": max(0.0, x1 - x0),
                 "h": max(0.0, y1 - y0),
                 "signature_hash": d["signature_hash"],
+                "original_class": original_class,
                 "instance_count": d["count"],
                 "name_source": d.get("name_source"),
                 "entropy": d.get("spatial_entropy"),
             },
-            "confidence": 0.95 if d.get("name_source") in ("tenant_memory", "legend") else 0.60,
+            "confidence": confidence,
             "created_at": now,
             "created_by": None,
         })

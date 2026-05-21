@@ -67,6 +67,8 @@ class DisciplineTag:
         confidence: 0.0–1.0 LLM confidence.
         reasoning: Short explanation from LLM (for audit trail).
         needs_review: True when confidence < threshold.
+        source: "atlas" (deterministic) | "llm" (model) | "llm_retry" (second pass)
+                | "llm_dropped" (omitted by LLM even after retry).
     """
 
     sheet_id: str
@@ -74,6 +76,7 @@ class DisciplineTag:
     confidence: float
     reasoning: str
     needs_review: bool
+    source: str = "llm"
 
 
 @dataclass(frozen=True)
@@ -199,20 +202,9 @@ def _parse_llm_response(raw: str, batch: list[_SheetInput]) -> list[DisciplineTa
             )
         )
 
-    # Fill in any sheets that LLM omitted
-    returned_ids = {t.sheet_id for t in tags}
-    for s in batch:
-        if s.sheet_id not in returned_ids:
-            tags.append(
-                DisciplineTag(
-                    sheet_id=s.sheet_id,
-                    discipline=None,
-                    confidence=0.0,
-                    reasoning="LLM omitted this sheet from response",
-                    needs_review=True,
-                )
-            )
-
+    # NOTE (Wave 17b.1): omitted sheets are NOT auto-filled here. Caller is
+    # responsible for detecting omissions and issuing a single retry before
+    # writing missing_inputs. See `_classify_with_retry` below.
     return tags
 
 
@@ -240,16 +232,85 @@ async def tag_disciplines(
     if not sheets:
         return []
 
-    # Wave 9h: system prompt built from cached taxonomy — prefix is byte-identical
-    # across all batches and runs, maximising OpenAI prefix cache reuse.
+    # ---------------------------------------------------------------
+    # Wave 17b.1 — Sheet-Type Atlas deterministic pre-classifier.
+    # ---------------------------------------------------------------
+    # Run regex/keyword classifier against every input. Sheets that match
+    # any tier with conf >=0.80 are tagged HERE; the LLM only sees the
+    # remainder. Massive cost + reliability win on the GAVNN-class job.
+    from aspire_orchestrator.services.blueprint import sheet_type_atlas
+
+    all_tags: list[DisciplineTag] = []
+    llm_pending: list[dict[str, Any]] = []
+    atlas_hits = 0
+
+    for row in sheets:
+        sheet_id = str(row["id"])
+        match = sheet_type_atlas.classify(
+            sheet_number=row.get("sheet_number"),
+            sheet_code=row.get("sheet_code"),
+            sheet_title=row.get("sheet_title"),
+            ocr_text=row.get("ocr_text"),
+        )
+        if match is not None:
+            atlas_hits += 1
+            all_tags.append(
+                DisciplineTag(
+                    sheet_id=sheet_id,
+                    discipline=match.discipline,
+                    confidence=match.confidence,
+                    reasoning=f"Atlas: {match.evidence}",
+                    needs_review=False,
+                    source="atlas",
+                )
+            )
+        else:
+            llm_pending.append(row)
+
+    logger.info(
+        "discipline_tagger: atlas pre-pass matched %d/%d sheets, %d remain for LLM, corr=%s",
+        atlas_hits,
+        len(sheets),
+        len(llm_pending),
+        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+    )
+
+    # Emit a stage receipt for atlas activity (Law #2). Best-effort.
+    if atlas_hits > 0:
+        try:
+            from aspire_orchestrator.services.receipt_store import store_receipts
+            import uuid as _uuid
+            from datetime import datetime as _dt
+            from datetime import timezone as _tz
+            store_receipts([{
+                "id": str(_uuid.uuid4()),
+                "outcome": "success",
+                "action_type": "drew.classify.atlas.matched",
+                "receipt_type": "drew.classify.atlas.matched",
+                "created_at": _dt.now(_tz.utc).isoformat(),
+                "risk_tier": "GREEN",
+                "actor_type": "WORKER",
+                "actor_id": "skillpack:drew-blueprint",
+                "correlation_id": correlation_id,
+                "metadata": {
+                    "stage": "classify",
+                    "atlas_matched": atlas_hits,
+                    "total_sheets": len(sheets),
+                    "llm_pending": len(llm_pending),
+                },
+            }])
+        except Exception:
+            pass
+
+    if not llm_pending:
+        return all_tags
+
+    # ---------------------------------------------------------------
+    # LLM pass for Tier-4 sheets (those atlas could not classify).
+    # ---------------------------------------------------------------
     taxonomy = _load_taxonomy()
     system_prompt = _build_system_prompt(taxonomy)
     api_key = resolve_openai_api_key()
-
-    # Import here to avoid circular imports (services → openai_client → settings)
-    from aspire_orchestrator.services.openai_client import generate_text_async
-
-    all_tags: list[DisciplineTag] = []
 
     # Wave 9h: stage-level token accumulators
     _total_prompt_tokens: int = 0
@@ -257,8 +318,8 @@ async def tag_disciplines(
     _total_completion_tokens: int = 0
 
     # Batch sheets into groups of _BATCH_SIZE
-    for batch_start in range(0, len(sheets), _BATCH_SIZE):
-        batch_rows = sheets[batch_start : batch_start + _BATCH_SIZE]
+    for batch_start in range(0, len(llm_pending), _BATCH_SIZE):
+        batch_rows = llm_pending[batch_start : batch_start + _BATCH_SIZE]
         batch_inputs: list[_SheetInput] = [
             _SheetInput(
                 sheet_id=str(row["id"]),
@@ -268,130 +329,25 @@ async def tag_disciplines(
             for row in batch_rows
         ]
 
-        user_prompt = _build_user_prompt(batch_inputs)
-
         logger.info(
             "discipline_tagger: batch %d/%d, sheets=%d, model=%s, corr=%s",
             batch_start // _BATCH_SIZE + 1,
-            (len(sheets) + _BATCH_SIZE - 1) // _BATCH_SIZE,
+            (len(llm_pending) + _BATCH_SIZE - 1) // _BATCH_SIZE,
             len(batch_inputs),
             model,
             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
         )
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        # Wave 9h: compute content hash for Redis response cache key
-        user_content_hash = compute_content_hash(user_prompt)
-
-        # Wave 9h: check Redis response cache before calling OpenAI
-        cached_llm = await get_cached_llm_response("classify", user_content_hash, model)
-        if cached_llm is not None:
-            logger.info(
-                "9h classify_cache_hit stage=classify model=%s hash=%s corr=%s",
-                model, user_content_hash[:8],
-                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-            )
-            # Emit receipt for cache hit (so ledger can track cache layer)
-            try:
-                from aspire_orchestrator.services.receipt_store import store_receipts
-                import uuid as _uuid
-                from datetime import datetime as _dt, timezone as _tz
-                store_receipts([{
-                    "id": str(_uuid.uuid4()),
-                    "outcome": "success",
-                    "action_type": "blueprint.llm.cache_hit",
-                    "receipt_type": "blueprint.llm.cache_hit",
-                    "created_at": _dt.now(_tz.utc).isoformat(),
-                    "risk_tier": "GREEN",
-                    "actor_type": "WORKER",
-                    "actor_id": "skillpack:drew-blueprint",
-                    "correlation_id": correlation_id,
-                    "metadata": {
-                        "stage": "classify",
-                        "model": model,
-                        "content_hash": user_content_hash[:16],
-                        "cache_layer": "redis",
-                    },
-                }])
-            except Exception:
-                pass  # Receipt emit is best-effort for cache hits
-            raw_response: str = json.dumps(cached_llm) if isinstance(cached_llm, list) else str(cached_llm)
-            batch_tags = _parse_llm_response(raw_response, batch_inputs)
-            all_tags.extend(batch_tags)
-            continue
-
-        try:
-            llm_result = await generate_text_async(
-                model=model,
-                messages=messages,
-                api_key=api_key,
-                timeout_seconds=float(settings.openai_timeout_seconds),
-                max_output_tokens=1024,
-            )
-            raw_response = llm_result["text"]
-
-            # Wave 9h: accumulate usage and verify prefix stability
-            usage = llm_result["usage"]
-            _total_prompt_tokens += usage["prompt_tokens"]
-            _total_cached_tokens += usage["cached_tokens"]
-            _total_completion_tokens += usage["completion_tokens"]
-
-            # Wave 9h: warn if prompt_prefix_hash drifts within a project run
-            prefix_key = f"{model}:classify"
-            observed_hash = usage["prompt_prefix_hash"]
-            last_hash = _LAST_PREFIX_HASH.get(prefix_key)
-            if last_hash is None:
-                _LAST_PREFIX_HASH[prefix_key] = observed_hash
-            elif last_hash != observed_hash:
-                logger.warning(
-                    "9h: prefix_hash drift detected for %s — "
-                    "previous=%s current=%s — OpenAI prefix cache INVALIDATED. "
-                    "Ensure system prompt is byte-stable across batches.",
-                    prefix_key, last_hash, observed_hash,
-                )
-                _LAST_PREFIX_HASH[prefix_key] = observed_hash
-
-            # Wave 9h: store response in Redis cache (best-effort)
-            try:
-                parsed_tags = _parse_llm_response(raw_response, batch_inputs)
-                # Cache as list of tag dicts
-                tag_dicts = [
-                    {
-                        "sheet_id": t.sheet_id,
-                        "discipline": t.discipline,
-                        "confidence": t.confidence,
-                        "reasoning": t.reasoning,
-                    }
-                    for t in parsed_tags
-                ]
-                await set_cached_llm_response("classify", user_content_hash, model, {"tags": tag_dicts})
-            except Exception:
-                pass  # Cache write is best-effort
-
-        except Exception as exc:
-            logger.error(
-                "discipline_tagger: LLM call failed (%s), corr=%s",
-                type(exc).__name__,
-                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
-            )
-            # Return low-confidence unknowns for this batch so pipeline continues
-            all_tags.extend(
-                DisciplineTag(
-                    sheet_id=s.sheet_id,
-                    discipline=None,
-                    confidence=0.0,
-                    reasoning=f"LLM call failed: {type(exc).__name__}",
-                    needs_review=True,
-                )
-                for s in batch_inputs
-            )
-            continue
-
-        batch_tags = _parse_llm_response(raw_response, batch_inputs)
+        batch_tags, tok_p, tok_c, tok_o = await _classify_with_retry(
+            batch_inputs=batch_inputs,
+            system_prompt=system_prompt,
+            api_key=api_key,
+            model=model,
+            correlation_id=correlation_id,
+        )
+        _total_prompt_tokens += tok_p
+        _total_cached_tokens += tok_c
+        _total_completion_tokens += tok_o
         all_tags.extend(batch_tags)
 
     # Wave 9h: log stage-level cache summary
@@ -410,3 +366,292 @@ async def tag_disciplines(
         )
 
     return all_tags
+
+
+async def _classify_with_retry(
+    *,
+    batch_inputs: list[_SheetInput],
+    system_prompt: str,
+    api_key: str,
+    model: str,
+    correlation_id: str,
+) -> tuple[list[DisciplineTag], int, int, int]:
+    """Call the LLM for one batch. If sheets are omitted from the response,
+    issue exactly ONE retry containing only the omitted sheets (with a hotter
+    temperature for variance). If they remain omitted after retry, return
+    them as zero-confidence drops so the caller can persist missing_inputs.
+
+    Returns:
+        (tags, total_prompt_tokens, total_cached_tokens, total_completion_tokens)
+    """
+    from aspire_orchestrator.services.openai_client import generate_text_async
+
+    tags_first, usage_first, raw_first = await _run_llm_batch(
+        batch_inputs=batch_inputs,
+        system_prompt=system_prompt,
+        api_key=api_key,
+        model=model,
+        correlation_id=correlation_id,
+        temperature=None,  # default
+        cache_layer=True,
+    )
+    tok_p = usage_first.get("prompt_tokens", 0)
+    tok_c = usage_first.get("cached_tokens", 0)
+    tok_o = usage_first.get("completion_tokens", 0)
+
+    if tags_first is None:
+        # LLM hard-failed — return zero-confidence drops for the whole batch.
+        return (
+            [
+                DisciplineTag(
+                    sheet_id=s.sheet_id,
+                    discipline=None,
+                    confidence=0.0,
+                    reasoning=f"LLM call failed: {raw_first}",
+                    needs_review=True,
+                    source="llm_dropped",
+                )
+                for s in batch_inputs
+            ],
+            tok_p, tok_c, tok_o,
+        )
+
+    returned_ids = {t.sheet_id for t in tags_first}
+    omitted = [s for s in batch_inputs if s.sheet_id not in returned_ids]
+    if not omitted:
+        return tags_first, tok_p, tok_c, tok_o
+
+    logger.warning(
+        "discipline_tagger: LLM omitted %d/%d sheets — issuing retry, corr=%s",
+        len(omitted),
+        len(batch_inputs),
+        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+    )
+
+    # Emit retry receipt (Law #2)
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        store_receipts([{
+            "id": str(_uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "drew.classify.llm.retry",
+            "receipt_type": "drew.classify.llm.retry",
+            "created_at": _dt.now(_tz.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": "skillpack:drew-blueprint",
+            "correlation_id": correlation_id,
+            "metadata": {
+                "stage": "classify",
+                "omitted_count": len(omitted),
+                "batch_size": len(batch_inputs),
+            },
+        }])
+    except Exception:
+        pass
+
+    tags_retry, usage_retry, _raw_retry = await _run_llm_batch(
+        batch_inputs=omitted,
+        system_prompt=system_prompt,
+        api_key=api_key,
+        model=model,
+        correlation_id=correlation_id,
+        temperature=0.6,  # variance to escape the dropout pattern
+        cache_layer=False,
+    )
+    tok_p += usage_retry.get("prompt_tokens", 0)
+    tok_c += usage_retry.get("cached_tokens", 0)
+    tok_o += usage_retry.get("completion_tokens", 0)
+
+    final_tags: list[DisciplineTag] = list(tags_first)
+    if tags_retry is None:
+        # Retry hard-failed; mark omitted as drops.
+        final_tags.extend(
+            DisciplineTag(
+                sheet_id=s.sheet_id,
+                discipline=None,
+                confidence=0.0,
+                reasoning="LLM retry call failed",
+                needs_review=True,
+                source="llm_dropped",
+            )
+            for s in omitted
+        )
+        return final_tags, tok_p, tok_c, tok_o
+
+    retry_index = {t.sheet_id: t for t in tags_retry}
+    for s in omitted:
+        retry_tag = retry_index.get(s.sheet_id)
+        if retry_tag is not None:
+            # Mark as llm_retry source for observability
+            final_tags.append(
+                DisciplineTag(
+                    sheet_id=retry_tag.sheet_id,
+                    discipline=retry_tag.discipline,
+                    confidence=retry_tag.confidence,
+                    reasoning=retry_tag.reasoning,
+                    needs_review=retry_tag.needs_review,
+                    source="llm_retry",
+                )
+            )
+        else:
+            # Still missing after retry → real drop, caller writes missing_input.
+            final_tags.append(
+                DisciplineTag(
+                    sheet_id=s.sheet_id,
+                    discipline=None,
+                    confidence=0.0,
+                    reasoning="LLM omitted sheet on initial call AND retry",
+                    needs_review=True,
+                    source="llm_dropped",
+                )
+            )
+
+    return final_tags, tok_p, tok_c, tok_o
+
+
+async def _run_llm_batch(
+    *,
+    batch_inputs: list[_SheetInput],
+    system_prompt: str,
+    api_key: str,
+    model: str,
+    correlation_id: str,
+    temperature: float | None,
+    cache_layer: bool,
+) -> tuple[list[DisciplineTag] | None, dict[str, int], str]:
+    """Single LLM call for one batch. Returns (tags_or_None, usage_dict, raw_or_err).
+
+    tags is None only on hard exception. Cache lookup/write controlled via
+    cache_layer (disabled on retry so we don't replay the same omission).
+    """
+    from aspire_orchestrator.services.openai_client import generate_text_async
+
+    user_prompt = _build_user_prompt(batch_inputs)
+    user_content_hash = compute_content_hash(user_prompt)
+
+    if cache_layer:
+        cached_llm = await get_cached_llm_response("classify", user_content_hash, model)
+        if cached_llm is not None:
+            logger.info(
+                "9h classify_cache_hit stage=classify model=%s hash=%s corr=%s",
+                model, user_content_hash[:8],
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+            try:
+                from aspire_orchestrator.services.receipt_store import store_receipts
+                import uuid as _uuid
+                from datetime import datetime as _dt
+                from datetime import timezone as _tz
+                store_receipts([{
+                    "id": str(_uuid.uuid4()),
+                    "outcome": "success",
+                    "action_type": "blueprint.llm.cache_hit",
+                    "receipt_type": "blueprint.llm.cache_hit",
+                    "created_at": _dt.now(_tz.utc).isoformat(),
+                    "risk_tier": "GREEN",
+                    "actor_type": "WORKER",
+                    "actor_id": "skillpack:drew-blueprint",
+                    "correlation_id": correlation_id,
+                    "metadata": {
+                        "stage": "classify",
+                        "model": model,
+                        "content_hash": user_content_hash[:16],
+                        "cache_layer": "redis",
+                    },
+                }])
+            except Exception:
+                pass
+            # Cache shape is {"tags": [<tag-dicts>]} (see set call below).
+            # Older entries may be a bare list. Normalise.
+            if isinstance(cached_llm, list):
+                tags_list = cached_llm
+            elif isinstance(cached_llm, dict) and isinstance(cached_llm.get("tags"), list):
+                tags_list = cached_llm["tags"]
+            else:
+                tags_list = []
+            raw_cached: str = json.dumps(tags_list)
+            return _parse_llm_response(raw_cached, batch_inputs), {
+                "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0,
+            }, raw_cached
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    call_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "api_key": api_key,
+        "timeout_seconds": float(settings.openai_timeout_seconds),
+        "max_output_tokens": 1024,
+    }
+    if temperature is not None:
+        call_kwargs["temperature"] = temperature
+
+    try:
+        llm_result = await generate_text_async(**call_kwargs)
+    except TypeError:
+        # generate_text_async may not accept temperature kwarg — drop it and retry.
+        call_kwargs.pop("temperature", None)
+        try:
+            llm_result = await generate_text_async(**call_kwargs)
+        except Exception as exc:
+            logger.error(
+                "discipline_tagger: LLM call failed (%s), corr=%s",
+                type(exc).__name__,
+                correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+            )
+            return None, {"prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0}, type(exc).__name__
+    except Exception as exc:
+        logger.error(
+            "discipline_tagger: LLM call failed (%s), corr=%s",
+            type(exc).__name__,
+            correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+        )
+        return None, {"prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0}, type(exc).__name__
+
+    raw_response: str = llm_result["text"]
+    usage = llm_result.get("usage", {}) or {}
+    usage_out = {
+        "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+        "cached_tokens": int(usage.get("cached_tokens", 0) or 0),
+        "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+    }
+
+    # Wave 9h: track prefix-hash stability
+    if "prompt_prefix_hash" in usage:
+        prefix_key = f"{model}:classify"
+        observed_hash = usage["prompt_prefix_hash"]
+        last_hash = _LAST_PREFIX_HASH.get(prefix_key)
+        if last_hash is None:
+            _LAST_PREFIX_HASH[prefix_key] = observed_hash
+        elif last_hash != observed_hash:
+            logger.warning(
+                "9h: prefix_hash drift detected for %s — previous=%s current=%s",
+                prefix_key, last_hash, observed_hash,
+            )
+            _LAST_PREFIX_HASH[prefix_key] = observed_hash
+
+    parsed_tags = _parse_llm_response(raw_response, batch_inputs)
+
+    if cache_layer:
+        try:
+            tag_dicts = [
+                {
+                    "sheet_id": t.sheet_id,
+                    "discipline": t.discipline,
+                    "confidence": t.confidence,
+                    "reasoning": t.reasoning,
+                }
+                for t in parsed_tags
+            ]
+            await set_cached_llm_response("classify", user_content_hash, model, {"tags": tag_dicts})
+        except Exception:
+            pass
+
+    return parsed_tags, usage_out, raw_response

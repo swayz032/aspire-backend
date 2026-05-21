@@ -1938,6 +1938,11 @@ async def _async_see_pipeline(
         SymbolDetectorError,
         detect_symbols,
     )
+    from aspire_orchestrator.services.blueprint.see_naming import (
+        interpretable_fallback,
+        is_opaque_name,
+        should_suppress_yolo_class,
+    )
     from aspire_orchestrator.services.blueprint.scale_calibrator import calibrate_scale
     from aspire_orchestrator.services.blueprint.seal_detector import detect_engineer_seal
     from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
@@ -2120,7 +2125,17 @@ async def _async_see_pipeline(
             sheet_ids_by_page=_vgse_sheet_ids_by_page,
             correlation_id=correlation_id,
         )
-        _vgse_rows = detections_to_blueprint_symbol_rows(_vgse_summary.get("detections", []))
+        # Wave 17b.3: pass sheet→discipline map so opaque motif names get an
+        # interpretable fallback ('electrical_symbol_high' etc.) at row-build time.
+        _vgse_discipline_by_sheet_id: dict[str, str | None] = {
+            str(s["id"]): s.get("discipline")
+            for s in sheets
+            if s.get("id")
+        }
+        _vgse_rows = detections_to_blueprint_symbol_rows(
+            _vgse_summary.get("detections", []),
+            discipline_by_sheet_id=_vgse_discipline_by_sheet_id,
+        )
         _vgse_inserted = 0
         for _row in _vgse_rows:
             try:
@@ -2379,8 +2394,39 @@ async def _async_see_pipeline(
             local_conf_sum = 0.0
             local_conf_count = 0
             local_model = default_model_version
+            # Wave 17b.3: per-sheet naming-pipeline counters. Aggregated into the
+            # blueprint.see.symbol_filter receipt at end of run.
+            local_yolo_detections = len(detections)
+            local_coco_suppressed = 0
+            local_fallback_named = 0
+            local_kept_real_name = 0
+            sheet_discipline = sheet_row.get("discipline")
 
             for det in detections:
+                # Wave 17b.3: kill COCO/unmapped leaks before they reach the UI.
+                suppress, _reason = should_suppress_yolo_class(det.class_name)
+                if suppress:
+                    local_coco_suppressed += 1
+                    continue
+                # Surviving rows: rewrite opaque names with interpretable fallback.
+                # (YOLO output is unlikely to be opaque today — it's either a real
+                # mapped class or it was suppressed above — but this keeps the
+                # write path symmetric with VGSE so future model swaps are safe.)
+                original_class = det.class_name
+                row_used_fallback = is_opaque_name(original_class)
+                if row_used_fallback:
+                    final_class = interpretable_fallback(
+                        original_class, sheet_discipline, det.confidence
+                    )
+                    local_fallback_named += 1
+                else:
+                    final_class = original_class
+                    local_kept_real_name += 1
+                # Preserve original under bbox.original_class so Wave 18 spatial OCR
+                # can dedupe / replace. Law #2 — never lose source of truth.
+                bbox_out = dict(det.bbox)
+                bbox_out["original_class"] = original_class
+                bbox_out["name_source"] = "fallback" if row_used_fallback else "yolo_mapped"
                 try:
                     await supabase_insert(
                         "blueprint_symbols",
@@ -2389,8 +2435,8 @@ async def _async_see_pipeline(
                             "suite_id": suite_id,
                             "office_id": office_id,
                             "sheet_id": sheet_id,
-                            "class": det.class_name,
-                            "bbox": det.bbox,
+                            "class": final_class,
+                            "bbox": bbox_out,
                             "confidence": det.confidence,
                             "created_at": datetime.now(timezone.utc).isoformat(),
                         },
@@ -2507,6 +2553,11 @@ async def _async_see_pipeline(
                 "seal": local_seal,
                 "missing": local_missing,
                 "model": local_model,
+                # Wave 17b.3 — naming-pipeline observability
+                "yolo_detections": local_yolo_detections,
+                "coco_suppressed": local_coco_suppressed,
+                "fallback_named": local_fallback_named,
+                "kept_real_name": local_kept_real_name,
             }
 
     # Run all in-scope sheets concurrently bounded by _max_concurrency.
@@ -2530,12 +2581,21 @@ async def _async_see_pipeline(
     confidence_sum = 0.0
     confidence_count = 0
     model_version = default_model_version
+    # Wave 17b.3 — naming-pipeline aggregates
+    agg_yolo_detections = 0
+    agg_coco_suppressed = 0
+    agg_fallback_named = 0
+    agg_kept_real_name = 0
     for r in per_sheet_results:
         if isinstance(r, BaseException):
             # SymbolDetectorError wrapped as RuntimeError surfaces here; fail-closed
             # per Law #3 — bubble up so see() can mark the stage failed.
             _see_lock.release()
             raise r
+        agg_yolo_detections += r.get("yolo_detections", 0)
+        agg_coco_suppressed += r.get("coco_suppressed", 0)
+        agg_fallback_named += r.get("fallback_named", 0)
+        agg_kept_real_name += r.get("kept_real_name", 0)
         total_symbols += r["symbols"]
         seal_sheets += r["seal"]
         missing_inputs += r["missing"]
@@ -2557,6 +2617,49 @@ async def _async_see_pipeline(
         missing_inputs,
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
+
+    # Wave 17b.3: aggregated naming-pipeline receipt. Gives ops a single row to
+    # answer "how many garbage YOLO labels did we suppress, and how many symbols
+    # got an interpretable fallback name?" without grepping logs.
+    try:
+        _vgse_memory_hits = 0
+        _vgse_legend_hits = 0
+        _vgse_unanchored = 0
+        try:
+            _vgse_memory_hits = int(_vgse_summary.get("memory_hits", 0))  # type: ignore[name-defined]
+            _vgse_legend_hits = int(_vgse_summary.get("legend_hits", 0))  # type: ignore[name-defined]
+            _vgse_unanchored = int(_vgse_summary.get("unanchored", 0))    # type: ignore[name-defined]
+        except (NameError, AttributeError):
+            # VGSE block didn't run (failed earlier or skipped) — leave at 0.
+            pass
+        final_kept = agg_kept_real_name + agg_fallback_named + _vgse_memory_hits + _vgse_legend_hits + _vgse_unanchored
+        store_receipts([{
+            "id": str(uuid.uuid4()),
+            "outcome": "success",
+            "action_type": "blueprint.see.symbol_filter",
+            "receipt_type": "blueprint.see.symbol_filter",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": ACTOR_DREW,
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "office_id": office_id,
+            "metadata": {
+                "project_id": project_id,
+                "yolo_detections": agg_yolo_detections,
+                "coco_suppressed": agg_coco_suppressed,
+                "vgse_motifs": _vgse_memory_hits + _vgse_legend_hits + _vgse_unanchored,
+                "memory_named": _vgse_memory_hits,
+                "legend_named": _vgse_legend_hits,
+                "fallback_named": agg_fallback_named + _vgse_unanchored,
+                "yolo_kept_real_name": agg_kept_real_name,
+                "final_kept": final_kept,
+            },
+            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+        }])
+    except Exception as _rec_exc:  # noqa: BLE001 — receipts must never block completion
+        _log.warning("drew.see: symbol_filter receipt emission failed (%s)", type(_rec_exc).__name__)
 
     # Wave 10c: ground-truth completion receipt BEFORE state mutation. Receipts are
     # immutable (Law #2), so even if set_stage_progress fails, ops can query
