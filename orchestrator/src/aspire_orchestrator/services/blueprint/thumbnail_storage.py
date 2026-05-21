@@ -177,10 +177,15 @@ async def _create_signed_url(
             )
             return None
 
-        # Supabase returns a relative path — prepend base origin
+        # Supabase returns a relative path like "/object/sign/<bucket>/<path>?token=..."
+        # WITHOUT the "/storage/v1" prefix. We must add the full storage prefix
+        # or the URL 404s in browsers (cause of every blank thumbnail in
+        # Plans & Photos). Defensive: don't double-prepend if a future SDK
+        # version starts including /storage/v1 in the response.
         if signed_url.startswith("/"):
             origin = settings.supabase_url.rstrip("/") if settings.supabase_url else ""
-            signed_url = f"{origin}{signed_url}"
+            prefix = "" if signed_url.startswith("/storage/v1") else "/storage/v1"
+            signed_url = f"{origin}{prefix}{signed_url}"
 
         return signed_url
 
