@@ -99,7 +99,23 @@ async def _download_raw_pdf(suite_id: str, project_id: str) -> bytes | None:
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return None
     base = settings.supabase_url.rstrip("/")
-    url = f"{base}/storage/v1/object/blueprint-raw-pdfs/{suite_id}/{project_id}/raw.pdf"
+    # Wave 17b fix: the upload writes to {suite_id}/{upload_id}/raw.pdf where upload_id
+    # is NOT the project_id. The DB column blueprint_projects.pdf_storage_path is the
+    # source of truth. Read it first; fall back to {suite_id}/{project_id}/raw.pdf
+    # only if the column is missing.
+    from aspire_orchestrator.services.supabase_client import supabase_select
+    storage_path = f"{suite_id}/{project_id}/raw.pdf"
+    try:
+        rows = await supabase_select(
+            "blueprint_projects",
+            filters=f"id=eq.{project_id}&suite_id=eq.{suite_id}",
+            columns="pdf_storage_path",
+        )
+        if rows and rows[0].get("pdf_storage_path"):
+            storage_path = rows[0]["pdf_storage_path"]
+    except Exception as exc:
+        _log.warning("backfill: pdf_storage_path lookup failed (%s) — using legacy path", type(exc).__name__)
+    url = f"{base}/storage/v1/object/blueprint-raw-pdfs/{storage_path}"
     headers = {
         "apikey": settings.supabase_service_role_key,
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
