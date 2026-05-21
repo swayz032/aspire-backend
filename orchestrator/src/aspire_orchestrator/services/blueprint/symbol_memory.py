@@ -112,7 +112,10 @@ async def upsert_observation(
 
     # Update existing — never overwrite a confirmation-sourced name with a
     # less-authoritative source (legend < confirmation; vlm < legend; unanchored < anything).
-    source_priority = {"manual": 5, "confirmation": 4, "legend": 3, "tenant_memory": 2, "vlm": 1, "unanchored": 0}
+    # Wave 17b.2 — spatial_ocr lands between legend (3) and tenant_memory (2):
+    # it's anchored to real architect text, but a page legend (when present)
+    # remains higher authority because legends are explicit.
+    source_priority = {"manual": 5, "confirmation": 4, "legend": 3, "spatial_ocr": 2, "tenant_memory": 2, "vlm": 1, "unanchored": 0}
     new_priority = source_priority.get(source, 0)
     existing_priority = source_priority.get(existing.get("source", "unanchored"), 0)
     update_payload: dict[str, Any] = {
