@@ -309,11 +309,25 @@ def build_candidate(
     sheets: list[dict[str, Any]],
     symbols_by_sheet: dict[str, list[dict[str, Any]]],
     ocr_by_sheet: dict[str, str],
+    *,
+    data_provider: Any | None = None,
 ) -> MissingInputCandidate:
     """Build a MissingInputCandidate from a blueprint_missing_inputs DB row.
 
     Attaches project context (sheets, symbols, OCR) from the caller's
     already-loaded data (avoid duplicate DB queries per candidate).
+
+    Args:
+        row: A blueprint_missing_inputs row dict.
+        sheets: Active sheets for the project (already loaded by the caller).
+        symbols_by_sheet: ``sheet_id -> list[blueprint_symbols row]`` index.
+        ocr_by_sheet: ``sheet_id -> ocr_text`` index.
+        data_provider: Wave 19.1a — Optional per-cascade-run
+            ``SheetDataProvider`` instance. Pass to give resolvers access
+            to PNG bytes (from Supabase Storage) and YOLO detections
+            (from blueprint_symbols) without each resolver having to
+            re-query. Default ``None`` keeps all pre-19.1 callers
+            (existing tests, legacy code paths) working unchanged.
     """
     description = str(row.get("description") or "")
     category = categorize_description(description)
@@ -328,4 +342,5 @@ def build_candidate(
         sheets=sheets,
         symbols_by_sheet=symbols_by_sheet,
         ocr_by_sheet=ocr_by_sheet,
+        data_provider=data_provider,
     )

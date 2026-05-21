@@ -192,9 +192,31 @@ async def _run_missing_input_cascade(
             for s in active_sheets if s.get("id")
         }
 
+        # Wave 19.1a — construct ONE SheetDataProvider per cascade dispatch so
+        # resolvers in later waves (Commit 2: schedule, Commit 3: scale) can
+        # pull PNG bytes from Supabase Storage and YOLO detections from
+        # blueprint_symbols without re-querying per resolver method. Provider
+        # caches reads in-memory for this dispatch only and is discarded when
+        # the function returns. Behavior is identical to pre-19.1 in this
+        # commit because no resolver consumes the provider yet.
+        from aspire_orchestrator.services.blueprint.resolvers.sheet_data_provider import (
+            SheetDataProvider,
+        )
+        _data_provider = SheetDataProvider(
+            suite_id=suite_id,
+            project_id=project_id,
+            correlation_id=correlation_id,
+        )
+
         # Build candidates
         candidates = [
-            build_candidate(row, active_sheets, symbols_by_sheet, ocr_by_sheet)
+            build_candidate(
+                row,
+                active_sheets,
+                symbols_by_sheet,
+                ocr_by_sheet,
+                data_provider=_data_provider,
+            )
             for row in unresolved_rows
         ]
 

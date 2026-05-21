@@ -65,6 +65,19 @@ class MissingInputCandidate:
     symbols_by_sheet: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     ocr_by_sheet: dict[str, str] = field(default_factory=dict)  # sheet_id -> ocr_text
 
+    # Wave 19.1a — Optional read-only access to SEE-stage artifacts (PNGs,
+    # YOLO detections). Set by the cascade dispatcher to a per-run
+    # ``SheetDataProvider`` instance. Resolvers that need PNG bytes or YOLO
+    # bboxes must read through this field; the field is ``None`` for any
+    # caller that has not been migrated yet (tests, legacy fixtures), and
+    # resolvers MUST treat ``None`` as "data plane not available" and
+    # degrade gracefully rather than raise.
+    #
+    # Typed as ``Any`` to avoid a circular import with ``sheet_data_provider``
+    # which itself lives under ``resolvers/``. Concrete type is
+    # ``aspire_orchestrator.services.blueprint.resolvers.sheet_data_provider.SheetDataProvider``.
+    data_provider: Any | None = None
+
 
 @dataclass(frozen=True)
 class ResolverResult:
