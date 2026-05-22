@@ -46,10 +46,26 @@ from aspire_orchestrator.services.blueprint.resolvers.base import (
 
 _log = logging.getLogger(__name__)
 
-# Wave 19.1f — per-method timeout. Graphic-bar OCR + provider PNG fetch +
-# geometric door lookup are all fast (≤ 5-10s each). 45s is generous;
-# stays well under the cascade's outer 90s cap (missing_input_cascade.py:43).
-_TIMEOUT_S: float = 45.0
+# Wave 19.1g (Commit 3.5) — per-method timeout raised 45s → 85s.
+#
+# The 45s value from Wave 19.1f was calibrated assuming "PNG fetch + graphic-
+# bar OCR + geometric door lookup are all fast (≤ 5-10s each)". That estimate
+# held for synthetic test fixtures but NOT for production data: the
+# post-19.1f Gulfstream backfill diagnostic receipts showed scale_calibrator
+# killed mid-execution with ``timeout: timeout_s=45`` evidence and ALL
+# calibrator evidence keys null. Root cause: Supabase Storage downloads of
+# Gulfstream's 3MB+ sealed engineering PNGs take 80-87s wall-clock per sheet.
+# Multiple sheets compound, even with asyncio.gather concurrency, because the
+# slowest individual download bounds the gather.
+#
+# Match schedule_resolver._TIMEOUT_S=85s (Wave 19.1c/Commit 2.7). 85s sits
+# one tick under the cascade's outer ``_CASCADE_TIMEOUT_S=90s`` so the
+# per-method timeout fires first and emits a clean ``timeout`` evidence
+# record before the outer cap preempts the resolver.
+#
+# geometric_door_reference is still cheap (SQL only, ≤ 1s) and runs in
+# parallel — the timeout exists for the calibrator branch.
+_TIMEOUT_S: float = 85.0
 
 # Geometric-door method constants
 _RENDER_DPI: float = 200.0

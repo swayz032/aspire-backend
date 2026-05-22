@@ -641,3 +641,74 @@ class TestScaleResolverProviderWiring:
         safe = _safe_evidence_for_receipt(ev)
         for k in ev:
             assert k in safe, f"scale_resolver evidence key {k!r} dropped by allow-list"
+
+
+# ---------------------------------------------------------------------------
+# Wave 19.1g (Commit 3.5) — per-method timeout calibration lock for scale.
+# Mirrors schedule_resolver's TestTimeoutCalibration. Regresses the
+# 19.1f Gulfstream failure: 45s killed scale_calibrator before Supabase
+# Storage delivered 3MB+ sealed-engineering PNGs (80-87s wall-clock).
+# ---------------------------------------------------------------------------
+
+
+class TestScaleResolverTimeoutCalibration:
+    """Lock the per-method timeout at a value that lets PNG-fetch + OCR finish."""
+
+    def test_scale_resolver_timeout_at_least_60s(self) -> None:
+        """Storage PNG fetches on production sealed PDFs can take 80+ seconds.
+
+        Locking 60s as the floor so a future "let's make the cascade snappier"
+        refactor cannot silently drop the timeout below what Supabase Storage
+        needs for large engineering sheets. Wave 19.1f shipped at 45s and
+        killed scale_calibrator on every Gulfstream cascade — don't regress.
+        """
+        from aspire_orchestrator.services.blueprint.resolvers.scale_resolver import (
+            _TIMEOUT_S,
+        )
+        assert _TIMEOUT_S >= 60.0, (
+            f"scale_resolver per-method timeout is {_TIMEOUT_S}s — Supabase "
+            f"Storage PNG fetches on Gulfstream-class engineering sheets "
+            f"(3MB+ sealed PDFs) take 80-87s. The Wave 19.1f 45s cap killed "
+            f"scale_calibrator on every Gulfstream cascade. Don't regress this."
+        )
+
+    def test_scale_resolver_timeout_below_cascade_outer_cap(self) -> None:
+        """Per-method timeout must be strictly less than the cascade outer cap.
+
+        If per-method >= outer, the outer cap fires first and the resolver's
+        clean ``timeout`` evidence record never gets emitted — exactly the
+        diagnostic gap that produced Bug 1 in Commit 2.6.
+        """
+        from aspire_orchestrator.services.blueprint.resolvers.scale_resolver import (
+            _TIMEOUT_S,
+        )
+        from aspire_orchestrator.services.blueprint.missing_input_cascade import (
+            _CASCADE_TIMEOUT_S,
+        )
+        assert _TIMEOUT_S < _CASCADE_TIMEOUT_S, (
+            f"per-method timeout {_TIMEOUT_S}s must be < cascade outer "
+            f"timeout {_CASCADE_TIMEOUT_S}s, otherwise the cascade outer cap "
+            f"preempts the resolver's evidence emission."
+        )
+
+    def test_scale_and_schedule_resolvers_share_timeout_calibration(self) -> None:
+        """Both heavy resolvers should have matching per-method timeouts.
+
+        Wave 19.1c calibrated schedule at 85s (Azure prebuilt-layout async
+        pipeline). Wave 19.1g matched scale at 85s (Storage PNG fetch).
+        Different bottlenecks, same envelope. If these drift apart in a
+        future refactor, one resolver will start regressing while the other
+        works — better to keep them aligned and update both together.
+        """
+        from aspire_orchestrator.services.blueprint.resolvers.scale_resolver import (
+            _TIMEOUT_S as _SCALE_TIMEOUT,
+        )
+        from aspire_orchestrator.services.blueprint.resolvers.schedule_resolver import (
+            _TIMEOUT_S as _SCHEDULE_TIMEOUT,
+        )
+        assert _SCALE_TIMEOUT == _SCHEDULE_TIMEOUT, (
+            f"scale_resolver._TIMEOUT_S ({_SCALE_TIMEOUT}s) and "
+            f"schedule_resolver._TIMEOUT_S ({_SCHEDULE_TIMEOUT}s) drifted. "
+            f"Both calibrate against the same cascade outer 90s cap. If you "
+            f"intentionally diverge them, document why and remove this test."
+        )
