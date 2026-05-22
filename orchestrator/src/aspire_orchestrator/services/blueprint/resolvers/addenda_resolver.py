@@ -35,7 +35,18 @@ from aspire_orchestrator.services.blueprint.resolvers.base import (
 )
 
 _log = logging.getLogger(__name__)
-_TIMEOUT_S: float = 15.0
+
+# Wave 19.2 (Commit 4) — per-method timeout calibrated against the
+# cascade outer cap (90s) AND vision-call latency (gpt-5.4-mini round-trip
+# ~10-30s on engineering sheet PNGs). 85s mirrors schedule/scale resolvers.
+_TIMEOUT_S: float = 85.0
+
+# Keywords that mark a sheet as a "addendum cover" candidate for vision
+# extraction of the supersession list.
+_ADDENDUM_COVER_KEYWORDS = re.compile(
+    r"\baddend(?:um|a)\b|\brevision\s+(?:log|history)\b|\bsupersess",
+    re.IGNORECASE,
+)
 
 # Revision block patterns: "Rev 1", "Addendum 2", "ASI-3", "RFI-04"
 _REV_PATTERN = re.compile(
@@ -62,6 +73,7 @@ class AddendaResolver(MissingInputResolver):
         tasks = [
             asyncio.create_task(self._method_cover_sheet_index(candidate)),
             asyncio.create_task(self._method_revision_block_scan(candidate)),
+            asyncio.create_task(self._method_vision_addendum_cover(candidate)),
         ]
         results: list[ResolverResult] = []
         for coro in asyncio.as_completed(tasks):
@@ -192,3 +204,161 @@ class AddendaResolver(MissingInputResolver):
             )
         except Exception as exc:  # noqa: BLE001
             return self._safe_result("revision_block_scan", exc)
+
+    async def _method_vision_addendum_cover(
+        self, candidate: MissingInputCandidate
+    ) -> ResolverResult:
+        """Wave 19.2 / Commit 4 — Vision pass on the addendum cover sheet.
+
+        Picks the sheet whose title/OCR best matches ``_ADDENDUM_COVER_KEYWORDS``
+        (preferring index/cover sheets). Falls back to the first sheet in
+        the candidate if no match. Sends the PNG to gpt-5.4-mini vision
+        with a system prompt that demands strict JSON output enumerating
+        which sheet codes are superseded by which addendum.
+
+        Resolves when:
+          * 5+ supersession entries returned with model confidence >= 0.80
+            OR the count matches the candidate's total sheet count (a
+            complete index) — confidence 0.85.
+          * 3-4 entries returned with model confidence >= 0.75 — confidence
+            0.75 (consensus-eligible, not standalone).
+
+        Skips when:
+          * Vision budget exhausted.
+          * Model returns < 3 entries, or vague/uncertain output. The
+            row stays open for the contractor (no false positive).
+        """
+        try:
+            provider = candidate.data_provider
+            budget = candidate.vision_budget
+
+            # ---------- Pick the cover sheet ----------
+            cover_sheet: dict[str, Any] | None = None
+            for sheet in candidate.sheets:
+                title = str(sheet.get("sheet_title") or "")
+                ocr = (
+                    candidate.ocr_by_sheet.get(str(sheet.get("id") or ""))
+                    or sheet.get("ocr_text")
+                    or ""
+                )[:600]
+                if _ADDENDUM_COVER_KEYWORDS.search(title + ocr):
+                    cover_sheet = sheet
+                    break
+            if cover_sheet is None and candidate.sheets:
+                cover_sheet = candidate.sheets[0]
+
+            if cover_sheet is None or not cover_sheet.get("id"):
+                return ResolverResult(
+                    resolved=False, value=None, confidence=0.0,
+                    method="vision_addendum_cover",
+                    evidence={
+                        "skip_reason": "no_cover_sheet_candidate",
+                        **(budget.receipt_evidence() if budget is not None else {}),
+                    },
+                    category=self.category,
+                )
+
+            # ---------- Fetch PNG ----------
+            sheet_id = str(cover_sheet["id"])
+            png_bytes: bytes | None = None
+            if provider is not None:
+                try:
+                    png_bytes = await provider.get_sheet_png(sheet_id)
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning(
+                        "addenda_resolver.vision: provider fetch failed sheet=%s err=%s",
+                        sheet_id[:8], type(exc).__name__,
+                    )
+            if not png_bytes:
+                legacy = cover_sheet.get("image_bytes")
+                if isinstance(legacy, (bytes, bytearray)) and legacy:
+                    png_bytes = bytes(legacy)
+
+            # ---------- Vision call ----------
+            from aspire_orchestrator.services.blueprint.resolvers.vision_helper import (
+                call_vision_with_budget,
+            )
+            system_prompt = (
+                "You are reading an addendum cover sheet from a construction "
+                "drawing set. Return STRICT JSON only — no prose, no markdown.\n"
+                "Schema: {\n"
+                '  "supersessions": [\n'
+                '    {"sheet_code": "<e.g. A-101>", "addendum_number": <int>, '
+                '"superseded_by": "<e.g. A-101-R2>"}\n'
+                "  ],\n"
+                '  "confidence": <0.0 to 1.0>,\n'
+                '  "notes": "<one-line evidence summary or empty>"\n'
+                "}\n"
+                "If you cannot find a concrete supersession list, return "
+                '{"supersessions": [], "confidence": 0.0, "notes": "uncertain"}'
+                " — do NOT invent entries."
+            )
+            user_prompt = (
+                "Extract the supersession / revision-hierarchy list from this "
+                "addendum cover sheet. Only include entries you can read "
+                "directly from the sheet. Return JSON per the schema."
+            )
+            vc = await call_vision_with_budget(
+                png_bytes=png_bytes,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                vision_budget=budget,
+                max_output_tokens=600,
+                timeout_seconds=60.0,
+            )
+
+            if not vc.ok:
+                return ResolverResult(
+                    resolved=False, value=None, confidence=0.0,
+                    method="vision_addendum_cover",
+                    evidence={
+                        "skip_reason": vc.skip_reason,
+                        "vision_model_used": vc.model,
+                        **(budget.receipt_evidence() if budget is not None else {}),
+                    },
+                    category=self.category,
+                )
+
+            # ---------- Interpret structured output ----------
+            entries = vc.json_payload.get("supersessions") or []
+            model_conf = float(vc.json_payload.get("confidence") or 0.0)
+            entry_count = len(entries) if isinstance(entries, list) else 0
+            sheet_count = len(candidate.sheets)
+
+            # No false positives: require concrete entries + model confidence.
+            if entry_count < 3 or model_conf < 0.75:
+                return ResolverResult(
+                    resolved=False, value=None, confidence=0.0,
+                    method="vision_addendum_cover",
+                    evidence={
+                        "skip_reason": "vision_could_not_extract_supersession",
+                        "supersession_entries_found": entry_count,
+                        "vision_confidence": round(model_conf, 3),
+                        "vision_model_used": vc.model,
+                        **(budget.receipt_evidence() if budget is not None else {}),
+                    },
+                    category=self.category,
+                )
+
+            # Resolve: 5+ entries OR entries >= sheet_count → 0.85; else 0.75.
+            if entry_count >= 5 or (sheet_count > 0 and entry_count >= sheet_count):
+                confidence = 0.85
+            else:
+                confidence = 0.75
+
+            return ResolverResult(
+                resolved=confidence >= 0.85,
+                value=entries if confidence >= 0.85 else None,
+                confidence=confidence,
+                method="vision_addendum_cover",
+                evidence={
+                    "supersession_entries_found": entry_count,
+                    "sheets_referenced_in_addendum": entry_count,
+                    "vision_confidence": round(model_conf, 3),
+                    "vision_model_used": vc.model,
+                    **(budget.receipt_evidence() if budget is not None else {}),
+                },
+                category=self.category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self._safe_result("vision_addendum_cover", exc)

@@ -83,6 +83,16 @@ _CATEGORY_PATTERNS: list[tuple[MissingInputCategory, re.Pattern[str]]] = [
         r"\bschedule\b|\blegend\b|\bequipment\b|\bfixture\b|\bpanel\b|\bcircuit\b",
         re.IGNORECASE,
     )),
+    # Wave 19.2 (Commit 4) — "read this drawing" categories that need a
+    # vision pass. Anchored AFTER schedule so a "fire-protection schedule"
+    # description still routes to ``schedule`` (which has Azure-table
+    # extraction). Only descriptions WITHOUT any schedule/equipment/fixture
+    # anchor fall through to GENERAL_VISION here.
+    (MissingInputCategory.GENERAL_VISION, re.compile(
+        r"\bfire\s+protection\b|\bsprinkler\b|\blife\s+safety\b"
+        r"|\bcivil\b|\butility\b|\bplumbing\s+riser\b|\bsiamese\b",
+        re.IGNORECASE,
+    )),
 ]
 
 
@@ -110,6 +120,9 @@ def _build_resolver_registry() -> dict[MissingInputCategory, Any]:
         from aspire_orchestrator.services.blueprint.resolvers.dimension_resolver import DimensionResolver
         from aspire_orchestrator.services.blueprint.resolvers.detail_resolver import DetailResolver
         from aspire_orchestrator.services.blueprint.resolvers.schedule_resolver import ScheduleResolver
+        from aspire_orchestrator.services.blueprint.resolvers.general_vision_resolver import (
+            GeneralVisionResolver,
+        )
         return {
             MissingInputCategory.DISCIPLINE: DisciplineResolver(),
             MissingInputCategory.SCALE: ScaleResolver(),
@@ -117,6 +130,7 @@ def _build_resolver_registry() -> dict[MissingInputCategory, Any]:
             MissingInputCategory.DIMENSION: DimensionResolver(),
             MissingInputCategory.DETAIL: DetailResolver(),
             MissingInputCategory.SCHEDULE: ScheduleResolver(),
+            MissingInputCategory.GENERAL_VISION: GeneralVisionResolver(),
         }
     except ImportError as exc:
         _log.warning("missing_input_cascade: resolver import failed: %s", exc)
@@ -346,6 +360,22 @@ _RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
     "matched_sheet_ids_sample",  # comma-separated 8-char UUID prefixes
     "derivation_method",  # Wave 19.1f — "door_36in", "graphic_bar", etc.
     "source_methods",     # Wave 19.1f — comma-separated consensus contributors
+    # Wave 19.2 (Commit 4) — vision budget + vision-method evidence
+    "vision_tokens_used",
+    "vision_input_tokens",
+    "vision_output_tokens",
+    "vision_cost_usd_estimate",
+    "vision_calls_made",
+    "vision_calls_aborted_by_budget",
+    "vision_cap_usd",
+    "supersession_entries_found",
+    "sheets_referenced_in_addendum",
+    "callouts_parsed_from_description",
+    "callouts_vision_resolved",
+    "vision_model_used",
+    "vision_confidence",
+    "vision_answer_summary",
+    "extracted_facts_count",
 })
 
 
@@ -453,6 +483,7 @@ def build_candidate(
     ocr_by_sheet: dict[str, str],
     *,
     data_provider: Any | None = None,
+    vision_budget: Any | None = None,
 ) -> MissingInputCandidate:
     """Build a MissingInputCandidate from a blueprint_missing_inputs DB row.
 
@@ -465,11 +496,12 @@ def build_candidate(
         symbols_by_sheet: ``sheet_id -> list[blueprint_symbols row]`` index.
         ocr_by_sheet: ``sheet_id -> ocr_text`` index.
         data_provider: Wave 19.1a — Optional per-cascade-run
-            ``SheetDataProvider`` instance. Pass to give resolvers access
-            to PNG bytes (from Supabase Storage) and YOLO detections
-            (from blueprint_symbols) without each resolver having to
-            re-query. Default ``None`` keeps all pre-19.1 callers
-            (existing tests, legacy code paths) working unchanged.
+            ``SheetDataProvider`` instance. Default ``None`` keeps pre-19.1
+            callers working unchanged.
+        vision_budget: Wave 19.2 — Optional per-cascade-batch
+            ``VisionBudget`` instance. Default ``None`` means vision
+            methods will either skip (preferred) or construct an
+            ephemeral budget (see each vision-method's docstring).
     """
     description = str(row.get("description") or "")
     category = categorize_description(description)
@@ -485,6 +517,7 @@ def build_candidate(
         symbols_by_sheet=symbols_by_sheet,
         ocr_by_sheet=ocr_by_sheet,
         data_provider=data_provider,
+        vision_budget=vision_budget,
     )
 
 
@@ -506,6 +539,10 @@ class BatchOutcome:
     resolved_count: int
     unresolved_count: int
     skipped_count: int  # outcomes whose category had no registered resolver
+    # Wave 19.2 (Commit 4) — final vision-budget state after the batch ran.
+    # Used by the backfill script to surface vision_tokens_used,
+    # vision_cost_usd_estimate, etc. on the batch receipt.
+    vision_budget_stats: dict[str, int | float] = field(default_factory=dict)
 
 
 async def resolve_batch(
@@ -593,6 +630,7 @@ async def resolve_batch(
         return BatchOutcome(
             outcomes=[], provider_cache_stats={}, candidates_count=0,
             resolved_count=0, unresolved_count=0, skipped_count=0,
+            vision_budget_stats={},
         )
 
     # Build ONE provider for the entire batch — the whole point of B.
@@ -614,6 +652,25 @@ async def resolve_batch(
         )
         provider = None
 
+    # Wave 19.2 (Commit 4) — ONE VisionBudget per batch. Vision methods
+    # consult ``can_spend`` before issuing OpenAI calls and ``record_call``
+    # after to keep the running USD spend updated. Cap from
+    # ``ASPIRE_DREW_VISION_CAP_USD`` env (default 0.30). Construction is
+    # fail-safe — a budget always exists for the batch.
+    vision_budget: Any | None = None
+    try:
+        from aspire_orchestrator.services.blueprint.vision_budget import (
+            VisionBudget,
+        )
+        vision_budget = VisionBudget()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "resolve_batch: vision_budget construction failed (%s); "
+            "vision methods will skip",
+            type(exc).__name__,
+        )
+        vision_budget = None
+
     sheets_arg = active_sheets if active_sheets is not None else []
     symbols_arg = symbols_by_sheet if symbols_by_sheet is not None else {}
     ocr_arg = ocr_by_sheet if ocr_by_sheet is not None else {}
@@ -622,6 +679,7 @@ async def resolve_batch(
         build_candidate(
             row, sheets_arg, symbols_arg, ocr_arg,
             data_provider=provider,
+            vision_budget=vision_budget,
         )
         for row in validated_rows
     ]
@@ -656,10 +714,14 @@ async def resolve_batch(
     cache_stats: dict[str, int] = (
         provider.cache_stats() if provider is not None else {}
     )
+    vision_stats: dict[str, int | float] = (
+        vision_budget.receipt_evidence() if vision_budget is not None else {}
+    )
 
     _log.info(
         "resolve_batch: project=%s candidates=%d resolved=%d unresolved=%d "
-        "skipped=%d png_cache_entries=%d yolo_cache_entries=%d",
+        "skipped=%d png_cache_entries=%d yolo_cache_entries=%d "
+        "vision_cost_usd=%.4f vision_calls=%d vision_aborts=%d",
         project_id[:8],
         len(candidates),
         resolved_count,
@@ -667,6 +729,9 @@ async def resolve_batch(
         skipped_count,
         cache_stats.get("png_cache_entries", 0),
         cache_stats.get("yolo_cache_entries", 0),
+        float(vision_stats.get("vision_cost_usd_estimate", 0.0)),
+        int(vision_stats.get("vision_calls_made", 0)),
+        int(vision_stats.get("vision_calls_aborted_by_budget", 0)),
     )
 
     return BatchOutcome(
@@ -676,4 +741,5 @@ async def resolve_batch(
         resolved_count=resolved_count,
         unresolved_count=unresolved_count,
         skipped_count=skipped_count,
+        vision_budget_stats=vision_stats,
     )

@@ -32,7 +32,9 @@ from aspire_orchestrator.services.blueprint.resolvers.base import (
 )
 
 _log = logging.getLogger(__name__)
-_TIMEOUT_S: float = 15.0
+
+# Wave 19.2 (Commit 4) — 85s to accommodate vision call latency.
+_TIMEOUT_S: float = 85.0
 
 # Callout marker patterns: "1/A4", "3/S2.1", "TYP/A6"
 _CALLOUT_PATTERN = re.compile(
@@ -53,6 +55,7 @@ class DetailResolver(MissingInputResolver):
     async def resolve(self, candidate: MissingInputCandidate) -> list[ResolverResult]:
         tasks = [
             asyncio.create_task(self._method_callout_cross_reference(candidate)),
+            asyncio.create_task(self._method_vision_callout_detail(candidate)),
         ]
         results: list[ResolverResult] = []
         for coro in asyncio.as_completed(tasks):
@@ -137,3 +140,179 @@ class DetailResolver(MissingInputResolver):
             )
         except Exception as exc:  # noqa: BLE001
             return self._safe_result("callout_cross_reference", exc)
+
+    async def _method_vision_callout_detail(
+        self, candidate: MissingInputCandidate
+    ) -> ResolverResult:
+        """Wave 19.2 / Commit 4 — Vision pass on detail-sheet target regions.
+
+        Parses callout markers from BOTH the candidate's description AND the
+        OCR text of every sheet (matches "1/A4", "3/S2.1", etc). For each
+        unique callout, locates the target sheet by ``sheet_code``, fetches
+        the PNG, and asks gpt-5.4-mini vision: "describe detail #{n} on this
+        sheet". Strict JSON output: label + dimensions OR materials.
+
+        Resolves when 2+ callouts return concrete structured answers with
+        model confidence >= 0.75 (confidence 0.85). Skips when zero
+        callouts can be located or every model response is vague.
+
+        Cost guard: at most ``_MAX_CALLOUTS_PER_CASCADE`` (3) vision calls
+        per cascade-run to keep cost bounded even before the global
+        VisionBudget kicks in. The budget still wraps every call so multi-
+        cascade backfills can't overrun.
+        """
+        try:
+            provider = candidate.data_provider
+            budget = candidate.vision_budget
+
+            # ---------- Parse callouts from description + sheet OCR ----------
+            seen_callouts: set[tuple[str, str]] = set()  # (detail_num, sheet_ref)
+            for source in [candidate.description] + [
+                (candidate.ocr_by_sheet.get(str(s.get("id") or ""))
+                 or s.get("ocr_text") or "")[:4000]
+                for s in candidate.sheets
+            ]:
+                for m in _CALLOUT_PATTERN.finditer(source):
+                    seen_callouts.add((m.group(1), m.group(2).upper()))
+
+            callouts_parsed = len(seen_callouts)
+            if callouts_parsed == 0:
+                return ResolverResult(
+                    resolved=False, value=None, confidence=0.0,
+                    method="vision_callout_detail",
+                    evidence={
+                        "skip_reason": "no_callouts_in_description_or_ocr",
+                        "callouts_parsed_from_description": 0,
+                        **(budget.receipt_evidence() if budget is not None else {}),
+                    },
+                    category=self.category,
+                )
+
+            # ---------- Cap callouts to keep cost bounded ----------
+            _MAX_CALLOUTS_PER_CASCADE = 3
+            callouts_to_try = list(seen_callouts)[:_MAX_CALLOUTS_PER_CASCADE]
+
+            # ---------- Index sheets by sheet_code for O(1) lookup ----------
+            sheets_by_code: dict[str, dict[str, Any]] = {
+                str(s.get("sheet_code") or "").upper(): s
+                for s in candidate.sheets
+                if s.get("sheet_code")
+            }
+
+            # ---------- Vision call per callout (sequential to honour budget) ----------
+            from aspire_orchestrator.services.blueprint.resolvers.vision_helper import (
+                call_vision_with_budget,
+            )
+            resolved_callouts: list[dict[str, Any]] = []
+            callouts_attempted = 0
+            highest_conf = 0.0
+            last_model = ""
+
+            for detail_num, sheet_ref in callouts_to_try:
+                target_sheet = sheets_by_code.get(sheet_ref)
+                if target_sheet is None:
+                    continue
+                sheet_id = str(target_sheet.get("id") or "")
+                if not sheet_id:
+                    continue
+
+                png_bytes: bytes | None = None
+                if provider is not None:
+                    try:
+                        png_bytes = await provider.get_sheet_png(sheet_id)
+                    except Exception as exc:  # noqa: BLE001
+                        _log.warning(
+                            "detail_resolver.vision: provider fetch failed sheet=%s err=%s",
+                            sheet_id[:8], type(exc).__name__,
+                        )
+                if not png_bytes:
+                    legacy = target_sheet.get("image_bytes")
+                    if isinstance(legacy, (bytes, bytearray)) and legacy:
+                        png_bytes = bytes(legacy)
+
+                system_prompt = (
+                    "You are reading a construction-drawing detail sheet. "
+                    "Return STRICT JSON only.\n"
+                    "Schema: {\n"
+                    '  "detail_label": "<short label e.g. INTERIOR PARTITION TYPE 1>",\n'
+                    '  "dimensions": {"<measure>": "<value>"},\n'
+                    '  "materials_called_out": ["<material 1>", ...],\n'
+                    '  "confidence": <0.0 to 1.0>,\n'
+                    '  "notes": "<one-line evidence summary>"\n'
+                    "}\n"
+                    "If you cannot find the requested detail on this sheet, "
+                    'return {"detail_label": "", "dimensions": {}, '
+                    '"materials_called_out": [], "confidence": 0.0, '
+                    '"notes": "not found"} — do NOT invent.'
+                )
+                user_prompt = (
+                    f"Find detail #{detail_num} on this sheet "
+                    f"(callout reference {detail_num}/{sheet_ref}). "
+                    "Describe what it shows per the JSON schema."
+                )
+                vc = await call_vision_with_budget(
+                    png_bytes=png_bytes,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    vision_budget=budget,
+                    max_output_tokens=500,
+                    timeout_seconds=60.0,
+                )
+                callouts_attempted += 1
+                last_model = vc.model
+                if not vc.ok:
+                    # Budget exhausted is the only reason to stop the loop;
+                    # other skip reasons mean this callout failed but the
+                    # next might work.
+                    if vc.skip_reason == "vision_budget_exhausted":
+                        break
+                    continue
+
+                payload = vc.json_payload
+                label = str(payload.get("detail_label") or "").strip()
+                dims = payload.get("dimensions") or {}
+                materials = payload.get("materials_called_out") or []
+                model_conf = float(payload.get("confidence") or 0.0)
+
+                # No-false-positives gate: require concrete extraction.
+                has_label = bool(label) and label.lower() != "not found"
+                has_dims = isinstance(dims, dict) and len(dims) >= 1
+                has_materials = (
+                    isinstance(materials, list) and len(materials) >= 1
+                )
+                if model_conf < 0.75 or not has_label or not (has_dims or has_materials):
+                    continue
+
+                resolved_callouts.append({
+                    "callout": f"{detail_num}/{sheet_ref}",
+                    "detail_label": label[:80],
+                    "dimensions_count": len(dims) if isinstance(dims, dict) else 0,
+                    "materials_count": len(materials) if isinstance(materials, list) else 0,
+                })
+                if model_conf > highest_conf:
+                    highest_conf = model_conf
+
+            resolved_count = len(resolved_callouts)
+            if resolved_count >= 2:
+                confidence = 0.85
+            elif resolved_count == 1:
+                confidence = 0.75
+            else:
+                confidence = 0.0
+
+            return ResolverResult(
+                resolved=confidence >= 0.85,
+                value=resolved_callouts if confidence >= 0.85 else None,
+                confidence=confidence,
+                method="vision_callout_detail",
+                evidence={
+                    "callouts_parsed_from_description": callouts_parsed,
+                    "callouts_vision_resolved": resolved_count,
+                    "vision_confidence": round(highest_conf, 3),
+                    "vision_model_used": last_model or "gpt-5.4-mini",
+                    **(budget.receipt_evidence() if budget is not None else {}),
+                },
+                category=self.category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self._safe_result("vision_callout_detail", exc)

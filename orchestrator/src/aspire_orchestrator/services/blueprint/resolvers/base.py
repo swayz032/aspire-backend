@@ -39,6 +39,10 @@ class MissingInputCategory(str, Enum):
     DIMENSION = "dimension"
     DETAIL = "detail"
     SCHEDULE = "schedule"
+    # Wave 19.2 (Commit 4) — fire-protection, life-safety, civil-utility,
+    # and similar "read this drawing" missing_inputs that don't fit one of
+    # the structured categories above. Routed to ``GeneralVisionResolver``.
+    GENERAL_VISION = "general_vision"
     UNKNOWN = "unknown"
 
 
@@ -77,6 +81,15 @@ class MissingInputCandidate:
     # which itself lives under ``resolvers/``. Concrete type is
     # ``aspire_orchestrator.services.blueprint.resolvers.sheet_data_provider.SheetDataProvider``.
     data_provider: Any | None = None
+
+    # Wave 19.2 (Commit 4) — Optional vision-spend ceiling. One
+    # ``VisionBudget`` per cascade-batch run; shared across every candidate's
+    # vision methods so the per-batch USD cap is enforced across resolvers.
+    # When None (pre-19.2 fixtures, callers not yet migrated), vision
+    # methods either skip OR construct an ephemeral budget — see each
+    # resolver's docstring. Concrete type:
+    # ``aspire_orchestrator.services.blueprint.vision_budget.VisionBudget``.
+    vision_budget: Any | None = None
 
 
 @dataclass(frozen=True)
