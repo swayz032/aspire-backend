@@ -381,16 +381,25 @@ class TestGeneralVisionResolver:
             skip_reason="",
         )
 
+        # Wave 19.2.1: resolve() now returns TWO results — vision +
+        # azure-only fallback. Stub the Azure pre-pass to return None so
+        # the azure-only path skips and we can isolate the vision result.
         with patch(
             "aspire_orchestrator.services.blueprint.resolvers.vision_helper."
             "call_vision_with_budget",
             new=AsyncMock(return_value=fake_result),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.resolvers.vision_helper."
+            "run_azure_layout_pre_pass",
+            new=AsyncMock(return_value=None),
         ):
             results = await resolver.resolve(cand)
 
-        assert len(results) == 1
-        r = results[0]
-        assert r.method == "vision_unknown_fallback"
+        # Two results expected: vision + azure-only (which skips here).
+        assert len(results) == 2
+        vision_results = [r for r in results if r.method == "vision_unknown_fallback"]
+        assert len(vision_results) == 1
+        r = vision_results[0]
         assert r.resolved is True
         assert r.confidence == pytest.approx(0.85)
         assert r.evidence["extracted_facts_count"] == 2
@@ -422,14 +431,23 @@ class TestGeneralVisionResolver:
             input_tokens=800, output_tokens=50, model="gpt-5.4-mini",
             skip_reason="",
         )
+        # Wave 19.2.1: resolve() returns 2 results — vision + azure-only.
+        # Stub Azure pre-pass to None so the azure-only fallback skips,
+        # then assert on the vision result specifically.
         with patch(
             "aspire_orchestrator.services.blueprint.resolvers.vision_helper."
             "call_vision_with_budget",
             new=AsyncMock(return_value=hallucination),
+        ), patch(
+            "aspire_orchestrator.services.blueprint.resolvers.vision_helper."
+            "run_azure_layout_pre_pass",
+            new=AsyncMock(return_value=None),
         ):
             results = await resolver.resolve(cand)
 
-        r = results[0]
+        vision_results = [r for r in results if r.method == "vision_unknown_fallback"]
+        assert len(vision_results) == 1
+        r = vision_results[0]
         assert r.resolved is False
         assert r.evidence["skip_reason"] == "vision_could_not_extract_facts"
         assert r.evidence["extracted_facts_count"] == 0

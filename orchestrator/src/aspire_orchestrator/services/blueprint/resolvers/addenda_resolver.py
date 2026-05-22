@@ -274,10 +274,27 @@ class AddendaResolver(MissingInputResolver):
                 if isinstance(legacy, (bytes, bytearray)) and legacy:
                     png_bytes = bytes(legacy)
 
-            # ---------- Vision call ----------
+            # ---------- Azure layout pre-pass (Wave 19.2.1) ----------
+            # Extract structured tables from the cover sheet via Azure
+            # prebuilt-layout before the vision call. Addendum cover
+            # sheets typically contain revision-log tables that gpt-5
+            # vision can't read at 200 DPI but Azure extracts reliably.
             from aspire_orchestrator.services.blueprint.resolvers.vision_helper import (
                 call_vision_with_budget,
+                run_azure_layout_pre_pass,
             )
+            azure_layout = await run_azure_layout_pre_pass(
+                png_bytes=png_bytes,
+                suite_id=candidate.suite_id,
+                office_id=candidate.office_id or "",
+            )
+            azure_layout_used = bool(azure_layout)
+            azure_tables_count = (
+                len((azure_layout or {}).get("tables") or [])
+                if azure_layout_used else 0
+            )
+
+            # ---------- Vision call ----------
             system_prompt = (
                 "You are reading an addendum cover sheet from a construction "
                 "drawing set. Return STRICT JSON only — no prose, no markdown.\n"
@@ -295,14 +312,17 @@ class AddendaResolver(MissingInputResolver):
             )
             user_prompt = (
                 "Extract the supersession / revision-hierarchy list from this "
-                "addendum cover sheet. Only include entries you can read "
-                "directly from the sheet. Return JSON per the schema."
+                "addendum cover sheet. Use the structured layout table above "
+                "(if present) as your primary source — those are direct OCR "
+                "cells. Only include entries you can read directly. "
+                "Return JSON per the schema."
             )
             vc = await call_vision_with_budget(
                 png_bytes=png_bytes,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 vision_budget=budget,
+                extracted_layout=azure_layout,
                 max_output_tokens=600,
                 timeout_seconds=60.0,
             )
@@ -314,6 +334,8 @@ class AddendaResolver(MissingInputResolver):
                     evidence={
                         "skip_reason": vc.skip_reason,
                         "vision_model_used": vc.model,
+                        "azure_layout_pre_pass_used": azure_layout_used,
+                        "azure_layout_tables_count": azure_tables_count,
                         **(budget.receipt_evidence() if budget is not None else {}),
                     },
                     category=self.category,
@@ -335,6 +357,8 @@ class AddendaResolver(MissingInputResolver):
                         "supersession_entries_found": entry_count,
                         "vision_confidence": round(model_conf, 3),
                         "vision_model_used": vc.model,
+                        "azure_layout_pre_pass_used": azure_layout_used,
+                        "azure_layout_tables_count": azure_tables_count,
                         **(budget.receipt_evidence() if budget is not None else {}),
                     },
                     category=self.category,
@@ -356,6 +380,8 @@ class AddendaResolver(MissingInputResolver):
                     "sheets_referenced_in_addendum": entry_count,
                     "vision_confidence": round(model_conf, 3),
                     "vision_model_used": vc.model,
+                    "azure_layout_pre_pass_used": azure_layout_used,
+                    "azure_layout_tables_count": azure_tables_count,
                     **(budget.receipt_evidence() if budget is not None else {}),
                 },
                 category=self.category,

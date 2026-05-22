@@ -376,6 +376,12 @@ _RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
     "vision_confidence",
     "vision_answer_summary",
     "extracted_facts_count",
+    # Wave 19.2.1 (Commit 4.1) — Azure layout pre-pass + pure-Azure fallback
+    "azure_layout_pre_pass_used",
+    "azure_layout_pre_passes_used",
+    "azure_layout_tables_count",
+    "azure_table_keyword_hits",
+    "azure_tables_with_keyword_numeric_match",
 })
 
 

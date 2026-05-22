@@ -202,9 +202,11 @@ class DetailResolver(MissingInputResolver):
             # ---------- Vision call per callout (sequential to honour budget) ----------
             from aspire_orchestrator.services.blueprint.resolvers.vision_helper import (
                 call_vision_with_budget,
+                run_azure_layout_pre_pass,
             )
             resolved_callouts: list[dict[str, Any]] = []
             callouts_attempted = 0
+            azure_pre_passes_used = 0
             highest_conf = 0.0
             last_model = ""
 
@@ -230,6 +232,18 @@ class DetailResolver(MissingInputResolver):
                     if isinstance(legacy, (bytes, bytearray)) and legacy:
                         png_bytes = bytes(legacy)
 
+                # Wave 19.2.1 — Azure layout pre-pass for each target sheet.
+                # Detail callouts are usually referenced FROM schedules
+                # (door schedule, partition schedule), so structured cells
+                # are the right interpretation source.
+                azure_layout = await run_azure_layout_pre_pass(
+                    png_bytes=png_bytes,
+                    suite_id=candidate.suite_id,
+                    office_id=candidate.office_id or "",
+                )
+                if azure_layout is not None:
+                    azure_pre_passes_used += 1
+
                 system_prompt = (
                     "You are reading a construction-drawing detail sheet. "
                     "Return STRICT JSON only.\n"
@@ -248,13 +262,17 @@ class DetailResolver(MissingInputResolver):
                 user_prompt = (
                     f"Find detail #{detail_num} on this sheet "
                     f"(callout reference {detail_num}/{sheet_ref}). "
-                    "Describe what it shows per the JSON schema."
+                    "Use the structured layout above (if present) as primary "
+                    "source — detail labels and dimensions are usually in "
+                    "schedule cells. Describe what the detail shows per the "
+                    "JSON schema."
                 )
                 vc = await call_vision_with_budget(
                     png_bytes=png_bytes,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     vision_budget=budget,
+                    extracted_layout=azure_layout,
                     max_output_tokens=500,
                     timeout_seconds=60.0,
                 )
@@ -310,6 +328,7 @@ class DetailResolver(MissingInputResolver):
                     "callouts_vision_resolved": resolved_count,
                     "vision_confidence": round(highest_conf, 3),
                     "vision_model_used": last_model or "gpt-5.4-mini",
+                    "azure_layout_pre_passes_used": azure_pre_passes_used,
                     **(budget.receipt_evidence() if budget is not None else {}),
                 },
                 category=self.category,
