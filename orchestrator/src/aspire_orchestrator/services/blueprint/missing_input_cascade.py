@@ -324,6 +324,19 @@ _RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
     "tables_found",
     "best_confidence",
     "doors_detected",
+    # Wave 19.1f (Commit 3) — scale_resolver evidence keys
+    "sheets_with_png",
+    "bars_detected",
+    "doors_detected_total",
+    "doors_per_sheet_median",
+    "pixels_per_foot_derived",
+    "sheets_with_doors",
+    "doors_rejected_too_narrow",
+    "consensus_pxft",
+    "geometric_pxft",
+    "calibrator_pxft",
+    "agreement_pct",
+    "tolerance_pct",
     # Enum-like short strings
     "ocr_tier",
     "skip_reason",
@@ -331,6 +344,8 @@ _RECEIPT_EVIDENCE_KEY_ALLOWLIST: frozenset[str] = frozenset({
     "error",
     "timeout_s",
     "matched_sheet_ids_sample",  # comma-separated 8-char UUID prefixes
+    "derivation_method",  # Wave 19.1f — "door_36in", "graphic_bar", etc.
+    "source_methods",     # Wave 19.1f — comma-separated consensus contributors
 })
 
 
