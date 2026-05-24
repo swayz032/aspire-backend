@@ -422,6 +422,7 @@ class Drew:
         dispatch: dict[str, Any] = {
             "INGEST": self.ingest,
             "CLASSIFY": self.classify,
+            "UNIVERSAL_SHEET_INTELLIGENCE": self.universal_sheet_intelligence,
             "SEE": self.see,
             "REASON": self.reason,
             "PROCURE": self.procure,
@@ -594,6 +595,104 @@ class Drew:
                 "discipline_counts": result.get("discipline_counts", {}),
                 "revisions": result.get("revisions", 0),
                 "needs_review_count": result.get("needs_review_count", 0),
+            },
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Stage 2.5: UNIVERSAL_SHEET_INTELLIGENCE (Wave 20c — between CLASSIFY and SEE)
+    # ------------------------------------------------------------------
+    def universal_sheet_intelligence(
+        self, payload: dict[str, Any], correlation_id: str
+    ) -> dict[str, Any]:
+        """Run Azure layout extraction on every sheet in the project.
+
+        Payload keys:
+          - project_id: UUID str
+          - suite_id:   UUID str
+          - office_id:  UUID str (optional)
+
+        Returns:
+          {"status": "ok", "stage": "universal_sheet_intelligence",
+           "project_id": str, "sheets_total": int, "sheets_succeeded": int,
+           "sheets_failed": int, "total_azure_ms": int}
+
+        Law #2: emits blueprint.universal_sheet_intelligence.summary receipt.
+        Law #6: all DB queries filter by suite_id.
+        """
+        required_keys = ("project_id", "suite_id")
+        for key in required_keys:
+            if key not in payload:
+                self._emit_receipt(
+                    correlation_id=correlation_id,
+                    event_type="blueprint.universal_sheet_intelligence",
+                    status="failed",
+                    inputs={"task": "UNIVERSAL_SHEET_INTELLIGENCE", "missing_key": key},
+                )
+                return {
+                    "status": "error",
+                    "stage": "universal_sheet_intelligence",
+                    "reason": f"missing payload key: {key}",
+                }
+
+        project_id: str = str(payload["project_id"])
+        suite_id: str = str(payload["suite_id"])
+        office_id: str | None = str(payload["office_id"]) if payload.get("office_id") else None
+
+        _run_async_set_stage(
+            project_id=project_id,
+            suite_id=suite_id,
+            stage="universal_intel",
+            state="in_progress",
+        )
+
+        try:
+            result = _run_async_universal_sheet_intel(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            _run_async_set_stage(
+                project_id=project_id,
+                suite_id=suite_id,
+                stage="universal_intel",
+                state="failed",
+            )
+            self._emit_receipt(
+                correlation_id=correlation_id,
+                event_type="blueprint.universal_sheet_intelligence",
+                status="failed",
+                inputs={
+                    "task": "UNIVERSAL_SHEET_INTELLIGENCE",
+                    "project_id": project_id,
+                },
+                metadata={"error": type(exc).__name__},
+            )
+            return {
+                "status": "error",
+                "stage": "universal_sheet_intelligence",
+                "reason": f"pipeline failed: {type(exc).__name__}",
+            }
+
+        final_state = "done" if result.get("sheets_succeeded", 0) > 0 else "failed"
+        _run_async_set_stage(
+            project_id=project_id,
+            suite_id=suite_id,
+            stage="universal_intel",
+            state=final_state,
+        )
+        self._emit_receipt(
+            correlation_id=correlation_id,
+            event_type="blueprint.universal_sheet_intelligence.summary",
+            status=result.get("status", "ok"),
+            inputs={"task": "UNIVERSAL_SHEET_INTELLIGENCE", "project_id": project_id},
+            metadata={
+                "sheets_total": result.get("sheets_total", 0),
+                "sheets_succeeded": result.get("sheets_succeeded", 0),
+                "sheets_failed": result.get("sheets_failed", 0),
+                "total_azure_ms": result.get("total_azure_ms", 0),
             },
         )
         return result
@@ -2105,6 +2204,270 @@ async def _async_classify_pipeline(
         "discipline_counts": discipline_counts,
         "revisions": revision_count,
         "needs_review_count": needs_review_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage 2.5 UNIVERSAL_SHEET_INTELLIGENCE — async helpers (Wave 20c)
+# ---------------------------------------------------------------------------
+
+def _run_async_universal_sheet_intel(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Bridge: run async universal sheet intelligence pipeline from sync context."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    _async_universal_sheet_intel_pipeline(
+                        project_id=project_id,
+                        suite_id=suite_id,
+                        office_id=office_id,
+                        correlation_id=correlation_id,
+                    ),
+                )
+                return future.result(timeout=3600)  # 39 sheets × ~90s/sheet max
+        else:
+            return loop.run_until_complete(
+                _async_universal_sheet_intel_pipeline(
+                    project_id=project_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    correlation_id=correlation_id,
+                )
+            )
+    except RuntimeError:
+        return asyncio.run(
+            _async_universal_sheet_intel_pipeline(
+                project_id=project_id,
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+            )
+        )
+
+
+async def _async_universal_sheet_intel_pipeline(
+    *,
+    project_id: str,
+    suite_id: str,
+    office_id: str | None,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Per-sheet Azure layout extraction for all sheets in the project.
+
+    - Loads all blueprint_sheets for the project.
+    - Downloads each sheet PNG from Supabase Storage.
+    - Calls extract_sheet_intelligence on each sheet (semaphore-capped).
+    - Upserts results into blueprint_sheet_intelligence (idempotent on project_id+sheet_id).
+    - Fail-soft: single sheet failure → log + continue.
+      Stage fails only if >50% of sheets fail.
+    - Returns summary: {sheets_total, sheets_succeeded, sheets_failed, total_azure_ms}.
+
+    Law #2: caller emits the summary receipt; each extract_sheet_intelligence call
+            emits its own provider.azure.sheet_layout receipt.
+    Law #3: if no sheets exist, returns status=failed immediately.
+    Law #6: all DB reads filter by suite_id.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    from aspire_orchestrator.services.supabase_client import (
+        SupabaseClientError,
+        supabase_select,
+        supabase_upsert,
+    )
+    from aspire_orchestrator.services.blueprint.sheet_image_storage import (
+        download_sheet_image as _download_sheet_image,
+    )
+    from aspire_orchestrator.services.blueprint.universal_sheet_extractor import (
+        extract_sheet_intelligence,
+    )
+    from aspire_orchestrator.providers.base_client import ProviderError
+    from aspire_orchestrator.services.blueprint.stage_progress import set_stage_progress
+
+    concurrency = int(os.getenv("ASPIRE_DREW_OCR_CONCURRENCY", "15"))
+    sem = asyncio.Semaphore(concurrency)
+
+    # Load all sheets for this project (active sheets only — exclude superseded)
+    try:
+        all_sheets = await supabase_select(
+            "blueprint_sheets",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+            order_by="created_at.asc",
+        )
+    except (SupabaseClientError, asyncio.CancelledError) as exc:
+        _log.error(
+            "drew.universal_intel: failed to load sheets project=%s: %s",
+            project_id[:8], type(exc).__name__,
+        )
+        return {
+            "status": "failed",
+            "stage": "universal_sheet_intelligence",
+            "project_id": project_id,
+            "sheets_total": 0,
+            "sheets_succeeded": 0,
+            "sheets_failed": 0,
+            "total_azure_ms": 0,
+        }
+
+    active_sheets = [s for s in (all_sheets or []) if not s.get("supersedes_id")]
+    sheets_total = len(active_sheets)
+
+    if sheets_total == 0:
+        _log.warning(
+            "drew.universal_intel: no active sheets found project=%s — stage failed",
+            project_id[:8],
+        )
+        return {
+            "status": "failed",
+            "stage": "universal_sheet_intelligence",
+            "project_id": project_id,
+            "sheets_total": 0,
+            "sheets_succeeded": 0,
+            "sheets_failed": 0,
+            "total_azure_ms": 0,
+        }
+
+    _log.info(
+        "drew.universal_intel: starting project=%s sheets=%d concurrency=%d corr=%s",
+        project_id[:8], sheets_total, concurrency,
+        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+    )
+
+    async def _process_one_sheet(sheet: dict[str, Any]) -> dict[str, Any]:
+        """Download PNG + run Azure layout + upsert result. Returns outcome dict."""
+        sheet_id: str = str(sheet.get("id") or "")
+        if not sheet_id:
+            return {"sheet_id": "", "success": False, "azure_ms": 0, "reason": "no_sheet_id"}
+
+        async with sem:
+            # Download sheet PNG (INGEST-stage cache)
+            png_bytes = await _download_sheet_image(
+                suite_id=suite_id,
+                project_id=project_id,
+                sheet_id=sheet_id,
+                correlation_id=correlation_id,
+            )
+            if not png_bytes:
+                _log.warning(
+                    "drew.universal_intel: no PNG for sheet=%s project=%s — skipping",
+                    sheet_id[:8], project_id[:8],
+                )
+                return {
+                    "sheet_id": sheet_id,
+                    "success": False,
+                    "azure_ms": 0,
+                    "reason": "no_png",
+                }
+
+            try:
+                row = await extract_sheet_intelligence(
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    project_id=project_id,
+                    sheet_id=sheet_id,
+                    sheet_png_bytes=png_bytes,
+                    correlation_id=correlation_id,
+                )
+            except ProviderError as exc:
+                _log.warning(
+                    "drew.universal_intel: Azure failed sheet=%s project=%s: %s",
+                    sheet_id[:8], project_id[:8], exc,
+                )
+                return {
+                    "sheet_id": sheet_id,
+                    "success": False,
+                    "azure_ms": 0,
+                    "reason": f"azure_error:{type(exc).__name__}",
+                }
+            except Exception as exc:
+                _log.warning(
+                    "drew.universal_intel: unexpected error sheet=%s project=%s: %s",
+                    sheet_id[:8], project_id[:8], type(exc).__name__,
+                )
+                return {
+                    "sheet_id": sheet_id,
+                    "success": False,
+                    "azure_ms": 0,
+                    "reason": f"error:{type(exc).__name__}",
+                }
+
+            azure_ms: int = row.get("azure_call_ms") or 0
+
+            # Upsert into blueprint_sheet_intelligence — idempotent on (project_id, sheet_id)
+            try:
+                await supabase_upsert(
+                    "blueprint_sheet_intelligence",
+                    row,
+                    on_conflict="project_id,sheet_id",
+                )
+            except SupabaseClientError as exc:
+                _log.warning(
+                    "drew.universal_intel: upsert failed sheet=%s project=%s: %s",
+                    sheet_id[:8], project_id[:8], type(exc).__name__,
+                )
+                return {
+                    "sheet_id": sheet_id,
+                    "success": False,
+                    "azure_ms": azure_ms,
+                    "reason": f"upsert_error:{type(exc).__name__}",
+                }
+
+            _log.info(
+                "drew.universal_intel: sheet=%s done azure_ms=%d",
+                sheet_id[:8], azure_ms,
+            )
+            return {"sheet_id": sheet_id, "success": True, "azure_ms": azure_ms}
+
+    # Dispatch all sheets concurrently under semaphore cap
+    tasks = [_process_one_sheet(sheet) for sheet in active_sheets]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    sheets_succeeded = 0
+    sheets_failed = 0
+    total_azure_ms = 0
+
+    for outcome in results:
+        if isinstance(outcome, BaseException):
+            sheets_failed += 1
+            _log.warning(
+                "drew.universal_intel: gather task raised %s — counted as failure",
+                type(outcome).__name__,
+            )
+        elif outcome.get("success"):
+            sheets_succeeded += 1
+            total_azure_ms += outcome.get("azure_ms", 0)
+        else:
+            sheets_failed += 1
+
+    # Fail-soft: only mark stage failed if >50% of sheets failed
+    failure_rate = sheets_failed / sheets_total if sheets_total > 0 else 0.0
+    status = "failed" if failure_rate > 0.50 else "ok"
+
+    _log.info(
+        "drew.universal_intel: project=%s total=%d succeeded=%d failed=%d "
+        "total_azure_ms=%d status=%s corr=%s",
+        project_id[:8], sheets_total, sheets_succeeded, sheets_failed,
+        total_azure_ms, status,
+        correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
+    )
+
+    return {
+        "status": status,
+        "stage": "universal_sheet_intelligence",
+        "project_id": project_id,
+        "sheets_total": sheets_total,
+        "sheets_succeeded": sheets_succeeded,
+        "sheets_failed": sheets_failed,
+        "total_azure_ms": total_azure_ms,
     }
 
 
