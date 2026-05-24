@@ -57,7 +57,12 @@ class _UF:
 
 
 async def _fetch_primitives_for_sheet(sheet_id: str) -> list[dict]:
-    """Fetch visible non-tiny primitives for one sheet via SQL aggregation."""
+    """Fetch visible CURVES for one sheet — they're the discriminative anchors.
+
+    Strategy: curves anchor symbols (sprinkler circles, fixture rounds). Use them
+    as cluster seeds, then composed_symbol bbox unions naturally include adjacent
+    detail lines via PCE proximity logic.
+    """
     rows: list[dict] = []
     last_id = ""
     while True:
@@ -65,12 +70,12 @@ async def _fetch_primitives_for_sheet(sheet_id: str) -> list[dict]:
         page = await supabase_select(
             "blueprint_primitives",
             f"sheet_id=eq.{sheet_id}&suite_id=eq.{SUITE}"
-            f"&raster_density=gte.{_VISIBILITY_FLOOR}{cursor}&order=id",
+            f"&primitive_type=eq.curve&raster_density=gte.{_VISIBILITY_FLOOR}"
+            f"{cursor}&order=id",
             limit=1000,
         )
         if not page:
             break
-        # Local filter for size (Supabase REST doesn't allow OR on numeric easily)
         rows.extend([p for p in page if max(
             float(p.get("bbox_w") or 0), float(p.get("bbox_h") or 0)
         ) >= _MIN_PRIMITIVE_DIM])
