@@ -532,6 +532,188 @@ class TestUnwrangleUpstreamDegradationBodyDetection:
         assert r.receipt_data.get("reason_code") == "UPSTREAM_DEGRADED"
 
 
+class TestUnwrangleLowesSearchProducts:
+    """Tests for search_products (lowes_search platform).
+
+    lowes_search is known-broken upstream (Unwrangle ticket confirmed -- 504).
+    Tests verify: correct platform param, 504 fast-fail path, standard error paths,
+    receipt on every code path, PII safety, and no-retry behaviour.
+    """
+
+    @pytest.mark.asyncio
+    async def test_builds_correct_lowes_search_url(self, monkeypatch, with_api_key):
+        captured = []
+        async def fg(self, url, **kw):
+            captured.append(url)
+            return _make_http_response(200, _success_body())
+        monkeypatch.setattr(httpx.AsyncClient, "get", fg)
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.SUCCESS, r.error
+        assert "platform=lowes_search" in captured[0]
+        assert f"api_key={FAKE_KEY}" in captured[0]
+        assert "search=dishwasher" in captured[0]
+
+    @pytest.mark.asyncio
+    async def test_success_returns_results_and_receipt(self, monkeypatch, with_api_key):
+        body = _success_body([{"title": "Bosch SHPM88Z75N", "price": 999}])
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(200, body))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.SUCCESS
+        assert r.receipt_data is not None
+        assert r.receipt_data.get("reason_code") == "EXECUTED"
+        assert r.data["result_count"] == 1
+        assert r.data["source"] == "unwrangle_lowes"
+        assert r.data["query"] == "dishwasher"
+
+    @pytest.mark.asyncio
+    async def test_504_fast_fail_with_skip_receipt(self, monkeypatch, with_api_key):
+        """lowes_search upstream is known broken -- 504 must fast-fail with skip receipt."""
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(504, _504_body()))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.FAILED
+        assert r.receipt_data.get("reason_code") == "UPSTREAM_DEGRADED"
+        assert r.receipt_data.get("upstream_skip") == "provider.unwrangle_lowes.504_skip"
+        assert "504" in (r.error or "")
+        assert "do not retry" in (r.error or "").lower()
+        assert FAKE_KEY not in (r.error or "")
+        # Empty result returned (not None) so caller can inspect
+        assert r.data is not None
+        assert r.data.get("upstream_error") == 504
+        assert r.data.get("results") == []
+
+    @pytest.mark.asyncio
+    async def test_504_body_soft_fail_detected(self, monkeypatch, with_api_key):
+        """HTTP 200 with success=false + unable-to-fetch message is also treated as 504 skip."""
+        body = {"success": False, "error": "Unable to fetch search results from Lowes upstream"}
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(200, body))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("faucet", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.receipt_data.get("reason_code") == "UPSTREAM_DEGRADED"
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_missing_api_key(self, monkeypatch, without_api_key):
+        calls = []
+        async def fg(self, url, **kw):
+            calls.append(url)
+            return _make_http_response(200, _success_body())
+        monkeypatch.setattr(httpx.AsyncClient, "get", fg)
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.FAILED
+        assert len(calls) == 0
+        assert r.receipt_data.get("reason_code") == InternalErrorCode.AUTH_INVALID_KEY.value
+
+    @pytest.mark.asyncio
+    async def test_missing_query_fails_with_receipt(self, monkeypatch, with_api_key):
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.FAILED
+        assert r.receipt_data.get("reason_code") == InternalErrorCode.INPUT_MISSING_REQUIRED.value
+
+    @pytest.mark.asyncio
+    async def test_query_too_long_fails(self, monkeypatch, with_api_key):
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("x" * 501, suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.FAILED
+        assert r.receipt_data.get("reason_code") == InternalErrorCode.INPUT_INVALID_FORMAT.value
+
+    @pytest.mark.asyncio
+    async def test_optional_store_no_and_zipcode_appended(self, monkeypatch, with_api_key):
+        captured = []
+        async def fg(self, url, **kw):
+            captured.append(url)
+            return _make_http_response(200, _success_body())
+        monkeypatch.setattr(httpx.AsyncClient, "get", fg)
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products(
+            "dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID,
+            store_no="501", zipcode="30297",
+        )
+        assert r.outcome == Outcome.SUCCESS, r.error
+        assert "store_no=501" in captured[0]
+        assert "zipcode=30297" in captured[0]
+
+    @pytest.mark.asyncio
+    async def test_401_maps_auth_invalid_key(self, monkeypatch, with_api_key):
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(401, _401_body()))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.FAILED
+        assert FAKE_KEY not in (r.error or "")
+        assert r.receipt_data is not None
+
+    @pytest.mark.asyncio
+    async def test_402_credit_exhausted(self, monkeypatch, with_api_key):
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(402, _402_body()))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.FAILED
+        pm = r.receipt_data.get("provider_metadata", {})
+        assert pm.get("error_code") == InternalErrorCode.RATE_QUOTA_EXCEEDED.value
+
+    @pytest.mark.asyncio
+    async def test_receipt_on_every_path(self, monkeypatch, with_api_key):
+        import aspire_orchestrator.providers.unwrangle_lowes_client as lw
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        for sc, body in [(200, _success_body()), (504, _504_body()), (401, _401_body()), (500, _500_body())]:
+            def mk(s, b):
+                async def g(self, url, **kw): return _make_http_response(s, b)
+                return g
+            monkeypatch.setattr(httpx.AsyncClient, "get", mk(sc, body))
+            lw._client = None
+            r = await search_products("item", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+            assert r.receipt_data is not None, f"No receipt for HTTP {sc}"
+            assert "id" in r.receipt_data
+
+    @pytest.mark.asyncio
+    async def test_pii_safe_key_not_in_receipt(self, monkeypatch, with_api_key):
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(504, _504_body()))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert FAKE_KEY not in json.dumps(r.receipt_data)
+
+    @pytest.mark.asyncio
+    async def test_credits_tracked_on_success(self, monkeypatch, with_api_key):
+        b = _success_body(); b["remaining_credits"] = 77
+        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get(200, b))
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products("dishwasher", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
+        assert r.outcome == Outcome.SUCCESS
+        assert r.data["credits_remaining"] == 77
+        assert r.receipt_data.get("provider_metadata", {}).get("credits_remaining") == 77
+
+
+@pytest.mark.skipif(
+    not __import__("os").environ.get("ASPIRE_UNWRANGLE_API_KEY"),
+    reason="Integration test: requires ASPIRE_UNWRANGLE_API_KEY",
+)
+class TestUnwrangleLowesSearchProductsIntegration:
+    """Live integration test for lowes_search. Gated on ASPIRE_UNWRANGLE_API_KEY presence.
+
+    Expected behaviour: Unwrangle returns 504 (known broken upstream). Test asserts
+    that the 504 is handled gracefully with a skip receipt and empty results.
+    Remove this class and promote to happy-path when Unwrangle fixes the upstream.
+    """
+
+    @pytest.mark.asyncio
+    async def test_lowes_search_returns_504_skip_gracefully(self):
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        r = await search_products(
+            "dishwasher",
+            suite_id=SUITE_ID,
+            office_id=OFFICE_ID,
+            correlation_id="integration-test-lowes-search",
+        )
+        # Known: Unwrangle lowes_search upstream is broken -- expect UPSTREAM_DEGRADED
+        assert r.receipt_data is not None
+        assert r.receipt_data.get("upstream_skip") == "provider.unwrangle_lowes.504_skip"
+        assert r.data is not None
+        assert r.data.get("upstream_error") == 504
+
+
 class TestUnwrangleSettingsField:
     def test_unwrangle_api_key_field_exists(self, monkeypatch):
         import aspire_orchestrator.config.settings as sm

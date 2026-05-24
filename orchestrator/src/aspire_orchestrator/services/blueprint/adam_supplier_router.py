@@ -1,13 +1,14 @@
-﻿"""Adam supplier router -- MATERIAL_SUPPLIER_SEARCH category-based provider dispatch.
+"""Adam supplier router -- MATERIAL_SUPPLIER_SEARCH category-based provider dispatch.
 
 Routes material line_item to the correct provider chain based on supply category:
-    commodity            -> SerpAPI HD (free) -> Unwrangle HD (rate-limit failover)
-    commercial_plumbing  -> Unwrangle Ferguson
-    appliance_finish     -> Unwrangle Lowes (store + category browse)
+    commodity            -> SerpAPI Shopping (parallel) + SerpAPI HD -> Unwrangle HD fallback
+    commercial_plumbing  -> Unwrangle Ferguson + SerpAPI Shopping (parallel)
+    appliance_finish     -> Unwrangle Lowes + SerpAPI Shopping (parallel)
     local_trade          -> Google Places only (call-for-quote)
     specialty_hardware   -> Defer to manual
 
-TODO: Wave 5.1a-2 wires Unwrangle real clients when feat/wave-5-1a-unwrangle-clients merges.
+Wave 5.4a: serpapi_shopping added as parallel call for every non-local category.
+  Union of candidates is deduped and re-ranked by price+rating score.
 
 Law compliance:
   Law #1: Returns ranked list only.
@@ -19,6 +20,7 @@ Law compliance:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -104,6 +106,22 @@ async def _call_serpapi_homedepot(*, line_item: str, office_zip: str | None, sui
         return [], 0
 
 
+async def _call_serpapi_shopping(*, line_item: str, office_zip: str | None, suite_id: str, office_id: str, correlation_id: str) -> tuple[list[dict[str, Any]], int]:
+    """Parallel Google Shopping call for all non-local categories (Wave 5.4a)."""
+    from aspire_orchestrator.providers.serpapi_shopping_client import execute_serpapi_shopping_search
+    from aspire_orchestrator.models import Outcome
+    payload: dict[str, Any] = {"query": line_item[:200], "gl": "us", "hl": "en"}
+    try:
+        result = await execute_serpapi_shopping_search(payload=payload, correlation_id=correlation_id, suite_id=suite_id, office_id=office_id, risk_tier="green")
+        if result.outcome == Outcome.SUCCESS:
+            raw: list[Any] = result.data.get("results") or []
+            return (list(raw) if isinstance(raw, list) else []), 1
+        return [], 0
+    except Exception as exc:
+        logger.warning("adam_supplier_router: serpapi_shopping failed item=%s err=%s", line_item[:40], type(exc).__name__)
+        return [], 0
+
+
 async def _call_unwrangle_homedepot_stub(*, line_item: str, office_zip: str | None) -> tuple[list[dict[str, Any]], int]:
     """Stub. TODO: Wave 5.1a-2 wires UnwrangleHomeDepotClient.search_products(line_item, office_zip)."""
     if not _UNWRANGLE_HD_AVAILABLE:
@@ -152,6 +170,43 @@ async def _call_unwrangle_lowes_stub(*, line_item: str, office_zip: str | None) 
         return [], 0
 
 
+async def _call_unwrangle_lowes_search(
+    *, line_item: str, suite_id: str, office_id: str, correlation_id: str,
+    store_no: str | None = None, office_zip: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Parallel keyword search via Unwrangle lowes_search platform.
+
+    NOTE: lowes_search currently returns 504 from Unwrangle upstream (ticket confirmed).
+    Wired here for parallel dispatch alongside the category-browse path. On 504 it
+    fast-fails with empty results and zero credits. No retry. Wave 5.2 re-enable target.
+    """
+    if not _UNWRANGLE_LOWES_AVAILABLE:
+        return [], 0
+    try:
+        from aspire_orchestrator.providers.unwrangle_lowes_client import search_products
+        from aspire_orchestrator.models import Outcome
+        result = await search_products(
+            line_item,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            store_no=store_no,
+            zipcode=office_zip,
+            risk_tier="green",
+        )
+        if result.outcome == Outcome.SUCCESS:
+            raw: list[Any] = (result.data or {}).get("results", [])
+            return list(raw) if isinstance(raw, list) else [], 1
+        # 504 upstream skip or other failure: zero credits, empty results, no retry
+        return [], 0
+    except Exception as exc:
+        logger.warning(
+            "adam_supplier_router: unwrangle_lowes_search failed item=%s err=%s",
+            line_item[:40], type(exc).__name__,
+        )
+        return [], 0
+
+
 async def _call_google_places(*, line_item: str, office_lat: float | None, office_lng: float | None, geofence_miles: float, suite_id: str, office_id: str, correlation_id: str) -> tuple[list[dict[str, Any]], int]:
     from aspire_orchestrator.providers.google_places_client import execute_google_places_search
     from aspire_orchestrator.models import Outcome
@@ -189,6 +244,51 @@ def _normalize_serpapi_hd(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _normalize_serpapi_shopping(raw: dict[str, Any]) -> dict[str, Any] | None:
+    title = str(raw.get("title") or "")
+    if not title:
+        return None
+    price_val: float | None = None
+    price_raw = raw.get("extracted_price") or raw.get("price")
+    if price_raw is not None:
+        try:
+            price_val = float(str(price_raw).replace("$", "").replace(",", "").strip())
+        except ValueError:
+            pass
+    source_name = str(raw.get("source") or "Google Shopping")
+    rating_raw = raw.get("rating")
+    rating: float | None = None
+    try:
+        rating = float(rating_raw) if rating_raw is not None else None
+    except (TypeError, ValueError):
+        pass
+    return {
+        "supplier": {"name": source_name, "id": f"gshop-{source_name.lower().replace(' ', '-')}", "distance_mi": None, "phone": None},
+        "product": {"name": title, "brand": None, "model_no": raw.get("product_id"), "upc": None, "in_stock": True, "qty_available": None, "rating": rating, "reviews": raw.get("reviews")},
+        "price": {"value": price_val, "currency": "USD", "source": "google_shopping"},
+        "tariff_flag_detected": None,
+        "freshness_as_of": _freshness_now(),
+        "_source_api": "serpapi_shopping",
+        "_dedup_key": f"gshop:{title[:60].lower()}:{price_val}",
+    }
+
+
+def _dedup_union(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Union two candidate lists, dedup by (name_prefix, price) to avoid near-duplicates."""
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for c in primary + secondary:
+        key = c.get("_dedup_key")
+        if key is None:
+            prod = c.get("product") or {}
+            price = (c.get("price") or {}).get("value")
+            key = f"{(prod.get('name') or '')[:60].lower()}:{price}"
+        if key not in seen:
+            seen.add(key)
+            merged.append(c)
+    return merged
+
+
 def _normalize_places_to_cfq(raw: dict[str, Any]) -> dict[str, Any] | None:
     name = str(raw.get("name") or "")
     if not name:
@@ -214,48 +314,81 @@ def _pass_through(raw: dict[str, Any], source_api: str) -> dict[str, Any]:
 async def _route_commodity(*, line_item: str, office_zip: str | None, brand_familiarity_map: dict[str, float], suite_id: str, office_id: str, correlation_id: str) -> CandidateList:
     source_apis: list[str] = []
     credits = 0
-    raw_hd, c1 = await _call_serpapi_homedepot(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id)
-    credits += c1
+    # Wave 5.4a: run serpapi_shopping in parallel with serpapi_homedepot
+    (raw_hd, c1), (raw_shopping, c_shop) = await asyncio.gather(
+        _call_serpapi_homedepot(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
+        _call_serpapi_shopping(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
+    )
+    credits += c1 + c_shop
     if c1 > 0:
         source_apis.append("serpapi_homedepot")
+    if c_shop > 0:
+        source_apis.append("serpapi_shopping")
     _store_receipt(_make_receipt(event_type="provider.serpapi_homedepot", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_hd else "degraded", inputs={"line_item": line_item[:100], "category": "commodity"}, metadata={"result_count": len(raw_hd), "credits_used": c1}))
+    _store_receipt(_make_receipt(event_type="provider.serpapi_shopping.blueprint", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_shopping else "degraded", inputs={"line_item": line_item[:100], "category": "commodity"}, metadata={"result_count": len(raw_shopping), "credits_used": c_shop}))
     if not raw_hd:
         raw_uw, c2 = await _call_unwrangle_homedepot_stub(line_item=line_item, office_zip=office_zip)
         credits += c2
         if c2 > 0:
             source_apis.append("unwrangle_homedepot")
         _store_receipt(_make_receipt(event_type="provider.unwrangle_homedepot", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_uw else "degraded", inputs={"line_item": line_item[:100], "category": "commodity"}, metadata={"result_count": len(raw_uw), "credits_used": c2}))
-        normalized = [_pass_through(r, "unwrangle_homedepot") for r in raw_uw]
+        primary_normalized = [_pass_through(r, "unwrangle_homedepot") for r in raw_uw]
     else:
-        normalized = [n for r in raw_hd if (n := _normalize_serpapi_hd(r)) is not None]
-    candidates = rank_candidates(normalized, brand_familiarity_map=brand_familiarity_map)
-    return {"status": "ok" if candidates else "degraded", "candidates": candidates, "source_apis_called": source_apis, "credits_used": credits, "degradation_reason": "No results from Home Depot search" if not candidates else None}
+        primary_normalized = [n for r in raw_hd if (n := _normalize_serpapi_hd(r)) is not None]
+    shopping_normalized = [n for r in raw_shopping if (n := _normalize_serpapi_shopping(r)) is not None]
+    merged = _dedup_union(primary_normalized, shopping_normalized)
+    candidates = rank_candidates(merged, brand_familiarity_map=brand_familiarity_map)
+    return {"status": "ok" if candidates else "degraded", "candidates": candidates, "source_apis_called": source_apis, "credits_used": credits, "degradation_reason": "No results from Home Depot or Google Shopping" if not candidates else None}
 
 
-async def _route_commercial_plumbing(*, line_item: str, brand_familiarity_map: dict[str, float], suite_id: str, office_id: str, correlation_id: str) -> CandidateList:
+async def _route_commercial_plumbing(*, line_item: str, office_zip: str | None, brand_familiarity_map: dict[str, float], suite_id: str, office_id: str, correlation_id: str) -> CandidateList:
     source_apis: list[str] = []
     credits = 0
-    raw_ferg, c1 = await _call_unwrangle_ferguson_stub(line_item=line_item)
-    credits += c1
+    # Wave 5.4a: serpapi_shopping runs in parallel with Ferguson
+    (raw_ferg, c1), (raw_shopping, c_shop) = await asyncio.gather(
+        _call_unwrangle_ferguson_stub(line_item=line_item),
+        _call_serpapi_shopping(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
+    )
+    credits += c1 + c_shop
     if c1 > 0:
         source_apis.append("unwrangle_ferguson")
+    if c_shop > 0:
+        source_apis.append("serpapi_shopping")
     _store_receipt(_make_receipt(event_type="provider.unwrangle_ferguson", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_ferg else "degraded", inputs={"line_item": line_item[:100], "category": "commercial_plumbing"}, metadata={"result_count": len(raw_ferg), "credits_used": c1}))
-    normalized = [_pass_through(r, "unwrangle_ferguson") for r in raw_ferg]
-    candidates = rank_candidates(normalized, brand_familiarity_map=brand_familiarity_map)
-    return {"status": "ok" if candidates else "degraded", "candidates": candidates, "source_apis_called": source_apis, "credits_used": credits, "degradation_reason": "Ferguson unavailable (Unwrangle client not yet wired)" if not candidates else None}
+    _store_receipt(_make_receipt(event_type="provider.serpapi_shopping.blueprint", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_shopping else "degraded", inputs={"line_item": line_item[:100], "category": "commercial_plumbing"}, metadata={"result_count": len(raw_shopping), "credits_used": c_shop}))
+    ferg_normalized = [_pass_through(r, "unwrangle_ferguson") for r in raw_ferg]
+    shopping_normalized = [n for r in raw_shopping if (n := _normalize_serpapi_shopping(r)) is not None]
+    merged = _dedup_union(ferg_normalized, shopping_normalized)
+    candidates = rank_candidates(merged, brand_familiarity_map=brand_familiarity_map)
+    return {"status": "ok" if candidates else "degraded", "candidates": candidates, "source_apis_called": source_apis, "credits_used": credits, "degradation_reason": "Ferguson and Google Shopping returned no results" if not candidates else None}
 
 
 async def _route_appliance_finish(*, line_item: str, office_zip: str | None, brand_familiarity_map: dict[str, float], suite_id: str, office_id: str, correlation_id: str) -> CandidateList:
     source_apis: list[str] = []
     credits = 0
-    raw_lowes, c1 = await _call_unwrangle_lowes_stub(line_item=line_item, office_zip=office_zip)
-    credits += c1
+    # Wave 5.4a+c: category-browse, keyword search (known-504 but wired), and shopping run in parallel.
+    # lowes_search will return empty results until Unwrangle fixes upstream (Wave 5.2 target).
+    (raw_lowes, c1), (raw_lowes_kw, c_kw), (raw_shopping, c_shop) = await asyncio.gather(
+        _call_unwrangle_lowes_stub(line_item=line_item, office_zip=office_zip),
+        _call_unwrangle_lowes_search(line_item=line_item, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, office_zip=office_zip),
+        _call_serpapi_shopping(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
+    )
+    credits += c1 + c_kw + c_shop
     if c1 > 0:
         source_apis.append("unwrangle_lowes")
+    if c_kw > 0:
+        source_apis.append("unwrangle_lowes_search")
+    if c_shop > 0:
+        source_apis.append("serpapi_shopping")
     _store_receipt(_make_receipt(event_type="provider.unwrangle_lowes", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_lowes else "degraded", inputs={"line_item": line_item[:100], "category": "appliance_finish"}, metadata={"result_count": len(raw_lowes), "credits_used": c1}))
-    normalized = [_pass_through(r, "unwrangle_lowes") for r in raw_lowes]
-    candidates = rank_candidates(normalized, brand_familiarity_map=brand_familiarity_map)
-    return {"status": "ok" if candidates else "degraded", "candidates": candidates, "source_apis_called": source_apis, "credits_used": credits, "degradation_reason": "Lowes browse unavailable (Unwrangle client not yet wired)" if not candidates else None}
+    _store_receipt(_make_receipt(event_type="provider.unwrangle_lowes_search", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_lowes_kw else "504_skip", inputs={"line_item": line_item[:100], "category": "appliance_finish"}, metadata={"result_count": len(raw_lowes_kw), "credits_used": c_kw}))
+    _store_receipt(_make_receipt(event_type="provider.serpapi_shopping.blueprint", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="ok" if raw_shopping else "degraded", inputs={"line_item": line_item[:100], "category": "appliance_finish"}, metadata={"result_count": len(raw_shopping), "credits_used": c_shop}))
+    lowes_normalized = [_pass_through(r, "unwrangle_lowes") for r in raw_lowes]
+    lowes_kw_normalized = [_pass_through(r, "unwrangle_lowes_search") for r in raw_lowes_kw]
+    shopping_normalized = [n for r in raw_shopping if (n := _normalize_serpapi_shopping(r)) is not None]
+    merged = _dedup_union(_dedup_union(lowes_normalized, lowes_kw_normalized), shopping_normalized)
+    candidates = rank_candidates(merged, brand_familiarity_map=brand_familiarity_map)
+    return {"status": "ok" if candidates else "degraded", "candidates": candidates, "source_apis_called": source_apis, "credits_used": credits, "degradation_reason": "Lowes and Google Shopping returned no results" if not candidates else None}
 
 
 async def _route_local_trade(*, line_item: str, office_lat: float | None, office_lng: float | None, geofence_miles: float, brand_familiarity_map: dict[str, float], suite_id: str, office_id: str, correlation_id: str) -> CandidateList:
@@ -303,7 +436,7 @@ async def route_supplier_search(
         if category == "commodity":
             result = await _route_commodity(line_item=line_item, office_zip=office_zip, brand_familiarity_map=brand_familiarity_map, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id)
         elif category == "commercial_plumbing":
-            result = await _route_commercial_plumbing(line_item=line_item, brand_familiarity_map=brand_familiarity_map, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id)
+            result = await _route_commercial_plumbing(line_item=line_item, office_zip=office_zip, brand_familiarity_map=brand_familiarity_map, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id)
         elif category == "appliance_finish":
             result = await _route_appliance_finish(line_item=line_item, office_zip=office_zip, brand_familiarity_map=brand_familiarity_map, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id)
         elif category == "local_trade":
