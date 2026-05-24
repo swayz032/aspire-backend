@@ -91,6 +91,16 @@ class MissingInputCandidate:
     # ``aspire_orchestrator.services.blueprint.vision_budget.VisionBudget``.
     vision_budget: Any | None = None
 
+    # Wave 20e — Optional cache-first layout data plane. One
+    # ``SheetIntelligenceProvider`` per cascade-batch run, pre-loaded with
+    # ``blueprint_sheet_intelligence`` rows from INGEST. Resolvers that call
+    # Azure analyze_layout check this provider first; a cache hit returns
+    # pre-extracted tables at zero Azure cost (azure_calls_made=0).
+    # When None (pre-20e fixtures, callers not yet migrated), resolvers fall
+    # through directly to the live Azure path unchanged. Concrete type:
+    # ``aspire_orchestrator.services.blueprint.sheet_intelligence_provider.SheetIntelligenceProvider``.
+    intelligence_provider: Any | None = None
+
 
 @dataclass(frozen=True)
 class ResolverResult:

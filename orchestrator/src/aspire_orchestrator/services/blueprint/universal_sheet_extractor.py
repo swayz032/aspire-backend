@@ -130,8 +130,9 @@ async def extract_sheet_intelligence(
                 "azure_call_ms": azure_call_ms,
             },
         )
+        from aspire_orchestrator.providers.error_codes import InternalErrorCode as _EC
         raise ProviderError(
-            code=response.error_code,
+            code=response.error_code or _EC.SERVER_INTERNAL_ERROR,
             message=f"Azure layout failed for sheet {sheet_id}: {response.error_code}",
             provider_id="azure_doc_intel",
         )
