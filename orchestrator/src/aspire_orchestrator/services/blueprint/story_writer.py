@@ -255,12 +255,16 @@ def _build_messages_a(
     discipline_counts: dict[str, int],
     case_pack_hints: list,
     project_id: str,
+    sheet_intel_context: str = "",
 ) -> list[dict[str, str]]:
     """Call A: assemblies + quantities.
 
     Asks the LLM to enumerate all assemblies and material quantities from the
     sheet corpus. Returns a subset of the full schema:
       {"phases": [{"phase_number": int, "phase_name": str, "assemblies": [...], "material_lines": [...]}]}
+
+    Wave 20f: sheet_intel_context is prepended to the user message when available,
+    grounding A in project-specific legends, notes, and schedule counts.
     """
     system_parts = [_load_system_prompt()]
     system_parts.append("\n\n---\n# Reference: Discipline Taxonomy\n")
@@ -304,9 +308,12 @@ def _build_messages_a(
             "No other top-level keys needed."
         ),
     }
+    user_content = json.dumps(user_payload, indent=2, default=str)
+    if sheet_intel_context:
+        user_content = sheet_intel_context + "\n\n" + user_content
     return [
         {"role": "system", "content": system_message},
-        {"role": "user", "content": json.dumps(user_payload, indent=2, default=str)},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -316,6 +323,7 @@ def _build_messages_b(
     existing_missing_input_descriptions: set[str],
     discipline_counts: dict[str, int],
     project_id: str,
+    sheet_intel_context: str = "",
 ) -> list[dict[str, str]]:
     """Call B: missing_inputs + risk_flags.
 
@@ -323,6 +331,9 @@ def _build_messages_b(
     Returns: {"missing_inputs": [...], "risk_flags": [...]}
     risk_flags is an optional list of plain strings (ignored by _parse_llm_response
     but logged for future use).
+
+    Wave 20f: sheet_intel_context is prepended when available so B can reference
+    the authoritative schedule counts and symbol dictionary when identifying gaps.
     """
     system_parts = [_load_system_prompt()]
     system_parts.append("\n\n---\n# Reference: Truth Class Policy\n")
@@ -351,9 +362,12 @@ def _build_messages_b(
             "Deduplicate against existing_missing_input_descriptions."
         ),
     }
+    user_content = json.dumps(user_payload, indent=2, default=str)
+    if sheet_intel_context:
+        user_content = sheet_intel_context + "\n\n" + user_content
     return [
         {"role": "system", "content": system_message},
-        {"role": "user", "content": json.dumps(user_payload, indent=2, default=str)},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -819,6 +833,193 @@ def _normalize_tariff_flag(val: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Wave 20f: Sheet intelligence context builder
+# ---------------------------------------------------------------------------
+
+# Cover sheet patterns — any sheet_number matching these codes/prefixes is the cover.
+_COVER_PATTERNS = ("G0.0", "T-001", "COVER", "G-001", "C0.0", "G0", "T0.0")
+
+# Discipline prefixes used to find general-notes sheets (<discipline>X.X e.g. A0.1, S0.0).
+_DISCIPLINE_CODES = ("A", "S", "M", "E", "P", "FP", "C")
+
+
+async def _build_sheet_intelligence_context(
+    project_id: str,
+    suite_id: str,
+    *,
+    sheets: list[dict[str, Any]],
+    correlation_id: str,
+) -> tuple[str, dict[str, Any]]:
+    """Query blueprint_sheet_intelligence and assemble REASON context block.
+
+    Returns (context_str, meta) where:
+      - context_str is injected into calls A and B as authoritative context.
+      - meta = {legend_count, schedule_count, notes_count, paragraphs_count}
+
+    Returns ("", {}) when no rows exist so REASON falls back to legacy OCR path.
+    Law #6: query scoped by suite_id=eq.<suite_id>&project_id=eq.<project_id>.
+    Law #9: raw cell content is included but never logged. Only counts are logged.
+    """
+    import aspire_orchestrator.services.blueprint.story_writer as _sw
+    _supabase_select_fn = _sw.supabase_select
+
+    try:
+        intel_rows: list[dict[str, Any]] = await _supabase_select_fn(
+            "blueprint_sheet_intelligence",
+            filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+        )
+    except Exception:
+        _log.warning(
+            "story_writer: failed to load sheet_intelligence for project=%s — "
+            "falling back to legacy OCR context",
+            project_id[:8],
+        )
+        return "", {}
+
+    if not intel_rows:
+        return "", {}
+
+    # Index rows by sheet_id for O(1) access
+    intel_by_sheet: dict[str, dict[str, Any]] = {
+        str(r.get("sheet_id", "")): r for r in intel_rows
+    }
+
+    # Build a map of sheet_id → sheet_number for pattern matching
+    sheet_num_by_id: dict[str, str] = {
+        str(s.get("id", "")): str(s.get("sheet_number") or "").upper()
+        for s in sheets
+    }
+
+    parts: list[str] = ["AUTHORITATIVE SHEET INTELLIGENCE (from Azure prebuilt-layout):\n"]
+
+    paragraphs_count = 0
+    notes_count = 0
+    legend_count = 0
+    schedule_count = 0
+
+    # ── Cover sheet: project description, location, owner, scope summary ───
+    cover_row: dict[str, Any] | None = None
+    for sheet_id, sheet_num in sheet_num_by_id.items():
+        if any(sheet_num.startswith(pat.upper()) for pat in _COVER_PATTERNS):
+            cover_row = intel_by_sheet.get(sheet_id)
+            if cover_row:
+                break
+
+    if cover_row:
+        paras = cover_row.get("paragraphs") or []
+        if paras:
+            parts.append("\n## COVER SHEET — Project Overview\n")
+            for p in paras:
+                text = str(p.get("text") or "").strip()
+                if text:
+                    parts.append(f"  {text}\n")
+                    paragraphs_count += 1
+
+    # ── General notes per discipline (<discipline>X.X sheets) ─────────────
+    notes_by_discipline: dict[str, list[str]] = {}
+    for sheet_id, sheet_num in sheet_num_by_id.items():
+        for disc in _DISCIPLINE_CODES:
+            # Match e.g. A0.0, A0.1, FP0.0 — discipline prefix + digit(s) + dot
+            if sheet_num.startswith(disc) and len(sheet_num) > len(disc):
+                rest = sheet_num[len(disc):]
+                if rest and rest[0].isdigit():
+                    row = intel_by_sheet.get(sheet_id)
+                    if not row:
+                        continue
+                    regions = row.get("regions") or {}
+                    note_regions = regions.get("notes") or []
+                    if note_regions:
+                        note_texts: list[str] = []
+                        for nr in note_regions:
+                            text = str(nr.get("text") or "").strip()
+                            if text:
+                                note_texts.append(text)
+                        if note_texts:
+                            existing = notes_by_discipline.get(disc, [])
+                            notes_by_discipline[disc] = existing + note_texts
+                    break
+
+    if notes_by_discipline:
+        parts.append("\n## GENERAL NOTES BY DISCIPLINE\n")
+        for disc, note_texts in sorted(notes_by_discipline.items()):
+            parts.append(f"  [{disc}]\n")
+            for t in note_texts:
+                parts.append(f"    - {t}\n")
+                notes_count += 1
+
+    # ── Legend (symbol dictionary) per sheet ──────────────────────────────
+    legend_entries: list[str] = []
+    for sheet_id, row in intel_by_sheet.items():
+        regions = row.get("regions") or {}
+        legend_rows = regions.get("legend") or []
+        for lr in legend_rows:
+            sym = str(lr.get("symbol") or "").strip()
+            desc = str(lr.get("description") or "").strip()
+            if sym or desc:
+                legend_entries.append(f"  {sym}: {desc}")
+                legend_count += 1
+
+    if legend_entries:
+        parts.append("\n## SYMBOL DICTIONARY (from Legend regions)\n")
+        for entry in legend_entries:
+            parts.append(f"{entry}\n")
+
+    # ── Schedule reads: door, window, panel, fixture ───────────────────────
+    schedule_sections: list[str] = []
+    for sheet_id, row in intel_by_sheet.items():
+        sheet_num = sheet_num_by_id.get(sheet_id, "")
+
+        # Tables with schedule headers
+        tables = row.get("tables") or []
+        for tbl in tables:
+            headers_raw = [str(h).lower() for h in (tbl.get("headers") or [])]
+            headers_joined = " ".join(headers_raw)
+            if any(kw in headers_joined for kw in ("schedule", "door", "window", "panel", "fixture")):
+                row_count = len(tbl.get("rows") or [])
+                schedule_sections.append(
+                    f"  {sheet_num} table — row count: {row_count}"
+                )
+                schedule_count += 1
+
+        # Regions with schedule-type entries
+        regions = row.get("regions") or {}
+        sched_regions = regions.get("schedule") or []
+        for sr in sched_regions:
+            region_type = str(sr.get("region_type") or "schedule")
+            row_count = len(sr.get("rows") or [])
+            schedule_sections.append(
+                f"  {sheet_num} {region_type} — row count: {row_count}"
+            )
+            schedule_count += 1
+
+    if schedule_sections:
+        parts.append("\n## SCHEDULE COUNTS (authoritative totals)\n")
+        for s in schedule_sections:
+            parts.append(f"{s}\n")
+
+    context_str = "".join(parts)
+
+    meta: dict[str, Any] = {
+        "paragraphs_count": paragraphs_count,
+        "notes_count": notes_count,
+        "legend_count": legend_count,
+        "schedule_count": schedule_count,
+    }
+
+    _log.info(
+        "story_writer: sheet_intelligence context built project=%s "
+        "paragraphs=%d notes=%d legends=%d schedules=%d",
+        project_id[:8],
+        paragraphs_count,
+        notes_count,
+        legend_count,
+        schedule_count,
+    )
+
+    return context_str, meta
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -947,11 +1148,52 @@ async def write_story(
         k=3,
     )
 
+    # ── 4b. Wave 20f: load sheet intelligence context (prebuilt-layout data) ─
+    # Queries blueprint_sheet_intelligence populated at INGEST time by Wave 20.
+    # Falls back gracefully to empty string when the table has no rows (pre-Wave 20
+    # or INGEST not yet run), keeping legacy OCR context as the sole input.
+    sheet_intel_context, sheet_intel_meta = await _build_sheet_intelligence_context(
+        project_id,
+        suite_id,
+        sheets=active_sheets,
+        correlation_id=correlation_id,
+    )
+
+    # Emit receipt for sheet intelligence load (Law #2 — even zero rows gets a receipt).
+    try:
+        from aspire_orchestrator.services.receipt_store import store_receipts as _sr_intel
+        import uuid as _uuid_intel
+        from datetime import datetime as _dt_intel, timezone as _tz_intel
+        _sr_intel([{
+            "id": str(_uuid_intel.uuid4()),
+            "outcome": "success",
+            "action_type": "reason.sheet_intelligence_context",
+            "receipt_type": "reason.sheet_intelligence_context",
+            "created_at": _dt_intel.now(_tz_intel.utc).isoformat(),
+            "risk_tier": "GREEN",
+            "actor_type": "WORKER",
+            "actor_id": "skillpack:drew-blueprint",
+            "correlation_id": correlation_id,
+            "suite_id": suite_id,
+            "metadata": {
+                "project_id": project_id,
+                "legend_count": sheet_intel_meta.get("legend_count", 0),
+                "schedule_count": sheet_intel_meta.get("schedule_count", 0),
+                "notes_count": sheet_intel_meta.get("notes_count", 0),
+                "paragraphs_count": sheet_intel_meta.get("paragraphs_count", 0),
+                "stage": "reason",
+                "has_context": bool(sheet_intel_context),
+            },
+        }])
+    except Exception:
+        pass  # Receipt emission is best-effort; non-fatal
+
     # ── 5. Build 3 focused LLM message sets for parallel dispatch ────────
     # Wave 9l: split the single monolithic LLM call into 3 parallel calls:
     #   Call A — assemblies + quantities
     #   Call B — missing_inputs + risk_flags
     #   Call C — phased markdown narrative + truth tags
+    # Wave 20f: calls A and B receive sheet_intel_context as upstream grounding.
     # Reduces wall-clock REASON time from ~sequential to ~max(A, B, C).
     messages_a = _build_messages_a(
         sheets=active_sheets,
@@ -960,12 +1202,14 @@ async def write_story(
         discipline_counts=discipline_counts,
         case_pack_hints=case_pack_hints,
         project_id=project_id,
+        sheet_intel_context=sheet_intel_context,
     )
     messages_b = _build_messages_b(
         sheets=active_sheets,
         existing_missing_input_descriptions=existing_descriptions,
         discipline_counts=discipline_counts,
         project_id=project_id,
+        sheet_intel_context=sheet_intel_context,
     )
     messages_c = _build_messages_c(
         sheets=active_sheets,

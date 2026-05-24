@@ -490,6 +490,7 @@ def build_candidate(
     *,
     data_provider: Any | None = None,
     vision_budget: Any | None = None,
+    intelligence_provider: Any | None = None,
 ) -> MissingInputCandidate:
     """Build a MissingInputCandidate from a blueprint_missing_inputs DB row.
 
@@ -508,6 +509,8 @@ def build_candidate(
             ``VisionBudget`` instance. Default ``None`` means vision
             methods will either skip (preferred) or construct an
             ephemeral budget (see each vision-method's docstring).
+        intelligence_provider: Wave 20e — Optional ``SheetIntelligenceProvider``
+            instance. Default ``None`` preserves pre-20e behavior (live Azure).
     """
     description = str(row.get("description") or "")
     category = categorize_description(description)
@@ -524,6 +527,7 @@ def build_candidate(
         ocr_by_sheet=ocr_by_sheet,
         data_provider=data_provider,
         vision_budget=vision_budget,
+        intelligence_provider=intelligence_provider,
     )
 
 
@@ -677,6 +681,31 @@ async def resolve_batch(
         )
         vision_budget = None
 
+    # Wave 20e — ONE SheetIntelligenceProvider per batch, pre-loaded with
+    # blueprint_sheet_intelligence rows. Resolvers use it as a first source
+    # before issuing live Azure calls. Fail-safe — falls through to live Azure.
+    intel_provider: Any | None = None
+    try:
+        from aspire_orchestrator.services.blueprint.sheet_intelligence_provider import (
+            SheetIntelligenceProvider,
+        )
+        intel_provider = SheetIntelligenceProvider(
+            project_id=project_id,
+            suite_id=suite_id,
+        )
+        await intel_provider.load_all()
+        _log.info(
+            "resolve_batch: intelligence_provider loaded stats=%s",
+            intel_provider.cache_stats(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "resolve_batch: intelligence_provider load failed (%s); "
+            "resolvers will fall through to live Azure",
+            type(exc).__name__,
+        )
+        intel_provider = None
+
     sheets_arg = active_sheets if active_sheets is not None else []
     symbols_arg = symbols_by_sheet if symbols_by_sheet is not None else {}
     ocr_arg = ocr_by_sheet if ocr_by_sheet is not None else {}
@@ -686,6 +715,7 @@ async def resolve_batch(
             row, sheets_arg, symbols_arg, ocr_arg,
             data_provider=provider,
             vision_budget=vision_budget,
+            intelligence_provider=intel_provider,
         )
         for row in validated_rows
     ]
@@ -723,10 +753,14 @@ async def resolve_batch(
     vision_stats: dict[str, int | float] = (
         vision_budget.receipt_evidence() if vision_budget is not None else {}
     )
+    intel_stats: dict[str, int | bool] = (
+        intel_provider.cache_stats() if intel_provider is not None else {}
+    )
 
     _log.info(
         "resolve_batch: project=%s candidates=%d resolved=%d unresolved=%d "
         "skipped=%d png_cache_entries=%d yolo_cache_entries=%d "
+        "intelligence_sheets_cached=%d "
         "vision_cost_usd=%.4f vision_calls=%d vision_aborts=%d",
         project_id[:8],
         len(candidates),
@@ -735,6 +769,7 @@ async def resolve_batch(
         skipped_count,
         cache_stats.get("png_cache_entries", 0),
         cache_stats.get("yolo_cache_entries", 0),
+        int(intel_stats.get("sheets_cached", 0)),
         float(vision_stats.get("vision_cost_usd_estimate", 0.0)),
         int(vision_stats.get("vision_calls_made", 0)),
         int(vision_stats.get("vision_calls_aborted_by_budget", 0)),
