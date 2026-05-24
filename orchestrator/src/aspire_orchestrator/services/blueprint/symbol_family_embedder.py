@@ -510,7 +510,6 @@ async def populate_motif_embeddings(
     sheet_rows = await supabase_select(
         "blueprint_sheets",
         filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
-        select="id",
     )
     if not sheet_rows:
         return {"motifs_total": 0, "embedded": 0, "skipped_no_bbox": 0, "errors": 0}
@@ -521,8 +520,7 @@ async def populate_motif_embeddings(
     rows = await supabase_select(
         "blueprint_symbols",
         filters=f"sheet_id=in.({sheet_filter})&suite_id=eq.{suite_id}&embedding=is.null",
-        select="id,bbox",
-        limit=batch_size * 100,  # cap upper bound
+        limit=batch_size * 100,
     )
 
     motifs_total = len(rows or [])
