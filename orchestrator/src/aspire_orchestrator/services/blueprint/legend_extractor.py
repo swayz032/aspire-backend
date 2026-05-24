@@ -100,6 +100,23 @@ def _detect_discipline(
     return "unknown"
 
 
+def _get_cell_bbox_for_row(
+    cells: list[dict[str, Any]],
+    row_index: int,
+    col_index: int = 0,
+) -> Any:
+    """Return the polygon bbox for a specific (row_index, col_index) cell.
+
+    Returns None if cells data is missing or no matching cell is found.
+    """
+    for cell in cells:
+        if cell.get("row_index") == row_index and cell.get("column_index") == col_index:
+            brs = cell.get("bounding_regions") or []
+            if brs:
+                return brs[0].get("polygon")
+    return None
+
+
 def _parse_legend_table(
     table: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -108,14 +125,20 @@ def _parse_legend_table(
     Each returned dict has:
         symbol_id, label, specification, representation_bbox
 
+    representation_bbox is taken from the symbol glyph cell (column 0) of each
+    data row when per-cell bounding_regions are available (Commit 1 data).
+    Falls back to the outer table bbox for older rows that lack cells data.
+
     Rows with empty symbol_id (col 0) are silently skipped.
     """
     rows: list[list[Any]] = table.get("rows") or []
     table_bbox: Any = table.get("bbox")
+    cells: list[dict[str, Any]] = table.get("cells") or []
 
     symbols: list[dict[str, Any]] = []
 
-    for row in rows:
+    # Data rows start at row_index 1 (row_index 0 is the header row in Azure layout).
+    for data_row_idx, row in enumerate(rows):
         if not row:
             continue
         # col 0 → symbol_id
@@ -138,12 +161,18 @@ def _parse_legend_table(
                     spec_parts.append(s)
         specification: str | None = " ".join(spec_parts) if spec_parts else None
 
+        # Per-cell bbox for the symbol glyph cell (col 0).
+        # Azure row_index 0 = header; data rows start at azure_row_index = data_row_idx + 1.
+        azure_row_index = data_row_idx + 1
+        cell_bbox = _get_cell_bbox_for_row(cells, row_index=azure_row_index, col_index=0)
+        representation_bbox = cell_bbox if cell_bbox is not None else table_bbox
+
         symbols.append(
             {
                 "symbol_id": symbol_id,
                 "label": label,
                 "specification": specification,
-                "representation_bbox": table_bbox,
+                "representation_bbox": representation_bbox,
             }
         )
 

@@ -171,6 +171,75 @@ class TestParseLegendTable:
         result = _parse_legend_table(tbl)
         assert result[0]["representation_bbox"] == bbox
 
+    def test_per_cell_bbox_extracted(self) -> None:
+        """When cells data is present, each symbol uses its own glyph-cell polygon."""
+        outer_bbox = [0, 0, 300, 0, 300, 150, 0, 150]
+        # Two data rows: azure row_index 1 and 2 (row_index 0 = header)
+        cells = [
+            # Header cells (row_index=0) — not used for representation_bbox
+            {
+                "content": "MARK", "row_index": 0, "column_index": 0,
+                "row_span": 1, "column_span": 1,
+                "bounding_regions": [{"page_number": 1, "polygon": [0, 0, 80, 0, 80, 20, 0, 20]}],
+            },
+            # Data row 1 — glyph cell (col 0) with distinct bbox
+            {
+                "content": "FP-1", "row_index": 1, "column_index": 0,
+                "row_span": 1, "column_span": 1,
+                "bounding_regions": [{"page_number": 1, "polygon": [10, 20, 70, 20, 70, 60, 10, 60]}],
+            },
+            {
+                "content": "Upright Sprinkler", "row_index": 1, "column_index": 1,
+                "row_span": 1, "column_span": 1,
+                "bounding_regions": [{"page_number": 1, "polygon": [80, 20, 300, 20, 300, 60, 80, 60]}],
+            },
+            # Data row 2 — glyph cell (col 0) with a different bbox
+            {
+                "content": "FP-2", "row_index": 2, "column_index": 0,
+                "row_span": 1, "column_span": 1,
+                "bounding_regions": [{"page_number": 1, "polygon": [10, 60, 70, 60, 70, 100, 10, 100]}],
+            },
+            {
+                "content": "Pendant Sprinkler", "row_index": 2, "column_index": 1,
+                "row_span": 1, "column_span": 1,
+                "bounding_regions": [{"page_number": 1, "polygon": [80, 60, 300, 60, 300, 100, 80, 100]}],
+            },
+        ]
+        tbl = {
+            "bbox": outer_bbox,
+            "headers": ["MARK", "DESCRIPTION"],
+            "rows": [["FP-1", "Upright Sprinkler"], ["FP-2", "Pendant Sprinkler"]],
+            "cells": cells,
+            "region_type": "legend",
+        }
+        result = _parse_legend_table(tbl)
+
+        assert len(result) == 2
+        # Each symbol should have ITS OWN per-cell bbox, NOT the shared outer bbox.
+        assert result[0]["representation_bbox"] == [10, 20, 70, 20, 70, 60, 10, 60]
+        assert result[1]["representation_bbox"] == [10, 60, 70, 60, 70, 100, 10, 100]
+        assert result[0]["representation_bbox"] != outer_bbox
+        assert result[1]["representation_bbox"] != outer_bbox
+        # The two symbols must have distinct bboxes (different rows → different positions)
+        assert result[0]["representation_bbox"] != result[1]["representation_bbox"]
+
+    def test_fallback_to_outer_bbox_when_cells_missing(self) -> None:
+        """When cells data is absent, representation_bbox falls back to the outer table bbox."""
+        outer_bbox = [0, 0, 300, 0, 300, 150, 0, 150]
+        tbl = {
+            "bbox": outer_bbox,
+            "headers": ["MARK", "DESCRIPTION"],
+            "rows": [["AHU-1", "Air Handler"], ["AHU-2", "Fan Coil Unit"]],
+            # No "cells" key — simulates older blueprint_sheet_intelligence rows
+            "region_type": "legend",
+        }
+        result = _parse_legend_table(tbl)
+
+        assert len(result) == 2
+        # Both symbols must fall back to the outer table bbox
+        assert result[0]["representation_bbox"] == outer_bbox
+        assert result[1]["representation_bbox"] == outer_bbox
+
 
 # ---------------------------------------------------------------------------
 # Integration-style tests (Supabase calls patched)
