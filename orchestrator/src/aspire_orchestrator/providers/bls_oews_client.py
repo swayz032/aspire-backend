@@ -50,7 +50,6 @@ from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.base_client import (
     BaseProviderClient,
     ProviderRequest,
-    ProviderResponse,
 )
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
 from aspire_orchestrator.services.tool_types import ToolExecutionResult
@@ -204,7 +203,7 @@ class BLSOEWSClient(BaseProviderClient):
         if status_code == 429:
             return InternalErrorCode.RATE_LIMITED
         if status_code in (500, 503):
-            return InternalErrorCode.PROVIDER_INTERNAL_ERROR
+            return InternalErrorCode.SERVER_INTERNAL_ERROR
         return super()._parse_error(status_code, body)
 
 
@@ -445,7 +444,7 @@ async def execute_bls_oews_get_wage(
             tool_id=tool_id,
             risk_tier=risk_tier,
             outcome=Outcome.FAILED,
-            reason_code="PROVIDER_INTERNAL_ERROR",
+            reason_code=InternalErrorCode.SERVER_INTERNAL_ERROR.value,
             capability_token_id=capability_token_id,
             capability_token_hash=capability_token_hash,
             provider_response=response,

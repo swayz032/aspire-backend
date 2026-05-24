@@ -45,13 +45,13 @@ except ImportError:
     _UNWRANGLE_HD_AVAILABLE = False
 
 try:
-    from aspire_orchestrator.providers.unwrangle_ferguson_client import UnwrangleFergusonClient  # type: ignore[import]
+    from aspire_orchestrator.providers.unwrangle_ferguson_client import UnwrangleFergusonClient  # type: ignore[import]  # noqa: F401
     _UNWRANGLE_FERGUSON_AVAILABLE = True
 except ImportError:
     _UNWRANGLE_FERGUSON_AVAILABLE = False
 
 try:
-    from aspire_orchestrator.providers.unwrangle_lowes_client import UnwrangleLowesClient  # type: ignore[import]
+    from aspire_orchestrator.providers.unwrangle_lowes_client import UnwrangleLowesClient  # type: ignore[import]  # noqa: F401
     _UNWRANGLE_LOWES_AVAILABLE = True
 except ImportError:
     _UNWRANGLE_LOWES_AVAILABLE = False
@@ -128,6 +128,9 @@ async def _call_unwrangle_homedepot_stub(*, line_item: str, office_zip: str | No
         return [], 0
     try:
         client = UnwrangleHomeDepotClient()  # type: ignore[name-defined]
+        if not hasattr(client, "search_products"):
+            logger.warning("adam_supplier_router: UnwrangleHomeDepotClient has no search_products — HD_NOT_IMPLEMENTED")
+            return [], 0
         results = await client.search_products(line_item, office_zip)
         return results if isinstance(results, list) else [], 1
     except Exception as exc:

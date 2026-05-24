@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aspire_orchestrator.models import Outcome
+from aspire_orchestrator.providers.error_codes import InternalErrorCode
 
 SUITE_ID = "94b89098-c4bf-4419-a154-e18d9d53f993"
 OFFICE_ID = "94b89098-c4bf-4419-a154-e18d9d53f993"
@@ -192,6 +193,131 @@ async def test_timeout_returns_failed(monkeypatch):
     )
     assert result.outcome == Outcome.FAILED
     assert result.receipt_data is not None
+
+
+# --- Coverage: rate limited 429 — account swap path ---
+
+@pytest.mark.asyncio
+async def test_rate_limited_marks_account_exhausted(monkeypatch):
+    import aspire_orchestrator.providers.serpapi_local_service_ads_client as m
+
+    exhausted_calls: list[str] = []
+    monkeypatch.setattr(m, "mark_account_exhausted", lambda acct, reason="": exhausted_calls.append(acct))
+
+    mock_resp_429 = _make_provider_response(False, {"error": "quota exceeded"}, status=429)
+    mock_resp_429.status_code = 429
+
+    other_resp = _make_provider_response(True, _SAMPLE_RESPONSE_BODY)
+
+    call_count = 0
+
+    async def _side_effect(req: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_resp_429
+        return other_resp
+
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(m._get_client(), "_request", _side_effect)
+    monkeypatch.setattr(m, "try_increment", lambda acct: True)
+    monkeypatch.setattr(m, "get_api_key", lambda acct: "fake-key-B")
+
+    from aspire_orchestrator.providers.serpapi_local_service_ads_client import execute_serpapi_local_service_ads_search
+    result = await execute_serpapi_local_service_ads_search(
+        payload={"service": "HVAC contractor"},
+        correlation_id=CORR_ID,
+        suite_id=SUITE_ID,
+        office_id=OFFICE_ID,
+    )
+    assert "A" in exhausted_calls
+
+
+# --- Coverage: budget exhausted (select_account=None) ---
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_returns_failed(monkeypatch):
+    import aspire_orchestrator.providers.serpapi_local_service_ads_client as m
+    monkeypatch.setattr(m, "select_account", lambda: None)
+
+    from aspire_orchestrator.providers.serpapi_local_service_ads_client import execute_serpapi_local_service_ads_search
+    result = await execute_serpapi_local_service_ads_search(
+        payload={"service": "plumber"},
+        correlation_id=CORR_ID,
+        suite_id=SUITE_ID,
+        office_id=OFFICE_ID,
+    )
+    assert result.outcome == Outcome.FAILED
+    assert result.receipt_data is not None
+    assert result.receipt_data.get("redacted_outputs", {}).get("engine") == "google_local_services"
+
+
+# --- Coverage: try_increment failure path (both accounts full) ---
+
+@pytest.mark.asyncio
+async def test_both_accounts_full_returns_failed(monkeypatch):
+    import aspire_orchestrator.providers.serpapi_local_service_ads_client as m
+    monkeypatch.setattr(m, "select_account", lambda: "A")
+    monkeypatch.setattr(m, "try_increment", lambda acct: False)
+
+    from aspire_orchestrator.providers.serpapi_local_service_ads_client import execute_serpapi_local_service_ads_search
+    result = await execute_serpapi_local_service_ads_search(
+        payload={"service": "hvac"},
+        correlation_id=CORR_ID,
+        suite_id=SUITE_ID,
+        office_id=OFFICE_ID,
+    )
+    assert result.outcome == Outcome.FAILED
+    assert result.receipt_data is not None
+    assert result.receipt_data.get("redacted_outputs", {}).get("engine") == "google_local_services"
+
+
+# --- Coverage: get_api_key KeyError path ---
+
+@pytest.mark.asyncio
+async def test_missing_api_key_returns_failed_with_receipt(monkeypatch):
+    import aspire_orchestrator.providers.serpapi_local_service_ads_client as m
+    monkeypatch.setattr(m, "select_account", lambda: "A")
+    monkeypatch.setattr(m, "try_increment", lambda acct: True)
+
+    def _raise_key_error(acct: str) -> str:
+        raise KeyError(acct)
+
+    monkeypatch.setattr(m, "get_api_key", _raise_key_error)
+
+    from aspire_orchestrator.providers.serpapi_local_service_ads_client import execute_serpapi_local_service_ads_search
+    result = await execute_serpapi_local_service_ads_search(
+        payload={"service": "electrician"},
+        correlation_id=CORR_ID,
+        suite_id=SUITE_ID,
+        office_id=OFFICE_ID,
+    )
+    assert result.outcome == Outcome.FAILED
+    assert result.receipt_data is not None
+    reason = result.receipt_data.get("reason_code") or ""
+    assert InternalErrorCode.AUTH_INVALID_KEY.value in reason
+    assert "fake-serpapi-key" not in str(result.receipt_data)
+
+
+# --- Coverage: provider 500 error path ---
+
+@pytest.mark.asyncio
+async def test_provider_500_returns_failed_with_receipt(monkeypatch):
+    from unittest.mock import AsyncMock
+    import aspire_orchestrator.providers.serpapi_local_service_ads_client as m
+    mock_resp = _make_provider_response(False, {"error": "internal server error"}, status=500)
+    monkeypatch.setattr(m._get_client(), "_request", AsyncMock(return_value=mock_resp))
+
+    from aspire_orchestrator.providers.serpapi_local_service_ads_client import execute_serpapi_local_service_ads_search
+    result = await execute_serpapi_local_service_ads_search(
+        payload={"service": "roofer"},
+        correlation_id=CORR_ID,
+        suite_id=SUITE_ID,
+        office_id=OFFICE_ID,
+    )
+    assert result.outcome == Outcome.FAILED
+    assert result.receipt_data is not None
+    assert result.receipt_data.get("redacted_outputs", {}).get("engine") == "google_local_services"
 
 
 # --- Integration ---

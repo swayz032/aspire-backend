@@ -34,7 +34,6 @@ from aspire_orchestrator.services.search_router import (
     route_web_search,
     route_places_search,
 )
-from aspire_orchestrator.services.tool_executor import execute_tool
 from aspire_orchestrator.services.browser_service import (
     get_browser_service,
     DomainDeniedError,

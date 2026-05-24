@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aspire_orchestrator.models import Outcome
+from aspire_orchestrator.providers.error_codes import InternalErrorCode
 
 SUITE_ID = "94b89098-c4bf-4419-a154-e18d9d53f993"
 OFFICE_ID = "94b89098-c4bf-4419-a154-e18d9d53f993"
@@ -293,6 +294,36 @@ async def test_receipt_no_pii_in_outputs(monkeypatch):
     receipt_str = str(result.receipt_data)
     # BLS data is public — no secrets or PII expected; just assert no key names sneak in
     assert "registrationkey" not in receipt_str.lower()
+
+
+# --- Error mapping: SERVER_INTERNAL_ERROR (was PROVIDER_INTERNAL_ERROR — crash fix) ---
+
+@pytest.mark.asyncio
+async def test_provider_500_maps_to_server_internal_error(monkeypatch):
+    import aspire_orchestrator.providers.bls_oews_client as m
+    mock_resp = _make_provider_response(False, {"error": "internal error"}, status=500)
+    monkeypatch.setattr(m._get_client(), "_request", AsyncMock(return_value=mock_resp))
+
+    from aspire_orchestrator.providers.bls_oews_client import execute_bls_oews_get_wage
+    result = await execute_bls_oews_get_wage(
+        payload={"soc_code": "47-2111"},
+        correlation_id=CORR_ID,
+        suite_id=SUITE_ID,
+        office_id=OFFICE_ID,
+    )
+    assert result.outcome == Outcome.FAILED
+    assert result.receipt_data is not None
+
+
+@pytest.mark.asyncio
+async def test_parse_error_500_returns_server_internal_error():
+    """Verify _parse_error maps 500/503 to SERVER_INTERNAL_ERROR (not the removed PROVIDER_INTERNAL_ERROR)."""
+    import aspire_orchestrator.providers.bls_oews_client as m
+    client = m._get_client()
+    code_500 = client._parse_error(500, {})
+    code_503 = client._parse_error(503, {})
+    assert code_500 == InternalErrorCode.SERVER_INTERNAL_ERROR
+    assert code_503 == InternalErrorCode.SERVER_INTERNAL_ERROR
 
 
 # --- Helpers ---

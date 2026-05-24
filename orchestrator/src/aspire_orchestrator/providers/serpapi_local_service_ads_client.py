@@ -39,7 +39,6 @@ from aspire_orchestrator.models import Outcome
 from aspire_orchestrator.providers.base_client import (
     BaseProviderClient,
     ProviderRequest,
-    ProviderResponse,
 )
 from aspire_orchestrator.providers.error_codes import InternalErrorCode
 from aspire_orchestrator.services.adam.serpapi_budget import (

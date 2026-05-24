@@ -529,6 +529,43 @@ class TestUnknownCategoryDenialReceipt:
 # Fix P-3: Denial receipt emitted when Ferguson/Lowes stub crashes
 # ---------------------------------------------------------------------------
 
+class TestHomeDepotStubGuard:
+    @pytest.mark.asyncio
+    async def test_hd_stub_disabled_returns_empty(self, monkeypatch):
+        """BLOCKER 2: When HD flag is disabled, stub returns ([], 0) without calling search_products."""
+        import aspire_orchestrator.services.blueprint.adam_supplier_router as router
+        monkeypatch.setattr(router, "_UNWRANGLE_HD_AVAILABLE", False)
+
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import _call_unwrangle_homedepot_stub
+        result_list, count = await _call_unwrangle_homedepot_stub(line_item="copper pipe", office_zip="30297")
+        assert result_list == []
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_hd_stub_client_without_search_products_returns_empty(self, monkeypatch):
+        """BLOCKER 2: hasattr guard — client with no search_products returns ([], 0) without crashing."""
+        import sys
+        import types
+        import aspire_orchestrator.services.blueprint.adam_supplier_router as router
+
+        class _HDClientNoMethod:
+            pass
+
+        # Inject fake module so ImportError doesn't fire
+        fake_mod = types.ModuleType("aspire_orchestrator.providers.unwrangle_homedepot_client")
+        fake_mod.UnwrangleHomeDepotClient = _HDClientNoMethod  # type: ignore[attr-defined]
+        sys.modules.setdefault("aspire_orchestrator.providers.unwrangle_homedepot_client", fake_mod)
+
+        monkeypatch.setattr(router, "_UNWRANGLE_HD_AVAILABLE", True)
+        # Patch the name used inside the stub (it does `UnwrangleHomeDepotClient()`)
+        monkeypatch.setattr(router, "UnwrangleHomeDepotClient", _HDClientNoMethod, raising=False)
+
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import _call_unwrangle_homedepot_stub
+        result_list, count = await _call_unwrangle_homedepot_stub(line_item="copper pipe", office_zip="30297")
+        assert result_list == []
+        assert count == 0
+
+
 class TestFergusonLowesStubCorrectness:
     @pytest.mark.asyncio
     async def test_ferguson_stub_calls_module_level_coroutine(self, monkeypatch):
