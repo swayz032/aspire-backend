@@ -47,6 +47,7 @@ PAD_PX = 80
 PRIMITIVE_OVERLAY_COLOR = (255, 0, 0)  # red boxes
 PRIMITIVE_OVERLAY_WIDTH = 2
 LEGEND_LABEL_EXTEND_PX = 600
+PDF_TO_PNG_SCALE = 200 / 72  # Sheet PNGs at 200 DPI; PCE composed bbox in PDF points
 
 # Cap artifact volume for tonight's spot-check
 MAX_COMPOSED_PER_PROJECT = 30
@@ -146,24 +147,27 @@ async def _fetch_composed_symbols(project_id: str, suite_id: str, cap: int) -> l
 
 
 async def _fetch_primitive_bboxes(motif_ids: list[str], suite_id: str) -> dict[str, tuple[float, float, float, float]]:
+    """Fetch primitive bboxes (PDF points) for constituent IDs.
+
+    PCE-v2 constituent_motif_ids reference blueprint_primitives.id (NOT blueprint_symbols).
+    """
     if not motif_ids:
         return {}
     out: dict[str, tuple[float, float, float, float]] = {}
-    # Page motif fetches in batches of 50
     for i in range(0, len(motif_ids), 50):
         chunk = motif_ids[i : i + 50]
         chunk_csv = ",".join(chunk)
         rows = await supabase_select(
-            "blueprint_symbols",
+            "blueprint_primitives",
             f"id=in.({chunk_csv})&suite_id=eq.{suite_id}",
         )
         for r in rows or []:
-            b = r.get("bbox") or {}
-            if isinstance(b, dict) and {"x", "y", "w", "h"}.issubset(b.keys()):
-                try:
-                    out[r["id"]] = (float(b["x"]), float(b["y"]), float(b["w"]), float(b["h"]))
-                except (TypeError, ValueError):
-                    continue
+            try:
+                x0 = float(r.get("x0") or 0); y0 = float(r.get("y0") or 0)
+                bw = float(r.get("bbox_w") or 0); bh = float(r.get("bbox_h") or 0)
+                out[r["id"]] = (x0, y0, bw, bh)
+            except (TypeError, ValueError):
+                continue
     return out
 
 
@@ -214,7 +218,14 @@ async def main() -> None:
         sheet_id = cs.get("sheet_id")
         bbox = cs.get("bbox") or {}
         try:
-            xywh = (float(bbox.get("x", 0)), float(bbox.get("y", 0)), float(bbox.get("w", 0)), float(bbox.get("h", 0)))
+            # PCE-v2 composed bbox is in PDF POINTS; sheet PNGs at 200 DPI
+            # Scale: PNG_px = PDF_pt × (200/72)
+            xywh = (
+                float(bbox.get("x", 0)) * PDF_TO_PNG_SCALE,
+                float(bbox.get("y", 0)) * PDF_TO_PNG_SCALE,
+                float(bbox.get("w", 0)) * PDF_TO_PNG_SCALE,
+                float(bbox.get("h", 0)) * PDF_TO_PNG_SCALE,
+            )
         except (TypeError, ValueError):
             continue
         png = sheet_pngs.get(sheet_id)
@@ -233,10 +244,14 @@ async def main() -> None:
             with open(composed_path, "wb") as f:
                 f.write(crop)
 
-        # Primitive overlay
+        # Primitive overlay — primitives also in PDF points, scale to PNG
         motif_ids = cs.get("constituent_motif_ids") or []
-        prim_bboxes_by_id = await _fetch_primitive_bboxes(motif_ids, SUITE)
-        prim_bboxes = list(prim_bboxes_by_id.values())
+        prim_bboxes_raw = await _fetch_primitive_bboxes(motif_ids, SUITE)
+        prim_bboxes = [
+            (b[0] * PDF_TO_PNG_SCALE, b[1] * PDF_TO_PNG_SCALE,
+             b[2] * PDF_TO_PNG_SCALE, b[3] * PDF_TO_PNG_SCALE)
+            for b in prim_bboxes_raw.values()
+        ]
         overlay = _crop_with_primitive_overlay(png, xywh, prim_bboxes)
         overlay_path = os.path.join(prim_subdir, f"{cid_short}_overlay.png")
         if overlay:
