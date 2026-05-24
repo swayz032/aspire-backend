@@ -325,10 +325,21 @@ async def _db_insert_batch(table: str, rows: list[dict[str, Any]]) -> list[dict[
 # ---------------------------------------------------------------------------
 
 async def _fetch_unresolved_motifs(project_id: str, suite_id: str) -> list[_MotifRow]:
-    """Read blueprint_symbols rows for unresolved motifs scoped to this project."""
+    """Read blueprint_symbols rows for unresolved motifs scoped to this project.
+
+    Pass 3.2 fix: blueprint_symbols has no project_id column — filter via sheet_ids
+    resolved from blueprint_sheets first.
+    """
+    sheet_rows = await _db_select(
+        "blueprint_sheets",
+        f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+    )
+    if not sheet_rows:
+        return []
+    sheet_ids_csv = ",".join(s["id"] for s in sheet_rows)
     rows = await _db_select(
         "blueprint_symbols",
-        f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+        f"sheet_id=in.({sheet_ids_csv})&suite_id=eq.{suite_id}",
     )
 
     result: list[_MotifRow] = []

@@ -380,11 +380,24 @@ def _build_topology_from_bbox(bbox_raw: Any) -> TopologyGraph | None:
             ys = [float(bbox_raw[i]) for i in (1, 3, 5, 7)]
             x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
         elif isinstance(bbox_raw, dict):
-            vals = list(bbox_raw.values())
-            if len(vals) == 4:
-                x0, y0, x1, y1 = (float(v) for v in vals)
+            # Wave 11g-v2 motif bbox: dict with x/y/w/h (+ entropy/signature_hash metadata)
+            if {"x", "y", "w", "h"}.issubset(bbox_raw.keys()):
+                x = float(bbox_raw["x"])
+                y = float(bbox_raw["y"])
+                w_d = float(bbox_raw["w"])
+                h_d = float(bbox_raw["h"])
+                x0, y0, x1, y1 = x, y, x + w_d, y + h_d
+            elif {"x0", "y0", "x1", "y1"}.issubset(bbox_raw.keys()):
+                x0 = float(bbox_raw["x0"])
+                y0 = float(bbox_raw["y0"])
+                x1 = float(bbox_raw["x1"])
+                y1 = float(bbox_raw["y1"])
             else:
-                return None
+                vals = list(bbox_raw.values())
+                if len(vals) == 4:
+                    x0, y0, x1, y1 = (float(v) for v in vals)
+                else:
+                    return None
         else:
             return None
     except (TypeError, ValueError):
