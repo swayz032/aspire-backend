@@ -371,9 +371,12 @@ _ACCEPTED_MIME_TYPES: frozenset[str] = frozenset({
 _STAGE_TIMEOUTS: dict[str, int] = {
     "ingest": 8 * 60,    # 8 minutes  — OCR + sheet DB writes
     "classify": 3 * 60,  # 3 minutes  — LLM discipline tagging (gpt-5.4 batches)
-    "see": 5 * 60,       # Wave 10b: 5 minutes — Modal T4 GPU at ~300ms/sheet with 10
-                         # parallel containers + 2 always-warm. Local-CPU fallback path
-                         # still fits in 5 min on yolo11n for 39 sheets.
+    "see": 15 * 60,      # Pass 1.5a (2026-05-24): bumped 5→15 min. SEE on local CPU
+                         # (no Modal GPU — Modal kill is gated on Wave 20.6) needs ~7-8 min
+                         # for 39-sheet projects; verified in Wave 27 validation on
+                         # 2026-05-24 where 300s ceiling fired a TimeoutError mid-run.
+                         # SEE is advisory (REASON/PROCURE read OCR text, not symbols),
+                         # so the 15-min ceiling is the safe upper bound until Modal lands.
     "reason": 5 * 60,    # Wave 10b: 5 minutes — map-reduce architecture caps stage at
                          # max(per-discipline maps ~90s) + reduce (~60s) = ~150s. 5min
                          # is 2x safety. Bumped down from 10min to surface real failures
