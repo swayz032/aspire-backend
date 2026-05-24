@@ -487,9 +487,22 @@ async def propagate_legend_bindings_to_clusters(
     )
 
     # 1. Fetch clusters already formed (re-read from blueprint_symbols)
+    # Pass 3.2 fix: blueprint_symbols has no project_id column — filter via sheet_ids
+    sheet_rows_p = await _db_select(
+        "blueprint_sheets",
+        f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+    )
+    if not sheet_rows_p:
+        return {
+            "clusters_auto_bound": 0,
+            "clusters_flagged_for_vlm": 0,
+            "clusters_unknown": 0,
+            "total_motifs_resolved": 0,
+        }
+    sheet_ids_csv_p = ",".join(s["id"] for s in sheet_rows_p)
     symbol_rows = await _db_select(
         "blueprint_symbols",
-        f"project_id=eq.{project_id}&suite_id=eq.{suite_id}&cluster_id=not.is.null",
+        f"sheet_id=in.({sheet_ids_csv_p})&suite_id=eq.{suite_id}&cluster_id=not.is.null",
     )
 
     if not symbol_rows:
