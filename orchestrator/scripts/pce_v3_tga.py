@@ -58,8 +58,8 @@ def _line_angle_bin(angle_deg: float | None) -> int:
     return int(abs(angle_deg) // 15) * 15 % 180
 
 
-async def _fetch_sheet_primitives(sheet_id: str) -> list[dict]:
-    """Fetch visible non-tiny primitives for one sheet (paginated)."""
+async def _fetch_sheet_curves(sheet_id: str) -> list[dict]:
+    """Fetch ONLY visible curves for one sheet (small subset, used as seeds)."""
     rows: list[dict] = []
     last_id = ""
     while True:
@@ -67,8 +67,9 @@ async def _fetch_sheet_primitives(sheet_id: str) -> list[dict]:
         page = await supabase_select(
             "blueprint_primitives",
             f"sheet_id=eq.{sheet_id}&suite_id=eq.{SUITE}"
-            f"&raster_density=gte.{_VISIBILITY_FLOOR}{cursor}&order=id",
-            limit=1000,
+            f"&primitive_type=eq.curve&raster_density=gte.{_VISIBILITY_FLOOR}"
+            f"{cursor}&order=id",
+            limit=500,
         )
         if not page:
             break
@@ -78,9 +79,28 @@ async def _fetch_sheet_primitives(sheet_id: str) -> list[dict]:
             ) >= _MIN_PRIMITIVE_DIM
         ])
         last_id = page[-1]["id"]
-        if len(page) < 1000:
+        if len(page) < 500:
             break
     return rows
+
+
+async def _fetch_primitives_in_bbox(sheet_id: str, cx: float, cy: float, radius: float) -> list[dict]:
+    """Fetch visible primitives within a spatial bbox around (cx, cy)."""
+    x0 = cx - radius; y0 = cy - radius
+    x1 = cx + radius; y1 = cy + radius
+    rows = await supabase_select(
+        "blueprint_primitives",
+        f"sheet_id=eq.{sheet_id}&suite_id=eq.{SUITE}"
+        f"&cx=gte.{x0}&cx=lte.{x1}"
+        f"&cy=gte.{y0}&cy=lte.{y1}"
+        f"&raster_density=gte.{_VISIBILITY_FLOOR}&order=id",
+        limit=500,
+    )
+    return [
+        p for p in (rows or []) if max(
+            float(p.get("bbox_w") or 0), float(p.get("bbox_h") or 0)
+        ) >= _MIN_PRIMITIVE_DIM
+    ]
 
 
 async def _fetch_paragraph_polygons(sheet_id: str) -> list[list[float]]:
@@ -259,34 +279,60 @@ async def main() -> None:
     inserts: list[dict] = []
 
     for sheet_id in symbol_sheet_ids:
-        prims = await _fetch_sheet_primitives(sheet_id)
-        if not prims:
-            continue
-        para_polys = await _fetch_paragraph_polygons(sheet_id)
-
-        # Centroids
-        centroids: list[tuple[float, float]] = []
-        for p in prims:
-            try:
-                centroids.append((float(p.get("cx") or 0), float(p.get("cy") or 0)))
-            except (TypeError, ValueError):
-                centroids.append((0.0, 0.0))
-
-        # Seed with curves only (anchors)
-        curve_seeds = [i for i, p in enumerate(prims) if p.get("primitive_type") == "curve"]
+        # Get curve seeds (small fast query)
+        curve_seeds = await _fetch_sheet_curves(sheet_id)
         if not curve_seeds:
             continue
-
-        claimed: set[int] = set()
+        para_polys = await _fetch_paragraph_polygons(sheet_id)
+        claimed_ids: set[str] = set()
         sheet_components = 0
+        sheet_persisted = 0
 
         for seed in curve_seeds:
-            if seed in claimed:
+            sid = str(seed["id"])
+            if sid in claimed_ids:
                 continue
-            comp = _grow_component(seed, prims, centroids, para_polys, claimed)
+
+            # Fetch local neighborhood per seed (small, fast, scoped)
+            try:
+                cx_seed = float(seed.get("cx") or 0); cy_seed = float(seed.get("cy") or 0)
+            except (TypeError, ValueError):
+                continue
+            neighborhood = await _fetch_primitives_in_bbox(
+                sheet_id, cx_seed, cy_seed, _GROWTH_RADIUS * 2,
+            )
+            if not neighborhood:
+                continue
+
+            # Find seed in neighborhood (must include itself)
+            seed_idx = -1
+            for i, p in enumerate(neighborhood):
+                if str(p["id"]) == sid:
+                    seed_idx = i; break
+            if seed_idx < 0:
+                neighborhood = [seed] + neighborhood
+                seed_idx = 0
+
+            centroids = [
+                (float(p.get("cx") or 0), float(p.get("cy") or 0)) for p in neighborhood
+            ]
+            # Local-claimed-by-id (not index; neighborhood differs per seed)
+            local_claimed: set[int] = set()
+            # Skip primitives already claimed by other components on this sheet
+            for i, p in enumerate(neighborhood):
+                if str(p["id"]) in claimed_ids:
+                    local_claimed.add(i)
+
+            comp = _grow_component(seed_idx, neighborhood, centroids, para_polys, local_claimed)
             total_components += 1
             sheet_components += 1
             stop_breakdown[comp["stop_reason"]] += 1
+
+            # Mark globally claimed
+            for i in comp["members"]:
+                claimed_ids.add(str(neighborhood[i]["id"]))
+            # Set prims/centroids refs so downstream code matches
+            prims = neighborhood
 
             if len(comp["members"]) < 2:
                 continue
