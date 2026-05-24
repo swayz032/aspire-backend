@@ -1,4 +1,4 @@
-﻿"""Unwrangle Lowes Provider Client -- local hardware/home improvement supplier discovery (Wave 5.1a).
+"""Unwrangle Lowes Provider Client -- local hardware/home improvement supplier discovery (Wave 5.1a).
 
 Provider: Unwrangle (https://data.unwrangle.com) -- Lowes engine
 Auth: Query parameter `api_key` -- no auth headers
@@ -10,8 +10,11 @@ Verified working as of 2026-05-17:
   - lowes_category: 431 dishwasher results with store-localized inventory
   - lowes_detail: Full Husqvarna spec sheet with variants
 
-Known broken (Unwrangle-side -- Wave 5.2 re-enable):
-  - lowes_search -> returns 504 upstream scraper failure (NOT wired here)
+Known broken (Unwrangle-side -- Unwrangle ticket confirmed, Wave 5.2 re-enable candidate):
+  - lowes_search -> returns 504 upstream scraper failure from Unwrangle.
+    search_products() is wired but fail-fasts on 504 with receipt code
+    provider.unwrangle_lowes.504_skip. DO NOT retry -- Unwrangle has confirmed
+    the upstream scraper is broken; retrying wastes credits.
 
 PII policy: zipcode is not PII (safe to log). Store addresses NOT logged.
 
@@ -19,6 +22,7 @@ Tools:
   - unwrangle_lowes.find_nearest_store: Find up to 10 nearby Lowes stores by ZIP
   - unwrangle_lowes.browse_category: Browse a Lowes category URL with store inventory
   - unwrangle_lowes.get_product_detail: Fetch full Lowes product detail by URL
+  - unwrangle_lowes.search_products: Keyword search (lowes_search platform -- currently 504 upstream)
 """
 
 from __future__ import annotations
@@ -463,5 +467,158 @@ async def get_product_detail(
         return ToolExecutionResult(
             outcome=Outcome.FAILED, tool_id=tool_id,
             error=response.error_message or f"Unwrangle Lowes detail error: HTTP {response.status_code}",
+            receipt_data=receipt,
+        )
+
+
+async def search_products(
+    query: str,
+    *,
+    suite_id: str,
+    office_id: str,
+    correlation_id: str,
+    page: int = 1,
+    store_no: str | None = None,
+    zipcode: str | None = None,
+    risk_tier: str = "green",
+    capability_token_id: str | None = None,
+    capability_token_hash: str | None = None,
+) -> ToolExecutionResult:
+    """Keyword search on Lowe's via Unwrangle lowes_search platform.
+
+    KNOWN UPSTREAM ISSUE: Unwrangle confirmed via ticket that lowes_search returns
+    504 from their scraper. This method is wired for forward-compatibility (Wave 5.2
+    re-enable) but will fast-fail on 504 with reason_code provider.unwrangle_lowes.504_skip.
+    The orchestrator MUST NOT retry on 504 -- it wastes credits and the upstream will
+    not recover within a single request cycle.
+
+    On 504: returns empty result list with upstream_error=504 in data.
+    On success: returns results list with result_count and credits_remaining.
+    """
+    client = _get_client()
+    tool_id = "unwrangle_lowes.search_products"
+
+    api_key, deny = _check_api_key(
+        client, tool_id, correlation_id, suite_id, office_id,
+        risk_tier, capability_token_id, capability_token_hash,
+    )
+    if deny is not None:
+        return deny
+
+    if not query or not query.strip():
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id, suite_id=suite_id, office_id=office_id,
+            tool_id=tool_id, risk_tier=risk_tier, outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.INPUT_MISSING_REQUIRED.value,
+            capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(outcome=Outcome.FAILED, tool_id=tool_id,
+            error="Missing required parameter: query", receipt_data=receipt)
+
+    if len(query) > 500:
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id, suite_id=suite_id, office_id=office_id,
+            tool_id=tool_id, risk_tier=risk_tier, outcome=Outcome.FAILED,
+            reason_code=InternalErrorCode.INPUT_INVALID_FORMAT.value,
+            capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
+        )
+        return ToolExecutionResult(outcome=Outcome.FAILED, tool_id=tool_id,
+            error="query exceeds 500 character limit", receipt_data=receipt)
+
+    query_safe = query[:100]
+    logger.info(
+        "unwrangle_lowes.search_products: query=%r page=%d store_no=%s suite=%s corr=%s",
+        query_safe, page, store_no, suite_id[:8], correlation_id[:8],
+    )
+
+    query_params: dict[str, str] = {
+        "platform": "lowes_search",
+        "search": query,
+        "page": str(page),
+        "api_key": api_key,  # type: ignore[arg-type]
+    }
+    if store_no is not None:
+        query_params["store_no"] = store_no
+    if zipcode is not None:
+        query_params["zipcode"] = zipcode
+
+    request = ProviderRequest(
+        method="GET", path="/api/getter/",
+        query_params=query_params,
+        correlation_id=correlation_id, suite_id=suite_id, office_id=office_id,
+    )
+
+    response = await client._request(request)
+
+    # Unwrangle lowes_search returns 504 due to broken upstream scraper (confirmed via ticket).
+    # Fail-fast: emit skip receipt and return empty result. DO NOT retry.
+    if _is_upstream_degraded(response):
+        logger.warning(
+            "provider.unwrangle_lowes.504_skip: endpoint=lowes_search "
+            "reason=upstream_scraper_504_confirmed suite=%s corr=%s",
+            suite_id[:8], correlation_id[:8],
+        )
+        receipt = client.make_receipt_data(
+            correlation_id=correlation_id, suite_id=suite_id, office_id=office_id,
+            tool_id=tool_id, risk_tier=risk_tier, outcome=Outcome.FAILED,
+            reason_code=_UPSTREAM_DEGRADED,
+            capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
+            provider_response=response,
+        )
+        receipt["redacted_inputs"] = {
+            "platform": "lowes_search", "query_normalized": query_safe,
+            "page": page, "store_no": store_no,
+        }
+        receipt["upstream_skip"] = "provider.unwrangle_lowes.504_skip"
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED, tool_id=tool_id,
+            error="Unwrangle lowes_search upstream scraper unavailable (504) -- known broken, do not retry",
+            data={"results": [], "result_count": 0, "upstream_error": 504, "source": "unwrangle_lowes"},
+            receipt_data=receipt,
+        )
+
+    outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
+    reason = "EXECUTED" if response.success else (
+        response.error_code.value if response.error_code else "FAILED"
+    )
+    receipt = client.make_receipt_data(
+        correlation_id=correlation_id, suite_id=suite_id, office_id=office_id,
+        tool_id=tool_id, risk_tier=risk_tier, outcome=outcome, reason_code=reason,
+        capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
+        provider_response=response,
+    )
+    receipt["redacted_inputs"] = {
+        "platform": "lowes_search", "query_normalized": query_safe,
+        "page": page, "store_no": store_no,
+    }
+
+    if response.success:
+        raw_results: list[Any] = response.body.get("results", [])
+        result_count = len(raw_results)
+        credits_remaining = response.body.get("remaining_credits")
+        logger.info(
+            "unwrangle_lowes.search_products success: results=%d query=%r suite=%s",
+            result_count, query_safe, suite_id[:8],
+        )
+        if credits_remaining is not None:
+            receipt.setdefault("provider_metadata", {})
+            receipt["provider_metadata"]["credits_remaining"] = credits_remaining
+        receipt["redacted_outputs"] = {
+            "result_count": result_count, "source_api": "lowes_search",
+            "query_normalized": query_safe,
+        }
+        return ToolExecutionResult(
+            outcome=Outcome.SUCCESS, tool_id=tool_id,
+            data={
+                "results": raw_results, "result_count": result_count,
+                "query": query, "page": page, "store_no": store_no,
+                "source": "unwrangle_lowes", "credits_remaining": credits_remaining,
+            },
+            receipt_data=receipt,
+        )
+    else:
+        return ToolExecutionResult(
+            outcome=Outcome.FAILED, tool_id=tool_id,
+            error=response.error_message or f"Unwrangle Lowes search error: HTTP {response.status_code}",
             receipt_data=receipt,
         )

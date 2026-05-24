@@ -34,7 +34,6 @@ from aspire_orchestrator.services.search_router import (
     route_web_search,
     route_places_search,
 )
-from aspire_orchestrator.services.tool_executor import execute_tool
 from aspire_orchestrator.services.browser_service import (
     get_browser_service,
     DomainDeniedError,
@@ -248,6 +247,222 @@ class AdamResearchSkillPack:
             receipt=receipt,
             error=None if is_success else candidate_list.get("degradation_reason"),
         )
+    async def subcontractor_discovery(
+        self,
+        payload: dict[str, Any],
+        context: AdamResearchContext,
+    ) -> SkillPackResult:
+        """SUBCONTRACTOR_DISCOVERY — Find local subcontractors via Google Local + LSA.
+
+        Calls SerpApi google_local and google_local_services in parallel, unions
+        results (Google-vetted LSA contractors ranked first), returns top 5.
+        Always-on for projects > $25K per plan decision (2026-05-22).
+
+        GREEN tier. Read-only search.
+
+        Input payload keys:
+            trade:    str — Trade type (e.g. "electrician", "plumber", "HVAC")
+            zipcode:  str — Project ZIP code for geographic scoping
+            scope:    str | None — Optional scope hint (e.g. "commercial")
+
+        Law compliance:
+          Law #1: Returns candidates only. Orchestrator decides ranking/selection.
+          Law #2: Receipt emitted; sub-receipts emitted per provider.
+          Law #3: Missing trade/zipcode -> fail-closed with receipt.
+          Law #6: suite_id/office_id scoped throughout.
+          Law #9: Only trade[:50] + counts in receipt redacted_outputs.
+        """
+        trade = str(payload.get("trade") or "").strip()
+        zipcode = str(payload.get("zipcode") or "").strip()
+
+        if not trade:
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type="adam.subcontractor_discovery",
+                status="denied",
+                inputs={"action": "adam.subcontractor_discovery", "trade": ""},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_TRADE"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: trade")
+
+        if not zipcode:
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type="adam.subcontractor_discovery",
+                status="denied",
+                inputs={"action": "adam.subcontractor_discovery", "trade": trade[:50], "zipcode": ""},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_ZIPCODE"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: zipcode")
+
+        scope = str(payload.get("scope") or "").strip()
+        location = zipcode  # SerpApi accepts ZIP directly as location
+
+        import time as _time
+        t0 = _time.monotonic()
+
+        discovery = await _run_subcontractor_discovery(
+            trade=trade,
+            location=location,
+            scope=scope,
+            context=context,
+        )
+
+        elapsed_ms = (_time.monotonic() - t0) * 1000
+
+        total_found = discovery.get("total_found", 0)
+        receipt = _emit_receipt(
+            ctx=context,
+            event_type="adam.subcontractor_discovery",
+            status="degraded" if total_found == 0 else "ok",
+            inputs={"action": "adam.subcontractor_discovery", "trade": trade[:50], "zipcode": zipcode},
+            metadata={
+                "candidates_returned": len(discovery.get("candidates", [])),
+                "total_found": total_found,
+                "lsa_count": discovery.get("lsa_count", 0),
+                "local_count": discovery.get("local_count", 0),
+                "sources_called": discovery.get("sources_called", []),
+                "latency_ms": round(elapsed_ms, 1),
+            },
+        )
+        from aspire_orchestrator.services.receipt_store import store_receipts as _store_receipts
+        _store_receipts([receipt])
+
+        return SkillPackResult(
+            success=True,
+            data=discovery,
+            receipt=receipt,
+        )
+
+    async def labor_rate_lookup(
+        self,
+        payload: dict[str, Any],
+        context: AdamResearchContext,
+    ) -> SkillPackResult:
+        """LABOR_RATE_LOOKUP — Retrieve BLS OEWS wage band for a trade + zipcode.
+
+        Maps trade → locked SOC code, maps zipcode → MSA code (static table),
+        calls BLS OEWS API, returns wage band (hourly percentiles + median).
+
+        GREEN tier. Free .gov data, read-only.
+
+        Input payload keys:
+            trade:    str — Trade type (e.g. "electrician", "hvac")
+            zipcode:  str — Project ZIP code for MSA-level wage lookup
+
+        Law compliance:
+          Law #1: Returns wage data only. Orchestrator/Drew uses for estimate enrichment.
+          Law #2: Receipt emitted per call.
+          Law #3: Unknown trade -> fail-closed. BLS no-data -> fail-closed with receipt.
+          Law #6: suite_id/office_id scoped throughout.
+          Law #9: No PII — OEWS data is public government statistics.
+        """
+        from aspire_orchestrator.providers.bls_oews_client import (
+            execute_bls_oews_get_wage,
+            resolve_soc_code,
+        )
+        from aspire_orchestrator.services.adam.zip_to_msa import zip_to_msa_code
+
+        trade = str(payload.get("trade") or "").strip()
+        zipcode = str(payload.get("zipcode") or "").strip()
+
+        if not trade:
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type="adam.labor_rate_lookup",
+                status="denied",
+                inputs={"action": "adam.labor_rate_lookup", "trade": ""},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_TRADE"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: trade")
+
+        if not zipcode:
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type="adam.labor_rate_lookup",
+                status="denied",
+                inputs={"action": "adam.labor_rate_lookup", "trade": trade[:50], "zipcode": ""},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["MISSING_ZIPCODE"]
+            return SkillPackResult(success=False, receipt=receipt, error="Missing required parameter: zipcode")
+
+        soc_code = resolve_soc_code(trade)
+        if soc_code is None:
+            receipt = _emit_receipt(
+                ctx=context,
+                event_type="adam.labor_rate_lookup",
+                status="denied",
+                inputs={"action": "adam.labor_rate_lookup", "trade": trade[:50], "zipcode": zipcode},
+            )
+            receipt["policy"]["decision"] = "deny"
+            receipt["policy"]["reasons"] = ["UNKNOWN_TRADE"]
+            return SkillPackResult(
+                success=False,
+                receipt=receipt,
+                error=f"Unknown trade: {trade!r}. Supported: electrician, plumber, drywaller, painter, hvac",
+            )
+
+        # Resolve ZIP → MSA (best-effort; falls back to national if not found)
+        msa_code: str | None = zip_to_msa_code(zipcode)
+
+        bls_payload: dict[str, Any] = {"soc_code": soc_code}
+        if msa_code:
+            bls_payload["msa_code"] = msa_code
+
+        import time as _time
+        t0 = _time.monotonic()
+
+        result = await execute_bls_oews_get_wage(
+            payload=bls_payload,
+            correlation_id=context.correlation_id,
+            suite_id=context.suite_id,
+            office_id=context.office_id,
+            capability_token_id=context.capability_token_id,
+            capability_token_hash=context.capability_token_hash,
+        )
+
+        elapsed_ms = (_time.monotonic() - t0) * 1000
+        is_success = result.outcome == Outcome.SUCCESS
+
+        receipt = _emit_receipt(
+            ctx=context,
+            event_type="adam.labor_rate_lookup",
+            status="ok" if is_success else "failed",
+            inputs={"action": "adam.labor_rate_lookup", "trade": trade[:50], "zipcode": zipcode},
+            metadata={
+                "soc_code": soc_code,
+                "msa_code": msa_code,
+                "area_type": result.data.get("area_type") if is_success else None,
+                "median_hourly": result.data.get("median_hourly") if is_success else None,
+                "year": result.data.get("year") if is_success else None,
+                "latency_ms": round(elapsed_ms, 1),
+            },
+        )
+        from aspire_orchestrator.services.receipt_store import store_receipts as _store_receipts
+        _store_receipts([receipt])
+
+        if is_success:
+            return SkillPackResult(
+                success=True,
+                data={
+                    **result.data,
+                    "trade": trade,
+                    "zipcode": zipcode,
+                    "msa_code": msa_code,
+                },
+                receipt=receipt,
+            )
+
+        return SkillPackResult(
+            success=False,
+            receipt=receipt,
+            error=result.error or "BLS OEWS lookup failed",
+        )
+
     async def research_playbook(
         self,
         query: str,
@@ -743,6 +958,70 @@ def _build_comparison(
         "vendors": vendors,
         "sources": sources,
         "total_results": len(vendors),
+    }
+
+
+async def _run_subcontractor_discovery(
+    trade: str,
+    location: str,
+    scope: str,
+    context: AdamResearchContext,
+) -> dict[str, Any]:
+    """Run Local + LSA searches in parallel and union + rank results (vetted first)."""
+    from aspire_orchestrator.providers.serpapi_local_client import execute_serpapi_local_search
+    from aspire_orchestrator.providers.serpapi_local_service_ads_client import execute_serpapi_local_service_ads_search
+
+    args = {
+        "correlation_id": context.correlation_id,
+        "suite_id": context.suite_id,
+        "office_id": context.office_id,
+        "capability_token_id": context.capability_token_id,
+        "capability_token_hash": context.capability_token_hash,
+    }
+
+    query = f"{trade} contractor {scope}".strip() if scope else f"{trade} contractor"
+
+    local_result, lsa_result = await asyncio.gather(
+        execute_serpapi_local_search(
+            payload={"query": query, "location": location},
+            **args,
+        ),
+        execute_serpapi_local_service_ads_search(
+            payload={"service": trade, "location": location},
+            **args,
+        ),
+        return_exceptions=True,
+    )
+
+    candidates: list[dict[str, Any]] = []
+
+    # LSA results first — Google-vetted contractors ranked higher
+    if not isinstance(lsa_result, Exception) and lsa_result.outcome == Outcome.SUCCESS and lsa_result.data:
+        for c in lsa_result.data.get("contractors", []):
+            candidates.append({**c, "source": "lsa", "vetted": c.get("google_vetted", False)})
+
+    # Local results next, deduplicated by name (case-insensitive)
+    seen_names: set[str] = {c["name"].lower() for c in candidates}
+    if not isinstance(local_result, Exception) and local_result.outcome == Outcome.SUCCESS and local_result.data:
+        for b in local_result.data.get("businesses", []):
+            if b.get("name", "").lower() not in seen_names:
+                candidates.append({**b, "source": "local", "vetted": False})
+                seen_names.add(b.get("name", "").lower())
+
+    return {
+        "candidates": candidates[:5],
+        "total_found": len(candidates),
+        "lsa_count": (
+            len(lsa_result.data.get("contractors", []))
+            if not isinstance(lsa_result, Exception) and lsa_result.outcome == Outcome.SUCCESS and lsa_result.data
+            else 0
+        ),
+        "local_count": (
+            len(local_result.data.get("businesses", []))
+            if not isinstance(local_result, Exception) and local_result.outcome == Outcome.SUCCESS and local_result.data
+            else 0
+        ),
+        "sources_called": ["serpapi_local", "serpapi_local_service_ads"],
     }
 
 
