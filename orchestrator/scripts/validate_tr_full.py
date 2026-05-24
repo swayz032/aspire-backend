@@ -40,11 +40,22 @@ async def main() -> None:
 
     print()
     print("=== STEP 3: Final terminal_state distribution ===")
-    rows = await supabase_select(
-        "blueprint_resolved_symbols",
-        f"project_id=eq.{PROJ}&suite_id=eq.{SUITE}",
-        limit=200000,
-    )
+    # Paginate — Supabase REST hard-caps at 1000/request
+    rows: list[dict] = []
+    last_id = ""
+    while True:
+        cur = f"&id=gt.{last_id}" if last_id else ""
+        page = await supabase_select(
+            "blueprint_resolved_symbols",
+            f"project_id=eq.{PROJ}&suite_id=eq.{SUITE}{cur}&order=id",
+            limit=1000,
+        )
+        if not page:
+            break
+        rows.extend(page)
+        last_id = page[-1]["id"]
+        if len(page) < 1000:
+            break
     counts_rows: dict[str, int] = {}
     counts_inst: dict[str, int] = {}
     for r in rows or []:

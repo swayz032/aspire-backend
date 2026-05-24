@@ -212,7 +212,7 @@ async def verify_borderline_binding(
             "role": "user",
             "content": [
                 {
-                    "type": "text",
+                    "type": "input_text",
                     "text": (
                         "Are these two construction symbols the same? "
                         "Answer YES or NO with one-sentence reason. "
@@ -221,12 +221,12 @@ async def verify_borderline_binding(
                     ),
                 },
                 {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{motif_b64}"},
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{motif_b64}",
                 },
                 {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{legend_b64}"},
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{legend_b64}",
                 },
             ],
         }
