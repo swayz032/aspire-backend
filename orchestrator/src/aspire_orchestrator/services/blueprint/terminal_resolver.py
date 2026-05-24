@@ -426,24 +426,23 @@ async def resolve_terminal_states(
         if sig:
             legend_signatures[sig] = lid
 
-    # 4. Stream motifs per sheet (IN-clause on 39 sheets + offset pagination times out)
+    # 4. Stream motifs per sheet using cursor-based pagination (offset>30K times out)
     motif_rows: list[dict[str, Any]] = []
-    page_size = 1000
+    page_size = 500
     for sid in sheet_ids:
-        offset = 0
+        last_id = ""
         while True:
+            cursor = f"&id=gt.{last_id}" if last_id else ""
             page = await supabase_select(
                 "blueprint_symbols",
-                f"sheet_id=eq.{sid}&suite_id=eq.{suite_id}&order=id&offset={offset}",
+                f"sheet_id=eq.{sid}&suite_id=eq.{suite_id}{cursor}&order=id",
                 limit=page_size,
             )
             if not page:
                 break
             motif_rows.extend(page)
+            last_id = page[-1]["id"]
             if len(page) < page_size:
-                break
-            offset += page_size
-            if offset > 50000:
                 break
 
     # 5. Aggregate into families
