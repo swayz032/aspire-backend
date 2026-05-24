@@ -205,10 +205,11 @@ class _Family:
         "signature_hash",
         "rows",                  # list of motif row dicts
         "total_instances",       # sum of instance_count across rows
-        "dominant_name",         # most common original_class
-        "dominant_sheet_id",     # sheet with most rows
-        "centroid_bbox",         # avg (x, y, w, h)
-        "max_text_overlap",      # max overlap any row had with text region
+        "dominant_name",         # most common original_class (only set if consensus >= threshold)
+        "dominant_name_share",   # fraction of family rows agreeing on dominant_name
+        "dominant_sheet_id",
+        "centroid_bbox",
+        "max_text_overlap",
     )
 
     def __init__(self, sig: str) -> None:
@@ -216,6 +217,7 @@ class _Family:
         self.rows: list[dict[str, Any]] = []
         self.total_instances: int = 0
         self.dominant_name: str = ""
+        self.dominant_name_share: float = 0.0
         self.dominant_sheet_id: str | None = None
         self.centroid_bbox: tuple[float, float, float, float] | None = None
         self.max_text_overlap: float = 0.0
@@ -256,13 +258,16 @@ def _aggregate_families(motif_rows: list[dict[str, Any]]) -> dict[str, _Family]:
                 s[0] += xywh[0]; s[1] += xywh[1]; s[2] += xywh[2]; s[3] += xywh[3]; s[4] += 1
 
     for sig, fam in families.items():
-        # Pick most common name
+        # Consensus name (only set if >=50% of named rows agree AND name is non-cruft)
         if name_counts[sig]:
-            fam.dominant_name = max(name_counts[sig].items(), key=lambda kv: kv[1])[0]
-        # Pick most common sheet
+            top_name, top_count = max(name_counts[sig].items(), key=lambda kv: kv[1])
+            total_named = sum(name_counts[sig].values())
+            share = top_count / max(total_named, 1)
+            if share >= 0.5 and not top_name.lower().startswith("unknown_motif"):
+                fam.dominant_name = top_name
+                fam.dominant_name_share = share
         if sheet_counts[sig]:
             fam.dominant_sheet_id = max(sheet_counts[sig].items(), key=lambda kv: kv[1])[0]
-        # Centroid bbox
         s = bbox_sums[sig]
         if s[4] > 0:
             n = s[4]
