@@ -50,8 +50,10 @@ _log = logging.getLogger(__name__)
 _TEXT_OVERLAP_THRESHOLD = 0.30
 _COMPOSED_MIN_AREA = 100.0
 _TOKEN_OVERLAP_FLOOR = 0.5
-_EMBEDDING_BIND_FLOOR = 0.85   # composed-symbol embedding ↔ legend embedding cosine for deterministic bind
-_EMBEDDING_VLM_FLOOR = 0.60    # cosine ≥ this → flag for VLM tiebreaker
+_EMBEDDING_BIND_FLOOR = 999.0  # DISABLED: bbox-synthetic embeddings have zero discriminative power
+                               # — every rectangle scores 0.99+ → false positive explosion verified on Gulfstream.
+                               # Embedding-based binding gated until real vector primitives flow into topology.
+_EMBEDDING_VLM_FLOOR = 0.60
 
 _DIMENSION_RE = re.compile(r"\d+['′’]?\s*[-–]?\s*\d+\s*[\"″”]?|\d+\s*(SF|sf|sqft)")
 _ROOM_NUMBER_RE = re.compile(r"^[A-Z]{0,3}[-.]?\d{2,4}[A-Z]?$")
