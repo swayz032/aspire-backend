@@ -25,6 +25,12 @@ import re
 import uuid
 from typing import Any
 
+from aspire_orchestrator.services.blueprint.symbol_family_embedder import (
+    _build_topology_from_bbox,
+    compute_embedding,
+    cosine_similarity,
+    deserialize_embedding,
+)
 from aspire_orchestrator.services.blueprint.terminal_resolver import (
     ALL_STATES,
     STATE_BOUND_MATERIAL,
@@ -42,8 +48,10 @@ from aspire_orchestrator.services.supabase_client import (
 _log = logging.getLogger(__name__)
 
 _TEXT_OVERLAP_THRESHOLD = 0.30
-_COMPOSED_MIN_AREA = 100.0  # composed symbols < this likely junk
+_COMPOSED_MIN_AREA = 100.0
 _TOKEN_OVERLAP_FLOOR = 0.5
+_EMBEDDING_BIND_FLOOR = 0.85   # composed-symbol embedding ↔ legend embedding cosine for deterministic bind
+_EMBEDDING_VLM_FLOOR = 0.60    # cosine ≥ this → flag for VLM tiebreaker
 
 _DIMENSION_RE = re.compile(r"\d+['′’]?\s*[-–]?\s*\d+\s*[\"″”]?|\d+\s*(SF|sf|sqft)")
 _ROOM_NUMBER_RE = re.compile(r"^[A-Z]{0,3}[-.]?\d{2,4}[A-Z]?$")
@@ -123,13 +131,14 @@ async def resolve_composed_symbols(
         if sid:
             paragraphs_per_sheet[sid] = polys
 
-    # 2. Legend dictionary
+    # 2. Legend dictionary + embeddings
     legend_rows = await supabase_select(
         "blueprint_project_legends",
         f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
     )
     labels_lower: dict[str, str] = {}
     legend_signatures: dict[str, str] = {}
+    legend_embeddings: list[tuple[str, str, Any]] = []  # (id, label, np.ndarray)
     for lr in legend_rows or []:
         lid = lr.get("id")
         if not lid:
@@ -140,6 +149,11 @@ async def resolve_composed_symbols(
         sig = lr.get("vector_signature")
         if sig:
             legend_signatures[sig] = lid
+            try:
+                emb = deserialize_embedding(sig)
+                legend_embeddings.append((lid, label, emb))
+            except Exception:  # noqa: BLE001
+                pass
 
     # 3. Stream composed symbols paginated
     composed_rows: list[dict[str, Any]] = []
@@ -185,17 +199,37 @@ async def resolve_composed_symbols(
 
         state = STATE_UNKNOWN_REVIEW
         legend_id = None
+        binding_cosine = 0.0
 
         # CRUFT first only if obviously tiny
         if area < _COMPOSED_MIN_AREA:
             state = STATE_CRUFT
         else:
-            # BOUND_MATERIAL by composed signature
+            # 1. Exact composed_signature match (rare but precise)
             if composed_sig and composed_sig in legend_signatures:
                 state = STATE_BOUND_MATERIAL
                 legend_id = legend_signatures[composed_sig]
+                binding_cosine = 1.0
 
-            # TEXT_OCR overlap on dominant text region
+            # 2. Embedding cosine match — Wave 20.13.2 (composed bbox ↔ legend embedding)
+            if state == STATE_UNKNOWN_REVIEW and legend_embeddings:
+                topo = _build_topology_from_bbox(bbox_dict)
+                if topo is not None:
+                    try:
+                        cs_emb = compute_embedding(topo)
+                        best_sim, best_id = -1.0, None
+                        for lid_c, _label, lemb in legend_embeddings:
+                            s = cosine_similarity(cs_emb, lemb)
+                            if s > best_sim:
+                                best_sim, best_id = s, lid_c
+                        if best_sim >= _EMBEDDING_BIND_FLOOR and best_id is not None:
+                            state = STATE_BOUND_MATERIAL
+                            legend_id = best_id
+                            binding_cosine = best_sim
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            # 3. TEXT_OCR overlap
             if state == STATE_UNKNOWN_REVIEW and sheet_id in paragraphs_per_sheet:
                 for poly in paragraphs_per_sheet[sheet_id]:
                     if _bbox_overlap_ratio(xywh, poly) >= _TEXT_OVERLAP_THRESHOLD:
@@ -212,8 +246,8 @@ async def resolve_composed_symbols(
             "legend_id": legend_id,
             "bbox": bbox_dict,
             "symbol_name": None,
-            "confidence": float(cs.get("plausibility_score") or 0.0),
-            "resolution_source": "composed_terminal_resolver",
+            "confidence": float(binding_cosine if binding_cosine > 0 else (cs.get("plausibility_score") or 0.0)),
+            "resolution_source": "composed_terminal_resolver" if state != STATE_BOUND_MATERIAL else "composed_embedding_match",
             "cluster_id": f"composed_{cs['id'][:16]}",
             "motif_hash": composed_sig,
             "terminal_state": state,
