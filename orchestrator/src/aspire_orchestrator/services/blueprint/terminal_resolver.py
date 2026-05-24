@@ -291,56 +291,60 @@ def _compute_family_text_overlap(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _route_family(
+def _route_family_by_name(
     fam: _Family,
+    *,
+    legend_labels_lower: dict[str, str],
+    legend_signatures: dict[str, str],
+) -> tuple[str, str | None] | None:
+    """Per-family name-only routing — applies same decision to all members.
+
+    Returns (state, legend_id) when a name rule matches, else None to fall through
+    to per-row geometry routing. Priority: BOUND_MATERIAL > PLAN_ELEMENT > DECORATION.
+    """
+    name = fam.dominant_name
+    # BOUND_MATERIAL — signature OR text match (HIGHEST priority)
+    lid = _signature_match(fam.signature_hash, legend_signatures)
+    if lid:
+        return (STATE_BOUND_MATERIAL, lid)
+    if name:
+        lid = _legend_text_match(name, legend_labels_lower)
+        if lid:
+            return (STATE_BOUND_MATERIAL, lid)
+    # PLAN_ELEMENT — pattern match on name
+    if name and _looks_like_plan_element(name):
+        return (STATE_PLAN_ELEMENT, None)
+    # DECORATION — vocab match
+    if name and _looks_like_decoration(name):
+        return (STATE_DECORATION, None)
+    return None
+
+
+def _route_row_by_geometry(
+    row: dict[str, Any],
     *,
     sheet_extents: dict[str, tuple[float, float]],
     paragraphs_per_sheet: dict[str, list[list[float]]],
-    legend_labels_lower: dict[str, str],
-    legend_signatures: dict[str, str],
-) -> tuple[str, str | None, str | None]:
-    """Returns (terminal_state, legend_id_or_none, reason_code_or_none)."""
-    bbox = fam.centroid_bbox
-    name = fam.dominant_name
-    sheet_id = fam.dominant_sheet_id
+) -> tuple[str, str | None]:
+    """Per-row geometry-only routing — for rows without name-based binding.
 
-    # CRUFT — tiny bbox or near border
-    if bbox is not None:
-        if _bbox_area(bbox) < _CRUFT_MIN_AREA:
-            return (STATE_CRUFT, None, "TINY_BBOX")
-        sw, sh = sheet_extents.get(sheet_id or "", (_SHEET_DEFAULT_WIDTH, _SHEET_DEFAULT_HEIGHT))
-        margin_x = sw * _CRUFT_BORDER_PCT
-        margin_y = sh * _CRUFT_BORDER_PCT
-        if (
-            bbox[0] < margin_x
-            or bbox[1] < margin_y
-            or bbox[0] + bbox[2] > sw - margin_x
-            or bbox[1] + bbox[3] > sh - margin_y
-        ):
-            return (STATE_CRUFT, None, "BORDER_CRUFT")
+    Priority: TEXT_OCR > CRUFT > UNKNOWN_REVIEW. CRUFT is LAST geometric resort.
+    """
+    bbox_dict = row.get("bbox") or {}
+    bbox = _bbox_xywh(bbox_dict)
+    sheet_id = row.get("sheet_id")
 
-    # TEXT_OCR — centroid bbox overlaps paragraph region
-    fam.max_text_overlap = _compute_family_text_overlap(fam, paragraphs_per_sheet)
-    if fam.max_text_overlap >= _TEXT_OVERLAP_THRESHOLD:
-        return (STATE_TEXT_OCR, None, None)
+    # TEXT_OCR — per-row paragraph overlap (uses actual row position, not centroid)
+    if bbox is not None and sheet_id in paragraphs_per_sheet:
+        for poly in paragraphs_per_sheet[sheet_id]:
+            if _bbox_overlap_ratio(bbox, poly) >= _TEXT_OVERLAP_THRESHOLD:
+                return (STATE_TEXT_OCR, None)
 
-    # PLAN_ELEMENT — name patterns
-    if name and _looks_like_plan_element(name):
-        return (STATE_PLAN_ELEMENT, None, None)
+    # CRUFT — tiny only (border-cruft removed; too aggressive on real symbols)
+    if bbox is not None and _bbox_area(bbox) < _CRUFT_MIN_AREA:
+        return (STATE_CRUFT, None)
 
-    # BOUND_MATERIAL — signature OR text match
-    lid = _signature_match(fam.signature_hash, legend_signatures)
-    if lid:
-        return (STATE_BOUND_MATERIAL, lid, "SIGNATURE_MATCH")
-    lid = _legend_text_match(name, legend_labels_lower)
-    if lid:
-        return (STATE_BOUND_MATERIAL, lid, "TEXT_MATCH")
-
-    # DECORATION — vocab match
-    if name and _looks_like_decoration(name):
-        return (STATE_DECORATION, None, None)
-
-    return (STATE_UNKNOWN_REVIEW, None, "NO_RULE_MATCH")
+    return (STATE_UNKNOWN_REVIEW, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -439,27 +443,38 @@ async def resolve_terminal_states(
     # 5. Aggregate into families
     families = _aggregate_families(motif_rows)
 
-    # 6. Route each family + record decisions
-    family_decisions: dict[str, tuple[str, str | None, str | None]] = {}
+    # 6. First pass — family name-based routing (BOUND_MATERIAL / PLAN_ELEMENT / DECORATION)
+    family_name_decisions: dict[str, tuple[str, str | None] | None] = {}
     for sig, fam in families.items():
-        family_decisions[sig] = _route_family(
+        family_name_decisions[sig] = _route_family_by_name(
             fam,
-            sheet_extents=sheet_extents,
-            paragraphs_per_sheet=paragraphs_per_sheet,
             legend_labels_lower=labels_lower,
             legend_signatures=legend_signatures,
         )
 
-    # 7. Propagate to per-detection rows
+    # 7. Second pass — per-row routing
     state_motif_rows = {s: 0 for s in ALL_STATES}
     state_instances = {s: 0 for s in ALL_STATES}
     resolved_inserts: list[dict[str, Any]] = []
 
     for sig, fam in families.items():
-        state, legend_id, _reason = family_decisions[sig]
-        state_motif_rows[state] += len(fam.rows)
-        state_instances[state] += fam.total_instances
+        name_decision = family_name_decisions[sig]
         for r in fam.rows:
+            if name_decision is not None:
+                state, legend_id = name_decision
+            else:
+                state, legend_id = _route_row_by_geometry(
+                    r,
+                    sheet_extents=sheet_extents,
+                    paragraphs_per_sheet=paragraphs_per_sheet,
+                )
+            try:
+                inst = int((r.get("bbox") or {}).get("instance_count", 1))
+            except (TypeError, ValueError, AttributeError):
+                inst = 1
+            inst = max(inst, 1)
+            state_motif_rows[state] += 1
+            state_instances[state] += inst
             bbox_dict = r.get("bbox") or {}
             resolved_inserts.append({
                 "id": str(uuid.uuid4()),
