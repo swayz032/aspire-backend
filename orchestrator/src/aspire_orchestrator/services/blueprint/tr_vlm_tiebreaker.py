@@ -46,8 +46,9 @@ from aspire_orchestrator.services.supabase_client import (
 
 _log = logging.getLogger(__name__)
 
-_MIN_FAMILY_INSTANCES_FOR_VLM = 25  # only verify families with this many instances
-_COSINE_MATCH_FLOOR = 0.55  # legend candidate must be at least this similar
+_MIN_FAMILY_INSTANCES_FOR_VLM = 10  # liberalized: catch more real symbols
+_COSINE_MATCH_FLOOR = 0.25  # liberalized: give VLM more candidates to verify (VLM is the precision gate)
+_MAX_FAMILIES_PER_RUN = 100  # cap parallel VLM calls; with $0.50 cap this is safe
 
 
 async def run_tr_vlm_tiebreaker(
@@ -138,14 +139,20 @@ async def run_tr_vlm_tiebreaker(
         }
 
     # 4. For each high-instance family, compute embedding + find best legend
-    families_marked = 0
+    # Rank by instance count and cap at MAX_FAMILIES_PER_RUN to respect VLM budget
     families_examined = len(families)
-    candidate_rows_to_update: list[tuple[str, str]] = []  # (row_id, candidate_legend_id)
-    cluster_assignments: dict[str, str] = {}  # cluster_id → legend_id
+    candidate_rows_to_update: list[tuple[str, str]] = []
+    cluster_assignments: dict[str, str] = {}
 
-    for mh, fam in families.items():
-        if fam["total_instances"] < _MIN_FAMILY_INSTANCES_FOR_VLM:
-            continue
+    eligible = [
+        (mh, fam) for mh, fam in families.items()
+        if fam["total_instances"] >= _MIN_FAMILY_INSTANCES_FOR_VLM
+    ]
+    eligible.sort(key=lambda kv: kv[1]["total_instances"], reverse=True)
+    eligible = eligible[:_MAX_FAMILIES_PER_RUN]
+    families_marked = 0
+
+    for mh, fam in eligible:
         topo = _build_topology_from_bbox(fam["rep_bbox"])
         if topo is None:
             continue
@@ -154,7 +161,7 @@ async def run_tr_vlm_tiebreaker(
         except Exception:  # noqa: BLE001
             continue
 
-        # Top-1 legend match
+        # Top-1 legend by cosine similarity (low floor — VLM is the precision gate)
         best_score = -1.0
         best_lid = None
         best_label = ""
