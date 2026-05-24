@@ -207,11 +207,37 @@ def _extract_tables(analyze_result: dict[str, Any]) -> list[dict[str, Any]]:
         headers: list[str] = []
         rows: list[list[str]] = [[""] * col_count for _ in range(max(0, row_count - 1))]
 
+        # Preserve per-cell bounding_regions so downstream consumers (legend_extractor)
+        # can use individual symbol-cell bboxes instead of the shared outer table bbox.
+        extracted_cells: list[dict[str, Any]] = []
+
         for cell in cells:
             row_idx: int = cell.get("rowIndex", 0)
             col_idx: int = cell.get("columnIndex", 0)
             content: str = cell.get("content", "").strip()
             kind: str = cell.get("kind", "")
+            row_span: int = cell.get("rowSpan", 1)
+            col_span: int = cell.get("columnSpan", 1)
+
+            # Capture per-cell bounding_regions polygon for downstream bbox use.
+            cell_bounding_regions: list[dict[str, Any]] = cell.get("boundingRegions", [])
+            cell_bbox: list[float] | None = (
+                cell_bounding_regions[0].get("polygon") if cell_bounding_regions else None
+            )
+            extracted_cells.append({
+                "content": content,
+                "row_index": row_idx,
+                "column_index": col_idx,
+                "row_span": row_span,
+                "column_span": col_span,
+                "bounding_regions": [
+                    {
+                        "page_number": br.get("pageNumber", 1),
+                        "polygon": br.get("polygon"),
+                    }
+                    for br in cell_bounding_regions
+                ],
+            })
 
             if row_idx == 0 or kind == "columnHeader":
                 while len(headers) <= col_idx:
@@ -229,6 +255,7 @@ def _extract_tables(analyze_result: dict[str, Any]) -> list[dict[str, Any]]:
             "bbox": bbox,
             "headers": headers,
             "rows": rows,
+            "cells": extracted_cells,
             "region_type": None,  # filled by _classify_regions
         })
 
