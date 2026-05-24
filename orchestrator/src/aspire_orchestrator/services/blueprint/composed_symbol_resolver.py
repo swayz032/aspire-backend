@@ -25,12 +25,38 @@ import re
 import uuid
 from typing import Any
 
+import io
+
+from aspire_orchestrator.services.blueprint.sheet_image_storage import download_sheet_image
 from aspire_orchestrator.services.blueprint.symbol_family_embedder import (
     _build_topology_from_bbox,
     compute_embedding,
     cosine_similarity,
     deserialize_embedding,
 )
+
+
+def _visible_pixel_ratio(png_bytes: bytes, xywh: tuple[float, float, float, float], pad_px: int = 10) -> float:
+    """Return fraction of non-white-ish pixels in the cropped region. 0.0 if crop fails."""
+    try:
+        from PIL import Image
+        x0 = int(xywh[0]); y0 = int(xywh[1])
+        x1 = int(xywh[0] + xywh[2]); y1 = int(xywh[1] + xywh[3])
+        img = Image.open(io.BytesIO(png_bytes)).convert("L")  # grayscale
+        w, h = img.size
+        left = max(0, x0 - pad_px); top = max(0, y0 - pad_px)
+        right = min(w, x1 + pad_px); bottom = min(h, y1 + pad_px)
+        if right <= left or bottom <= top:
+            return 0.0
+        cropped = img.crop((left, top, right, bottom))
+        pixels = list(cropped.getdata())
+        if not pixels:
+            return 0.0
+        # "non-white-ish" = grayscale < 220
+        non_white = sum(1 for p in pixels if p < 220)
+        return non_white / len(pixels)
+    except Exception:
+        return 0.0
 from aspire_orchestrator.services.blueprint.terminal_resolver import (
     ALL_STATES,
     STATE_BOUND_MATERIAL,
@@ -50,10 +76,9 @@ _log = logging.getLogger(__name__)
 _TEXT_OVERLAP_THRESHOLD = 0.30
 _COMPOSED_MIN_AREA = 100.0
 _TOKEN_OVERLAP_FLOOR = 0.5
-_EMBEDDING_BIND_FLOOR = 999.0  # DISABLED: bbox-synthetic embeddings have zero discriminative power
-                               # — every rectangle scores 0.99+ → false positive explosion verified on Gulfstream.
-                               # Embedding-based binding gated until real vector primitives flow into topology.
+_EMBEDDING_BIND_FLOOR = 999.0  # DISABLED — bbox-synthetic embeddings collapse to ~1.0 cosine on all rectangles
 _EMBEDDING_VLM_FLOOR = 0.60
+_VISIBLE_PIXEL_RATIO_FLOOR = 0.03  # Wave 20.14.1 — crop with <3% non-white pixels = invisible cruft (CRUFT)
 
 _DIMENSION_RE = re.compile(r"\d+['′’]?\s*[-–]?\s*\d+\s*[\"″”]?|\d+\s*(SF|sf|sqft)")
 _ROOM_NUMBER_RE = re.compile(r"^[A-Z]{0,3}[-.]?\d{2,4}[A-Z]?$")
@@ -174,6 +199,9 @@ async def resolve_composed_symbols(
         if len(page) < 500:
             break
 
+    # Wave 20.14.1 — preload sheet PNGs for visible-pixel filter
+    sheet_pngs_cache: dict[str, bytes | None] = {}
+
     # 4. Route each composed symbol
     state_counts = {s: 0 for s in ALL_STATES}
     instance_counts = {s: 0 for s in ALL_STATES}
@@ -202,6 +230,38 @@ async def resolve_composed_symbols(
         state = STATE_UNKNOWN_REVIEW
         legend_id = None
         binding_cosine = 0.0
+
+        # Wave 20.14.1 — Visible-Pixel Filter: invisible vector cruft → CRUFT
+        if sheet_id and area > 0:
+            if sheet_id not in sheet_pngs_cache:
+                try:
+                    sheet_pngs_cache[sheet_id] = await download_sheet_image(
+                        suite_id=suite_id, project_id=project_id,
+                        sheet_id=sheet_id, correlation_id="composed-resolver-vpf",
+                    )
+                except Exception:
+                    sheet_pngs_cache[sheet_id] = None
+            png = sheet_pngs_cache.get(sheet_id)
+            if png:
+                vpr = _visible_pixel_ratio(png, xywh)
+                if vpr < _VISIBLE_PIXEL_RATIO_FLOOR:
+                    state_counts[STATE_CRUFT] += 1
+                    instance_counts[STATE_CRUFT] += inst
+                    resolved_inserts.append({
+                        "id": str(uuid.uuid4()),
+                        "suite_id": suite_id,
+                        "project_id": project_id,
+                        "sheet_id": sheet_id,
+                        "legend_id": None,
+                        "bbox": bbox_dict,
+                        "symbol_name": None,
+                        "confidence": vpr,
+                        "resolution_source": "composed_invisible_vector_cruft",
+                        "cluster_id": f"composed_{cs['id'][:16]}",
+                        "motif_hash": composed_sig,
+                        "terminal_state": STATE_CRUFT,
+                    })
+                    continue  # skip rest of routing
 
         # CRUFT first only if obviously tiny
         if area < _COMPOSED_MIN_AREA:
