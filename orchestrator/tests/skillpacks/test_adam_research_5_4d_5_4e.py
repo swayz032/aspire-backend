@@ -328,3 +328,156 @@ class TestLaborRateLookup:
                 context=CTX,
             )
             assert result.success or result.receipt, f"No receipt for trade={trade}"
+
+
+# =============================================================================
+# Fix R-2: Orphan receipt persistence — store_receipts called after _emit_receipt
+# =============================================================================
+
+class TestOrphanReceiptPersistence:
+
+    @pytest.mark.asyncio
+    async def test_subcontractor_discovery_persists_receipt(self, monkeypatch):
+        """R-2: store_receipts must be called after _emit_receipt in subcontractor_discovery."""
+        from unittest.mock import MagicMock
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        lsa_data = {"contractors": [
+            {"id": "lsa_0", "name": "Fast Electric", "google_vetted": True,
+             "phone": "", "rating": 4.7, "review_count": 80, "hours": "", "years_in_business": None}
+        ], "result_count": 1}
+        local_data = {"businesses": [], "result_count": 0}
+
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_local_service_ads_client.execute_serpapi_local_service_ads_search",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, lsa_data)),
+        )
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_local_client.execute_serpapi_local_search",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, local_data)),
+        )
+
+        result = await SKILLPACK.subcontractor_discovery(
+            payload={"trade": "electrician", "zipcode": "78701"},
+            context=CTX,
+        )
+        assert result.success
+        assert store_mock.called, "store_receipts must be called to persist the parent receipt"
+        all_persisted = []
+        for call in store_mock.call_args_list:
+            all_persisted.extend(call[0][0])
+        event_types = {r.get("event_type") for r in all_persisted}
+        assert "adam.subcontractor_discovery" in event_types
+
+    @pytest.mark.asyncio
+    async def test_labor_rate_lookup_persists_receipt(self, monkeypatch):
+        """R-2: store_receipts must be called after _emit_receipt in labor_rate_lookup."""
+        from unittest.mock import MagicMock
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        wage_data = {
+            "soc_code": "47-2111", "area_code": "0012420", "area_type": "msa",
+            "mean_hourly": 31.0, "median_hourly": 29.5, "pct_10_hourly": 18.0,
+            "pct_25_hourly": 23.0, "pct_75_hourly": 38.0, "pct_90_hourly": 47.0,
+            "employment": 12500, "year": "2024", "period": "A01",
+        }
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.bls_oews_client.execute_bls_oews_get_wage",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, wage_data)),
+        )
+        monkeypatch.setattr(
+            "aspire_orchestrator.services.adam.zip_to_msa.zip_to_msa_code",
+            lambda z: "12420",
+        )
+
+        result = await SKILLPACK.labor_rate_lookup(
+            payload={"trade": "electrician", "zipcode": "78701"},
+            context=CTX,
+        )
+        assert result.success
+        assert store_mock.called, "store_receipts must be called to persist the labor_rate_lookup receipt"
+        all_persisted = []
+        for call in store_mock.call_args_list:
+            all_persisted.extend(call[0][0])
+        event_types = {r.get("event_type") for r in all_persisted}
+        assert "adam.labor_rate_lookup" in event_types
+
+
+# =============================================================================
+# Fix P-4: Degraded status when total_found == 0
+# =============================================================================
+
+class TestDegradedStatusOnZeroResults:
+
+    @pytest.mark.asyncio
+    async def test_subcontractor_discovery_degraded_when_no_results(self, monkeypatch):
+        """P-4: When total_found == 0, parent receipt status must be 'degraded', not 'ok'."""
+        from unittest.mock import MagicMock
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_local_service_ads_client.execute_serpapi_local_service_ads_search",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, {"contractors": [], "result_count": 0})),
+        )
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_local_client.execute_serpapi_local_search",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, {"businesses": [], "result_count": 0})),
+        )
+
+        result = await SKILLPACK.subcontractor_discovery(
+            payload={"trade": "welder", "zipcode": "00001"},
+            context=CTX,
+        )
+        assert result.success
+        # The persisted receipt must be "degraded" not "ok" when no results
+        all_persisted = []
+        for call in store_mock.call_args_list:
+            all_persisted.extend(call[0][0])
+        discovery_receipt = next(
+            (r for r in all_persisted if r.get("event_type") == "adam.subcontractor_discovery"), None
+        )
+        assert discovery_receipt is not None, "Must have a persisted subcontractor_discovery receipt"
+        assert discovery_receipt["status"] == "degraded", (
+            f"Expected status='degraded' when total_found==0, got '{discovery_receipt['status']}'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_subcontractor_discovery_ok_when_results_found(self, monkeypatch):
+        """P-4: When total_found > 0, status must be 'ok'."""
+        from unittest.mock import MagicMock
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        lsa_data = {"contractors": [
+            {"id": "lsa_0", "name": "Good Electric", "google_vetted": True,
+             "phone": "", "rating": 4.8, "review_count": 200, "hours": "", "years_in_business": None}
+        ], "result_count": 1}
+
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_local_service_ads_client.execute_serpapi_local_service_ads_search",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, lsa_data)),
+        )
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_local_client.execute_serpapi_local_search",
+            AsyncMock(return_value=_make_tool_result(Outcome.SUCCESS, {"businesses": [], "result_count": 0})),
+        )
+
+        result = await SKILLPACK.subcontractor_discovery(
+            payload={"trade": "electrician", "zipcode": "78701"},
+            context=CTX,
+        )
+        all_persisted = []
+        for call in store_mock.call_args_list:
+            all_persisted.extend(call[0][0])
+        discovery_receipt = next(
+            (r for r in all_persisted if r.get("event_type") == "adam.subcontractor_discovery"), None
+        )
+        assert discovery_receipt is not None
+        assert discovery_receipt["status"] == "ok"

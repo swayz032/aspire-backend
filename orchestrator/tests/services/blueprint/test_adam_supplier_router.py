@@ -457,3 +457,174 @@ class TestPriceRatingRanking:
         for c in result["candidates"]:
             assert "match_score" in c
             assert "match_class" in c
+
+
+# ---------------------------------------------------------------------------
+# Fix R-1: Unknown category emits denial receipt (Law #2)
+# ---------------------------------------------------------------------------
+
+class TestUnknownCategoryDenialReceipt:
+    @pytest.mark.asyncio
+    async def test_unknown_category_emits_denial_receipt(self, monkeypatch):
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import route_supplier_search
+        result = await route_supplier_search(
+            line_item="mystery item",
+            category="not_a_real_category",  # type: ignore[arg-type]
+            brand_familiarity_map={},
+            office_zip=None,
+            office_lat=None,
+            office_lng=None,
+            suite_id=SUITE_ID,
+            office_id=OFFICE_ID,
+            correlation_id=CORR_ID,
+        )
+
+        assert result["status"] == "error"
+
+        all_receipts = []
+        for call in store_mock.call_args_list:
+            all_receipts.extend(call[0][0])
+
+        denial_receipts = [r for r in all_receipts if r.get("event_type") == "adam.supplier_search.denied"]
+        assert denial_receipts, "Must emit a denial receipt for unknown category"
+        r = denial_receipts[0]
+        assert r["suite_id"] == SUITE_ID
+        assert r["status"] == "denied"
+        assert r.get("metadata", {}).get("reason_code") == "UNKNOWN_CATEGORY"
+
+    @pytest.mark.asyncio
+    async def test_unknown_category_receipt_has_correct_policy(self, monkeypatch):
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import route_supplier_search
+        await route_supplier_search(
+            line_item="flux capacitor",
+            category="warp_drive",  # type: ignore[arg-type]
+            brand_familiarity_map={},
+            office_zip=None,
+            office_lat=None,
+            office_lng=None,
+            suite_id=SUITE_ID,
+            office_id=OFFICE_ID,
+            correlation_id=CORR_ID,
+        )
+
+        all_receipts = []
+        for call in store_mock.call_args_list:
+            all_receipts.extend(call[0][0])
+
+        denial = next((r for r in all_receipts if r.get("event_type") == "adam.supplier_search.denied"), None)
+        assert denial is not None
+        assert denial["policy"]["decision"] == "deny"
+
+
+# ---------------------------------------------------------------------------
+# Fix P-2: Ferguson/Lowes stubs call module-level coroutines correctly
+# Fix P-3: Denial receipt emitted when Ferguson/Lowes stub crashes
+# ---------------------------------------------------------------------------
+
+class TestFergusonLowesStubCorrectness:
+    @pytest.mark.asyncio
+    async def test_ferguson_stub_calls_module_level_coroutine(self, monkeypatch):
+        """Fix P-2: Must call search_products on the module, not on a client instance."""
+        from aspire_orchestrator.models import Outcome
+        from aspire_orchestrator.services.tool_types import ToolExecutionResult
+
+        search_mock = AsyncMock(return_value=ToolExecutionResult(
+            outcome=Outcome.SUCCESS,
+            tool_id="unwrangle_ferguson.search_products",
+            data={"results": [
+                {"title": "Ball Valve 2in", "supplier": {"name": "Ferguson", "id": "ferg"}, "product": {"name": "Ball Valve 2in", "in_stock": True}, "price": {"value": 45.0, "currency": "USD", "source": "retail"}, "tariff_flag_detected": None, "freshness_as_of": "2026-05-23T00:00:00Z"},
+            ]},
+            receipt_data={"id": "ferg-001"},
+        ))
+
+        import aspire_orchestrator.services.blueprint.adam_supplier_router as router
+        monkeypatch.setattr(router, "_UNWRANGLE_FERGUSON_AVAILABLE", True)
+
+        import aspire_orchestrator.providers.unwrangle_ferguson_client as ferg_mod
+        monkeypatch.setattr(ferg_mod, "search_products", search_mock)
+
+        shopping_mock = AsyncMock()
+        from aspire_orchestrator.services.tool_types import ToolExecutionResult as TER
+        shopping_mock.return_value = ToolExecutionResult(
+            outcome=Outcome.SUCCESS, tool_id="serpapi_shopping.search",
+            data={"results": []}, receipt_data={"id": "shop-001"},
+        )
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_shopping_client.execute_serpapi_shopping_search",
+            shopping_mock,
+        )
+
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import route_supplier_search
+        result = await route_supplier_search(
+            line_item="2in brass ball valve",
+            category="commercial_plumbing",
+            brand_familiarity_map={},
+            office_zip=None,
+            office_lat=None,
+            office_lng=None,
+            suite_id=SUITE_ID,
+            office_id=OFFICE_ID,
+            correlation_id=CORR_ID,
+        )
+        search_mock.assert_awaited_once()
+        assert result["status"] in ("ok", "degraded")
+
+    @pytest.mark.asyncio
+    async def test_ferguson_crash_emits_provider_error_receipt(self, monkeypatch):
+        """Fix P-3: When Ferguson stub raises, a PROVIDER_CRASH receipt must be stored."""
+        import aspire_orchestrator.services.receipt_store as rs
+        store_mock = MagicMock()
+        monkeypatch.setattr(rs, "store_receipts", store_mock)
+
+        import aspire_orchestrator.services.blueprint.adam_supplier_router as router
+        monkeypatch.setattr(router, "_UNWRANGLE_FERGUSON_AVAILABLE", True)
+
+        import aspire_orchestrator.providers.unwrangle_ferguson_client as ferg_mod
+
+        async def _raise(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("connection refused")
+
+        monkeypatch.setattr(ferg_mod, "search_products", _raise)
+
+        from aspire_orchestrator.models import Outcome
+        from aspire_orchestrator.services.tool_types import ToolExecutionResult
+        shopping_mock = AsyncMock(return_value=ToolExecutionResult(
+            outcome=Outcome.SUCCESS, tool_id="serpapi_shopping.search",
+            data={"results": []}, receipt_data={"id": "shop-002"},
+        ))
+        monkeypatch.setattr(
+            "aspire_orchestrator.providers.serpapi_shopping_client.execute_serpapi_shopping_search",
+            shopping_mock,
+        )
+
+        from aspire_orchestrator.services.blueprint.adam_supplier_router import route_supplier_search
+        result = await route_supplier_search(
+            line_item="copper fitting 1/2",
+            category="commercial_plumbing",
+            brand_familiarity_map={},
+            office_zip=None,
+            office_lat=None,
+            office_lng=None,
+            suite_id=SUITE_ID,
+            office_id=OFFICE_ID,
+            correlation_id=CORR_ID,
+        )
+
+        assert result["status"] in ("ok", "degraded", "error")
+        all_receipts = []
+        for call in store_mock.call_args_list:
+            all_receipts.extend(call[0][0])
+        crash_receipts = [r for r in all_receipts if r.get("event_type") == "provider.supplier_search.error"]
+        assert crash_receipts, "PROVIDER_CRASH receipt must be emitted when Ferguson stub raises"
+        r = crash_receipts[0]
+        assert r.get("metadata", {}).get("reason_code") == "PROVIDER_CRASH"
+        # provider is stored in inputs (since _make_receipt takes inputs as a separate arg)
+        assert r.get("inputs_hash") is not None  # inputs_hash proves inputs were captured

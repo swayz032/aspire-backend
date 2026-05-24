@@ -135,38 +135,83 @@ async def _call_unwrangle_homedepot_stub(*, line_item: str, office_zip: str | No
         return [], 0
 
 
-async def _call_unwrangle_ferguson_stub(*, line_item: str) -> tuple[list[dict[str, Any]], int]:
-    """Stub. TODO: Wave 5.1a-2 wires UnwrangleFergusonClient.search_products(line_item)."""
+async def _call_unwrangle_ferguson_stub(*, line_item: str, suite_id: str, office_id: str, correlation_id: str) -> tuple[list[dict[str, Any]], int]:
+    """Routes to module-level unwrangle_ferguson_client.search_products coroutine."""
     if not _UNWRANGLE_FERGUSON_AVAILABLE:
         return [], 0
     try:
-        client = UnwrangleFergusonClient()  # type: ignore[name-defined]
-        results = await client.search_products(line_item)
-        return results if isinstance(results, list) else [], 1
+        from aspire_orchestrator.providers import unwrangle_ferguson_client as _ferg
+        from aspire_orchestrator.models import Outcome
+        result = await _ferg.search_products(
+            line_item,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+        )
+        if result.outcome == Outcome.SUCCESS:
+            raw: list[Any] = (result.data or {}).get("results", [])
+            return list(raw) if isinstance(raw, list) else [], 1
+        return [], 0
     except Exception as exc:
         logger.warning("adam_supplier_router: unwrangle_ferg failed item=%s err=%s", line_item[:40], type(exc).__name__)
+        _store_receipt(_make_receipt(
+            event_type="provider.supplier_search.error",
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            status="error",
+            inputs={"line_item": line_item[:100], "provider": "unwrangle_ferguson"},
+            metadata={"reason_code": "PROVIDER_CRASH", "exception_type": type(exc).__name__},
+        ))
         return [], 0
 
 
-async def _call_unwrangle_lowes_stub(*, line_item: str, office_zip: str | None) -> tuple[list[dict[str, Any]], int]:
-    """Stub. TODO: Wave 5.1a-2 wires UnwrangleLowesClient.find_nearest_store + browse_category."""
+async def _call_unwrangle_lowes_stub(*, line_item: str, office_zip: str | None, suite_id: str, office_id: str, correlation_id: str) -> tuple[list[dict[str, Any]], int]:
+    """Routes to module-level unwrangle_lowes_client coroutines (find_nearest_store + browse_category)."""
     if not _UNWRANGLE_LOWES_AVAILABLE:
         return [], 0
     category_url = resolve_lowes_url(line_item)
     if not category_url:
         return [], 0
     try:
-        client = UnwrangleLowesClient()  # type: ignore[name-defined]
-        store_no: str | None = None
+        from aspire_orchestrator.providers import unwrangle_lowes_client as _lowes
+        from aspire_orchestrator.models import Outcome
+        store_no: int | None = None
         credits = 0
         if office_zip:
-            store_no = await client.find_nearest_store(office_zip)
-            credits += 1
-        results = await client.browse_category(category_url, store_no)
+            store_result = await _lowes.find_nearest_store(
+                zipcode=office_zip,
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+            )
+            if store_result.outcome == Outcome.SUCCESS:
+                stores = (store_result.data or {}).get("stores", [])
+                store_no = stores[0].get("store_no") if stores else None
+                credits += 1
+        browse_result = await _lowes.browse_category(
+            category_url=category_url,
+            store_no=store_no or 0,
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+        )
         credits += 1
-        return results if isinstance(results, list) else [], credits
+        if browse_result.outcome == Outcome.SUCCESS:
+            raw: list[Any] = (browse_result.data or {}).get("results", [])
+            return list(raw) if isinstance(raw, list) else [], credits
+        return [], 0
     except Exception as exc:
         logger.warning("adam_supplier_router: unwrangle_lowes failed item=%s err=%s", line_item[:40], type(exc).__name__)
+        _store_receipt(_make_receipt(
+            event_type="provider.supplier_search.error",
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            status="error",
+            inputs={"line_item": line_item[:100], "provider": "unwrangle_lowes"},
+            metadata={"reason_code": "PROVIDER_CRASH", "exception_type": type(exc).__name__},
+        ))
         return [], 0
 
 
@@ -346,7 +391,7 @@ async def _route_commercial_plumbing(*, line_item: str, office_zip: str | None, 
     credits = 0
     # Wave 5.4a: serpapi_shopping runs in parallel with Ferguson
     (raw_ferg, c1), (raw_shopping, c_shop) = await asyncio.gather(
-        _call_unwrangle_ferguson_stub(line_item=line_item),
+        _call_unwrangle_ferguson_stub(line_item=line_item, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
         _call_serpapi_shopping(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
     )
     credits += c1 + c_shop
@@ -369,7 +414,7 @@ async def _route_appliance_finish(*, line_item: str, office_zip: str | None, bra
     # Wave 5.4a+c: category-browse, keyword search (known-504 but wired), and shopping run in parallel.
     # lowes_search will return empty results until Unwrangle fixes upstream (Wave 5.2 target).
     (raw_lowes, c1), (raw_lowes_kw, c_kw), (raw_shopping, c_shop) = await asyncio.gather(
-        _call_unwrangle_lowes_stub(line_item=line_item, office_zip=office_zip),
+        _call_unwrangle_lowes_stub(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
         _call_unwrangle_lowes_search(line_item=line_item, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, office_zip=office_zip),
         _call_serpapi_shopping(line_item=line_item, office_zip=office_zip, suite_id=suite_id, office_id=office_id, correlation_id=correlation_id),
     )
@@ -446,6 +491,15 @@ async def route_supplier_search(
             _store_receipt(_make_receipt(event_type="adam.material_supplier_search", suite_id=suite_id, office_id=office_id, correlation_id=correlation_id, status="defer_to_manual", inputs={"line_item": line_item[:100], "category": category}, metadata={"candidates_returned": 0, "credits_used": 0}))
             return result
         else:
+            _store_receipt(_make_receipt(
+                event_type="adam.supplier_search.denied",
+                suite_id=suite_id,
+                office_id=office_id,
+                correlation_id=correlation_id,
+                status="denied",
+                inputs={"line_item": line_item[:100], "category": category},
+                metadata={"reason_code": "UNKNOWN_CATEGORY"},
+            ))
             result = {"status": "error", "candidates": [], "source_apis_called": [], "credits_used": 0, "degradation_reason": f"Unknown category: {category!r}"}
 
         logger.info("adam_supplier_router: category=%s status=%s candidates=%d credits=%d suite=%s", category, result.get("status"), len(result.get("candidates", [])), result.get("credits_used", 0), suite_id[:8])

@@ -313,20 +313,23 @@ class AdamResearchSkillPack:
 
         elapsed_ms = (_time.monotonic() - t0) * 1000
 
+        total_found = discovery.get("total_found", 0)
         receipt = _emit_receipt(
             ctx=context,
             event_type="adam.subcontractor_discovery",
-            status="ok",
+            status="degraded" if total_found == 0 else "ok",
             inputs={"action": "adam.subcontractor_discovery", "trade": trade[:50], "zipcode": zipcode},
             metadata={
                 "candidates_returned": len(discovery.get("candidates", [])),
-                "total_found": discovery.get("total_found", 0),
+                "total_found": total_found,
                 "lsa_count": discovery.get("lsa_count", 0),
                 "local_count": discovery.get("local_count", 0),
                 "sources_called": discovery.get("sources_called", []),
                 "latency_ms": round(elapsed_ms, 1),
             },
         )
+        from aspire_orchestrator.services.receipt_store import store_receipts as _store_receipts
+        _store_receipts([receipt])
 
         return SkillPackResult(
             success=True,
@@ -440,6 +443,8 @@ class AdamResearchSkillPack:
                 "latency_ms": round(elapsed_ms, 1),
             },
         )
+        from aspire_orchestrator.services.receipt_store import store_receipts as _store_receipts
+        _store_receipts([receipt])
 
         if is_success:
             return SkillPackResult(
