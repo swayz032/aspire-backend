@@ -93,17 +93,30 @@ class _ClusterCentroid:
 # Embedding helpers
 # ---------------------------------------------------------------------------
 
-def _embedding_from_bytes(raw: bytes | None) -> list[float] | None:
-    """Decode 64-dim float32 embedding stored as 256-byte bytea."""
+def _embedding_from_bytes(raw: bytes | str | None) -> list[float] | None:
+    """Decode float32 embedding from either hex-bytea or base64 string.
+
+    blueprint_symbols.embedding is stored as hex-encoded bytea (Supabase REST
+    returns \\x<hex>). blueprint_project_legends.vector_signature is stored as
+    base64 ASCII by symbol_family_embedder.serialize_embedding (Stage 3).
+    Both forms are accepted here.
+    """
     if raw is None:
         return None
     try:
         if isinstance(raw, str):
-            # Hex-encoded (Supabase returns bytea as \\x<hex>)
-            hex_str = raw.lstrip("\\x").lstrip("0x")
-            raw = bytes.fromhex(hex_str)
-        n = len(raw) // 4
-        return list(struct.unpack(f"<{n}f", raw[:n * 4]))
+            stripped = raw.strip()
+            if stripped.startswith("\\x") or stripped.startswith("0x"):
+                # Supabase hex-encoded bytea
+                raw_bytes = bytes.fromhex(stripped.lstrip("\\x").lstrip("0x"))
+            else:
+                # base64 (Stage 3 vector_signature format)
+                import base64 as _b64
+                raw_bytes = _b64.b64decode(stripped)
+        else:
+            raw_bytes = raw
+        n = len(raw_bytes) // 4
+        return list(struct.unpack(f"<{n}f", raw_bytes[:n * 4]))
     except Exception:
         return None
 
