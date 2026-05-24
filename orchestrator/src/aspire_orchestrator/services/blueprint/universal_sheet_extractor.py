@@ -40,8 +40,18 @@ RECEIPT_VERSION = "1.0"
 
 # Region detection thresholds
 _LEGEND_HEADER_KEYWORDS: frozenset[str] = frozenset(
-    {"symbol", "legend", "mark", "tag", "description", "abbrev", "abbreviation", "key"}
+    {"symbol", "legend", "abbrev", "abbreviation"}  # Wave 20.11: tightened — 'mark','tag','description','key' too noisy
 )
+# Wave 20.11: explicit anti-legend filter — tables containing these tokens are
+# revision/index/title-block, NOT symbol legends
+_NOT_LEGEND_TOKENS: frozenset[str] = frozenset({
+    "revision", "rev.", "rev no", "rev no.", "rev date", "by",
+    "drawing index", "sheet index", "sheet list", "drawing list",
+    "issue", "issued", "consultant", "stamp",
+    "addressed", "address",
+    "designed", "drawn", "checked", "approved", "scale",
+    "project no", "project no.", "drawing no", "drawing no.",
+})
 _SCHEDULE_HEADER_KEYWORDS: frozenset[str] = frozenset(
     {"type", "mark", "tag", "no.", "item", "no", "number", "id", "label"}
 )
@@ -393,6 +403,21 @@ def _classify_table(
 
     first_header = headers_lower[0] if headers_lower else ""
 
+    # Wave 20.11: anti-legend filter — if any header OR any cell content matches
+    # revision/index/title-block tokens, this is NOT a symbol legend
+    all_headers_blob = " ".join(headers_lower)
+    if any(tok in all_headers_blob for tok in _NOT_LEGEND_TOKENS):
+        # check this isn't a legend at all
+        if not any(strong in first_header for strong in ("symbol", "legend")):
+            # check schedule rules instead
+            has_row_numbering = _has_row_numbering(rows)
+            schedule_header_hit = any(
+                any(kw in h for kw in _SCHEDULE_HEADER_KEYWORDS) for h in headers_lower
+            )
+            if has_row_numbering and schedule_header_hit:
+                return "schedule"
+            return None  # revision/index — not a usable region
+
     # Legend: first column header is a symbol/mark/tag word or canonical glyph header
     if any(kw in first_header for kw in _LEGEND_HEADER_KEYWORDS):
         return "legend"
@@ -400,7 +425,9 @@ def _classify_table(
     # Legend: any paragraph near this table contains "LEGEND" or "SYMBOLS"
     for pt in para_texts_lower:
         if "legend" in pt or "symbols" in pt or "symbol list" in pt:
-            return "legend"
+            # but reject if it's a revision-history paragraph
+            if not any(tok in pt for tok in ("revision", "issue", "drawing index", "sheet index")):
+                return "legend"
 
     # Schedule: explicit row numbering (first column of rows contains integers)
     has_row_numbering = _has_row_numbering(rows)
