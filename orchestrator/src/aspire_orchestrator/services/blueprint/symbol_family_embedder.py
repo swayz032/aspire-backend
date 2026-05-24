@@ -374,6 +374,11 @@ def _build_topology_from_bbox(bbox_raw: Any) -> TopologyGraph | None:
     try:
         if isinstance(bbox_raw, (list, tuple)) and len(bbox_raw) == 4:
             x0, y0, x1, y1 = (float(v) for v in bbox_raw)
+        elif isinstance(bbox_raw, (list, tuple)) and len(bbox_raw) == 8:
+            # Azure prebuilt-layout polygon format: [x1,y1,x2,y2,x3,y3,x4,y4]
+            xs = [float(bbox_raw[i]) for i in (0, 2, 4, 6)]
+            ys = [float(bbox_raw[i]) for i in (1, 3, 5, 7)]
+            x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
         elif isinstance(bbox_raw, dict):
             vals = list(bbox_raw.values())
             if len(vals) == 4:

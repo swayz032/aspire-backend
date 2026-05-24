@@ -368,3 +368,47 @@ class TestClustering:
             assert not (
                 "row-circle" in ms and "row-rect" in ms and "row-star" in ms
             ), f"All 3 different-topology symbols wrongly in family {fid}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 11-12: 8-coord Azure polygon handling in _build_topology_from_bbox
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEightCoordPolygon:
+    def test_handles_8_coord_polygon(self) -> None:
+        """8-coord Azure polygon [x1,y1,x2,y2,x3,y3,x4,y4] must produce a valid TopologyGraph."""
+        from aspire_orchestrator.services.blueprint.symbol_family_embedder import _build_topology_from_bbox
+
+        # Axis-aligned rectangle in Azure 8-coord polygon format.
+        polygon_8 = [177.0, 155.0, 4609.0, 155.0, 4611.0, 1092.0, 178.0, 1092.0]
+        topo = _build_topology_from_bbox(polygon_8)
+
+        assert topo is not None, "8-coord polygon must produce a TopologyGraph, not None"
+        emb = compute_embedding(topo)
+        assert emb.shape == (EMBEDDING_DIM,)
+        assert emb.dtype == np.float32
+        assert float(emb.max()) > 0.0, "Embedding must be non-zero for a valid polygon"
+
+    def test_4_and_8_coord_polygons_produce_equivalent_topology_for_axis_aligned_bbox(self) -> None:
+        """4-coord [x0,y0,x1,y1] and the equivalent 8-coord polygon must produce
+        topologies with cosine_similarity >= 0.999 (functionally identical)."""
+        from aspire_orchestrator.services.blueprint.symbol_family_embedder import _build_topology_from_bbox
+
+        x0, y0, x1, y1 = 177.0, 155.0, 4611.0, 1092.0
+        # 4-coord format
+        topo_4 = _build_topology_from_bbox([x0, y0, x1, y1])
+        # 8-coord format for the same axis-aligned rectangle:
+        # top-left, top-right, bottom-right, bottom-left
+        topo_8 = _build_topology_from_bbox([x0, y0, x1, y0, x1, y1, x0, y1])
+
+        assert topo_4 is not None
+        assert topo_8 is not None
+
+        emb_4 = compute_embedding(topo_4)
+        emb_8 = compute_embedding(topo_8)
+
+        sim = cosine_similarity(emb_4, emb_8)
+        assert sim >= 0.999, (
+            f"4-coord and 8-coord for the same axis-aligned bbox should produce "
+            f"equivalent topologies; cosine_similarity={sim:.6f}"
+        )
