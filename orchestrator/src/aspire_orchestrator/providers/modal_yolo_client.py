@@ -110,33 +110,6 @@ async def detect_symbols_modal(
     short_sheet = sheet_id[:8] if len(sheet_id) > 8 else sheet_id
     short_corr = correlation_id[:8] if len(correlation_id) > 8 else correlation_id
 
-    def _emit_failure_receipt(reason_code: str, error_detail: str, elapsed_ms: int = 0) -> None:
-        """Emit a per-sheet failure receipt for Law #2 compliance. Best-effort."""
-        try:
-            import uuid as _uuid
-            from datetime import datetime as _dt, timezone as _tz
-            from aspire_orchestrator.services.receipt_store import store_receipts as _sr
-            _sr([{
-                "id": str(_uuid.uuid4()),
-                "outcome": "failed",
-                "action_type": "blueprint.see.modal_yolo",
-                "receipt_type": "blueprint.see.modal_yolo",
-                "created_at": _dt.now(_tz.utc).isoformat(),
-                "risk_tier": "GREEN",
-                "actor_type": "WORKER",
-                "actor_id": "skillpack:drew-blueprint",
-                "correlation_id": correlation_id,
-                "reason_code": reason_code,
-                "metadata": {
-                    "sheet_id": sheet_id,
-                    "error": error_detail,
-                    "elapsed_ms": elapsed_ms,
-                    "fallback": "cpu_inference",
-                },
-            }])
-        except Exception:  # noqa: BLE001
-            pass
-
     t0 = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
@@ -151,14 +124,12 @@ async def detect_symbols_modal(
             "modal_yolo: timeout (>%ss) sheet=%s corr=%s — falling back to CPU",
             timeout_s, short_sheet, short_corr,
         )
-        _emit_failure_receipt("PROVIDER_TIMEOUT", f"timeout>{timeout_s}s")
         return None
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "modal_yolo: network error (%s) sheet=%s corr=%s — falling back to CPU",
             type(exc).__name__, short_sheet, short_corr,
         )
-        _emit_failure_receipt("PROVIDER_UNAVAILABLE", type(exc).__name__)
         return None
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -167,11 +138,6 @@ async def detect_symbols_modal(
         logger.warning(
             "modal_yolo: HTTP %d sheet=%s corr=%s (%dms) — falling back to CPU",
             resp.status_code, short_sheet, short_corr, elapsed_ms,
-        )
-        _emit_failure_receipt(
-            "PROVIDER_INTERNAL_ERROR" if resp.status_code >= 500 else "PROVIDER_PERMISSION_DENIED",
-            f"http_{resp.status_code}",
-            elapsed_ms,
         )
         return None
 
@@ -182,7 +148,6 @@ async def detect_symbols_modal(
             "modal_yolo: non-JSON response sheet=%s corr=%s — falling back to CPU",
             short_sheet, short_corr,
         )
-        _emit_failure_receipt("PROVIDER_INTERNAL_ERROR", "non_json_response", elapsed_ms)
         return None
 
     raw_dets = payload.get("detections") or []
@@ -210,40 +175,9 @@ async def detect_symbols_modal(
         short_sheet, len(detections), elapsed_ms, short_corr,
     )
 
-    result = ModalResult(
+    return ModalResult(
         detections=detections,
         image_size=size_tuple,
         model_version=str(payload.get("model_version", "modal-yolo11n")),
         elapsed_ms=elapsed_ms,
     )
-
-    # Law #2: emit per-sheet receipt for every Modal inference call.
-    # Best-effort (try/except) — a receipt failure must not kill the inference result.
-    try:
-        import uuid as _uuid
-        from datetime import datetime as _dt, timezone as _tz
-        from aspire_orchestrator.services.receipt_store import store_receipts as _sr
-        _sr([{
-            "id": str(_uuid.uuid4()),
-            "outcome": "success",
-            "action_type": "blueprint.see.modal_yolo",
-            "receipt_type": "blueprint.see.modal_yolo",
-            "created_at": _dt.now(_tz.utc).isoformat(),
-            "risk_tier": "GREEN",
-            "actor_type": "WORKER",
-            "actor_id": "skillpack:drew-blueprint",
-            "correlation_id": correlation_id,
-            "metadata": {
-                "sheet_id": sheet_id,
-                "detection_count": len(detections),
-                "model_version": result.model_version,
-                "image_size": list(result.image_size),
-                "elapsed_ms": elapsed_ms,
-                "confidence_floor": conf,
-                "imgsz": imgsz,
-            },
-        }])
-    except Exception:  # noqa: BLE001
-        pass  # receipt failure is non-fatal — inference result stands
-
-    return result

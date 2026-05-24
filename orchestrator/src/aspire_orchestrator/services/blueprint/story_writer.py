@@ -508,113 +508,6 @@ def _merge_parallel_responses(
 
 
 # ---------------------------------------------------------------------------
-# Wave 10b: Discipline map-reduce (ASPIRE_DREW_REASON_DISCIPLINE_MAPS=true)
-# ---------------------------------------------------------------------------
-
-# Canonical discipline groups for parallel map dispatch. Each group maps to one
-# focused LLM call containing only sheets for that discipline cluster.
-# Discipline codes per discipline_tagger.py: A, S, M, E, P, FP, C, L, Specs, Schedules, Addenda
-_DISCIPLINE_GROUPS: dict[str, list[str]] = {
-    "architectural": ["A", "L", "C"],            # architectural, landscape, civil
-    "structural":    ["S"],
-    "mechanical":    ["M"],
-    "electrical":    ["E"],
-    "plumbing":      ["P"],
-    "fire_protection": ["FP"],
-    "other":         ["Specs", "Schedules", "Addenda"],
-}
-
-
-def _build_messages_discipline_map(
-    *,
-    discipline_group: str,
-    sheets_for_group: list[dict[str, Any]],
-    symbols_by_sheet: dict[str, list[dict[str, Any]]],
-    seal_sheet_ids: set[str],
-    discipline_counts: dict[str, int],
-    case_pack_hints: list,
-    project_id: str,
-) -> list[dict[str, str]]:
-    """Focused call-A variant scoped to a single discipline group.
-
-    Identical to _build_messages_a but with sheets pre-filtered to the group and
-    a narrowed instruction that tells the LLM to focus only on that discipline.
-    The LLM still returns the full phase schema — _merge_discipline_maps unions
-    the results across groups before passing to _merge_parallel_responses.
-    """
-    system_parts = [_load_system_prompt()]
-    system_parts.append("\n\n---\n# Reference: Discipline Taxonomy\n")
-    system_parts.append(_load_kb_doc("drew-discipline-taxonomy.md"))
-    system_parts.append("\n\n---\n# Reference: Trade Sequence Playbook\n")
-    system_parts.append(_load_kb_doc("drew-trade-sequence-playbook.md"))
-    system_parts.append("\n\n---\n# Reference: Truth Class Policy\n")
-    system_parts.append(_load_kb_doc("drew-truth-class-policy.md"))
-    system_parts.append("\n\n---\n# Governing Laws\n")
-    system_parts.append(_load_kb_doc("drew-aspire-laws.md"))
-    system_message = "".join(system_parts)
-
-    sheet_summaries = _build_sheet_summaries(sheets_for_group, symbols_by_sheet, seal_sheet_ids)
-    hint_summaries = _build_hint_summaries(case_pack_hints)
-
-    from aspire_orchestrator.services.blueprint.assembly_types import ASSEMBLY_TYPES
-    user_payload = {
-        "project_id": project_id,
-        "discipline_group": discipline_group,
-        "discipline_summary": discipline_counts,
-        "sheet_count": len(sheets_for_group),
-        "seal_sheet_count": sum(1 for s in sheets_for_group if str(s.get("id", "")) in seal_sheet_ids),
-        "sheets": sheet_summaries,
-        "case_pack_hints": hint_summaries,
-        "task": "ASSEMBLIES_AND_QUANTITIES",
-        "allowed_assembly_types": sorted(ASSEMBLY_TYPES),
-        "instructions": (
-            f"Focus ONLY on the '{discipline_group}' discipline sheets provided. "
-            "For each construction phase (from the trade sequence playbook), enumerate all "
-            "assemblies and material line items visible in these sheets. "
-            "Every assembly and material_line must carry a truth tag and confidence. "
-            "EVERY assembly.type MUST be one of the strings in allowed_assembly_types (exact match, "
-            "snake_case). Do NOT invent new type strings, do NOT emit 'general', do NOT leave type empty. "
-            "If you cannot confidently match an assembly to an allowed type, OMIT it. "
-            "EVERY material_line.line_item MUST be a specific spec string. "
-            "Do NOT produce markdown narrative or missing_inputs in this response. "
-            "Return JSON with keys: phases (array of {phase_number, phase_name, assemblies, material_lines}). "
-            "No other top-level keys needed."
-        ),
-    }
-    return [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": json.dumps(user_payload, indent=2, default=str)},
-    ]
-
-
-def _merge_discipline_maps(map_responses: list[dict[str, Any]]) -> dict[str, Any]:
-    """Reduce N discipline-map call responses into a single call-A shaped dict.
-
-    Each map response has schema: {"phases": [{"phase_number", "phase_name",
-    "assemblies", "material_lines"}]}. We union assemblies and material_lines
-    across all map responses for the same phase_number.
-
-    The result is identical in shape to what _build_messages_a returns,
-    so it can be passed directly to _merge_parallel_responses as resp_a.
-    """
-    phases_merged: dict[int, dict[str, Any]] = {}
-    for resp in map_responses:
-        for p in (resp.get("phases") or []):
-            n = int(p.get("phase_number") or 0)
-            if n not in phases_merged:
-                phases_merged[n] = {
-                    "phase_number": n,
-                    "phase_name": p.get("phase_name") or f"Phase {n}",
-                    "assemblies": [],
-                    "material_lines": [],
-                }
-            phases_merged[n]["assemblies"].extend(list(p.get("assemblies") or []))
-            phases_merged[n]["material_lines"].extend(list(p.get("material_lines") or []))
-
-    return {"phases": [phases_merged[n] for n in sorted(phases_merged.keys())]}
-
-
-# ---------------------------------------------------------------------------
 # LLM response parser
 # ---------------------------------------------------------------------------
 
@@ -1054,63 +947,20 @@ async def write_story(
         k=3,
     )
 
-    # ── 5. Build focused LLM message sets for parallel dispatch ──────────
+    # ── 5. Build 3 focused LLM message sets for parallel dispatch ────────
     # Wave 9l: split the single monolithic LLM call into 3 parallel calls:
     #   Call A — assemblies + quantities
     #   Call B — missing_inputs + risk_flags
     #   Call C — phased markdown narrative + truth tags
-    # Wave 10b: when ASPIRE_DREW_REASON_DISCIPLINE_MAPS=true, call A is replaced
-    #   by N parallel discipline-map calls (one per non-empty discipline group),
-    #   then reduced via _merge_discipline_maps into the same call-A shape.
-
-    # Discipline map-reduce: group active sheets by discipline code.
-    _use_discipline_maps = os.getenv("ASPIRE_DREW_REASON_DISCIPLINE_MAPS", "").lower() in (
-        "1", "true", "yes",
+    # Reduces wall-clock REASON time from ~sequential to ~max(A, B, C).
+    messages_a = _build_messages_a(
+        sheets=active_sheets,
+        symbols_by_sheet=symbols_by_sheet,
+        seal_sheet_ids=seal_sheet_ids,
+        discipline_counts=discipline_counts,
+        case_pack_hints=case_pack_hints,
+        project_id=project_id,
     )
-    # Map each discipline code to its group name for O(1) lookup.
-    _code_to_group: dict[str, str] = {}
-    for _grp, _codes in _DISCIPLINE_GROUPS.items():
-        for _code in _codes:
-            _code_to_group[_code] = _grp
-
-    _sheets_by_group: dict[str, list[dict[str, Any]]] = {}
-    if _use_discipline_maps:
-        for _sheet in active_sheets:
-            _disc = str(_sheet.get("discipline") or "")
-            _grp = _code_to_group.get(_disc, "other")
-            _sheets_by_group.setdefault(_grp, []).append(_sheet)
-        # Only dispatch groups that have at least one sheet.
-        _active_groups = {g: ss for g, ss in _sheets_by_group.items() if ss}
-        if not _active_groups:
-            # No sheets have discipline tags — fall back to monolithic call-A.
-            _use_discipline_maps = False
-
-    if _use_discipline_maps:
-        _discipline_messages: dict[str, list[dict[str, str]]] = {
-            grp: _build_messages_discipline_map(
-                discipline_group=grp,
-                sheets_for_group=sheets,
-                symbols_by_sheet=symbols_by_sheet,
-                seal_sheet_ids=seal_sheet_ids,
-                discipline_counts=discipline_counts,
-                case_pack_hints=case_pack_hints,
-                project_id=project_id,
-            )
-            for grp, sheets in _active_groups.items()
-        }
-        # messages_a is unused in discipline-map mode; set to [] to satisfy type checker.
-        messages_a: list[dict[str, str]] = []
-    else:
-        messages_a = _build_messages_a(
-            sheets=active_sheets,
-            symbols_by_sheet=symbols_by_sheet,
-            seal_sheet_ids=seal_sheet_ids,
-            discipline_counts=discipline_counts,
-            case_pack_hints=case_pack_hints,
-            project_id=project_id,
-        )
-        _discipline_messages = {}
-
     messages_b = _build_messages_b(
         sheets=active_sheets,
         existing_missing_input_descriptions=existing_descriptions,
@@ -1130,84 +980,28 @@ async def write_story(
     last_exc: Exception | None = None
     llm_usage: dict[str, Any] = {}  # aggregated from all 3 calls
 
-    # Wave 9p: per-call model selection. Calls A (assemblies) and B (missing_inputs)
-    # are structured JSON outputs — gpt-5.4-mini is 3-5x faster and quality is
-    # indistinguishable on these schemas. Call C (narrative) uses the premium model
-    # because the story is the user-facing moat.
-    import os as _os_p
-    _fast_model = (
-        _os_p.getenv("ASPIRE_DREW_REASON_STRUCTURED_MODEL")
-        or _os_p.getenv("ASPIRE_DREW_MODEL_DEV")
-        or "gpt-5.4-mini"
-    )
-    _premium_model = model  # the model passed in via env (gpt-5.4)
-
     # Wave 9h: compute per-call content hashes for Redis response cache.
-    # Discipline-map mode: hash each group message separately.
-    if _use_discipline_maps:
-        _map_hashes: dict[str, str] = {
-            grp: compute_content_hash(msgs[-1]["content"])
-            for grp, msgs in _discipline_messages.items()
-        }
-        hash_a = compute_content_hash("")  # unused in map mode
-    else:
-        hash_a = compute_content_hash(messages_a[-1]["content"])
-        _map_hashes = {}
-
+    hash_a = compute_content_hash(messages_a[-1]["content"])
     hash_b = compute_content_hash(messages_b[-1]["content"])
     hash_c = compute_content_hash(messages_c[-1]["content"])
 
-    # Wave 9h: check Redis cache for B and C. For discipline maps, check each group.
-    if _use_discipline_maps:
-        _cached_maps_list, cached_b, cached_c = await asyncio.gather(
-            asyncio.gather(*[
-                get_cached_llm_response(f"reason_map_{grp}", h, model)
-                for grp, h in _map_hashes.items()
-            ]),
-            get_cached_llm_response("reason_b", hash_b, model),
-            get_cached_llm_response("reason_c", hash_c, model),
-        )
-        _cached_maps: dict[str, dict[str, Any] | None] = dict(
-            zip(_map_hashes.keys(), _cached_maps_list)
-        )
-        cached_a = None  # sentinel — not used in map mode
-        _all_cached = (
-            all(v is not None for v in _cached_maps.values())
-            and cached_b is not None
-            and cached_c is not None
-        )
-    else:
-        cached_a, cached_b, cached_c = await asyncio.gather(
-            get_cached_llm_response("reason_a", hash_a, model),
-            get_cached_llm_response("reason_b", hash_b, model),
-            get_cached_llm_response("reason_c", hash_c, model),
-        )
-        _cached_maps = {}
-        _all_cached = all(x is not None for x in (cached_a, cached_b, cached_c))
+    # Wave 9h: check Redis cache for each call before dispatching.
+    cached_a, cached_b, cached_c = await asyncio.gather(
+        get_cached_llm_response("reason_a", hash_a, model),
+        get_cached_llm_response("reason_b", hash_b, model),
+        get_cached_llm_response("reason_c", hash_c, model),
+    )
 
+    _all_cached = all(x is not None for x in (cached_a, cached_b, cached_c))
     if _all_cached:
-        _parallel_call_count = len(_cached_maps) + 2 if _use_discipline_maps else 3
         _log.info(
-            "9h reason_cache_hit all_parallel model=%s project=%s calls=%d",
-            model, project_id[:8], _parallel_call_count,
+            "9h reason_cache_hit all_3_parallel model=%s project=%s",
+            model, project_id[:8],
         )
         try:
             from aspire_orchestrator.services.receipt_store import store_receipts as _sr
             import uuid as _uuid
             from datetime import datetime as _dt, timezone as _tz
-            _cache_meta: dict[str, Any] = {
-                "stage": "reason",
-                "model": model,
-                "cache_layer": "redis",
-                "project_id": project_id,
-                "parallel_calls": _parallel_call_count,
-                "content_hash_b": hash_b[:16],
-                "content_hash_c": hash_c[:16],
-            }
-            if _use_discipline_maps:
-                _cache_meta["discipline_map_groups"] = list(_cached_maps.keys())
-            else:
-                _cache_meta["content_hash_a"] = hash_a[:16]
             _sr([{
                 "id": str(_uuid.uuid4()),
                 "outcome": "success",
@@ -1219,18 +1013,32 @@ async def write_story(
                 "actor_id": "skillpack:drew-blueprint",
                 "correlation_id": correlation_id,
                 "suite_id": suite_id,
-                "metadata": _cache_meta,
+                "metadata": {
+                    "stage": "reason",
+                    "model": model,
+                    "content_hash_a": hash_a[:16],
+                    "content_hash_b": hash_b[:16],
+                    "content_hash_c": hash_c[:16],
+                    "cache_layer": "redis",
+                    "project_id": project_id,
+                    "parallel_calls": 3,
+                },
             }])
         except Exception:
             pass
+        raw_response = _merge_parallel_responses(cached_a, cached_b, cached_c)  # type: ignore[arg-type]
 
-        if _use_discipline_maps:
-            _reduced_a = _merge_discipline_maps(
-                [v for v in _cached_maps.values() if v is not None]
-            )
-            raw_response = _merge_parallel_responses(_reduced_a, cached_b, cached_c)  # type: ignore[arg-type]
-        else:
-            raw_response = _merge_parallel_responses(cached_a, cached_b, cached_c)  # type: ignore[arg-type]
+    # Wave 9p: per-call model selection. Calls A (assemblies) and B (missing_inputs)
+    # are structured JSON outputs — gpt-5.4-mini is 3-5x faster and quality is
+    # indistinguishable on these schemas. Call C (narrative) uses the premium model
+    # because the story is the user-facing moat.
+    import os as _os_p
+    _fast_model = (
+        _os_p.getenv("ASPIRE_DREW_REASON_STRUCTURED_MODEL")
+        or _os_p.getenv("ASPIRE_DREW_MODEL_DEV")
+        or "gpt-5.4-mini"
+    )
+    _premium_model = model  # the model passed in via env (gpt-5.4)
 
     async def _call_llm(
         call_id: str,
@@ -1302,7 +1110,12 @@ async def write_story(
         return {}  # unreachable but satisfies type checker
 
     if not raw_response.get("phases"):
-        # Dispatch all calls concurrently (skipping any that had a cache hit).
+        # Dispatch all 3 calls concurrently (skipping any that had a cache hit).
+        async def _call_a() -> dict[str, Any]:
+            # Wave 9p: A = assemblies (structured JSON) → fast model
+            if cached_a is not None:
+                return cached_a
+            return await _call_llm("A", messages_a, "reason_a", hash_a, call_model=_fast_model)
 
         async def _call_b() -> dict[str, Any]:
             # Wave 9p: B = missing_inputs + risk_flags (structured JSON) → fast model
@@ -1330,55 +1143,17 @@ async def write_story(
             return await _call_llm("C", messages_c, "reason_c", hash_c, call_model=_narr_model)
 
         try:
-            if _use_discipline_maps:
-                # Wave 10b: discipline map-reduce path.
-                # Build one coroutine per discipline group + B + C.
-                async def _call_discipline_map(
-                    grp: str,
-                    msgs: list[dict[str, str]],
-                    h: str,
-                    cached_map: dict[str, Any] | None,
-                ) -> dict[str, Any]:
-                    if cached_map is not None:
-                        return cached_map
-                    return await _call_llm(
-                        f"MAP_{grp}", msgs, f"reason_map_{grp}", h, call_model=_fast_model,
-                    )
-
-                map_coroutines = [
-                    _call_discipline_map(
-                        grp,
-                        _discipline_messages[grp],
-                        _map_hashes[grp],
-                        _cached_maps.get(grp),
-                    )
-                    for grp in _discipline_messages
-                ]
-                all_results = await asyncio.gather(
-                    asyncio.gather(*map_coroutines),
-                    _call_b(),
-                    _call_c(),
-                    return_exceptions=False,
-                )
-                map_responses_list, resp_b, resp_c = all_results
-                resp_a = _merge_discipline_maps(list(map_responses_list))
-                _log.info(
-                    "10b discipline_map_reduce groups=%d project=%s",
-                    len(map_coroutines), project_id[:8],
-                )
-            else:
-                async def _call_a() -> dict[str, Any]:
-                    # Wave 9p: A = assemblies (structured JSON) → fast model
-                    if cached_a is not None:
-                        return cached_a
-                    return await _call_llm("A", messages_a, "reason_a", hash_a, call_model=_fast_model)
-
-                resp_a, resp_b, resp_c = await asyncio.gather(
-                    _call_a(), _call_b(), _call_c(),
-                    return_exceptions=False,  # fail-closed: any failure propagates
-                )
-
+            resp_a, resp_b, resp_c = await asyncio.gather(
+                _call_a(), _call_b(), _call_c(),
+                return_exceptions=False,  # fail-closed: any failure propagates
+            )
             raw_response = _merge_parallel_responses(resp_a, resp_b, resp_c)
+
+            # Aggregate usage across calls for the receipt metadata.
+            for call_result in [resp_a, resp_b, resp_c]:
+                # Each response is a raw dict from the LLM — usage is in _call_llm scope.
+                # We log per-call above; aggregate here is a best-effort sum.
+                pass
 
         except Exception as exc:
             last_exc = exc
