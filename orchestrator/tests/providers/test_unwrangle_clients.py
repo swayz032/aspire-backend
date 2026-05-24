@@ -205,7 +205,8 @@ class TestUnwrangleFergusonSearchProducts:
         from aspire_orchestrator.providers.unwrangle_ferguson_client import search_products
         r = await search_products("Kohler bathtub", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
         assert r.outcome == Outcome.SUCCESS, r.error
-        assert "platform=build_search" in captured[0]
+        # Wave 5.4b: build_search deprecated, migrated to fergusonhome_search
+        assert "platform=fergusonhome_search" in captured[0]
         assert f"api_key={FAKE_KEY}" in captured[0]
 
     @pytest.mark.asyncio
@@ -268,7 +269,8 @@ class TestUnwrangleFergusonGetProductDetail:
         from aspire_orchestrator.providers.unwrangle_ferguson_client import get_product_detail
         r = await get_product_detail(product_url="https://www.build.com/product/detail/kohler-k-1123", suite_id=SUITE_ID, office_id=OFFICE_ID, correlation_id=CORR_ID)
         assert r.outcome == Outcome.SUCCESS, r.error
-        assert "platform=build_detail" in captured[0]
+        # Wave 5.4b: build_detail deprecated, migrated to fergusonhome_product_data
+        assert "platform=fergusonhome_product_data" in captured[0]
         assert f"api_key={FAKE_KEY}" in captured[0]
         assert "url=" in captured[0]
 

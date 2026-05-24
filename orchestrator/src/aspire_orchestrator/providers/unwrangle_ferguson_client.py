@@ -1,17 +1,18 @@
 ﻿"""Unwrangle Ferguson Provider Client -- commercial plumbing/HVAC supplier discovery (Wave 5.1a).
 
-Provider: Unwrangle (https://data.unwrangle.com) -- Ferguson Home (build.com) engine
+Provider: Unwrangle (https://data.unwrangle.com) -- Ferguson Home engine
 Auth: Query parameter `api_key` -- no auth headers
 Risk tier: GREEN (read-only product search/detail)
 Idempotency: N/A (read-only)
 
-Verified working as of 2026-05-17:
-  - build_search: 590 results, real Ferguson catalog with inventory quantity
-  - build_detail: 17-variant Kohler sink with stock + dimensions + certifications
+Wave 5.4b: Migrated from deprecated build_search/build_detail to:
+  - fergusonhome_search: new Ferguson Home search endpoint
+  - fergusonhome_product_data: new Ferguson Home product detail endpoint
+New fields captured: variants, price_ranges, quick_ship, feature_groups.
 
 Tools:
-  - unwrangle_ferguson.search_products: Search Ferguson Home via build_search
-  - unwrangle_ferguson.get_product_detail: Fetch full Ferguson product detail by URL
+  - unwrangle_ferguson.search_products: Search Ferguson Home via fergusonhome_search
+  - unwrangle_ferguson.get_product_detail: Fetch full Ferguson product detail by URL via fergusonhome_product_data
 """
 
 from __future__ import annotations
@@ -118,6 +119,16 @@ def _is_upstream_degraded(response: ProviderResponse) -> bool:
     return False
 
 
+def _extract_ferguson_search_fields(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize fergusonhome_search result to include new Wave 5.4b fields."""
+    normalized = dict(result)
+    normalized.setdefault("variants", result.get("variants") or [])
+    normalized.setdefault("price_ranges", result.get("price_ranges") or {})
+    normalized.setdefault("quick_ship", result.get("quick_ship") or False)
+    normalized.setdefault("feature_groups", result.get("feature_groups") or [])
+    return normalized
+
+
 async def search_products(
     line_item: str,
     *,
@@ -129,7 +140,11 @@ async def search_products(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Search Ferguson Home via Unwrangle build_search (commercial plumbing/HVAC)."""
+    """Search Ferguson Home via Unwrangle fergusonhome_search (commercial plumbing/HVAC).
+
+    Wave 5.4b: Migrated from deprecated build_search to fergusonhome_search.
+    New fields: variants, price_ranges, quick_ship, feature_groups.
+    """
     client = _get_client()
     tool_id = "unwrangle_ferguson.search_products"
 
@@ -167,7 +182,7 @@ async def search_products(
     )
 
     query_params: dict[str, str] = {
-        "platform": "build_search",
+        "platform": "fergusonhome_search",
         "search": line_item,
         "page": str(page),
         "api_key": api_key,  # type: ignore[arg-type]
@@ -183,7 +198,7 @@ async def search_products(
 
     if _is_upstream_degraded(response):
         logger.warning(
-            "provider.unwrangle.degraded: endpoint=build_search "
+            "provider.unwrangle.degraded: endpoint=fergusonhome_search "
             "reason=upstream_scraper_504 suite=%s corr=%s",
             suite_id[:8], correlation_id[:8],
         )
@@ -194,9 +209,9 @@ async def search_products(
             capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
             provider_response=response,
         )
-        receipt["redacted_inputs"] = {"platform": "build_search", "query_normalized": query_safe, "page": page}
+        receipt["redacted_inputs"] = {"platform": "fergusonhome_search", "query_normalized": query_safe, "page": page}
         return ToolExecutionResult(outcome=Outcome.FAILED, tool_id=tool_id,
-            error="Unwrangle build_search upstream scraper unavailable (504)", receipt_data=receipt)
+            error="Unwrangle fergusonhome_search upstream scraper unavailable (504)", receipt_data=receipt)
 
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
     reason = "EXECUTED" if response.success else (
@@ -208,11 +223,12 @@ async def search_products(
         capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
         provider_response=response,
     )
-    receipt["redacted_inputs"] = {"platform": "build_search", "query_normalized": query_safe, "page": page}
+    receipt["redacted_inputs"] = {"platform": "fergusonhome_search", "query_normalized": query_safe, "page": page}
 
     if response.success:
         raw_results = response.body.get("results", [])
-        result_count = len(raw_results)
+        enriched_results = [_extract_ferguson_search_fields(r) for r in raw_results]
+        result_count = len(enriched_results)
         credits_remaining = response.body.get("remaining_credits")
         logger.info(
             "unwrangle_ferguson.search_products success: results=%d credits_remaining=%s suite=%s",
@@ -221,11 +237,11 @@ async def search_products(
         if credits_remaining is not None:
             receipt.setdefault("provider_metadata", {})
             receipt["provider_metadata"]["credits_remaining"] = credits_remaining
-        receipt["redacted_outputs"] = {"result_count": result_count, "source_api": "build_search"}
+        receipt["redacted_outputs"] = {"result_count": result_count, "source_api": "fergusonhome_search"}
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS, tool_id=tool_id,
             data={
-                "results": raw_results, "result_count": result_count,
+                "results": enriched_results, "result_count": result_count,
                 "query": line_item, "page": page,
                 "source": "unwrangle_ferguson", "credits_remaining": credits_remaining,
             },
@@ -249,7 +265,7 @@ async def get_product_detail(
     capability_token_id: str | None = None,
     capability_token_hash: str | None = None,
 ) -> ToolExecutionResult:
-    """Fetch full Ferguson product detail by URL (Wave 5.1a drill-in)."""
+    """Fetch full Ferguson product detail by URL via fergusonhome_product_data (Wave 5.4b migration from build_detail)."""
     client = _get_client()
     tool_id = "unwrangle_ferguson.get_product_detail"
 
@@ -277,7 +293,7 @@ async def get_product_detail(
     )
 
     query_params: dict[str, str] = {
-        "platform": "build_detail",
+        "platform": "fergusonhome_product_data",
         "url": product_url,
         "api_key": api_key,  # type: ignore[arg-type]
     }
@@ -292,7 +308,7 @@ async def get_product_detail(
 
     if _is_upstream_degraded(response):
         logger.warning(
-            "provider.unwrangle.degraded: endpoint=build_detail "
+            "provider.unwrangle.degraded: endpoint=fergusonhome_product_data "
             "reason=upstream_scraper_504 suite=%s corr=%s",
             suite_id[:8], correlation_id[:8],
         )
@@ -303,9 +319,9 @@ async def get_product_detail(
             capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
             provider_response=response,
         )
-        receipt["redacted_inputs"] = {"platform": "build_detail", "url_normalized": url_safe}
+        receipt["redacted_inputs"] = {"platform": "fergusonhome_product_data", "url_normalized": url_safe}
         return ToolExecutionResult(outcome=Outcome.FAILED, tool_id=tool_id,
-            error="Unwrangle build_detail upstream scraper unavailable (504)", receipt_data=receipt)
+            error="Unwrangle fergusonhome_product_data upstream scraper unavailable (504)", receipt_data=receipt)
 
     outcome = Outcome.SUCCESS if response.success else Outcome.FAILED
     reason = "EXECUTED" if response.success else (
@@ -317,10 +333,15 @@ async def get_product_detail(
         capability_token_id=capability_token_id, capability_token_hash=capability_token_hash,
         provider_response=response,
     )
-    receipt["redacted_inputs"] = {"platform": "build_detail", "url_normalized": url_safe}
+    receipt["redacted_inputs"] = {"platform": "fergusonhome_product_data", "url_normalized": url_safe}
 
     if response.success:
-        product_data = response.body.get("product", response.body)
+        raw_product = response.body.get("product", response.body)
+        product_data: dict[str, Any] = dict(raw_product) if isinstance(raw_product, dict) else {}
+        product_data.setdefault("variants", product_data.get("variants") or [])
+        product_data.setdefault("price_ranges", product_data.get("price_ranges") or {})
+        product_data.setdefault("quick_ship", product_data.get("quick_ship") or False)
+        product_data.setdefault("feature_groups", product_data.get("feature_groups") or [])
         credits_remaining = response.body.get("remaining_credits")
         logger.info(
             "unwrangle_ferguson.get_product_detail success: credits_remaining=%s suite=%s",
@@ -329,7 +350,7 @@ async def get_product_detail(
         if credits_remaining is not None:
             receipt.setdefault("provider_metadata", {})
             receipt["provider_metadata"]["credits_remaining"] = credits_remaining
-        receipt["redacted_outputs"] = {"has_product_data": bool(product_data), "source_api": "build_detail"}
+        receipt["redacted_outputs"] = {"has_product_data": bool(product_data), "source_api": "fergusonhome_product_data"}
         return ToolExecutionResult(
             outcome=Outcome.SUCCESS, tool_id=tool_id,
             data={"product": product_data, "source": "unwrangle_ferguson", "credits_remaining": credits_remaining},
