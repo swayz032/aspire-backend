@@ -317,7 +317,8 @@ async def _db_update(table: str, match_filters: str, data: dict[str, Any]) -> di
 
 async def _db_insert_batch(table: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from aspire_orchestrator.services.supabase_client import supabase_insert_batch_ignore_conflicts
-    return await supabase_insert_batch_ignore_conflicts(table, rows)
+    # blueprint_resolved_symbols has no natural unique constraint — use primary key 'id' as conflict target
+    return await supabase_insert_batch_ignore_conflicts(table, rows, conflict_target="id")
 
 
 # ---------------------------------------------------------------------------
