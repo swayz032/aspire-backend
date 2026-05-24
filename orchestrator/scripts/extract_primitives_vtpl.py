@@ -57,27 +57,47 @@ def _classify_op(items: list[Any]) -> str:
     return "path"
 
 
+_PAGE_RASTER_CACHE: dict[int, Any] = {}  # page_idx → grayscale PIL Image
+
+
+def _get_page_raster(pdf_page, page_idx: int):
+    """Render a full page ONCE at RASTER_DPI, cache as grayscale PIL Image."""
+    if page_idx in _PAGE_RASTER_CACHE:
+        return _PAGE_RASTER_CACHE[page_idx]
+    import fitz
+    from PIL import Image
+    zoom = RASTER_DPI / 72.0
+    mat = fitz.Matrix(zoom, zoom)
+    pix = pdf_page.get_pixmap(matrix=mat, alpha=False)
+    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert("L")
+    _PAGE_RASTER_CACHE[page_idx] = img
+    return img
+
+
 def _primitive_visibility(
     pdf_page,
     bbox: tuple[float, float, float, float],
+    page_idx: int = 0,
     pad: int = 4,
 ) -> tuple[int, float]:
-    """Render the small bbox region in isolation and count non-white grayscale pixels.
+    """Sample the pre-rendered page raster at the primitive's bbox region.
 
-    Returns (visible_pixels, raster_density 0..1).
+    Was: full PDF rasterization per primitive (34K renders × 50ms = ~28 min).
+    Now: one page render cached, per-primitive pixel sampling (microseconds).
     """
     try:
-        import fitz  # PyMuPDF
-        from PIL import Image
-        x0, y0, x1, y1 = bbox
-        w = max(x1 - x0, 1.0)
-        h = max(y1 - y0, 1.0)
-        clip = fitz.Rect(x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+        img = _get_page_raster(pdf_page, page_idx)
         zoom = RASTER_DPI / 72.0
-        mat = fitz.Matrix(zoom, zoom)
-        pix = pdf_page.get_pixmap(matrix=mat, clip=clip, alpha=False)
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert("L")
-        pixels = list(img.getdata())
+        x0, y0, x1, y1 = bbox
+        # PDF coords → page raster coords
+        px0 = max(0, int((x0 - pad) * zoom))
+        py0 = max(0, int((y0 - pad) * zoom))
+        px1 = min(img.width, int((x1 + pad) * zoom))
+        py1 = min(img.height, int((y1 + pad) * zoom))
+        if px1 <= px0 or py1 <= py0:
+            return (0, 0.0)
+        cropped = img.crop((px0, py0, px1, py1))
+        pixels = list(cropped.getdata())
         if not pixels:
             return (0, 0.0)
         non_white = sum(1 for p in pixels if p < 220)
@@ -183,8 +203,8 @@ async def main() -> None:
                 except Exception:
                     pass
 
-            # Render-consistency signal
-            visible_px, density = _primitive_visibility(page, (x0, y0, x1, y1))
+            # Render-consistency signal (uses page-level raster cache — ~1000x faster than per-primitive)
+            visible_px, density = _primitive_visibility(page, (x0, y0, x1, y1), page_idx=page_idx)
             if density >= 0.05:
                 visible_count += 1
 
