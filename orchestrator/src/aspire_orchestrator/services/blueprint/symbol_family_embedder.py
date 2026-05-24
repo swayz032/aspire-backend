@@ -476,6 +476,112 @@ async def populate_vector_signature(*, project_id: str, suite_id: str) -> dict[s
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Motif embedding population — Pass 3.2 (closes Wave 20.6 → Stage 5 gap)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def populate_motif_embeddings(
+    *,
+    project_id: str,
+    suite_id: str,
+    batch_size: int = 500,
+) -> dict[str, Any]:
+    """Compute + persist embedding bytea for blueprint_symbols motif rows.
+
+    Mirrors populate_vector_signature but for the blueprint_symbols table (motifs from
+    Wave 11g-v2 SEE stage) instead of blueprint_project_legends (Stage 1 extracts).
+
+    Required for Stage 5 cluster_motifs_on_project — it reads blueprint_symbols.embedding
+    bytea. Without this population, the entire Wave 20.6 → resolved_symbols chain stops at
+    Stage 4 (motifs detected but no embeddings → no clustering → no legend bindings).
+
+    blueprint_symbols.embedding is bytea — store raw float32 bytes (not base64) to match
+    Wave 20.6.5a migration column type.
+
+    Law #6: scoped by suite_id; resolves project's sheet_ids first then filters motifs by
+    sheet_id IN (...). Cross-tenant query returns 0 rows.
+
+    Returns: {motifs_total, embedded, skipped_no_bbox, errors}.
+    """
+    if not suite_id:
+        raise ValueError("populate_motif_embeddings requires non-empty suite_id (Law #6)")
+
+    # Get all sheet_ids for this project (blueprint_symbols has no project_id column).
+    sheet_rows = await supabase_select(
+        "blueprint_sheets",
+        filters=f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
+        select="id",
+    )
+    if not sheet_rows:
+        return {"motifs_total": 0, "embedded": 0, "skipped_no_bbox": 0, "errors": 0}
+    sheet_ids = [r["id"] for r in sheet_rows]
+    sheet_filter = ",".join(sheet_ids)
+
+    # Fetch motif rows lacking embedding. PostgREST IN syntax: sheet_id=in.(id1,id2,...)
+    rows = await supabase_select(
+        "blueprint_symbols",
+        filters=f"sheet_id=in.({sheet_filter})&suite_id=eq.{suite_id}&embedding=is.null",
+        select="id,bbox",
+        limit=batch_size * 100,  # cap upper bound
+    )
+
+    motifs_total = len(rows or [])
+    embedded = skipped_no_bbox = errors = 0
+
+    for row in (rows or []):
+        row_id = row.get("id")
+        if not row_id:
+            skipped_no_bbox += 1
+            continue
+        topo = _build_topology_from_bbox(row.get("bbox"))
+        if topo is None:
+            skipped_no_bbox += 1
+            continue
+        try:
+            emb = compute_embedding(topo)
+            # bytea: raw float32 bytes (NOT base64). Stage 5 reads via deserialize_motif_embedding.
+            raw_bytes = struct.pack(f"{EMBEDDING_DIM}f", *emb.tolist())
+            # Supabase REST API needs base64-encoded bytea on input
+            encoded = "\\x" + raw_bytes.hex()
+            await supabase_update(
+                "blueprint_symbols",
+                f"id=eq.{row_id}&suite_id=eq.{suite_id}",
+                {"embedding": encoded},
+            )
+            embedded += 1
+        except SupabaseClientError as exc:
+            _log.warning(
+                "populate_motif_embeddings: DB update failed row=%s %s",
+                str(row_id)[:8],
+                type(exc).__name__,
+            )
+            errors += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "populate_motif_embeddings: embedding failed row=%s %s",
+                str(row_id)[:8],
+                type(exc).__name__,
+            )
+            errors += 1
+
+    _log.info(
+        "populate_motif_embeddings: project=%s suite=%s total=%d embedded=%d skipped=%d errors=%d",
+        project_id[:8],
+        suite_id[:8],
+        motifs_total,
+        embedded,
+        skipped_no_bbox,
+        errors,
+    )
+    return {
+        "motifs_total": motifs_total,
+        "embedded": embedded,
+        "skipped_no_bbox": skipped_no_bbox,
+        "errors": errors,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Clustering — Commit 20.6.3c
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -579,5 +685,6 @@ __all__ = [
     "serialize_embedding",
     "deserialize_embedding",
     "populate_vector_signature",
+    "populate_motif_embeddings",
     "cluster_legend_into_families",
 ]
