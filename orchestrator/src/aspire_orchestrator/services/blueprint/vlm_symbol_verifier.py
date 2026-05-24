@@ -50,7 +50,8 @@ _USD_PER_INPUT_TOKEN: float = 0.15 / 1_000_000
 _USD_PER_OUTPUT_TOKEN: float = 0.60 / 1_000_000
 _DEFAULT_CAP_USD: float = 0.50
 _VISION_MODEL: str = "gpt-5.4-mini"
-_CROP_PAD_PX: int = 20
+_CROP_PAD_PX: int = 120        # surrounding context — annotations + adjacent symbols
+_LEGEND_LABEL_EXTEND_PX: int = 600  # extend legend crop horizontally to include label text column
 _MAX_OUTPUT_TOKENS: int = 128
 _CALL_TIMEOUT_S: float = 10.0
 _ACTOR: str = "service:vlm-symbol-verifier"
@@ -409,37 +410,83 @@ async def _fetch_cropped_legend(
     )
     if not png_bytes:
         return None
-    return _crop_png(png_bytes, rep_bbox)
+    # Wave 20.10: extend legend crop horizontally to include label text column
+    return _crop_png(png_bytes, rep_bbox, extend_right_px=_LEGEND_LABEL_EXTEND_PX)
+
+
+def _bbox_to_xyxy(bbox: dict[str, Any] | list[Any]) -> tuple[int, int, int, int] | None:
+    """Normalize any bbox shape to (x0, y0, x1, y1) integers.
+
+    Handles:
+    - Wave 11g-v2 dict {x, y, w, h, ...metadata}
+    - Standard dict {x0, y0, x1, y1} or {left, top, right, bottom}
+    - 4-coord list [x0, y0, x1, y1]
+    - 8-coord Azure polygon [x1, y1, x2, y2, x3, y3, x4, y4]
+    """
+    try:
+        if isinstance(bbox, dict):
+            if "w" in bbox and "h" in bbox and "x" in bbox and "y" in bbox:
+                x0 = int(float(bbox["x"]))
+                y0 = int(float(bbox["y"]))
+                x1 = int(x0 + float(bbox["w"]))
+                y1 = int(y0 + float(bbox["h"]))
+                return (x0, y0, x1, y1)
+            if {"x0", "y0", "x1", "y1"}.issubset(bbox.keys()):
+                return (
+                    int(float(bbox["x0"])),
+                    int(float(bbox["y0"])),
+                    int(float(bbox["x1"])),
+                    int(float(bbox["y1"])),
+                )
+            if {"left", "top", "right", "bottom"}.issubset(bbox.keys()):
+                return (
+                    int(float(bbox["left"])),
+                    int(float(bbox["top"])),
+                    int(float(bbox["right"])),
+                    int(float(bbox["bottom"])),
+                )
+            return None
+        if isinstance(bbox, (list, tuple)):
+            if len(bbox) == 4:
+                c = [int(float(x)) for x in bbox]
+                return (c[0], c[1], c[2], c[3])
+            if len(bbox) == 8:
+                xs = [float(bbox[i]) for i in (0, 2, 4, 6)]
+                ys = [float(bbox[i]) for i in (1, 3, 5, 7)]
+                return (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+    except (TypeError, ValueError, KeyError):
+        return None
+    return None
 
 
 def _crop_png(
     png_bytes: bytes,
     bbox: dict[str, Any] | list[Any],
+    *,
+    pad_px: int = _CROP_PAD_PX,
+    extend_right_px: int = 0,
 ) -> bytes | None:
-    """Crop a PNG to a bounding box + CROP_PAD_PX padding.
+    """Crop a PNG to a bounding box + padding.
 
-    Bbox may be dict {x0,y0,x1,y1} or list [x0,y0,x1,y1].
-    Returns None on any error (missing Pillow, invalid bbox, zero-size crop).
+    Wave 20.10: accepts {x,y,w,h} (Wave 11g-v2 motifs), {x0,y0,x1,y1}, and
+    8-coord Azure polygon. Larger default pad. Optional extend_right for
+    legend cropping (capture label text column to the right of the symbol).
     """
     try:
         from PIL import Image
 
-        if isinstance(bbox, dict):
-            x0 = int(bbox.get("x0") or bbox.get("left") or 0)
-            y0 = int(bbox.get("y0") or bbox.get("top") or 0)
-            x1 = int(bbox.get("x1") or bbox.get("right") or 0)
-            y1 = int(bbox.get("y1") or bbox.get("bottom") or 0)
-        else:
-            coords = [int(float(c)) for c in bbox[:4]]
-            x0, y0, x1, y1 = coords
+        xyxy = _bbox_to_xyxy(bbox)
+        if xyxy is None:
+            return None
+        x0, y0, x1, y1 = xyxy
 
         img = Image.open(io.BytesIO(png_bytes))
         w, h = img.size
 
-        left = max(0, x0 - _CROP_PAD_PX)
-        upper = max(0, y0 - _CROP_PAD_PX)
-        right = min(w, x1 + _CROP_PAD_PX)
-        lower = min(h, y1 + _CROP_PAD_PX)
+        left = max(0, x0 - pad_px)
+        upper = max(0, y0 - pad_px)
+        right = min(w, x1 + pad_px + extend_right_px)
+        lower = min(h, y1 + pad_px)
 
         if right <= left or lower <= upper:
             return None
