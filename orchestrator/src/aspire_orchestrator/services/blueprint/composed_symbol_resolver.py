@@ -78,7 +78,11 @@ _COMPOSED_MIN_AREA = 100.0
 _TOKEN_OVERLAP_FLOOR = 0.5
 _EMBEDDING_BIND_FLOOR = 999.0  # DISABLED — bbox-synthetic embeddings collapse to ~1.0 cosine on all rectangles
 _EMBEDDING_VLM_FLOOR = 0.60
-_VISIBLE_PIXEL_RATIO_FLOOR = 0.03  # Wave 20.14.1 — crop with <3% non-white pixels = invisible cruft (CRUFT)
+_VISIBLE_PIXEL_RATIO_FLOOR = 0.03  # Wave 20.14.1 — crop with <3% non-white pixels = invisible cruft
+
+# Wave 20.15 — Semantic Zoning
+_ZONE_FORBIDDEN_OVERLAP = 0.50      # composed bbox overlapping forbidden region by >this = NOT a material
+_TITLE_BLOCK_MARGIN_PCT = 0.20      # bottom-right 20%×20% of sheet = likely title block (PLAN_ELEMENT)
 
 _DIMENSION_RE = re.compile(r"\d+['′’]?\s*[-–]?\s*\d+\s*[\"″”]?|\d+\s*(SF|sf|sqft)")
 _ROOM_NUMBER_RE = re.compile(r"^[A-Z]{0,3}[-.]?\d{2,4}[A-Z]?$")
@@ -148,6 +152,8 @@ async def resolve_composed_symbols(
         f"project_id=eq.{project_id}&suite_id=eq.{suite_id}",
     )
     paragraphs_per_sheet: dict[str, list[list[float]]] = {}
+    # Wave 20.15 — Semantic zoning: forbidden regions where construction symbols can't live
+    forbidden_zones_per_sheet: dict[str, list[list[float]]] = {}
     for row in intel or []:
         sid = row.get("sheet_id")
         polys = []
@@ -157,6 +163,24 @@ async def resolve_composed_symbols(
                 polys.append(poly[:8])
         if sid:
             paragraphs_per_sheet[sid] = polys
+            regions = row.get("regions") or {}
+            forbidden = []
+            for region_type in ("notes", "legend", "schedule"):
+                for region in (regions.get(region_type) or []):
+                    rbbox = region.get("bbox") if isinstance(region, dict) else None
+                    if isinstance(rbbox, list) and len(rbbox) >= 8:
+                        forbidden.append(rbbox[:8])
+            forbidden_zones_per_sheet[sid] = forbidden
+
+    # Sheet extents for title-block zone detection
+    sheet_extent_xy: dict[str, tuple[float, float]] = {}
+    for s in sheet_rows:
+        try:
+            w = float(s.get("page_width_pt") or 5000)
+            h = float(s.get("page_height_pt") or 5000)
+            sheet_extent_xy[s["id"]] = (w, h)
+        except (TypeError, ValueError):
+            sheet_extent_xy[s["id"]] = (5000.0, 5000.0)
 
     # 2. Legend dictionary + embeddings
     legend_rows = await supabase_select(
@@ -267,8 +291,26 @@ async def resolve_composed_symbols(
         if area < _COMPOSED_MIN_AREA:
             state = STATE_CRUFT
         else:
-            # 1. Exact composed_signature match (rare but precise)
-            if composed_sig and composed_sig in legend_signatures:
+            # Wave 20.15 — Semantic Zoning HARD EXCLUSION
+            forbidden_overlap = 0.0
+            for poly in forbidden_zones_per_sheet.get(sheet_id or "", []):
+                ovl = _bbox_overlap_ratio(xywh, poly)
+                if ovl > forbidden_overlap:
+                    forbidden_overlap = ovl
+
+            in_title_block = False
+            ext_w, ext_h = sheet_extent_xy.get(sheet_id or "", (5000.0, 5000.0))
+            tb_x_floor = ext_w * (1.0 - _TITLE_BLOCK_MARGIN_PCT)
+            tb_y_floor = ext_h * (1.0 - _TITLE_BLOCK_MARGIN_PCT)
+            if xywh[0] >= tb_x_floor and xywh[1] >= tb_y_floor:
+                in_title_block = True
+
+            if forbidden_overlap >= _ZONE_FORBIDDEN_OVERLAP or in_title_block:
+                # Hard fail-closed: not eligible for BOUND_MATERIAL — route to PLAN_ELEMENT
+                state = STATE_PLAN_ELEMENT
+
+            # 1. Exact composed_signature match — gated by zoning
+            elif composed_sig and composed_sig in legend_signatures:
                 state = STATE_BOUND_MATERIAL
                 legend_id = legend_signatures[composed_sig]
                 binding_cosine = 1.0
