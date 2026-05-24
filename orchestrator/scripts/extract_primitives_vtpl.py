@@ -134,8 +134,9 @@ async def main() -> None:
     sheets = await _fetch_sheets(PROJ, SUITE)
     sheet_by_pageno: dict[int, str] = {}
     for s in sheets:
+        # sheet_number is a STRING ("1", "2", ...) that maps to PDF page index
         try:
-            pn = int(s.get("page_number", 0))
+            pn = int(str(s.get("sheet_number", "")).strip())
             if pn > 0:
                 sheet_by_pageno[pn] = s["id"]
         except (TypeError, ValueError):
