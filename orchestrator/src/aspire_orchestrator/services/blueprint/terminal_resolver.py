@@ -304,12 +304,25 @@ async def resolve_terminal_states(
         if sig:
             legend_signatures[sig] = lid
 
-    # 4. Stream motifs and route each
-    motif_rows = await supabase_select(
-        "blueprint_symbols",
-        f"sheet_id=in.({sheet_ids_csv})&suite_id=eq.{suite_id}",
-        limit=200000,
-    )
+    # 4. Stream motifs in pages of 1000 (PostgREST hard cap per request)
+    motif_rows: list[dict[str, Any]] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        page = await supabase_select(
+            "blueprint_symbols",
+            f"sheet_id=in.({sheet_ids_csv})&suite_id=eq.{suite_id}&order=id&offset={offset}",
+            limit=page_size,
+        )
+        if not page:
+            break
+        motif_rows.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+        if offset > 500000:  # safety cap
+            _log.warning("terminal_resolver: hit 500K motif cap on project=%s", project_id[:8])
+            break
 
     counts: dict[str, int] = {state: 0 for state in ALL_STATES}
     resolved_inserts: list[dict[str, Any]] = []
