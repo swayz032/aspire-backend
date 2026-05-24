@@ -168,47 +168,15 @@ class ScheduleResolver(MissingInputResolver):
     ) -> ResolverResult:
         """Re-OCR schedule sheets with Azure Doc Intel prebuilt-layout.
 
-        Wave 19.1b rewrite:
-        * Pulls PNG bytes from ``candidate.data_provider`` (Supabase Storage)
-          when available. Falls back to the legacy ``sheet["image_bytes"]``
-          field for pre-19.1 fixtures that hand-build candidates without a
-          provider.
-        * Calls ``AzureDocIntelClient.analyze_layout(pdf_bytes, ...)`` —
-          the real provider API. The prior implementation called a
-          non-existent ``client.execute()`` with a misshapen
-          ``ProviderRequest``; that bug was masked by an always-empty
-          sheet filter.
-        * Caps Azure calls at :data:`_AZURE_SHEETS_PER_CASCADE_CAP` (8).
-        * Records ``azure_calls_made`` and ``png_source`` on
-          ``ResolverResult.evidence`` for receipt audit.
+        Wave 20e: checks SheetIntelligenceProvider cache first (zero Azure cost
+        on hit). Falls through to live Azure analyze_layout only on cache miss.
+
+        Wave 19.1b (preserved): PNG from data_provider; cap 8; concurrent dispatch.
+        Records azure_calls_made and png_source on evidence for receipt audit.
         """
         try:
-            from aspire_orchestrator.config.settings import settings
-
-            endpoint = settings.azure_doc_intel_endpoint
-            api_key_env = settings.azure_doc_intel_key
-            if not endpoint or not api_key_env:
-                return ResolverResult(
-                    resolved=False, value=None, confidence=0.0,
-                    method="azure_premium_ocr",
-                    evidence={
-                        "skip_reason": "azure_creds_missing",
-                        "azure_calls_made": 0,
-                    },
-                    category=self.category,
-                )
-
             ocr_tier = os.getenv("ASPIRE_AZURE_OCR_TIER", "base")
 
-            # ----------------------------------------------------------
-            # Pick candidate schedule sheets and resolve PNG source per sheet.
-            # ----------------------------------------------------------
-            # Title/OCR match for schedule-ish sheets. We do NOT pre-filter
-            # on whether image_bytes exists like the old code did — that
-            # gate excluded everything because no row carries image_bytes
-            # in production. Instead we walk through and try each PNG source
-            # (provider first, legacy field second) and skip if neither
-            # gives us bytes.
             candidate_sheets = [
                 s for s in candidate.sheets
                 if _SCHEDULE_TITLE_PATTERN.search(
@@ -229,8 +197,55 @@ class ScheduleResolver(MissingInputResolver):
                     category=self.category,
                 )
 
-            # Cap BEFORE issuing PNG downloads / Azure calls so we don't
-            # pay for sheets we'll discard.
+            # Wave 20e: cache-first — check SheetIntelligenceProvider before Azure.
+            intel_provider = getattr(candidate, "intelligence_provider", None)
+            if intel_provider is not None:
+                cache_rows, cache_hits, cache_misses = await self._read_from_intelligence_cache(
+                    candidate_sheets, intel_provider
+                )
+                _log.info(
+                    "schedule_resolver.azure_premium_ocr: intel cache hits=%d misses=%d project=%s",
+                    cache_hits, cache_misses, str(candidate.project_id or "")[:8],
+                )
+                if cache_hits > 0 and cache_rows:
+                    row_count = sum(r.get("row_count", 0) for r in cache_rows)
+                    confidence = 0.90 if row_count >= 3 else 0.75
+                    return ResolverResult(
+                        resolved=confidence >= 0.85,
+                        value=cache_rows if confidence >= 0.85 else None,
+                        confidence=confidence,
+                        method="azure_premium_ocr",
+                        evidence={
+                            "ocr_tier": ocr_tier,
+                            "sheets_processed": cache_hits,
+                            "total_rows_extracted": row_count,
+                            "tables_found": len(cache_rows),
+                            "azure_calls_made": 0,
+                            "azure_calls_capped_at": _AZURE_SHEETS_PER_CASCADE_CAP,
+                            "schedule_sheets_found": len(candidate_sheets),
+                            "schedule_sheets_with_png": cache_hits,
+                            "png_source": "intelligence_cache",
+                        },
+                        category=self.category,
+                    )
+
+            # Live Azure path: cache miss or no intelligence_provider.
+            from aspire_orchestrator.config.settings import settings
+
+            endpoint = settings.azure_doc_intel_endpoint
+            api_key_env = settings.azure_doc_intel_key
+            if not endpoint or not api_key_env:
+                return ResolverResult(
+                    resolved=False, value=None, confidence=0.0,
+                    method="azure_premium_ocr",
+                    evidence={
+                        "skip_reason": "azure_creds_missing",
+                        "azure_calls_made": 0,
+                    },
+                    category=self.category,
+                )
+
+            # Cap BEFORE issuing PNG downloads / Azure calls.
             capped_sheets = candidate_sheets[:_AZURE_SHEETS_PER_CASCADE_CAP]
 
             from aspire_orchestrator.providers.azure_doc_intel_client import (
@@ -446,3 +461,41 @@ class ScheduleResolver(MissingInputResolver):
             )
         except Exception as exc:  # noqa: BLE001
             return self._safe_result("table_structure_parse", exc)
+
+    async def _read_from_intelligence_cache(
+        self,
+        candidate_sheets: list[dict[str, Any]],
+        intel_provider: Any,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        """Read pre-extracted tables from SheetIntelligenceProvider.
+
+        Returns (cache_rows, cache_hits, cache_misses). cache_rows are in
+        the same shape used by the live Azure path. Never raises.
+        """
+        cache_rows: list[dict[str, Any]] = []
+        cache_hits = 0
+        cache_misses = 0
+        try:
+            for sheet in candidate_sheets:
+                sheet_id = str(sheet.get("id") or "")
+                if not sheet_id:
+                    cache_misses += 1
+                    continue
+                tables = await intel_provider.tables_on_sheet(sheet_id)
+                if tables:
+                    cache_hits += 1
+                    for table in tables:
+                        rows_val = table.get("rows") or []
+                        cache_rows.append({
+                            "row_count": len(rows_val) if isinstance(rows_val, list) else int(table.get("row_count") or 0),
+                            "column_count": int(table.get("column_count") or 0),
+                            "cell_count": int(table.get("cell_count") or 0),
+                        })
+                else:
+                    cache_misses += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "schedule_resolver._read_from_intelligence_cache: %s",
+                type(exc).__name__,
+            )
+        return cache_rows, cache_hits, cache_misses
