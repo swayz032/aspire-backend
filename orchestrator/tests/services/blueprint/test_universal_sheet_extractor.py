@@ -379,3 +379,125 @@ async def test_receipt_emitted_on_failure_path():
     assert receipt["action_type"] == "provider.azure.sheet_layout"
     assert receipt["outcome"] == "failed"
     assert receipt["metadata"]["reason_code"] == "AZURE_LAYOUT_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Per-cell bboxes are extracted alongside rows (Wave 20b-fix)
+# ---------------------------------------------------------------------------
+
+def test_cells_extracted_with_bboxes():
+    """_extract_tables must emit cells list with bounding_regions on each cell."""
+    from aspire_orchestrator.services.blueprint.universal_sheet_extractor import (
+        _extract_tables,
+    )
+
+    # 2-row × 3-col table: header + 2 data rows = 6 cells total (excluding header row cells
+    # from data region, but header cells are still captured in extracted_cells list)
+    raw_cells = []
+    polygons = {}
+    cell_num = 0
+    for r in range(3):  # row 0 = header, rows 1-2 = data
+        for c in range(3):
+            poly = [float(c * 100), float(r * 50), float(c * 100 + 100), float(r * 50),
+                    float(c * 100 + 100), float(r * 50 + 50), float(c * 100), float(r * 50 + 50)]
+            raw_cells.append({
+                "rowIndex": r,
+                "columnIndex": c,
+                "content": f"cell-{r}-{c}",
+                "kind": "columnHeader" if r == 0 else "content",
+                "rowSpan": 1,
+                "columnSpan": 1,
+                "boundingRegions": [{"pageNumber": 1, "polygon": poly}],
+            })
+            polygons[(r, c)] = poly
+            cell_num += 1
+
+    azure_result = {
+        "tables": [{
+            "rowCount": 3,
+            "columnCount": 3,
+            "cells": raw_cells,
+            "boundingRegions": [{"polygon": [0.0, 0.0, 300.0, 0.0, 300.0, 150.0, 0.0, 150.0]}],
+        }]
+    }
+
+    tables = _extract_tables(azure_result)
+
+    assert len(tables) == 1
+    tbl = tables[0]
+    assert "cells" in tbl, "cells key must be present in extracted table"
+    assert len(tbl["cells"]) == 9  # 3 rows × 3 cols
+    # Verify each cell has bounding_regions with polygon
+    for cell in tbl["cells"]:
+        assert "bounding_regions" in cell
+        assert len(cell["bounding_regions"]) == 1
+        assert cell["bounding_regions"][0]["polygon"] is not None
+        assert "content" in cell
+        assert "row_index" in cell
+        assert "column_index" in cell
+
+
+def test_cells_preserved_on_legend_table():
+    """Legend-region table: cells must carry per-cell bounding_regions for symbol glyph bboxes."""
+    from aspire_orchestrator.services.blueprint.universal_sheet_extractor import (
+        _classify_regions,
+        _extract_tables,
+    )
+
+    # Legend table: header row + 2 symbol rows, each cell has distinct polygon
+    raw_cells = [
+        # Header
+        {
+            "rowIndex": 0, "columnIndex": 0, "content": "Symbol",
+            "kind": "columnHeader", "rowSpan": 1, "columnSpan": 1,
+            "boundingRegions": [{"pageNumber": 1, "polygon": [0.0, 0.0, 80.0, 0.0, 80.0, 20.0, 0.0, 20.0]}],
+        },
+        {
+            "rowIndex": 0, "columnIndex": 1, "content": "Description",
+            "kind": "columnHeader", "rowSpan": 1, "columnSpan": 1,
+            "boundingRegions": [{"pageNumber": 1, "polygon": [80.0, 0.0, 300.0, 0.0, 300.0, 20.0, 80.0, 20.0]}],
+        },
+        # Row 1 (symbol glyph cell + label cell)
+        {
+            "rowIndex": 1, "columnIndex": 0, "content": "FP-1",
+            "kind": "content", "rowSpan": 1, "columnSpan": 1,
+            "boundingRegions": [{"pageNumber": 1, "polygon": [0.0, 20.0, 80.0, 20.0, 80.0, 50.0, 0.0, 50.0]}],
+        },
+        {
+            "rowIndex": 1, "columnIndex": 1, "content": "Upright Sprinkler",
+            "kind": "content", "rowSpan": 1, "columnSpan": 1,
+            "boundingRegions": [{"pageNumber": 1, "polygon": [80.0, 20.0, 300.0, 20.0, 300.0, 50.0, 80.0, 50.0]}],
+        },
+        # Row 2
+        {
+            "rowIndex": 2, "columnIndex": 0, "content": "FP-2",
+            "kind": "content", "rowSpan": 1, "columnSpan": 1,
+            "boundingRegions": [{"pageNumber": 1, "polygon": [0.0, 50.0, 80.0, 50.0, 80.0, 80.0, 0.0, 80.0]}],
+        },
+        {
+            "rowIndex": 2, "columnIndex": 1, "content": "Pendant Sprinkler",
+            "kind": "content", "rowSpan": 1, "columnSpan": 1,
+            "boundingRegions": [{"pageNumber": 1, "polygon": [80.0, 50.0, 300.0, 50.0, 300.0, 80.0, 80.0, 80.0]}],
+        },
+    ]
+
+    azure_result = {
+        "tables": [{
+            "rowCount": 3,
+            "columnCount": 2,
+            "cells": raw_cells,
+            "boundingRegions": [{"polygon": [0.0, 0.0, 300.0, 0.0, 300.0, 80.0, 0.0, 80.0]}],
+        }]
+    }
+
+    tables = _extract_tables(azure_result)
+    regions = _classify_regions(tables=tables, paragraphs=[])
+
+    assert len(regions["legend"]) == 1, "Legend region must be detected from 'Symbol' header"
+    tbl = tables[0]
+    assert "cells" in tbl
+    # The glyph cells (col 0, rows 1-2) must have distinct polygons
+    glyph_cells = [c for c in tbl["cells"] if c["column_index"] == 0 and c["row_index"] > 0]
+    assert len(glyph_cells) == 2
+    polys = [c["bounding_regions"][0]["polygon"] for c in glyph_cells]
+    assert polys[0] != polys[1], "Each symbol glyph cell must have a distinct per-cell bbox"
