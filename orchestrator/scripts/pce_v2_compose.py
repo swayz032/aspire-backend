@@ -27,7 +27,6 @@ from collections import defaultdict
 sys.path.insert(0, "orchestrator/src")
 
 from aspire_orchestrator.services.supabase_client import (  # noqa: E402
-    supabase_execute_sql,
     supabase_insert_batch_ignore_conflicts,
     supabase_select,
 )
