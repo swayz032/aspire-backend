@@ -1,0 +1,910 @@
+{
+  "wave": "semantic_gating_v1",
+  "total_pages": 24,
+  "follows_rate": 0.5,
+  "avg_recall": 0.454,
+  "avg_precision": 0.4403,
+  "avg_iou": 0.5182,
+  "trajectory": {
+    "FOLLOW": 11,
+    "SPLIT_CLUSTER": 7,
+    "STAY": 2,
+    "DRIFT_NEAR": 2
+  },
+  "per_pdf": {
+    "raster150_29187P-ES (3).pdf": {
+      "baseline_found": 6,
+      "follows": 5,
+      "stays": 0,
+      "ocr_zones": 29,
+      "best_sheet_ids": [
+        "P-1"
+      ]
+    },
+    "raster150_American_Farmhouse_201225.pdf": {
+      "baseline_found": 6,
+      "follows": 3,
+      "stays": 1,
+      "ocr_zones": 25,
+      "best_sheet_ids": [
+        "A1.1",
+        "A1.0",
+        "A0.1",
+        "A1.2",
+        "A0.0"
+      ]
+    },
+    "raster150_GAVNN_ADDENDUM_1.pdf": {
+      "baseline_found": 4,
+      "follows": 0,
+      "stays": 0,
+      "ocr_zones": 15,
+      "best_sheet_ids": [
+        "A-101",
+        "A117.1"
+      ]
+    },
+    "raster150_Southern_Farmhouse_JayOsborne.pdf": {
+      "baseline_found": 6,
+      "follows": 3,
+      "stays": 1,
+      "ocr_zones": 18,
+      "best_sheet_ids": [
+        "A0.1",
+        "A1.2",
+        "A5.2",
+        "A1.0"
+      ]
+    }
+  },
+  "per_page": [
+    {
+      "pdf_name": "raster150_29187P-ES (3).pdf",
+      "page_idx": 0,
+      "baseline_found": true,
+      "primitives_in": 38997,
+      "primitives_after_prune": 32266,
+      "candidates": 6,
+      "valid_regions": 6,
+      "best_region_score": 13.565,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "OF",
+          "1.IT IS THE RESPONSIBILITYOF THE BUILDER/CONTRACTOR TO II"
+        ],
+        [
+          "OF",
+          "COMPLY WITHTHE APPLICABLE REQUIREMENTSOF ANY GOVERI"
+        ],
+        [
+          "DRAWING",
+          "ENGINEERINGDAIAANDDRAWINGSFORTHEMETALBUILDING"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.623,
+      "primitive_precision": 0.34,
+      "iou_follow": 0.343,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 35.0,
+      "p2_ms": 110531.0,
+      "p3_ms": 15.5,
+      "prg_ms": 44580.9,
+      "elapsed_ms": 155824.1
+    },
+    {
+      "pdf_name": "raster150_29187P-ES (3).pdf",
+      "page_idx": 1,
+      "baseline_found": true,
+      "primitives_in": 5985,
+      "primitives_after_prune": 3264,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 7.928,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "NO",
+          "NOTE:ALL BASE PLATES 10O'-0U.N."
+        ],
+        [
+          "DRAWING",
+          "DRAWING STATUS"
+        ],
+        [
+          "APPR",
+          "FOR APPROVAL:"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.637,
+      "primitive_precision": 0.688,
+      "iou_follow": 0.971,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 5.9,
+      "p2_ms": 21653.3,
+      "p3_ms": 2.6,
+      "prg_ms": 1138.4,
+      "elapsed_ms": 23006.5
+    },
+    {
+      "pdf_name": "raster150_29187P-ES (3).pdf",
+      "page_idx": 2,
+      "baseline_found": true,
+      "primitives_in": 14857,
+      "primitives_after_prune": 9394,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 7.096,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "DRAWING",
+          "DRAWING STATUS"
+        ],
+        [
+          "APPR",
+          "FOR _APPROVAL:"
+        ],
+        [
+          "DATE",
+          "NO.DATE"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.619,
+      "primitive_precision": 0.516,
+      "iou_follow": 0.793,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 14.2,
+      "p2_ms": 69432.6,
+      "p3_ms": 6.3,
+      "prg_ms": 4634.1,
+      "elapsed_ms": 74427.7
+    },
+    {
+      "pdf_name": "raster150_29187P-ES (3).pdf",
+      "page_idx": 3,
+      "baseline_found": true,
+      "primitives_in": 11025,
+      "primitives_after_prune": 5197,
+      "candidates": 6,
+      "valid_regions": 5,
+      "best_region_score": 22.239,
+      "best_region_sheet_id": "P-1",
+      "best_region_positives": [
+        [
+          "OF",
+          "ROOF"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.656,
+      "primitive_precision": 0.658,
+      "iou_follow": 0.983,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 11.5,
+      "p2_ms": 30926.5,
+      "p3_ms": 5.5,
+      "prg_ms": 1645.2,
+      "elapsed_ms": 32875.8
+    },
+    {
+      "pdf_name": "raster150_29187P-ES (3).pdf",
+      "page_idx": 4,
+      "baseline_found": true,
+      "primitives_in": 9666,
+      "primitives_after_prune": 6550,
+      "candidates": 6,
+      "valid_regions": 5,
+      "best_region_score": 9.891,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "SHEET",
+          "SIDEWALL SHEETING & TRIM: LINE A"
+        ],
+        [
+          "DRAWING",
+          "DRAWING STATUS"
+        ],
+        [
+          "APPR",
+          "FOR APPROVAL:"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.0,
+      "primitive_precision": 0.0,
+      "iou_follow": 0.0,
+      "iou_stay": 0.099,
+      "ablation_survives": true,
+      "p1_ms": 9.7,
+      "p2_ms": 38619.5,
+      "p3_ms": 5.3,
+      "prg_ms": 2030.1,
+      "elapsed_ms": 40941.7
+    },
+    {
+      "pdf_name": "raster150_29187P-ES (3).pdf",
+      "page_idx": 5,
+      "baseline_found": true,
+      "primitives_in": 9304,
+      "primitives_after_prune": 6098,
+      "candidates": 6,
+      "valid_regions": 5,
+      "best_region_score": 9.91,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "SHEET",
+          "SIDEWALL SHEETING & TRIM: LINE F"
+        ],
+        [
+          "DRAWING",
+          "DRAWING STATUS"
+        ],
+        [
+          "APPR",
+          "FOR APPROVAL:"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.672,
+      "primitive_precision": 0.692,
+      "iou_follow": 0.981,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 9.6,
+      "p2_ms": 35548.2,
+      "p3_ms": 4.7,
+      "prg_ms": 2201.2,
+      "elapsed_ms": 38024.4
+    },
+    {
+      "pdf_name": "raster150_American_Farmhouse_201225.pdf",
+      "page_idx": 0,
+      "baseline_found": true,
+      "primitives_in": 21019,
+      "primitives_after_prune": 15503,
+      "candidates": 6,
+      "valid_regions": 5,
+      "best_region_score": 26.083,
+      "best_region_sheet_id": "A0.0",
+      "best_region_positives": [
+        [
+          "SHEET",
+          "SHEET INDEX"
+        ],
+        [
+          "PROJECT",
+          "PROJECT INFORMATION"
+        ],
+        [
+          "NO",
+          "GENERAL NOTES"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.811,
+      "primitive_precision": 0.322,
+      "iou_follow": 0.761,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 20.8,
+      "p2_ms": 42506.6,
+      "p3_ms": 9.6,
+      "prg_ms": 10901.9,
+      "elapsed_ms": 53852.0
+    },
+    {
+      "pdf_name": "raster150_American_Farmhouse_201225.pdf",
+      "page_idx": 1,
+      "baseline_found": true,
+      "primitives_in": 16313,
+      "primitives_after_prune": 7629,
+      "candidates": 6,
+      "valid_regions": 3,
+      "best_region_score": 8.634,
+      "best_region_sheet_id": "A0.1",
+      "best_region_positives": [
+        [
+          "REVISION",
+          "REVISIONS"
+        ],
+        [
+          "NUMBER",
+          "NUMBER"
+        ],
+        [
+          "NO",
+          "MINOR GRAPHIC EDITS"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.743,
+      "primitive_precision": 0.675,
+      "iou_follow": 0.958,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 16.1,
+      "p2_ms": 20532.7,
+      "p3_ms": 6.9,
+      "prg_ms": 3059.3,
+      "elapsed_ms": 24037.0
+    },
+    {
+      "pdf_name": "raster150_American_Farmhouse_201225.pdf",
+      "page_idx": 2,
+      "baseline_found": true,
+      "primitives_in": 30867,
+      "primitives_after_prune": 22289,
+      "candidates": 6,
+      "valid_regions": 6,
+      "best_region_score": 5.229,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "SH",
+          "32. THE GENERAL CONTRACTOR SHALL MAINTAIN A"
+        ],
+        [
+          "DRAWING",
+          "COMPLETE SETOF DRAWINGS ON THE JOBSITE DUF"
+        ],
+        [
+          "SH",
+          "OF CONSTRUCTION.ALLSUBCONTRACTORS SHALL"
+        ]
+      ],
+      "trajectory_class": "STAY",
+      "follows_content": false,
+      "stays_at_position": true,
+      "primitive_recall": 0.661,
+      "primitive_precision": 0.694,
+      "iou_follow": 0.992,
+      "iou_stay": 0.641,
+      "ablation_survives": true,
+      "p1_ms": 29.6,
+      "p2_ms": 59517.6,
+      "p3_ms": 14.9,
+      "prg_ms": 19004.1,
+      "elapsed_ms": 79024.8
+    },
+    {
+      "pdf_name": "raster150_American_Farmhouse_201225.pdf",
+      "page_idx": 3,
+      "baseline_found": true,
+      "primitives_in": 12005,
+      "primitives_after_prune": 5576,
+      "candidates": 6,
+      "valid_regions": 3,
+      "best_region_score": 6.49,
+      "best_region_sheet_id": "A1.0",
+      "best_region_positives": [
+        [
+          "REVISION",
+          "REVISIONS"
+        ],
+        [
+          "NO",
+          "MINOR GRAPHIC EDITS"
+        ],
+        [
+          "DATE",
+          "DATE"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.0,
+      "primitive_precision": 0.0,
+      "iou_follow": 0.0,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 11.8,
+      "p2_ms": 14773.5,
+      "p3_ms": 5.4,
+      "prg_ms": 1490.9,
+      "elapsed_ms": 16542.3
+    },
+    {
+      "pdf_name": "raster150_American_Farmhouse_201225.pdf",
+      "page_idx": 4,
+      "baseline_found": true,
+      "primitives_in": 9007,
+      "primitives_after_prune": 6096,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 6.485,
+      "best_region_sheet_id": "A1.1",
+      "best_region_positives": [
+        [
+          "REVISION",
+          "REVISIONS"
+        ],
+        [
+          "NO",
+          "MINOR GRAPHIC EDITS"
+        ],
+        [
+          "DATE",
+          "DATE"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.0,
+      "primitive_precision": 0.0,
+      "iou_follow": 0.0,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 8.8,
+      "p2_ms": 19761.6,
+      "p3_ms": 4.3,
+      "prg_ms": 1848.1,
+      "elapsed_ms": 21867.6
+    },
+    {
+      "pdf_name": "raster150_American_Farmhouse_201225.pdf",
+      "page_idx": 5,
+      "baseline_found": true,
+      "primitives_in": 7655,
+      "primitives_after_prune": 4217,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 6.485,
+      "best_region_sheet_id": "A1.2",
+      "best_region_positives": [
+        [
+          "REVISION",
+          "REVISIONS"
+        ],
+        [
+          "NO",
+          "MINOR GRAPHIC EDITS"
+        ],
+        [
+          "DATE",
+          "DATE"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.503,
+      "primitive_precision": 0.655,
+      "iou_follow": 0.541,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 7.6,
+      "p2_ms": 18916.4,
+      "p3_ms": 4.0,
+      "prg_ms": 1128.5,
+      "elapsed_ms": 20300.0
+    },
+    {
+      "pdf_name": "raster150_GAVNN_ADDENDUM_1.pdf",
+      "page_idx": 0,
+      "baseline_found": true,
+      "primitives_in": 28423,
+      "primitives_after_prune": 9177,
+      "candidates": 6,
+      "valid_regions": 5,
+      "best_region_score": 4.661,
+      "best_region_sheet_id": "A117.1",
+      "best_region_positives": [
+        [
+          "OF",
+          "INTERNATIONAL BUILDING CODE (IBC), 2024 W/ STATE OF GE"
+        ],
+        [
+          "OF",
+          "NFPA 101, LIFE SAFETY CODE, 2024 W/ STATE OF GEORGIA A"
+        ],
+        [
+          "OF",
+          "INTERNATIONAL FIRE CODE 2024 W/ STATE OF GEORGIA AME"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.0,
+      "primitive_precision": 0.0,
+      "iou_follow": 0.0,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 27.0,
+      "p2_ms": 37449.2,
+      "p3_ms": 14.7,
+      "prg_ms": 4175.6,
+      "elapsed_ms": 42368.1
+    },
+    {
+      "pdf_name": "raster150_GAVNN_ADDENDUM_1.pdf",
+      "page_idx": 1,
+      "baseline_found": true,
+      "primitives_in": 22310,
+      "primitives_after_prune": 8695,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 28.341,
+      "best_region_sheet_id": "A-101",
+      "best_region_positives": [
+        [
+          "SHEET",
+          "REVISED SHEET."
+        ],
+        [
+          "PROJECT",
+          "UPDATED PROJECT ADDRESS"
+        ],
+        [
+          "SHEET",
+          "REVISED SHEET NUMBER"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.0,
+      "primitive_precision": 0.0,
+      "iou_follow": 0.0,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 21.4,
+      "p2_ms": 37434.4,
+      "p3_ms": 11.4,
+      "prg_ms": 3101.0,
+      "elapsed_ms": 41288.8
+    },
+    {
+      "pdf_name": "raster150_GAVNN_ADDENDUM_1.pdf",
+      "page_idx": 2,
+      "baseline_found": true,
+      "primitives_in": 50000,
+      "primitives_after_prune": 16581,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 6.44,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "NO",
+          "ITEMS NOTED AS \"SIMILAR\"OR \"SIM\" MEA"
+        ],
+        [
+          "SH",
+          "ALL MATERIALS, SYSTEMS, FINISHES AND"
+        ],
+        [
+          "SH",
+          "AND/OR PRODUCT SHALL BE SUBMITTED"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.533,
+      "primitive_precision": 0.727,
+      "iou_follow": 0.21,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 45.7,
+      "p2_ms": 46336.4,
+      "p3_ms": 22.0,
+      "prg_ms": 8858.4,
+      "elapsed_ms": 56374.7
+    },
+    {
+      "pdf_name": "raster150_GAVNN_ADDENDUM_1.pdf",
+      "page_idx": 3,
+      "baseline_found": true,
+      "primitives_in": 23769,
+      "primitives_after_prune": 4241,
+      "candidates": 6,
+      "valid_regions": 2,
+      "best_region_score": 3.423,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "NO",
+          "NO"
+        ],
+        [
+          "SH",
+          "X SHALL"
+        ],
+        [
+          "SH",
+          "SHALL"
+        ]
+      ],
+      "trajectory_class": "SPLIT_CLUSTER",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.286,
+      "primitive_precision": 0.833,
+      "iou_follow": 0.074,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 23.0,
+      "p2_ms": 15068.5,
+      "p3_ms": 9.4,
+      "prg_ms": 1086.9,
+      "elapsed_ms": 16933.7
+    },
+    {
+      "pdf_name": "raster150_GAVNN_ADDENDUM_1.pdf",
+      "page_idx": 4,
+      "primitives_in": 15200,
+      "primitives_after_prune": 272,
+      "candidates": 6,
+      "valid_regions": 0,
+      "trajectory_class": "NO_BASELINE",
+      "baseline_found": false,
+      "p1_ms": 14.9,
+      "p2_ms": 14450.8,
+      "p3_ms": 2.1,
+      "elapsed_ms": 14979.6
+    },
+    {
+      "pdf_name": "raster150_GAVNN_ADDENDUM_1.pdf",
+      "page_idx": 5,
+      "primitives_in": 11510,
+      "primitives_after_prune": 89,
+      "candidates": 6,
+      "valid_regions": 0,
+      "trajectory_class": "NO_BASELINE",
+      "baseline_found": false,
+      "p1_ms": 12.0,
+      "p2_ms": 19774.2,
+      "p3_ms": 1.7,
+      "elapsed_ms": 20280.4
+    },
+    {
+      "pdf_name": "raster150_Southern_Farmhouse_JayOsborne.pdf",
+      "page_idx": 0,
+      "baseline_found": true,
+      "primitives_in": 16011,
+      "primitives_after_prune": 10727,
+      "candidates": 6,
+      "valid_regions": 2,
+      "best_region_score": 17.818,
+      "best_region_sheet_id": "A5.2",
+      "best_region_positives": [
+        [
+          "NO",
+          "IMPORTANTNOTE"
+        ],
+        [
+          "DRAWING",
+          "THESE DRAWINGS ARE FOR INFORMATIONAL PURPOSES ONLY. THIS"
+        ],
+        [
+          "NO",
+          "WORK IS PROVIDED 'AS IS' WITH NO PROMISES ABOUT ACCURACY"
+        ]
+      ],
+      "trajectory_class": "DRIFT_NEAR",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.412,
+      "primitive_precision": 0.5,
+      "iou_follow": 0.172,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 14.9,
+      "p2_ms": 43352.9,
+      "p3_ms": 6.2,
+      "prg_ms": 8153.2,
+      "elapsed_ms": 51857.1
+    },
+    {
+      "pdf_name": "raster150_Southern_Farmhouse_JayOsborne.pdf",
+      "page_idx": 1,
+      "baseline_found": true,
+      "primitives_in": 8376,
+      "primitives_after_prune": 6912,
+      "candidates": 6,
+      "valid_regions": 4,
+      "best_region_score": 5.59,
+      "best_region_sheet_id": "A0.1",
+      "best_region_positives": [
+        [
+          "NUMBER",
+          "PHONE NUMBER"
+        ],
+        [
+          "NO",
+          "NOTES"
+        ],
+        [
+          "NUMBER",
+          "PHONE NUMBER"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.539,
+      "primitive_precision": 0.367,
+      "iou_follow": 0.926,
+      "iou_stay": 0.267,
+      "ablation_survives": true,
+      "p1_ms": 8.1,
+      "p2_ms": 43381.9,
+      "p3_ms": 4.0,
+      "prg_ms": 2801.4,
+      "elapsed_ms": 46382.8
+    },
+    {
+      "pdf_name": "raster150_Southern_Farmhouse_JayOsborne.pdf",
+      "page_idx": 2,
+      "baseline_found": true,
+      "primitives_in": 16400,
+      "primitives_after_prune": 15398,
+      "candidates": 6,
+      "valid_regions": 6,
+      "best_region_score": 15.912,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "SH",
+          "6D  ALL REQUIRED EXITS SHALL BE OPERABLE FROM THE INSIDE,"
+        ],
+        [
+          "NO",
+          "WITHOUT THE USE OF A KEY OR ANY SPECIAL KNOWLEDGE"
+        ],
+        [
+          "SH",
+          "6E  THE MINIMUM STAIRCASE TREAD SHALL BE 10 [254]AND THE"
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.652,
+      "primitive_precision": 0.632,
+      "iou_follow": 0.993,
+      "iou_stay": 0.092,
+      "ablation_survives": true,
+      "p1_ms": 16.2,
+      "p2_ms": 97470.3,
+      "p3_ms": 7.5,
+      "prg_ms": 12744.1,
+      "elapsed_ms": 110499.8
+    },
+    {
+      "pdf_name": "raster150_Southern_Farmhouse_JayOsborne.pdf",
+      "page_idx": 3,
+      "baseline_found": true,
+      "primitives_in": 7734,
+      "primitives_after_prune": 4910,
+      "candidates": 6,
+      "valid_regions": 2,
+      "best_region_score": 3.142,
+      "best_region_sheet_id": "A1.0",
+      "best_region_positives": [
+        [
+          "PROJECT",
+          "FOR MORE PROJECT HISTORY AND CREDITS, SEE A0.1."
+        ]
+      ],
+      "trajectory_class": "FOLLOW",
+      "follows_content": true,
+      "stays_at_position": false,
+      "primitive_recall": 0.571,
+      "primitive_precision": 0.458,
+      "iou_follow": 0.466,
+      "iou_stay": 0.0,
+      "ablation_survives": true,
+      "p1_ms": 8.0,
+      "p2_ms": 42104.1,
+      "p3_ms": 2.9,
+      "prg_ms": 2111.2,
+      "elapsed_ms": 44404.0
+    },
+    {
+      "pdf_name": "raster150_Southern_Farmhouse_JayOsborne.pdf",
+      "page_idx": 4,
+      "baseline_found": true,
+      "primitives_in": 10947,
+      "primitives_after_prune": 4915,
+      "candidates": 6,
+      "valid_regions": 2,
+      "best_region_score": 2.288,
+      "best_region_sheet_id": null,
+      "best_region_positives": [
+        [
+          "NO",
+          "NOTES"
+        ],
+        [
+          "SH",
+          "1. PER OWNER APPROVAL, BUILT-IN SHELVES CAN BE"
+        ],
+        [
+          "SH",
+          "2. RAILING HEIGHT SHALL INCREASE ONLY IF DROP FROM"
+        ]
+      ],
+      "trajectory_class": "DRIFT_NEAR",
+      "follows_content": false,
+      "stays_at_position": false,
+      "primitive_recall": 0.561,
+      "primitive_precision": 0.309,
+      "iou_follow": 0.288,
+      "iou_stay": 0.004,
+      "ablation_survives": true,
+      "p1_ms": 10.6,
+      "p2_ms": 60748.2,
+      "p3_ms": 3.4,
+      "prg_ms": 1892.1,
+      "elapsed_ms": 62891.9
+    },
+    {
+      "pdf_name": "raster150_Southern_Farmhouse_JayOsborne.pdf",
+      "page_idx": 5,
+      "baseline_found": true,
+      "primitives_in": 10288,
+      "primitives_after_prune": 6664,
+      "candidates": 6,
+      "valid_regions": 2,
+      "best_region_score": 3.34,
+      "best_region_sheet_id": "A1.2",
+      "best_region_positives": [
+        [
+          "OF",
+          "6[150]ABOVE ROOF"
+        ],
+        [
+          "NO",
+          "NOTE: RAILING EXTENSION PRESERVES SIGHTLINES"
+        ],
+        [
+          "PROJECT",
+          "FOR MORE PROJECT HISTORY AND CREDITS, SEE A0.1."
+        ]
+      ],
+      "trajectory_class": "STAY",
+      "follows_content": false,
+      "stays_at_position": true,
+      "primitive_recall": 0.51,
+      "primitive_precision": 0.621,
+      "iou_follow": 0.949,
+      "iou_stay": 0.447,
+      "ablation_survives": true,
+      "p1_ms": 9.9,
+      "p2_ms": 55464.2,
+      "p3_ms": 4.2,
+      "prg_ms": 3541.7,
+      "elapsed_ms": 59245.0
+    }
+  ]
+}

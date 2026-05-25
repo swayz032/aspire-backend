@@ -1,0 +1,995 @@
+{
+  "version": "20.14.5I-r2-2026-05-24",
+  "generated_at": "2026-05-24T08:15:45",
+  "total_pdfs": 14,
+  "pass": 14,
+  "fail": 0,
+  "error": 0,
+  "category_coverage": [
+    "civil_site_plan",
+    "dense_hatch_architectural",
+    "electrical_one_line",
+    "flattened_polyline_cad",
+    "mechanical_shop_drawing",
+    "native_curve_cad",
+    "plumbing_single_sheet",
+    "site_lighting"
+  ],
+  "rows": [
+    {
+      "pdf": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+      "category_name": "Lighting plan",
+      "category_label": "site_lighting",
+      "size_bytes": 831087,
+      "extract_ms": 495.8,
+      "canon_ms": 317.3,
+      "export_style": {
+        "n_total": 119353,
+        "n_lines": 115624,
+        "n_curves": 3729,
+        "n_rects": 0,
+        "n_images": 1,
+        "tiny_line_share": 0.916,
+        "avg_segment_length_pt": 1.538,
+        "curve_share": 0.0312,
+        "line_share": 0.9688,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 115624,
+        "curve": 3729
+      },
+      "field_distribution_before": {
+        "TABLE_FIELD": 85,
+        "STRUCTURAL_FIELD": 142,
+        "SYMBOL_FIELD": 28,
+        "HATCH_FIELD": 35,
+        "UNKNOWN_FIELD": 59,
+        "BORDER_FIELD": 87
+      },
+      "field_distribution_after": {
+        "TABLE_FIELD": 86,
+        "SYMBOL_FIELD": 33,
+        "STRUCTURAL_FIELD": 136,
+        "HATCH_FIELD": 35,
+        "UNKNOWN_FIELD": 59,
+        "BORDER_FIELD": 87
+      },
+      "canonicalization": {
+        "candidate_chains": 207,
+        "synthetic_emitted": 22,
+        "acceptance_rate": 0.1063,
+        "rejections": {
+          "branching_dominance": 44,
+          "circular_fit_poor": 44,
+          "radius_out_of_band": 94,
+          "curvature_monotonicity_too_flat": 3
+        },
+        "synthetic_radius_range": [
+          2.16,
+          48.7
+        ],
+        "synthetic_confidence_range": [
+          0.7094,
+          0.8668
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "21030 ENG-C2.2 GSM (1).pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM (1)",
+      "category_name": "Civil C-2.2 GSM (dup)",
+      "category_label": "civil_site_plan",
+      "size_bytes": 944807,
+      "extract_ms": 396.7,
+      "canon_ms": 230.6,
+      "export_style": {
+        "n_total": 81066,
+        "n_lines": 80147,
+        "n_curves": 919,
+        "n_rects": 0,
+        "n_images": 3,
+        "tiny_line_share": 0.8487,
+        "avg_segment_length_pt": 2.754,
+        "curve_share": 0.0113,
+        "line_share": 0.9887,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 80147,
+        "curve": 919
+      },
+      "field_distribution_before": {
+        "TABLE_FIELD": 32,
+        "HATCH_FIELD": 87,
+        "UNKNOWN_FIELD": 179,
+        "STRUCTURAL_FIELD": 382,
+        "BORDER_FIELD": 112,
+        "SYMBOL_FIELD": 36
+      },
+      "field_distribution_after": {
+        "TABLE_FIELD": 32,
+        "HATCH_FIELD": 87,
+        "UNKNOWN_FIELD": 182,
+        "STRUCTURAL_FIELD": 375,
+        "SYMBOL_FIELD": 40,
+        "BORDER_FIELD": 112
+      },
+      "canonicalization": {
+        "candidate_chains": 1084,
+        "synthetic_emitted": 43,
+        "acceptance_rate": 0.0397,
+        "rejections": {
+          "circular_fit_poor": 537,
+          "curvature_monotonicity_too_flat": 32,
+          "branching_dominance": 403,
+          "radius_out_of_band": 69
+        },
+        "synthetic_radius_range": [
+          2.62,
+          17.62
+        ],
+        "synthetic_confidence_range": [
+          0.5716,
+          0.9764
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "21030 ENG-C2.2 GSM.pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM",
+      "category_name": "Civil C-2.2 GSM",
+      "category_label": "civil_site_plan",
+      "size_bytes": 944807,
+      "extract_ms": 351.3,
+      "canon_ms": 238.4,
+      "export_style": {
+        "n_total": 81066,
+        "n_lines": 80147,
+        "n_curves": 919,
+        "n_rects": 0,
+        "n_images": 3,
+        "tiny_line_share": 0.8487,
+        "avg_segment_length_pt": 2.754,
+        "curve_share": 0.0113,
+        "line_share": 0.9887,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 80147,
+        "curve": 919
+      },
+      "field_distribution_before": {
+        "TABLE_FIELD": 32,
+        "HATCH_FIELD": 87,
+        "UNKNOWN_FIELD": 179,
+        "STRUCTURAL_FIELD": 382,
+        "BORDER_FIELD": 112,
+        "SYMBOL_FIELD": 36
+      },
+      "field_distribution_after": {
+        "TABLE_FIELD": 32,
+        "HATCH_FIELD": 87,
+        "UNKNOWN_FIELD": 182,
+        "STRUCTURAL_FIELD": 375,
+        "SYMBOL_FIELD": 40,
+        "BORDER_FIELD": 112
+      },
+      "canonicalization": {
+        "candidate_chains": 1084,
+        "synthetic_emitted": 43,
+        "acceptance_rate": 0.0397,
+        "rejections": {
+          "circular_fit_poor": 537,
+          "curvature_monotonicity_too_flat": 32,
+          "branching_dominance": 403,
+          "radius_out_of_band": 69
+        },
+        "synthetic_radius_range": [
+          2.62,
+          17.62
+        ],
+        "synthetic_confidence_range": [
+          0.5716,
+          0.9764
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "21030 ENG_Rev1 240801_Signed.pdf",
+      "pdf_key": "21030 ENG_Rev1 240801_Signed",
+      "category_name": "Gulfstream",
+      "category_label": "native_curve_cad",
+      "size_bytes": 22062647,
+      "extract_ms": 7124.3,
+      "canon_ms": 6440.2,
+      "export_style": {
+        "n_total": 1865103,
+        "n_lines": 1860657,
+        "n_curves": 2641,
+        "n_rects": 1805,
+        "n_images": 116,
+        "tiny_line_share": 0.8933,
+        "avg_segment_length_pt": 1.496,
+        "curve_share": 0.0014,
+        "line_share": 0.9976,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "embedded_raster_heavy"
+      },
+      "raw_primitive_counts": {
+        "line": 1860657,
+        "curve": 2641,
+        "rect": 1805
+      },
+      "field_distribution_before": {
+        "BORDER_FIELD": 617,
+        "UNKNOWN_FIELD": 618,
+        "TABLE_FIELD": 235,
+        "STRUCTURAL_FIELD": 4739,
+        "HATCH_FIELD": 749,
+        "SYMBOL_FIELD": 93
+      },
+      "field_distribution_after": {
+        "BORDER_FIELD": 617,
+        "UNKNOWN_FIELD": 619,
+        "TABLE_FIELD": 261,
+        "STRUCTURAL_FIELD": 4708,
+        "HATCH_FIELD": 749,
+        "SYMBOL_FIELD": 97
+      },
+      "canonicalization": {
+        "candidate_chains": 22242,
+        "synthetic_emitted": 239,
+        "acceptance_rate": 0.0107,
+        "rejections": {
+          "circular_fit_poor": 14205,
+          "branching_dominance": 6603,
+          "radius_out_of_band": 895,
+          "curvature_monotonicity_too_flat": 300
+        },
+        "synthetic_radius_range": [
+          2.0,
+          57.63
+        ],
+        "synthetic_confidence_range": [
+          0.4931,
+          0.9818
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "29187P-ES (3).pdf",
+      "pdf_key": "29187P-ES (3)",
+      "category_name": "Electrical site (12pg)",
+      "category_label": "flattened_polyline_cad",
+      "size_bytes": 2884774,
+      "extract_ms": 1798.2,
+      "canon_ms": 2904.6,
+      "export_style": {
+        "n_total": 375331,
+        "n_lines": 375330,
+        "n_curves": 0,
+        "n_rects": 1,
+        "n_images": 0,
+        "tiny_line_share": 0.7808,
+        "avg_segment_length_pt": 2.478,
+        "curve_share": 0.0,
+        "line_share": 1.0,
+        "native_curves": false,
+        "polyline_arc_export": true,
+        "origin_class": "pure_auto_vectorized"
+      },
+      "raw_primitive_counts": {
+        "line": 375330,
+        "rect": 1
+      },
+      "field_distribution_before": {
+        "STRUCTURAL_FIELD": 2577,
+        "BORDER_FIELD": 139,
+        "UNKNOWN_FIELD": 289,
+        "HATCH_FIELD": 83
+      },
+      "field_distribution_after": {
+        "TABLE_FIELD": 165,
+        "STRUCTURAL_FIELD": 2389,
+        "UNKNOWN_FIELD": 295,
+        "BORDER_FIELD": 139,
+        "HATCH_FIELD": 83,
+        "SYMBOL_FIELD": 17
+      },
+      "canonicalization": {
+        "candidate_chains": 13068,
+        "synthetic_emitted": 947,
+        "acceptance_rate": 0.0725,
+        "rejections": {
+          "circular_fit_poor": 4874,
+          "branching_dominance": 3368,
+          "radius_out_of_band": 3593,
+          "curvature_monotonicity_too_flat": 286
+        },
+        "synthetic_radius_range": [
+          2.0,
+          24.31
+        ],
+        "synthetic_confidence_range": [
+          0.492,
+          0.9264
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "Concrete blueprints Mangonia Park.pdf",
+      "pdf_key": "Concrete blueprints Mangonia Park",
+      "category_name": "Concrete structural",
+      "category_label": "dense_hatch_architectural",
+      "size_bytes": 1483018,
+      "extract_ms": 1363.0,
+      "canon_ms": 2933.8,
+      "export_style": {
+        "n_total": 197552,
+        "n_lines": 193590,
+        "n_curves": 3962,
+        "n_rects": 0,
+        "n_images": 1,
+        "tiny_line_share": 0.3609,
+        "avg_segment_length_pt": 6.574,
+        "curve_share": 0.0201,
+        "line_share": 0.9799,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "curve": 3962,
+        "line": 193590
+      },
+      "field_distribution_before": {
+        "SYMBOL_FIELD": 23,
+        "BORDER_FIELD": 315,
+        "STRUCTURAL_FIELD": 838,
+        "UNKNOWN_FIELD": 322,
+        "HATCH_FIELD": 351,
+        "TABLE_FIELD": 142
+      },
+      "field_distribution_after": {
+        "SYMBOL_FIELD": 23,
+        "BORDER_FIELD": 315,
+        "STRUCTURAL_FIELD": 836,
+        "UNKNOWN_FIELD": 322,
+        "HATCH_FIELD": 351,
+        "TABLE_FIELD": 144
+      },
+      "canonicalization": {
+        "candidate_chains": 3709,
+        "synthetic_emitted": 4,
+        "acceptance_rate": 0.0011,
+        "rejections": {
+          "branching_dominance": 2394,
+          "circular_fit_poor": 1004,
+          "radius_out_of_band": 237,
+          "curvature_monotonicity_too_flat": 70
+        },
+        "synthetic_radius_range": [
+          2.1,
+          2.11
+        ],
+        "synthetic_confidence_range": [
+          0.6666,
+          0.6745
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "E-1 (1).pdf",
+      "pdf_key": "E-1 (1)",
+      "category_name": "Electrical E-1",
+      "category_label": "electrical_one_line",
+      "size_bytes": 851016,
+      "extract_ms": 449.1,
+      "canon_ms": 1824.4,
+      "export_style": {
+        "n_total": 94967,
+        "n_lines": 93036,
+        "n_curves": 1931,
+        "n_rects": 0,
+        "n_images": 1,
+        "tiny_line_share": 0.765,
+        "avg_segment_length_pt": 3.071,
+        "curve_share": 0.0203,
+        "line_share": 0.9797,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 93036,
+        "curve": 1931
+      },
+      "field_distribution_before": {
+        "STRUCTURAL_FIELD": 604,
+        "SYMBOL_FIELD": 42,
+        "HATCH_FIELD": 73,
+        "UNKNOWN_FIELD": 165,
+        "BORDER_FIELD": 154,
+        "TABLE_FIELD": 42
+      },
+      "field_distribution_after": {
+        "STRUCTURAL_FIELD": 601,
+        "SYMBOL_FIELD": 44,
+        "HATCH_FIELD": 73,
+        "UNKNOWN_FIELD": 165,
+        "BORDER_FIELD": 154,
+        "TABLE_FIELD": 43
+      },
+      "canonicalization": {
+        "candidate_chains": 1998,
+        "synthetic_emitted": 22,
+        "acceptance_rate": 0.011,
+        "rejections": {
+          "curvature_monotonicity_too_flat": 21,
+          "branching_dominance": 811,
+          "circular_fit_poor": 847,
+          "radius_out_of_band": 297
+        },
+        "synthetic_radius_range": [
+          3.86,
+          15.37
+        ],
+        "synthetic_confidence_range": [
+          0.5039,
+          0.9555
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "E-2 (1).pdf",
+      "pdf_key": "E-2 (1)",
+      "category_name": "Electrical E-2",
+      "category_label": "electrical_one_line",
+      "size_bytes": 960731,
+      "extract_ms": 634.6,
+      "canon_ms": 1760.1,
+      "export_style": {
+        "n_total": 102242,
+        "n_lines": 100455,
+        "n_curves": 1787,
+        "n_rects": 0,
+        "n_images": 1,
+        "tiny_line_share": 0.7991,
+        "avg_segment_length_pt": 2.253,
+        "curve_share": 0.0175,
+        "line_share": 0.9825,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 100455,
+        "curve": 1787
+      },
+      "field_distribution_before": {
+        "TABLE_FIELD": 71,
+        "HATCH_FIELD": 301,
+        "STRUCTURAL_FIELD": 205,
+        "UNKNOWN_FIELD": 163,
+        "SYMBOL_FIELD": 35,
+        "BORDER_FIELD": 109
+      },
+      "field_distribution_after": {
+        "TABLE_FIELD": 71,
+        "HATCH_FIELD": 301,
+        "STRUCTURAL_FIELD": 204,
+        "UNKNOWN_FIELD": 163,
+        "SYMBOL_FIELD": 36,
+        "BORDER_FIELD": 109
+      },
+      "canonicalization": {
+        "candidate_chains": 1023,
+        "synthetic_emitted": 16,
+        "acceptance_rate": 0.0156,
+        "rejections": {
+          "circular_fit_poor": 253,
+          "branching_dominance": 246,
+          "radius_out_of_band": 482,
+          "curvature_monotonicity_too_flat": 26
+        },
+        "synthetic_radius_range": [
+          3.86,
+          15.55
+        ],
+        "synthetic_confidence_range": [
+          0.4956,
+          0.7155
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "E-3 (1).pdf",
+      "pdf_key": "E-3 (1)",
+      "category_name": "Electrical E-3",
+      "category_label": "electrical_one_line",
+      "size_bytes": 1042117,
+      "extract_ms": 943.6,
+      "canon_ms": 2813.5,
+      "export_style": {
+        "n_total": 197623,
+        "n_lines": 195696,
+        "n_curves": 1927,
+        "n_rects": 0,
+        "n_images": 1,
+        "tiny_line_share": 0.7667,
+        "avg_segment_length_pt": 2.12,
+        "curve_share": 0.0098,
+        "line_share": 0.9902,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 195696,
+        "curve": 1927
+      },
+      "field_distribution_before": {
+        "UNKNOWN_FIELD": 101,
+        "BORDER_FIELD": 70,
+        "SYMBOL_FIELD": 70,
+        "STRUCTURAL_FIELD": 963,
+        "TABLE_FIELD": 34,
+        "HATCH_FIELD": 22
+      },
+      "field_distribution_after": {
+        "UNKNOWN_FIELD": 102,
+        "BORDER_FIELD": 70,
+        "SYMBOL_FIELD": 71,
+        "STRUCTURAL_FIELD": 944,
+        "TABLE_FIELD": 51,
+        "HATCH_FIELD": 22
+      },
+      "canonicalization": {
+        "candidate_chains": 7609,
+        "synthetic_emitted": 96,
+        "acceptance_rate": 0.0126,
+        "rejections": {
+          "circular_fit_poor": 3490,
+          "branching_dominance": 3490,
+          "curvature_monotonicity_too_flat": 54,
+          "radius_out_of_band": 479
+        },
+        "synthetic_radius_range": [
+          2.01,
+          8.14
+        ],
+        "synthetic_confidence_range": [
+          0.4573,
+          0.9555
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "E-4 (1).pdf",
+      "pdf_key": "E-4 (1)",
+      "category_name": "Electrical E-4",
+      "category_label": "electrical_one_line",
+      "size_bytes": 7119598,
+      "extract_ms": 351.3,
+      "canon_ms": 1451.8,
+      "export_style": {
+        "n_total": 48757,
+        "n_lines": 48028,
+        "n_curves": 729,
+        "n_rects": 0,
+        "n_images": 13,
+        "tiny_line_share": 0.8564,
+        "avg_segment_length_pt": 2.235,
+        "curve_share": 0.015,
+        "line_share": 0.985,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "embedded_raster_heavy"
+      },
+      "raw_primitive_counts": {
+        "curve": 729,
+        "line": 48028
+      },
+      "field_distribution_before": {
+        "SYMBOL_FIELD": 5,
+        "TABLE_FIELD": 13,
+        "BORDER_FIELD": 18,
+        "STRUCTURAL_FIELD": 43,
+        "UNKNOWN_FIELD": 16,
+        "HATCH_FIELD": 3
+      },
+      "field_distribution_after": {
+        "SYMBOL_FIELD": 6,
+        "TABLE_FIELD": 13,
+        "BORDER_FIELD": 18,
+        "STRUCTURAL_FIELD": 42,
+        "UNKNOWN_FIELD": 16,
+        "HATCH_FIELD": 3
+      },
+      "canonicalization": {
+        "candidate_chains": 428,
+        "synthetic_emitted": 9,
+        "acceptance_rate": 0.021,
+        "rejections": {
+          "branching_dominance": 90,
+          "circular_fit_poor": 101,
+          "radius_out_of_band": 225,
+          "curvature_monotonicity_too_flat": 3
+        },
+        "synthetic_radius_range": [
+          3.86,
+          6.23
+        ],
+        "synthetic_confidence_range": [
+          0.5114,
+          0.6903
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "Open 29187P-ES (3).pdf",
+      "pdf_key": "Open 29187P-ES (3)",
+      "category_name": "Open electrical site",
+      "category_label": "flattened_polyline_cad",
+      "size_bytes": 2798271,
+      "extract_ms": 1775.1,
+      "canon_ms": 1416.2,
+      "export_style": {
+        "n_total": 375325,
+        "n_lines": 375325,
+        "n_curves": 0,
+        "n_rects": 0,
+        "n_images": 0,
+        "tiny_line_share": 0.8838,
+        "avg_segment_length_pt": 1.166,
+        "curve_share": 0.0,
+        "line_share": 1.0,
+        "native_curves": false,
+        "polyline_arc_export": true,
+        "origin_class": "pure_auto_vectorized"
+      },
+      "raw_primitive_counts": {
+        "line": 375325
+      },
+      "field_distribution_before": {
+        "STRUCTURAL_FIELD": 861,
+        "HATCH_FIELD": 16,
+        "BORDER_FIELD": 22,
+        "UNKNOWN_FIELD": 10
+      },
+      "field_distribution_after": {
+        "STRUCTURAL_FIELD": 859,
+        "HATCH_FIELD": 16,
+        "TABLE_FIELD": 2,
+        "BORDER_FIELD": 22,
+        "UNKNOWN_FIELD": 10
+      },
+      "canonicalization": {
+        "candidate_chains": 4165,
+        "synthetic_emitted": 10,
+        "acceptance_rate": 0.0024,
+        "rejections": {
+          "radius_out_of_band": 2221,
+          "circular_fit_poor": 1656,
+          "branching_dominance": 220,
+          "curvature_monotonicity_too_flat": 58
+        },
+        "synthetic_radius_range": [
+          2.01,
+          8.47
+        ],
+        "synthetic_confidence_range": [
+          0.6202,
+          0.9139
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "P-1 (1).pdf",
+      "pdf_key": "P-1 (1)",
+      "category_name": "Plumbing P-1",
+      "category_label": "plumbing_single_sheet",
+      "size_bytes": 700241,
+      "extract_ms": 187.9,
+      "canon_ms": 314.0,
+      "export_style": {
+        "n_total": 53369,
+        "n_lines": 52055,
+        "n_curves": 1314,
+        "n_rects": 0,
+        "n_images": 2,
+        "tiny_line_share": 0.7986,
+        "avg_segment_length_pt": 3.462,
+        "curve_share": 0.0246,
+        "line_share": 0.9754,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "hybrid_raster_vector"
+      },
+      "raw_primitive_counts": {
+        "line": 52055,
+        "curve": 1314
+      },
+      "field_distribution_before": {
+        "BORDER_FIELD": 91,
+        "UNKNOWN_FIELD": 48,
+        "STRUCTURAL_FIELD": 265,
+        "TABLE_FIELD": 37,
+        "HATCH_FIELD": 5,
+        "SYMBOL_FIELD": 46
+      },
+      "field_distribution_after": {
+        "BORDER_FIELD": 91,
+        "UNKNOWN_FIELD": 48,
+        "STRUCTURAL_FIELD": 265,
+        "TABLE_FIELD": 37,
+        "HATCH_FIELD": 5,
+        "SYMBOL_FIELD": 46
+      },
+      "canonicalization": {
+        "candidate_chains": 1310,
+        "synthetic_emitted": 6,
+        "acceptance_rate": 0.0046,
+        "rejections": {
+          "radius_out_of_band": 194,
+          "circular_fit_poor": 826,
+          "branching_dominance": 274,
+          "curvature_monotonicity_too_flat": 10
+        },
+        "synthetic_radius_range": [
+          3.64,
+          49.43
+        ],
+        "synthetic_confidence_range": [
+          0.4956,
+          0.7589
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "Precast Drainage.pdf",
+      "pdf_key": "Precast Drainage",
+      "category_name": "Precast catch basin",
+      "category_label": "mechanical_shop_drawing",
+      "size_bytes": 323303,
+      "extract_ms": 88.5,
+      "canon_ms": 146.8,
+      "export_style": {
+        "n_total": 29889,
+        "n_lines": 29670,
+        "n_curves": 214,
+        "n_rects": 5,
+        "n_images": 11,
+        "tiny_line_share": 0.8053,
+        "avg_segment_length_pt": 7.211,
+        "curve_share": 0.0072,
+        "line_share": 0.9927,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "embedded_raster_heavy"
+      },
+      "raw_primitive_counts": {
+        "line": 29670,
+        "rect": 5,
+        "curve": 214
+      },
+      "field_distribution_before": {
+        "BORDER_FIELD": 169,
+        "UNKNOWN_FIELD": 111,
+        "STRUCTURAL_FIELD": 240,
+        "HATCH_FIELD": 15,
+        "SYMBOL_FIELD": 31,
+        "TABLE_FIELD": 7
+      },
+      "field_distribution_after": {
+        "BORDER_FIELD": 169,
+        "UNKNOWN_FIELD": 111,
+        "STRUCTURAL_FIELD": 239,
+        "HATCH_FIELD": 15,
+        "SYMBOL_FIELD": 32,
+        "TABLE_FIELD": 7
+      },
+      "canonicalization": {
+        "candidate_chains": 352,
+        "synthetic_emitted": 12,
+        "acceptance_rate": 0.0341,
+        "rejections": {
+          "radius_out_of_band": 132,
+          "branching_dominance": 23,
+          "circular_fit_poor": 166,
+          "curvature_monotonicity_too_flat": 19
+        },
+        "synthetic_radius_range": [
+          3.28,
+          53.67
+        ],
+        "synthetic_confidence_range": [
+          0.821,
+          0.8777
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    },
+    {
+      "pdf": "Revised light pole plan.pdf",
+      "pdf_key": "Revised light pole plan",
+      "category_name": "Light pole plan",
+      "category_label": "site_lighting",
+      "size_bytes": 616249,
+      "extract_ms": 357.6,
+      "canon_ms": 361.8,
+      "export_style": {
+        "n_total": 55811,
+        "n_lines": 55528,
+        "n_curves": 283,
+        "n_rects": 0,
+        "n_images": 0,
+        "tiny_line_share": 0.8113,
+        "avg_segment_length_pt": 2.618,
+        "curve_share": 0.0051,
+        "line_share": 0.9949,
+        "native_curves": true,
+        "polyline_arc_export": false,
+        "origin_class": "pure_auto_vectorized"
+      },
+      "raw_primitive_counts": {
+        "line": 55528,
+        "curve": 283
+      },
+      "field_distribution_before": {
+        "HATCH_FIELD": 442,
+        "STRUCTURAL_FIELD": 231,
+        "UNKNOWN_FIELD": 35,
+        "TABLE_FIELD": 21,
+        "SYMBOL_FIELD": 8,
+        "BORDER_FIELD": 114
+      },
+      "field_distribution_after": {
+        "HATCH_FIELD": 442,
+        "STRUCTURAL_FIELD": 231,
+        "UNKNOWN_FIELD": 34,
+        "TABLE_FIELD": 22,
+        "SYMBOL_FIELD": 8,
+        "BORDER_FIELD": 114
+      },
+      "canonicalization": {
+        "candidate_chains": 1060,
+        "synthetic_emitted": 24,
+        "acceptance_rate": 0.0226,
+        "rejections": {
+          "circular_fit_poor": 862,
+          "branching_dominance": 121,
+          "radius_out_of_band": 53
+        },
+        "synthetic_radius_range": [
+          2.49,
+          2.5
+        ],
+        "synthetic_confidence_range": [
+          0.8908,
+          0.908
+        ]
+      },
+      "acceptance_gates": {
+        "gate_symbol_field_recovery": true,
+        "gate_hatch_no_promotion": true,
+        "gate_synthetic_produced_when_needed": true,
+        "gate_synthetic_acceptance_rate_bounded": true,
+        "gate_canonicalization_runtime_bounded": true
+      },
+      "all_gates_pass": true
+    }
+  ]
+}

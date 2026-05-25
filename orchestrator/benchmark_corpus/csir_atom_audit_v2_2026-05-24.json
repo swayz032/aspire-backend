@@ -1,0 +1,309 @@
+{
+  "wave": "20.14.5J-A-fix",
+  "atom_set": [
+    "discipline",
+    "position",
+    "operational_system",
+    "scale"
+  ],
+  "pdf_op_systems": {
+    "2101LP-R1-LP1-1of1 (11) (7)": {
+      "primary_system": "drainage",
+      "score": 3,
+      "confidence": 0.65,
+      "evidence": [
+        "DRAINAGE",
+        "DRAINAGE",
+        "DRAINAGE"
+      ],
+      "all_scores": {
+        "lighting": 2,
+        "low_voltage": 1,
+        "drainage": 3
+      }
+    },
+    "21030 ENG-C2.2 GSM (1)": {
+      "primary_system": "drainage",
+      "score": 5,
+      "confidence": 0.757,
+      "evidence": [
+        "DRAINAGE",
+        "DRAINAGE",
+        "DRAINAGE",
+        "CATCH\nBASIN"
+      ],
+      "all_scores": {
+        "sanitary": 1,
+        "drainage": 5,
+        "site_grading": 1
+      }
+    },
+    "21030 ENG-C2.2 GSM": {
+      "primary_system": "drainage",
+      "score": 5,
+      "confidence": 0.757,
+      "evidence": [
+        "DRAINAGE",
+        "DRAINAGE",
+        "DRAINAGE",
+        "CATCH\nBASIN"
+      ],
+      "all_scores": {
+        "sanitary": 1,
+        "drainage": 5,
+        "site_grading": 1
+      }
+    },
+    "21030 ENG_Rev1 240801_Signed": {
+      "primary_system": "drainage",
+      "score": 19,
+      "confidence": 0.78,
+      "evidence": [
+        "DRAINAGE",
+        "DRAINAGE",
+        "DRAINAGE",
+        "CATCH\nBASIN",
+        "CATCH\nBASIN"
+      ],
+      "all_scores": {
+        "sanitary": 3,
+        "drainage": 19,
+        "site_grading": 3
+      }
+    },
+    "29187P-ES (3)": {
+      "primary_system": "unknown",
+      "score": 0,
+      "confidence": 0.1,
+      "evidence": []
+    },
+    "Concrete blueprints Mangonia Park": {
+      "primary_system": "structural",
+      "score": 32,
+      "confidence": 0.844,
+      "evidence": [
+        "FOUNDATION",
+        "FOUNDATION",
+        "FOUNDATION",
+        "STRUCTURAL",
+        "STRUCTURAL"
+      ],
+      "all_scores": {
+        "sanitary": 1,
+        "drainage": 3,
+        "structural": 32
+      }
+    },
+    "E-1 (1)": {
+      "primary_system": "lighting",
+      "score": 5,
+      "confidence": 0.65,
+      "evidence": [
+        "LIGHTING",
+        "LIGHTING",
+        "LIGHTING",
+        "LUMINAIRE"
+      ],
+      "all_scores": {
+        "lighting": 5,
+        "site_lighting": 2,
+        "sanitary": 1,
+        "drainage": 2
+      }
+    },
+    "E-2 (1)": {
+      "primary_system": "power",
+      "score": 2,
+      "confidence": 0.6,
+      "evidence": [
+        "RECEPTACLE",
+        "RECEPTACLE"
+      ],
+      "all_scores": {
+        "lighting": 1,
+        "power": 2,
+        "drainage": 2
+      }
+    },
+    "E-3 (1)": {
+      "primary_system": "unknown",
+      "score": 0,
+      "confidence": 0.1,
+      "evidence": []
+    },
+    "E-4 (1)": {
+      "primary_system": "lighting",
+      "score": 1,
+      "confidence": 0.9,
+      "evidence": [
+        "LIGHTING"
+      ],
+      "all_scores": {
+        "lighting": 1
+      }
+    },
+    "Open 29187P-ES (3)": {
+      "primary_system": "unknown",
+      "score": 0,
+      "confidence": 0.1,
+      "evidence": []
+    },
+    "P-1 (1)": {
+      "primary_system": "unknown",
+      "score": 0,
+      "confidence": 0.1,
+      "evidence": []
+    },
+    "Precast Drainage": {
+      "primary_system": "drainage",
+      "score": 7,
+      "confidence": 0.838,
+      "evidence": [
+        "DRAINAGE",
+        "CATCH BASIN",
+        "CATCH BASIN",
+        "CATCH BASIN",
+        "PRECAST"
+      ],
+      "all_scores": {
+        "hvac": 1,
+        "drainage": 7
+      }
+    },
+    "Revised light pole plan": {
+      "primary_system": "lighting",
+      "score": 6,
+      "confidence": 0.775,
+      "evidence": [
+        "LIGHTING",
+        "LIGHTING",
+        "LIGHTING",
+        "LUMINAIRE"
+      ],
+      "all_scores": {
+        "lighting": 6,
+        "site_lighting": 2
+      }
+    }
+  },
+  "baselines": {
+    "topology_only": {
+      "atoms_used": [],
+      "cross_disc_total": 15,
+      "cross_disc_resolved": 0,
+      "resolution_rate": 0.0,
+      "healthy_total": 239,
+      "healthy_preserved": 239,
+      "preservation_rate": 1.0,
+      "distinct_ir_sigs": 401
+    },
+    "full_atoms": {
+      "atoms_used": [
+        "discipline",
+        "position",
+        "operational_system",
+        "scale"
+      ],
+      "cross_disc_total": 15,
+      "cross_disc_resolved": 15,
+      "resolution_rate": 1.0,
+      "healthy_total": 239,
+      "healthy_preserved": 213,
+      "preservation_rate": 0.8912,
+      "distinct_ir_sigs": 450
+    }
+  },
+  "per_atom_metrics": {
+    "discipline": {
+      "information_gain": 0.5333,
+      "standalone_resolution": 1.0,
+      "standalone_preservation": 1.0,
+      "drift_sensitivity": 0.0591,
+      "false_partition_rate": 0.0
+    },
+    "position": {
+      "information_gain": 0.0,
+      "standalone_resolution": 0.1333,
+      "standalone_preservation": 0.9456,
+      "drift_sensitivity": 0.0591,
+      "false_partition_rate": 0.0544
+    },
+    "operational_system": {
+      "information_gain": 0.0,
+      "standalone_resolution": 0.4,
+      "standalone_preservation": 0.9582,
+      "drift_sensitivity": 0.063,
+      "false_partition_rate": 0.0418
+    },
+    "scale": {
+      "information_gain": 0.0,
+      "standalone_resolution": 0.4,
+      "standalone_preservation": 0.9707,
+      "drift_sensitivity": 0.0512,
+      "false_partition_rate": 0.0293
+    }
+  },
+  "pairwise_ari_matrix": {
+    "discipline": {
+      "discipline": 1.0,
+      "position": 0.794,
+      "operational_system": 0.9339,
+      "scale": 0.8
+    },
+    "position": {
+      "discipline": 0.794,
+      "position": 1.0,
+      "operational_system": 0.8262,
+      "scale": 0.9713
+    },
+    "operational_system": {
+      "discipline": 0.9339,
+      "position": 0.8262,
+      "operational_system": 1.0,
+      "scale": 0.8219
+    },
+    "scale": {
+      "discipline": 0.8,
+      "position": 0.9713,
+      "operational_system": 0.8219,
+      "scale": 1.0
+    }
+  },
+  "verdicts": {
+    "discipline": {
+      "verdict": "REJECT",
+      "flags": [
+        "REDUNDANT_WITH_operational_system_ari=0.93"
+      ],
+      "max_pairwise_ari": 0.9339
+    },
+    "position": {
+      "verdict": "REJECT",
+      "flags": [
+        "REDUNDANT_WITH_scale_ari=0.97"
+      ],
+      "max_pairwise_ari": 0.9713
+    },
+    "operational_system": {
+      "verdict": "REJECT",
+      "flags": [
+        "REDUNDANT_WITH_discipline_ari=0.93"
+      ],
+      "max_pairwise_ari": 0.9339
+    },
+    "scale": {
+      "verdict": "REJECT",
+      "flags": [
+        "REDUNDANT_WITH_position_ari=0.97"
+      ],
+      "max_pairwise_ari": 0.9713
+    }
+  },
+  "v21_acceptance": {
+    "resolution_pass": true,
+    "preservation_pass": false,
+    "ari_pass": false,
+    "drift_pass": true,
+    "all_pass": false
+  }
+}

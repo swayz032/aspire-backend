@@ -1,0 +1,244 @@
+{
+  "schema_version": "2026-05-24-v1",
+  "labeled_by": "user_ground_truth + visual_inspection",
+  "principle": "Ground truth labels override all heuristics. Filename matching is NOT canonical. PDF text scanning is NOT canonical. This file IS canonical.",
+  "projects": {
+    "mangonia_park_warehouse": {
+      "canonical_name": "1319 Mangonia Park Warehouse",
+      "address": "1519 13th Street, Mangonia Park, FL 33407",
+      "client": "1319 Mangonia LLC",
+      "building_type": "pre-engineered metal warehouse with foundation + civil + MEP + lighting + drainage",
+      "project_kind": "multi_discipline_construction_project",
+      "engineers": [
+        {"firm": "McCann McCarthy & Associates P.A.", "discipline": "civil"},
+        {"firm": "DKK Engineers", "discipline": "structural/foundation"},
+        {"firm": "BMI Metal Buildings (MBMI)", "discipline": "pre-engineered metal building"},
+        {"firm": "Deveroun Polychron (signed)", "discipline": "electrical/lighting"},
+        {"firm": "Viet Bach Nguyen (signed)", "discipline": "plumbing"}
+      ],
+      "files": [
+        {
+          "filename": "21030 ENG_Rev1 240801_Signed.pdf",
+          "discipline_primary": "civil",
+          "disciplines_secondary": ["water_supply", "sanitary_sewer", "site_grading"],
+          "pages": 13,
+          "sheet_series": "C1.0-C6.2 + PW-1/PW-2",
+          "notes": "Master civil engineering package — site plan, grading, drainage, water/sewer details, general notes"
+        },
+        {
+          "filename": "21030 ENG-C2.2 GSM.pdf",
+          "discipline_primary": "civil",
+          "disciplines_secondary": ["site_signing_marking"],
+          "pages": 1,
+          "sheet_series": "C2.2 (GSM = Geometric Signing & Marking)",
+          "notes": "Single sheet — parking layout + striping + signage. Same project as 21030 ENG_Rev1."
+        },
+        {
+          "filename": "21030 ENG-C2.2 GSM (1).pdf",
+          "discipline_primary": "civil",
+          "disciplines_secondary": ["site_signing_marking"],
+          "pages": 1,
+          "sheet_series": "C2.2 (duplicate)",
+          "notes": "Identical to the above — duplicate copy."
+        },
+        {
+          "filename": "Concrete blueprints Mangonia Park.pdf",
+          "discipline_primary": "structural",
+          "disciplines_secondary": ["concrete_foundation"],
+          "pages": 2,
+          "sheet_series": "S-1, S-2",
+          "notes": "Concrete foundation drawings for the pre-engineered metal building. Sheet S-1 = foundation site/plan, S-2 = typical foundation details."
+        },
+        {
+          "filename": "29187P-ES (3).pdf",
+          "discipline_primary": "metal_building_structural",
+          "disciplines_secondary": ["pre_engineered_steel"],
+          "pages": 12,
+          "sheet_series": "MBMI proprietary cover sheet + erection drawings",
+          "notes": "BMI Metal Buildings shop drawings for the pre-engineered metal warehouse. CRITICAL: pure auto-vectorized PDF — ZERO extractable text, 0 native curves, 375K lines.",
+          "text_layer_present": false,
+          "production_gap_flag": "auto_vectorized_text_free"
+        },
+        {
+          "filename": "Open 29187P-ES (3).pdf",
+          "discipline_primary": "metal_building_structural",
+          "disciplines_secondary": ["pre_engineered_steel"],
+          "pages": 12,
+          "sheet_series": "same as above (variant)",
+          "notes": "Variant of the BMI metal building drawings. Same content, same project.",
+          "text_layer_present": false,
+          "production_gap_flag": "auto_vectorized_text_free"
+        },
+        {
+          "filename": "E-1 (1).pdf",
+          "discipline_primary": "electrical",
+          "disciplines_secondary": ["site_electrical", "service"],
+          "pages": 1,
+          "sheet_series": "E-1",
+          "notes": "Site electrical plan for the Mangonia warehouse — includes site lighting schedule, duct bank, utility pull box, transformer pad, pole installation details."
+        },
+        {
+          "filename": "E-2 (1).pdf",
+          "discipline_primary": "electrical",
+          "disciplines_secondary": ["panel_schedules", "lighting"],
+          "pages": 1,
+          "sheet_series": "E-2",
+          "notes": "Electrical floor plan + lighting plan + panelboard A/H schedules for the warehouse."
+        },
+        {
+          "filename": "E-3 (1).pdf",
+          "discipline_primary": "electrical",
+          "disciplines_secondary": [],
+          "pages": 1,
+          "sheet_series": "E-3",
+          "notes": "Continuation of electrical drawings (full content under inspection)."
+        },
+        {
+          "filename": "E-4 (1).pdf",
+          "discipline_primary": "electrical",
+          "disciplines_secondary": ["lighting"],
+          "pages": 1,
+          "sheet_series": "E-4",
+          "notes": "Electrical with lighting fixture details. Many embedded images (13)."
+        },
+        {
+          "filename": "P-1 (1).pdf",
+          "discipline_primary": "plumbing",
+          "disciplines_secondary": ["sanitary", "domestic_water"],
+          "pages": 1,
+          "sheet_series": "P-1",
+          "notes": "Plumbing floor plan for 1319 Mangonia Park Warehouse — sanitary piping isometric, water piping isometric. Signed by Viet Bach Nguyen."
+        },
+        {
+          "filename": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+          "discipline_primary": "electrical",
+          "disciplines_secondary": ["lighting", "photometric"],
+          "pages": 1,
+          "sheet_series": "LP1 (Lighting Plan, sheet 1 of 1, revision 11/7)",
+          "notes": "Site lighting / photometric plan for the same warehouse. 'LP' prefix = Lighting Plan."
+        },
+        {
+          "filename": "Revised light pole plan.pdf",
+          "discipline_primary": "electrical",
+          "disciplines_secondary": ["site_lighting", "pole_layout"],
+          "pages": 1,
+          "sheet_series": "Light pole plan (revised)",
+          "notes": "Site light pole layout for the Mangonia warehouse. Contains wall-mount + pole locations with luminaire schedule."
+        },
+        {
+          "filename": "Precast Drainage.pdf",
+          "discipline_primary": "civil",
+          "disciplines_secondary": ["precast_drainage", "catch_basin_details"],
+          "pages": 6,
+          "sheet_series": "Manufacturer shop drawings (X36, C2, C478, X4, D4 part numbers)",
+          "notes": "Precast catch basin / drainage shop drawings for the Mangonia warehouse civil package. Manufacturer reference drawings (Gray Cast Iron, ASTM-A48 Class 35B per title block)."
+        }
+      ]
+    },
+    "gulfstream_ups_savannah": {
+      "canonical_name": "UPS Savannah Tenant Improvement",
+      "address": "577 Gulfstream Rd, Suite D, Savannah, GA 31408",
+      "client": "United Parcel Service Inc.",
+      "building_type": "tenant improvement of existing air cargo facility",
+      "project_kind": "multi_discipline_construction_project",
+      "engineers": [
+        {"firm": "Stratus", "discipline": "architect", "address": "3715 Northside Pkwy NW, Atlanta GA"},
+        {"firm": "Killian (a Stratus Company)", "discipline": "MEP", "address": "119 Young Street, Henderson NC"}
+      ],
+      "files": [
+        {
+          "filename": "GAVNN_ADDENDUM_1.pdf",
+          "discipline_primary": "multi_discipline",
+          "disciplines_secondary": ["architectural", "MEP", "plumbing", "fire_protection", "electrical", "structural"],
+          "pages": 39,
+          "sheet_series": "Multi-sheet across all disciplines",
+          "notes": "Full 39-sheet multi-discipline tenant improvement package. Project No. 2025-1073, Addendum 1, dated 03/18/2026. Sheet P-101 visible = plumbing waste/vent plan; cover sheet shows site applicable codes (IBC 2024 GA amendments, NFPA 101, IFC). This is the canonical Gulfstream multi-discipline test PDF.",
+          "supabase_project_id": "7a93d144-5d53-47d3-8b97-067ebe249d88",
+          "text_layer_present": true
+        }
+      ]
+    },
+    "southern_farmhouse_jay_osborne": {
+      "canonical_name": "Southern Farmhouse Drawing Set",
+      "client": "residential — Jay Osborne plans",
+      "building_type": "residential single-family farmhouse",
+      "project_kind": "residential_architectural_drawing_set",
+      "engineers": [
+        {"firm": "Jay Osborne", "discipline": "residential architectural", "role": "designer/architect"}
+      ],
+      "files": [
+        {
+          "filename": "Southern_Farmhouse_JayOsborne.pdf",
+          "discipline_primary": "residential_architectural",
+          "disciplines_secondary": ["floor_plan", "elevation", "details"],
+          "pages": 32,
+          "sheet_series": "residential A-series",
+          "notes": "32-sheet residential drawing set by Jay Osborne, dated 2023-02-01. Critical anti-memorization test: different firm, different building class (residential vs commercial), different drafting conventions from Mangonia/Gulfstream.",
+          "text_layer_present": true
+        }
+      ]
+    },
+    "american_farmhouse_201225": {
+      "canonical_name": "American Farmhouse plans",
+      "client": "residential",
+      "building_type": "residential single-family farmhouse",
+      "project_kind": "residential_architectural_drawing_set",
+      "engineers": [
+        {"firm": "unknown — different from Jay Osborne", "discipline": "residential architectural"}
+      ],
+      "files": [
+        {
+          "filename": "American_Farmhouse_201225.pdf",
+          "discipline_primary": "residential_architectural",
+          "disciplines_secondary": ["floor_plan", "elevation", "details"],
+          "pages": 25,
+          "sheet_series": "residential A-series",
+          "notes": "25-sheet residential drawing set, file dated 201225 (likely 2020-12-25 or sheet 201225). Cross-firm generalization test alongside Southern Farmhouse.",
+          "text_layer_present": true
+        }
+      ]
+    }
+  },
+  "summary_statistics": {
+    "total_pdfs": 18,
+    "total_projects": 4,
+    "residential_pdfs": 2,
+    "residential_pages": 57,
+    "anti_memorization_corpus_added": "Southern Farmhouse (Jay Osborne, 32pp) + American Farmhouse (25pp) — different firms, residential building class, architectural discipline. First true cross-firm + cross-building-class test in v29 arc.",
+    "mangonia_park_pdfs_legacy": 14,
+    "gulfstream_ups_pdfs": 1,
+    "previous_misclassifications_corrected": [
+      "29187P-ES previously labeled electrical_site → actually metal_building_structural",
+      "Open 29187P-ES previously labeled electrical_site → actually metal_building_structural",
+      "21030 ENG_Rev1 previously labeled Gulfstream/MEP → actually Mangonia Park civil",
+      "E-1 through E-4 previously labeled standalone electrical project → actually Mangonia electrical",
+      "P-1 previously labeled standalone plumbing → actually Mangonia plumbing",
+      "2101LP previously labeled standalone lighting → actually Mangonia site lighting",
+      "Revised light pole plan previously labeled standalone → actually Mangonia site lighting",
+      "Precast Drainage previously labeled standalone mechanical → actually Mangonia civil drainage"
+    ]
+  },
+  "critical_architectural_implications": {
+    "for_audit_metrics": [
+      "Previously-reported '15 cross-discipline collisions' were WITHIN-PROJECT (Mangonia Park), NOT cross-project",
+      "The 42-instance MEP↔civil collision = real recurrence of fixtures across the SAME building's disciplines",
+      "Cross-project comparison group is now {Mangonia, Gulfstream} = only 2 — too small for meaningful cross-project ARI",
+      "Conditional ARI within-project should redefine: 'within multi-PDF same-project bundle' for Mangonia"
+    ],
+    "for_routing_context": [
+      "Multiple PDFs CAN belong to the same project — routing must support project-level grouping across files",
+      "Discipline must be per-PDF (Mangonia has 6 disciplines across 14 PDFs)",
+      "Operational system must be sheet-level (within one PDF can have multiple systems)"
+    ],
+    "for_production_pipeline": [
+      "Customer uploads will often be MULTI-PDF SAME-PROJECT (one PDF per discipline)",
+      "System needs project_grouping mechanism — likely user-confirmed at upload time",
+      "Cross-PDF reference resolution (legend on civil PDF references symbols on plumbing PDF) is a real requirement"
+    ],
+    "auto_vectorized_blindness": [
+      "29187P-ES + Open variant have 0 native curves, 0 text, 0 candidates extracted by current pipeline",
+      "These are real metal building manufacturer shop drawings — common production file type",
+      "Must add OCR fallback + line-cluster symbol detection + visual title-block parser"
+    ]
+  }
+}

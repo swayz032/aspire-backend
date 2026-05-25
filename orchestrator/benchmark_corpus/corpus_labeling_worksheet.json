@@ -1,0 +1,515 @@
+{
+  "generated_at": "2026-05-24",
+  "n_pdfs": 14,
+  "rows": [
+    {
+      "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+      "pdf_filename": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "n_pages": 1,
+      "size_bytes": 831087,
+      "primitive_counts": {
+        "lines": 115624,
+        "curves": 3729,
+        "rects": 0
+      },
+      "n_images": 1,
+      "total_text_chars": 5484,
+      "has_text": true,
+      "title_region_sample": "NORTH\nSHEET 1\nOF\n1\n13\n60'\nSCALE:   1\" = 20'\n0'\n10'\n20'\n40'\n80'\nLANDSCAPE\nPLAN",
+      "sheet_codes_found": {
+        "D3": 14,
+        "D1": 12,
+        "X4": 3,
+        "X6": 2,
+        "X8": 2,
+        "SP-3": 1,
+        "SP-1": 1,
+        "NO-4": 1,
+        "SP2": 1,
+        "R0": 1
+      },
+      "discipline_keyword_evidence": {
+        "civil_site": [
+          "PROPERTY LINE",
+          "PROPERTY LINE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\2101LP-R1-LP1-1of1__11___7_\\page_00.png"
+      ],
+      "first_page_text_sample": "D3\nD1\nD1\nD1\nD1\nD1\nD1\nD3\nD3\nD3\nD3\nD3\nD3\nUNIT A\nUNIT B\nUNIT C\nUNIT D\nUNIT E\nUNIT F\nBUILDING F\n15'DRAINAGE EASEMENT\nCES\n4\nCON\n98\nCES\n4\nLJ\n5\nQV\n7\nCHR\n168\nCES\n3\nCON\n45\nLJ\n3\nCES\n4\nQV\n1\nEXISTING VEGETATION\nFULL TO GROUND\n15' DRAINAGE AND\nLANDSCAPE EASEMENT\n15' UTILITY EASEMENT\nFIRE DDCV\nPROPERTY LINE\nPROPE"
+    },
+    {
+      "pdf_key": "21030 ENG-C2.2 GSM (1)",
+      "pdf_filename": "21030 ENG-C2.2 GSM (1).pdf",
+      "n_pages": 1,
+      "size_bytes": 944807,
+      "primitive_counts": {
+        "lines": 80147,
+        "curves": 919,
+        "rects": 0
+      },
+      "n_images": 3,
+      "total_text_chars": 2399,
+      "has_text": true,
+      "title_region_sample": "DATE: 8/1/2024\nSHEET\nTOWN RESUBMITTAL\nOF 13\nNOTE: THESE PLANS ARE PRELIMINARY AND SHOULD NOT BE USED FOR \nCONSTRUCTION OR BIDDING/CONTRACTUAL PURPOSES UNTIL ALL PERMITS ARE ISSUED.\nALL ELEVATIONS REFE",
+      "sheet_codes_found": {
+        "N87": 2,
+        "N02": 2,
+        "SHA-1": 2,
+        "S04": 1,
+        "C2": 1
+      },
+      "discipline_keyword_evidence": {
+        "plumbing": [
+          "SANITARY"
+        ],
+        "civil_drainage": [
+          "CATCH\nBASIN"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\21030_ENG-C2.2_GSM__1_\\page_00.png"
+      ],
+      "first_page_text_sample": "5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\n10' UTILITY EASEMENT\n5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\n20' DRAINAGE EASEMENT\n5' LANDSCAPE EASEMENT\n2.5'\n20' TURN-AROUND EASEMENT\nIN FAVOR OF PARCEL IV\nN87\u00b028'53\"W\n193.75'\nN87\u00b028'53\"W\n193.75'\nN02\u00b031'07\"E\n269.4"
+    },
+    {
+      "pdf_key": "21030 ENG-C2.2 GSM",
+      "pdf_filename": "21030 ENG-C2.2 GSM.pdf",
+      "n_pages": 1,
+      "size_bytes": 944807,
+      "primitive_counts": {
+        "lines": 80147,
+        "curves": 919,
+        "rects": 0
+      },
+      "n_images": 3,
+      "total_text_chars": 2399,
+      "has_text": true,
+      "title_region_sample": "DATE: 8/1/2024\nSHEET\nTOWN RESUBMITTAL\nOF 13\nNOTE: THESE PLANS ARE PRELIMINARY AND SHOULD NOT BE USED FOR \nCONSTRUCTION OR BIDDING/CONTRACTUAL PURPOSES UNTIL ALL PERMITS ARE ISSUED.\nALL ELEVATIONS REFE",
+      "sheet_codes_found": {
+        "N87": 2,
+        "N02": 2,
+        "SHA-1": 2,
+        "S04": 1,
+        "C2": 1
+      },
+      "discipline_keyword_evidence": {
+        "plumbing": [
+          "SANITARY"
+        ],
+        "civil_drainage": [
+          "CATCH\nBASIN"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\21030_ENG-C2.2_GSM\\page_00.png"
+      ],
+      "first_page_text_sample": "5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\n10' UTILITY EASEMENT\n5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\n20' DRAINAGE EASEMENT\n5' LANDSCAPE EASEMENT\n2.5'\n20' TURN-AROUND EASEMENT\nIN FAVOR OF PARCEL IV\nN87\u00b028'53\"W\n193.75'\nN87\u00b028'53\"W\n193.75'\nN02\u00b031'07\"E\n269.4"
+    },
+    {
+      "pdf_key": "21030 ENG_Rev1 240801_Signed",
+      "pdf_filename": "21030 ENG_Rev1 240801_Signed.pdf",
+      "n_pages": 13,
+      "size_bytes": 22062647,
+      "primitive_counts": {
+        "lines": 1860657,
+        "curves": 2641,
+        "rects": 1805
+      },
+      "n_images": 116,
+      "total_text_chars": 30299,
+      "has_text": true,
+      "title_region_sample": "DATE: 8/1/2024\nSHEET\nTOWN RESUBMITTAL\nOF 13\nNOTE: THESE PLANS ARE PRELIMINARY AND SHOULD NOT BE USED FOR \nCONSTRUCTION OR BIDDING/CONTRACTUAL PURPOSES UNTIL ALL PERMITS ARE ISSUED.\nALL ELEVATIONS REFE",
+      "sheet_codes_found": {
+        "SHA-1": 26,
+        "N87": 8,
+        "N02": 8,
+        "C2": 6,
+        "C4": 6,
+        "S04": 4,
+        "C6": 3,
+        "C1": 2,
+        "C3": 2,
+        "C5": 2
+      },
+      "discipline_keyword_evidence": {
+        "plumbing": [
+          "SANITARY",
+          "SANITARY",
+          "SANITARY"
+        ],
+        "civil_drainage": [
+          "CATCH\nBASIN",
+          "CATCH\nBASIN",
+          "CATCH\nBASIN",
+          "DRAINAGE PLAN",
+          "DRAINAGE PLAN"
+        ],
+        "civil_grading": [
+          "GRADING",
+          "GRADING"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\21030_ENG_Rev1_240801_Signed\\page_00.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\21030_ENG_Rev1_240801_Signed\\page_06.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\21030_ENG_Rev1_240801_Signed\\page_12.png"
+      ],
+      "first_page_text_sample": "DATE: 8/1/2024\nPROJECT #:21-030\nSHEET\nAPPROVED: TNM\nDRAWN: P. Saffold\nFIELD:\nDESIGNED: TNM\nTOWN RESUBMITTAL\nSEAL\nMANGONIA PARK, FLORIDA\n1319 MANGONIA PARK WAREHOUSE\nMcLeod    McCarthy\n& Associates, P.A.\nCivil Engineers\nThe Forum III\n1655 Palm Beach Lakes Blvd, Ste. 901\nWest Palm Beach, FL 33401\nP: 5"
+    },
+    {
+      "pdf_key": "29187P-ES (3)",
+      "pdf_filename": "29187P-ES (3).pdf",
+      "n_pages": 12,
+      "size_bytes": 2884774,
+      "primitive_counts": {
+        "lines": 375330,
+        "curves": 0,
+        "rects": 1
+      },
+      "n_images": 0,
+      "total_text_chars": 8,
+      "has_text": false,
+      "title_region_sample": "",
+      "sheet_codes_found": {},
+      "discipline_keyword_evidence": {},
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\29187P-ES__3_\\page_00.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\29187P-ES__3_\\page_06.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\29187P-ES__3_\\page_11.png"
+      ],
+      "first_page_text_sample": "SIGN"
+    },
+    {
+      "pdf_key": "Concrete blueprints Mangonia Park",
+      "pdf_filename": "Concrete blueprints Mangonia Park.pdf",
+      "n_pages": 2,
+      "size_bytes": 1483018,
+      "primitive_counts": {
+        "lines": 193590,
+        "curves": 3962,
+        "rects": 0
+      },
+      "n_images": 1,
+      "total_text_chars": 12234,
+      "has_text": true,
+      "title_region_sample": "A\nB\nB\nB\nPN-9\nPN-1\nPN-3\nPN-2\nPN-2\nA\nPN-2\nPN-8\nPN-8\nPN-2\nPN-8\n01 / S-2\n02 / S-2\nTYPICAL\nPN-1\nPN 1\nP\nPN 12\nC.J.\nC.J.\n-2\nPN-2\nPN-3\nPN-3\n04\nS-2",
+      "sheet_codes_found": {
+        "S-2": 52,
+        "PN-2": 52,
+        "PN-1": 35,
+        "PN-8": 29,
+        "PN-3": 29,
+        "PN-4": 13,
+        "PN-5": 12,
+        "PN-10": 12,
+        "PN-14": 11,
+        "PN-9": 10
+      },
+      "discipline_keyword_evidence": {
+        "plumbing": [
+          "SANITARY"
+        ],
+        "structural": [
+          "FOUNDATION",
+          "FOUNDATION",
+          "FOUNDATION",
+          "STRUCTURAL",
+          "STRUCTURAL"
+        ],
+        "metal_building": [
+          "METAL BUILDING",
+          "METAL\nBUILDING",
+          "METAL BUILDING"
+        ],
+        "civil_site": [
+          "SITE PLAN"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Concrete_blueprints_Mangonia_Park\\page_00.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Concrete_blueprints_Mangonia_Park\\page_01.png"
+      ],
+      "first_page_text_sample": "5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\n15' DRAINAGE AN\n20' DRAINAGE EASEMENT\n5' LANDSCAPE EASEMENT\n20' TURN-AROUND EASEMENT\nIN FAVOR OF PARCEL IV\nN87\u00b028'53\"W\n193.75'\nN87\u00b028'53\"W\n193.75'\nN02\u00b031'07\"E\n269.45'\nN02\u00b031'07\"E\n269.45'\nPARCEL IV\nPARCEL II\nCHAINLINK FENCE\nSANITARY SEWER"
+    },
+    {
+      "pdf_key": "E-1 (1)",
+      "pdf_filename": "E-1 (1).pdf",
+      "n_pages": 1,
+      "size_bytes": 851016,
+      "primitive_counts": {
+        "lines": 93036,
+        "curves": 1931,
+        "rects": 0
+      },
+      "n_images": 1,
+      "total_text_chars": 6228,
+      "has_text": true,
+      "title_region_sample": "G FIXTURE SCHEDULE",
+      "sheet_codes_found": {
+        "W1": 5,
+        "N87": 2,
+        "N02": 2,
+        "RSX1": 2,
+        "P4": 2,
+        "R4": 1,
+        "P3": 1,
+        "R3": 1
+      },
+      "discipline_keyword_evidence": {
+        "electrical_lighting": [
+          "LUMINAIRE",
+          "LIGHTING FIXTURE"
+        ],
+        "plumbing": [
+          "SANITARY"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\E-1__1_\\page_00.png"
+      ],
+      "first_page_text_sample": "5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\n20' DRAINAGE EASEMENT\n5' LANDSCAPE EASEMENT\n2.5'\n20' TURN-ARO\nIN FAVOR OF \nN87\u00b028'53\"W\n193.75'\nN87\u00b028'53\"W\n193.75'\nN02\u00b031'07\"E\n269.45'\nN02\u00b031'07\"E\n269.45'\nPARCEL II\n41.80'\nASSUMED\nBEARING BASE\nWOOD\nPOWER\nPOLE WITH\nLIGHT\nEAST LINE OF\nPARC"
+    },
+    {
+      "pdf_key": "E-2 (1)",
+      "pdf_filename": "E-2 (1).pdf",
+      "n_pages": 1,
+      "size_bytes": 960731,
+      "primitive_counts": {
+        "lines": 100455,
+        "curves": 1787,
+        "rects": 0
+      },
+      "n_images": 1,
+      "total_text_chars": 3824,
+      "has_text": true,
+      "title_region_sample": "193.75'\nCONCRETE\nNIA HILLS AMMENDED\nBOOK 27, PAGE 110",
+      "sheet_codes_found": {
+        "N87": 4,
+        "N02": 2
+      },
+      "discipline_keyword_evidence": {
+        "electrical_power": [
+          "RECEPTACLE",
+          "RECEPTACLE"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\E-2__1_\\page_00.png"
+      ],
+      "first_page_text_sample": "5' LIMITED ACCESS EASEMENT\n15' DRAINAGE AND LANDSCAPE EASEMENT\nN87\u00b028'53\"W\n193.75'\nN87\u00b028'53\"W\n193.75'\nN02\u00b031'07\"E\n269.45'\nRCEL II\n41.80'\nWOOD\nPOWER\nPOLE WITH\nLIGHT\n1.4'\nCHAINLINK FENCE\nFIRE DDCV\n67.36'\nCONCRETE\nCONCRETE\nLOADING RAMP\nCONCRETE\nCONCRETE\n91.55'\nMANGONIA HILLS AMMENDED\nPALT BOOK 27, PAG"
+    },
+    {
+      "pdf_key": "E-3 (1)",
+      "pdf_filename": "E-3 (1).pdf",
+      "n_pages": 1,
+      "size_bytes": 1042117,
+      "primitive_counts": {
+        "lines": 195696,
+        "curves": 1927,
+        "rects": 0
+      },
+      "n_images": 1,
+      "total_text_chars": 332,
+      "has_text": true,
+      "title_region_sample": "",
+      "sheet_codes_found": {},
+      "discipline_keyword_evidence": {},
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\E-3__1_\\page_00.png"
+      ],
+      "first_page_text_sample": "6\nSCALE:  NONE\nSERVICE RACK DETAIL\n2\nSCALE:  NONE\nELECTRICAL RISER\n1\nSCALE:  NONE\nLEGEND\n4\nSCALE:  NONE\nDATA RISER\nRDCE, INC.\n5\nSCALE:  NONE\nDATA DEVICE MOUNTING\n7\nSCALE:  NONE\nFIRE STOPPING DETAILS\n3\nSCALE:  NONE\nGENERAL ELECTRICAL NOTES\nDeveren \nPeterkin\nDigitally signed \nby Deveren \nPeterkin \nDat"
+    },
+    {
+      "pdf_key": "E-4 (1)",
+      "pdf_filename": "E-4 (1).pdf",
+      "n_pages": 1,
+      "size_bytes": 7119598,
+      "primitive_counts": {
+        "lines": 48028,
+        "curves": 729,
+        "rects": 0
+      },
+      "n_images": 13,
+      "total_text_chars": 163,
+      "has_text": true,
+      "title_region_sample": "",
+      "sheet_codes_found": {
+        "W1": 1
+      },
+      "discipline_keyword_evidence": {
+        "electrical_lighting": [
+          "LIGHTING FIXTURE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\E-4__1_\\page_00.png"
+      ],
+      "first_page_text_sample": "RDCE, INC.\n1\nSCALE:  NONE\nLIGHTING FIXTURE CUTSHEETS\n'SA' & 'SB'\n'W1'\nDeveren \nPeterkin\nDigitally signed \nby Deveren \nPeterkin \nDate: 2024.07.31 \n21:29:20 -04'00'"
+    },
+    {
+      "pdf_key": "Open 29187P-ES (3)",
+      "pdf_filename": "Open 29187P-ES (3).pdf",
+      "n_pages": 12,
+      "size_bytes": 2798271,
+      "primitive_counts": {
+        "lines": 375325,
+        "curves": 0,
+        "rects": 0
+      },
+      "n_images": 0,
+      "total_text_chars": 0,
+      "has_text": false,
+      "title_region_sample": "",
+      "sheet_codes_found": {},
+      "discipline_keyword_evidence": {},
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Open_29187P-ES__3_\\page_00.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Open_29187P-ES__3_\\page_06.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Open_29187P-ES__3_\\page_11.png"
+      ],
+      "first_page_text_sample": ""
+    },
+    {
+      "pdf_key": "P-1 (1)",
+      "pdf_filename": "P-1 (1).pdf",
+      "n_pages": 1,
+      "size_bytes": 700241,
+      "primitive_counts": {
+        "lines": 52055,
+        "curves": 1314,
+        "rects": 0
+      },
+      "n_images": 2,
+      "total_text_chars": 1200,
+      "has_text": true,
+      "title_region_sample": "",
+      "sheet_codes_found": {
+        "SHA-1": 2,
+        "P-1": 1
+      },
+      "discipline_keyword_evidence": {
+        "architectural": [
+          "FLOOR PLAN"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\P-1__1_\\page_00.png"
+      ],
+      "first_page_text_sample": "UNIT A\nUNIT B\nUNIT C\nUNIT F\nUNIT D\nUNIT E\nPROP. WAREHOUSE\nBUILDING\nF.F.E. 16.10\nPLUMBING FLOOR PLAN\nSYMBOL           DESCRIPTION\n.\\TODD-seal-sig.png\nDATE: 8/13/2021\nPROJECT #:21-030\nSHEET\nAPPROVED: TNM\nDRAWN: BN\nFIELD:\nDESIGNED: TNM\nSCALE:  AS SHOWN\nSEAL\nMANGONIA PARK, FLORIDA\n1319 MANGONIA PARK WAR"
+    },
+    {
+      "pdf_key": "Precast Drainage",
+      "pdf_filename": "Precast Drainage.pdf",
+      "n_pages": 6,
+      "size_bytes": 323303,
+      "primitive_counts": {
+        "lines": 29670,
+        "curves": 214,
+        "rects": 5
+      },
+      "n_images": 11,
+      "total_text_chars": 14701,
+      "has_text": true,
+      "title_region_sample": "REV BY\nQUOTE #\nREV\nREV DATE\nDRAWN BY\nGray Cast Iron\nMATERIAL:\nDRAWN DATE\nASTM-A48 Class 35B\n8040048\nAASHTO M306\n392.3 in\u00d7\nGrate\nFrame\nAssembly\nLOAD CLASSIFICATION:\nFLOW AREA:\n8030032\n8070191\nustomer D",
+      "sheet_codes_found": {
+        "X36": 4,
+        "C2": 4,
+        "C478": 4,
+        "X4": 4,
+        "D4": 4,
+        "D5": 4,
+        "WX27": 4,
+        "X1": 2,
+        "S-101": 2,
+        "S-102": 2
+      },
+      "discipline_keyword_evidence": {
+        "civil_drainage": [
+          "CATCH BASIN",
+          "CATCH BASIN",
+          "CATCH BASIN"
+        ],
+        "concrete_precast": [
+          "CONCRETE",
+          "CONCRETE",
+          "CONCRETE",
+          "REBAR",
+          "REBAR"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Precast_Drainage\\page_00.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Precast_Drainage\\page_03.png",
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Precast_Drainage\\page_05.png"
+      ],
+      "first_page_text_sample": "Day Holder \n& Hc\n233\n4\" 69\n16\"\n24\"\n291\n2\"\n22\"\n24\"\n353\n4\"\n11\n4\"\n11\n2\"\n34\"\n36\"\n11\n2\"\n4\"\n411\n2\"\n36\"\n11\n2\"\nREV BY\nQUOTE #\nREV\nREV DATE\nDRAWN BY\nUSF 4139 Frame & 6429 Grate\nGray Cast Iron\nMATERIAL:\nDRAWN DATE\n8351 NW 93rd Street\nMedley, FL, 33166-2025\nph: 1-800-432-9709\nfax: 305-887-9429\nwww.usfoundry.co"
+    },
+    {
+      "pdf_key": "Revised light pole plan",
+      "pdf_filename": "Revised light pole plan.pdf",
+      "n_pages": 1,
+      "size_bytes": 616249,
+      "primitive_counts": {
+        "lines": 55528,
+        "curves": 283,
+        "rects": 0
+      },
+      "n_images": 0,
+      "total_text_chars": 5266,
+      "has_text": true,
+      "title_region_sample": "WALL MOUNT A.F.F.\n0.855\n4202\n46.6589\n46.659\nWALL MOUNT A.F.F.\n0.855\n4268\n46.6589\n46.659\nWALL MOUNT A.F.F.\n0.855\n8779\n59.2761\n59.276\nHeight (FT)\nAvg\nMax\nMin\nAvg/Min\nMax/Min\n0\n1.93\n5.7\n0.6\n3.22\n9.50",
+      "sheet_codes_found": {
+        "W1": 6,
+        "W2": 4,
+        "W3": 4,
+        "P4": 3,
+        "RSX1": 2,
+        "R4": 2,
+        "P3": 1,
+        "R3": 1,
+        "P2": 1
+      },
+      "discipline_keyword_evidence": {
+        "electrical_lighting": [
+          "LUMINAIRE"
+        ]
+      },
+      "thumbnails": [
+        "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\thumbnails\\Revised_light_pole_plan\\page_00.png"
+      ],
+      "first_page_text_sample": "UNIT A\nUNIT B\nUNIT C\nUNIT F\nUNIT D\nUNIT E\nLuminaire Schedule: 1319 MANGONIA PARK WAREHOUSE - SITE_REV 1     MANGONIA PARK, FL     11/07/2024\nSymbol\nQty\nLabel\nArrangement\nManufacturer\nDescription\nMounting\nLLF\nLum Lumens\nLum Watts\nArrangement Watts\n1\nSA\nSingle\nLithonia Lighting\nRSX1 LED P4 40K R4\nPOLE"
+    }
+  ]
+}

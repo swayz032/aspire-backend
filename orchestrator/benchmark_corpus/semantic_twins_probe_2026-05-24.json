@@ -1,0 +1,6994 @@
+{
+  "summary": {
+    "total_signatures": 401,
+    "repeating": 254,
+    "category_counts": {
+      "same_project_same_discipline": 239,
+      "cross_everything": 14,
+      "same_project_cross_discipline": 1
+    },
+    "twin_risk_total": 15
+  },
+  "twin_examples": [
+    {
+      "sig": "696611dada",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            33,
+            10
+          ],
+          "n_prims": 13,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1686.0394287109375,
+            532.9212646484375
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            26
+          ],
+          "n_prims": 13,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1315.8499755859375
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            26
+          ],
+          "n_prims": 13,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1314.5899658203125
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            26
+          ],
+          "n_prims": 13,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1082.510009765625,
+            1314.5899658203125
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            26
+          ],
+          "n_prims": 13,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1082.510009765625,
+            1315.8499755859375
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "c2cf3c6c70",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1370.5099487304688,
+            1197.2899780273438
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1369.3699340820312,
+            1197.2899780273438
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1369.3699340820312,
+            1198.4299926757812
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1370.5099487304688,
+            1198.4299926757812
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1370.5099487304688,
+            1197.2899780273438
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1369.3699340820312,
+            1197.2899780273438
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1369.3699340820312,
+            1198.4299926757812
+          ]
+        },
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            27,
+            23
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1370.5099487304688,
+            1198.4299926757812
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            30
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1514.090087890625
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            30
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1512.830078125
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            30
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1082.510009765625,
+            1512.830078125
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            30
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1082.510009765625,
+            1514.090087890625
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1402.010009765625
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1400.75
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1082.510009765625,
+            1400.75
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 8,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1082.510009765625,
+            1402.010009765625
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "e24d411dc0",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+          "project": "2101LP",
+          "discipline": "site_lighting",
+          "page": 0,
+          "tile": [
+            20,
+            8
+          ],
+          "n_prims": 6,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1039.851318359375,
+            449.38299560546875
+          ]
+        },
+        {
+          "pdf_key": "E-1 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            29,
+            7
+          ],
+          "n_prims": 6,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1461.9498901367188,
+            387.2300567626953
+          ]
+        },
+        {
+          "pdf_key": "E-1 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            29,
+            7
+          ],
+          "n_prims": 6,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1459.6099243164062,
+            384.8900604248047
+          ]
+        },
+        {
+          "pdf_key": "E-1 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            29,
+            7
+          ],
+          "n_prims": 6,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1459.6099243164062,
+            387.2300567626953
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "fcf9ae1793",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.46998596191406,
+            189.1700439453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            407.92999267578125,
+            189.1700439453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.46998596191406,
+            192.71002197265625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.04998779296875,
+            189.59002685546875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.34999084472656,
+            189.59002685546875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.34999084472656,
+            192.2900390625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.04998779296875,
+            192.2900390625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.46998596191406,
+            189.1700439453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            407.92999267578125,
+            189.1700439453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.46998596191406,
+            192.71002197265625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.04998779296875,
+            189.59002685546875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.34999084472656,
+            189.59002685546875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.34999084472656,
+            192.2900390625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.04998779296875,
+            192.2900390625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.7250061035156,
+            189.15496826171875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0950012207031,
+            189.15496826171875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.7250061035156,
+            192.78497314453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.27500915527344,
+            189.60497283935547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.5450134277344,
+            189.60497283935547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.5450134277344,
+            192.33496856689453
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.27500915527344,
+            192.33496856689453
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.5749816894531,
+            189.18496704101562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0049743652344,
+            189.18496704101562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.5749816894531,
+            192.75497436523438
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.12498474121094,
+            189.63497161865234
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.4549865722656,
+            189.63497161865234
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.4549865722656,
+            192.30496978759766
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.12498474121094,
+            192.30496978759766
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.7250061035156,
+            189.15496826171875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0950012207031,
+            189.15496826171875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.7250061035156,
+            192.78497314453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.27500915527344,
+            189.60497283935547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.5450134277344,
+            189.60497283935547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.5450134277344,
+            192.33496856689453
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.27500915527344,
+            192.33496856689453
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.7250061035156,
+            189.15496826171875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0950012207031,
+            189.15496826171875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.7250061035156,
+            192.78497314453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.27500915527344,
+            189.60497283935547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.5450134277344,
+            189.60497283935547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.5450134277344,
+            192.33496856689453
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            411.27500915527344,
+            192.33496856689453
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "2374574bfd",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            407.92999267578125,
+            192.71002197265625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            407.92999267578125,
+            192.71002197265625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0950012207031,
+            192.78497314453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0049743652344,
+            192.75497436523438
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0950012207031,
+            192.78497314453125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            8,
+            3
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            408.0950012207031,
+            192.78497314453125
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "f63ccc80ef",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1085.1499633789062,
+            241.070068359375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1084.72998046875,
+            240.6500244140625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1085.1499633789062,
+            241.070068359375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1084.72998046875,
+            240.6500244140625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1085.2550659179688,
+            241.17501831054688
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1084.8049926757812,
+            240.72501373291016
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1085.5249633789062,
+            241.26495361328125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            21,
+            4
+          ],
+          "n_prims": 15,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1085.074951171875,
+            240.81494903564453
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "dfd4e5f538",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1358.718994140625,
+            1203.1396484375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1358.779541015625,
+            1201.760986328125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1351.3720703125,
+            1202.1494140625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1354.0694580078125,
+            1202.2679443359375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1358.718994140625,
+            1203.1396484375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1358.779541015625,
+            1201.760986328125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1351.3720703125,
+            1202.1494140625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1354.0694580078125,
+            1202.2679443359375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1359.094970703125,
+            1203.3340454101562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1359.1542358398438,
+            1201.9853515625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1351.6860961914062,
+            1202.3137817382812
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 1,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1354.4134521484375,
+            1202.4336547851562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1358.794921875,
+            1203.0940551757812
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1358.8541870117188,
+            1201.745361328125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1351.4172973632812,
+            1202.0451049804688
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1354.084716796875,
+            1202.1622924804688
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1359.094970703125,
+            1203.3340454101562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1359.1542358398438,
+            1201.9853515625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1351.6860961914062,
+            1202.3137817382812
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 3,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1354.4134521484375,
+            1202.4336547851562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1359.094970703125,
+            1203.3340454101562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1359.1542358398438,
+            1201.9853515625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1351.6860961914062,
+            1202.3137817382812
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 10,
+          "tile": [
+            27,
+            24
+          ],
+          "n_prims": 5,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "l"
+          ],
+          "centroid": [
+            1354.4134521484375,
+            1202.4336547851562
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "6aa43000d8",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            456.78810119628906,
+            334.10546875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            455.1990509033203,
+            336.37542724609375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            455.71356201171875,
+            336.81878662109375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            456.78810119628906,
+            334.10546875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            455.1990509033203,
+            336.37542724609375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            455.71356201171875,
+            336.81878662109375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 11,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            990.7922058105469,
+            1301.8201293945312
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "e315435b19",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            461.1665496826172,
+            332.73077392578125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            489.07440185546875,
+            333.59490966796875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            461.1665496826172,
+            332.73077392578125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            489.07440185546875,
+            333.59490966796875
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            988.8960571289062,
+            1304.8662109375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            986.500732421875,
+            1306.5664672851562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            984.1192626953125,
+            1306.5665893554688
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            981.7239379882812,
+            1304.8662109375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            984.1192626953125,
+            1307.3134155273438
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            981.7239379882812,
+            1308.9537353515625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            979.7677917480469,
+            1311.9998168945312
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            978.7779235839844,
+            1316.0220336914062
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 14,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            978.7779235839844,
+            1320.5978393554688
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "9ab788a1e3",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 12,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            493.68894958496094,
+            334.65264892578125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 12,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            493.68894958496094,
+            334.65264892578125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 12,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            979.7678527832031,
+            1301.8201293945312
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 12,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            981.7239379882812,
+            1327.666259765625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            26
+          ],
+          "n_prims": 12,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            984.1192626953125,
+            1329.3666381835938
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "f7578ad1ae",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            496.9323425292969,
+            338.101318359375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            497.44468688964844,
+            338.767333984375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            498.8134460449219,
+            335.69708251953125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM (1)",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            451.5968017578125,
+            333.7418212890625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            496.9323425292969,
+            338.101318359375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            497.44468688964844,
+            338.767333984375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            498.8134460449219,
+            335.69708251953125
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG-C2.2 GSM",
+          "project": "21030",
+          "discipline": "civil",
+          "page": 0,
+          "tile": [
+            9,
+            6
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            451.5968017578125,
+            333.7418212890625
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            988.8960571289062,
+            1286.1536865234375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            990.7922058105469,
+            1289.1997680664062
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            991.8420104980469,
+            1293.2221069335938
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            991.8420715332031,
+            1297.7979125976562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            978.7779846191406,
+            1297.7979125976562
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            978.7779235839844,
+            1293.2221069335938
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            979.7677917480469,
+            1289.1998901367188
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            981.7239379882812,
+            1286.1536865234375
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            984.1192626953125,
+            1284.5134887695312
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            19,
+            25
+          ],
+          "n_prims": 10,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            986.5007934570312,
+            1284.5134887695312
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "07ff1e726b",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            39,
+            14
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1977.4850463867188,
+            748.7749938964844
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 2,
+          "tile": [
+            39,
+            14
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1966.89501953125,
+            748.7749938964844
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1738.324951171875,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            34,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1747.6549682617188,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1779.7249755859375,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            35,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1789.0549926757812,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1821.0650634765625,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            36,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1830.3950805664062,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1913.0750122070312,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1903.7449951171875,
+            371.1649627685547
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1903.7449951171875,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            7
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1913.0750122070312,
+            380.4949493408203
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1913.0750122070312,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1903.7449951171875,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1903.7449951171875,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1913.0750122070312,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            412.5649871826172
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            8
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            421.8949737548828
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            329.8249969482422
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            6
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            339.1549835205078
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1913.0750122070312,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1903.7449951171875,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1903.7449951171875,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            38,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1913.0750122070312,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            288.4850311279297
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1862.405029296875,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "21030 ENG_Rev1 240801_Signed",
+          "project": "Gulfstream",
+          "discipline": "MEP",
+          "page": 4,
+          "tile": [
+            37,
+            5
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1871.7350463867188,
+            297.8150177001953
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            30,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1547.054931640625,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            30,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1547.054931640625,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            30,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1538.0849609375,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            30,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1538.0849609375,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            27,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1386.794921875,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            27,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1386.794921875,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            27,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1377.824951171875,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            27,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1377.824951171875,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            24,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1226.4749755859375,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            24,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1226.4749755859375,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            24,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1217.5050048828125,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            24,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1217.5050048828125,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1066.1549072265625,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1066.1549072265625,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1057.1849365234375,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            21,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1057.1849365234375,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            14,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            745.5149536132812,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            14,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            745.5149536132812,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            14,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            736.5449829101562,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            14,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            736.5449829101562,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            11,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            585.2549438476562,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            11,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            585.2549438476562,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            11,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            576.2849731445312,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            11,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            576.2849731445312,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            8,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            424.9349822998047,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            8,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            424.9349822998047,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            8,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            415.96498107910156,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            8,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            415.96498107910156,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            5,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            264.61500549316406,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            5,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            264.61500549316406,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            5,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            255.64500427246094,
+            1439.385009765625
+          ]
+        },
+        {
+          "pdf_key": "Concrete blueprints Mangonia Park",
+          "project": "Mangonia",
+          "discipline": "structural",
+          "page": 0,
+          "tile": [
+            5,
+            28
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            255.64500427246094,
+            1448.35498046875
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            32,
+            42
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1628.648193359375,
+            2137.0887451171875
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "a279e36dc7",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "E-2 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            17,
+            14
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            854.5099487304688,
+            730.7900390625
+          ]
+        },
+        {
+          "pdf_key": "E-2 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            17,
+            14
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            854.5099487304688,
+            725.570068359375
+          ]
+        },
+        {
+          "pdf_key": "Precast Drainage",
+          "project": "Precast",
+          "discipline": "mechanical_shop",
+          "page": 1,
+          "tile": [
+            7,
+            4
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            350.489990234375,
+            248.91000366210938
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "b618c3cdfa",
+      "category": "same_project_cross_discipline",
+      "rows": [
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            21,
+            37
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1083.77001953125,
+            1853.75
+          ]
+        },
+        {
+          "pdf_key": "P-1 (1)",
+          "project": "E_project",
+          "discipline": "plumbing",
+          "page": 0,
+          "tile": [
+            25,
+            19
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1253.123779296875,
+            982.8274841308594
+          ]
+        },
+        {
+          "pdf_key": "P-1 (1)",
+          "project": "E_project",
+          "discipline": "plumbing",
+          "page": 0,
+          "tile": [
+            25,
+            19
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1252.2905883789062,
+            984.8331909179688
+          ]
+        },
+        {
+          "pdf_key": "P-1 (1)",
+          "project": "E_project",
+          "discipline": "plumbing",
+          "page": 0,
+          "tile": [
+            25,
+            19
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1254.51611328125,
+            981.4525451660156
+          ]
+        },
+        {
+          "pdf_key": "P-1 (1)",
+          "project": "E_project",
+          "discipline": "plumbing",
+          "page": 0,
+          "tile": [
+            25,
+            19
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "c",
+            "c"
+          ],
+          "centroid": [
+            1255.3493041992188,
+            979.4468383789062
+          ]
+        }
+      ]
+    },
+    {
+      "sig": "ec3673f8b1",
+      "category": "cross_everything",
+      "rows": [
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            33,
+            43
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1653.8900146484375,
+            2169.530029296875
+          ]
+        },
+        {
+          "pdf_key": "E-3 (1)",
+          "project": "E_project",
+          "discipline": "electrical",
+          "page": 0,
+          "tile": [
+            33,
+            43
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            1653.8900146484375,
+            2162.510009765625
+          ]
+        },
+        {
+          "pdf_key": "Precast Drainage",
+          "project": "Precast",
+          "discipline": "mechanical_shop",
+          "page": 1,
+          "tile": [
+            8,
+            4
+          ],
+          "n_prims": 4,
+          "type_multiset": [
+            "c",
+            "c",
+            "l",
+            "l"
+          ],
+          "centroid": [
+            402.1499938964844,
+            248.91000366210938
+          ]
+        }
+      ]
+    }
+  ],
+  "per_pdf_stats": [
+    {
+      "pdf": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+      "project": "2101LP",
+      "discipline": "site_lighting",
+      "n_primitives": 119353,
+      "n_synthetic": 22,
+      "n_symbol_tiles": 33,
+      "n_candidates": 88
+    },
+    {
+      "pdf": "21030 ENG-C2.2 GSM (1).pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM (1)",
+      "project": "21030",
+      "discipline": "civil",
+      "n_primitives": 81066,
+      "n_synthetic": 43,
+      "n_symbol_tiles": 41,
+      "n_candidates": 123
+    },
+    {
+      "pdf": "21030 ENG-C2.2 GSM.pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM",
+      "project": "21030",
+      "discipline": "civil",
+      "n_primitives": 81066,
+      "n_synthetic": 43,
+      "n_symbol_tiles": 41,
+      "n_candidates": 123
+    },
+    {
+      "pdf": "21030 ENG_Rev1 240801_Signed.pdf",
+      "pdf_key": "21030 ENG_Rev1 240801_Signed",
+      "project": "Gulfstream",
+      "discipline": "MEP",
+      "n_primitives": 1865103,
+      "n_synthetic": 239,
+      "n_symbol_tiles": 106,
+      "n_candidates": 242
+    },
+    {
+      "pdf": "29187P-ES (3).pdf",
+      "pdf_key": "29187P-ES (3)",
+      "project": "BMI_metal",
+      "discipline": "metal_building",
+      "n_primitives": 375331,
+      "n_synthetic": 947,
+      "n_symbol_tiles": 17,
+      "n_candidates": 0
+    },
+    {
+      "pdf": "Concrete blueprints Mangonia Park.pdf",
+      "pdf_key": "Concrete blueprints Mangonia Park",
+      "project": "Mangonia",
+      "discipline": "structural",
+      "n_primitives": 197552,
+      "n_synthetic": 4,
+      "n_symbol_tiles": 37,
+      "n_candidates": 119
+    },
+    {
+      "pdf": "E-1 (1).pdf",
+      "pdf_key": "E-1 (1)",
+      "project": "E_project",
+      "discipline": "electrical",
+      "n_primitives": 94967,
+      "n_synthetic": 22,
+      "n_symbol_tiles": 47,
+      "n_candidates": 73
+    },
+    {
+      "pdf": "E-2 (1).pdf",
+      "pdf_key": "E-2 (1)",
+      "project": "E_project",
+      "discipline": "electrical",
+      "n_primitives": 102242,
+      "n_synthetic": 16,
+      "n_symbol_tiles": 47,
+      "n_candidates": 115
+    },
+    {
+      "pdf": "E-3 (1).pdf",
+      "pdf_key": "E-3 (1)",
+      "project": "E_project",
+      "discipline": "electrical",
+      "n_primitives": 197623,
+      "n_synthetic": 96,
+      "n_symbol_tiles": 76,
+      "n_candidates": 311
+    },
+    {
+      "pdf": "E-4 (1).pdf",
+      "pdf_key": "E-4 (1)",
+      "project": "E_project",
+      "discipline": "electrical",
+      "n_primitives": 48757,
+      "n_synthetic": 9,
+      "n_symbol_tiles": 8,
+      "n_candidates": 9
+    },
+    {
+      "pdf": "Open 29187P-ES (3).pdf",
+      "pdf_key": "Open 29187P-ES (3)",
+      "project": "BMI_metal",
+      "discipline": "metal_building",
+      "n_primitives": 375325,
+      "n_synthetic": 10,
+      "n_symbol_tiles": 0,
+      "n_candidates": 0
+    },
+    {
+      "pdf": "P-1 (1).pdf",
+      "pdf_key": "P-1 (1)",
+      "project": "E_project",
+      "discipline": "plumbing",
+      "n_primitives": 53369,
+      "n_synthetic": 6,
+      "n_symbol_tiles": 48,
+      "n_candidates": 78
+    },
+    {
+      "pdf": "Precast Drainage.pdf",
+      "pdf_key": "Precast Drainage",
+      "project": "Precast",
+      "discipline": "mechanical_shop",
+      "n_primitives": 29889,
+      "n_synthetic": 12,
+      "n_symbol_tiles": 33,
+      "n_candidates": 79
+    },
+    {
+      "pdf": "Revised light pole plan.pdf",
+      "pdf_key": "Revised light pole plan",
+      "project": "light_pole",
+      "discipline": "site_lighting",
+      "n_primitives": 55811,
+      "n_synthetic": 24,
+      "n_symbol_tiles": 8,
+      "n_candidates": 7
+    }
+  ]
+}

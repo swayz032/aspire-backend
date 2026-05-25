@@ -1,0 +1,179 @@
+{
+  "wave": "20.14.5J-V5",
+  "n_records": 4347,
+  "pdf_summaries": [
+    {
+      "pdf_name": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "electrical",
+      "n_pages_actual": 1,
+      "n_candidates": 88,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM (1).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "civil",
+      "n_pages_actual": 1,
+      "n_candidates": 123,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM.pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "civil",
+      "n_pages_actual": 1,
+      "n_candidates": 123,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "21030 ENG_Rev1 240801_Signed.pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "civil",
+      "n_pages_actual": 13,
+      "n_candidates": 242,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "29187P-ES (3).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "metal_building_structural",
+      "n_pages_actual": 12,
+      "n_candidates": 0,
+      "text_layer": false
+    },
+    {
+      "pdf_name": "Concrete blueprints Mangonia Park.pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "structural",
+      "n_pages_actual": 2,
+      "n_candidates": 119,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "E-1 (1).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "electrical",
+      "n_pages_actual": 1,
+      "n_candidates": 73,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "E-2 (1).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "electrical",
+      "n_pages_actual": 1,
+      "n_candidates": 115,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "E-3 (1).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "electrical",
+      "n_pages_actual": 1,
+      "n_candidates": 311,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "E-4 (1).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "electrical",
+      "n_pages_actual": 1,
+      "n_candidates": 9,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "GAVNN_ADDENDUM_1.pdf",
+      "project_id": "gulfstream_ups_savannah",
+      "discipline": "multi_discipline",
+      "n_pages_actual": 39,
+      "n_candidates": 2980,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "Open 29187P-ES (3).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "metal_building_structural",
+      "n_pages_actual": 12,
+      "n_candidates": 0,
+      "text_layer": false
+    },
+    {
+      "pdf_name": "P-1 (1).pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "plumbing",
+      "n_pages_actual": 1,
+      "n_candidates": 78,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "Precast Drainage.pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "civil",
+      "n_pages_actual": 6,
+      "n_candidates": 79,
+      "text_layer": true
+    },
+    {
+      "pdf_name": "Revised light pole plan.pdf",
+      "project_id": "mangonia_park_warehouse",
+      "discipline": "electrical",
+      "n_pages_actual": 1,
+      "n_candidates": 7,
+      "text_layer": true
+    }
+  ],
+  "by_project_records": {
+    "mangonia_park_warehouse": 1367,
+    "gulfstream_ups_savannah": 2980
+  },
+  "zero_candidate_pdfs": [
+    "29187P-ES (3).pdf",
+    "Open 29187P-ES (3).pdf"
+  ],
+  "v22_gates": {
+    "Gate 1: within-project ARI <0.6": {
+      "pass": true,
+      "value": 0.1478
+    },
+    "Gate 2: within-discipline ARI <0.7": {
+      "pass": true,
+      "value": 0.0416
+    },
+    "Gate 3: preservation >92%": {
+      "pass": true,
+      "value": 0.9391100702576113
+    },
+    "Gate 4: cross-project descriptive": {
+      "pass": true,
+      "value": 24
+    },
+    "Gate 5: op_sys entropy >1.5": {
+      "pass": true,
+      "value": 1.9290714965307447
+    },
+    "Gate 6: scale\u2194position ARI <0.6": {
+      "pass": true,
+      "value": 0.0353
+    }
+  },
+  "gates_passed": 6,
+  "cross_project_collisions_total": 24,
+  "cross_project_same_discipline": 0,
+  "cross_project_genuine_recurrence": 6,
+  "cross_project_discipline_pairs": {
+    "['electrical', 'multi_discipline']": 5,
+    "['civil', 'multi_discipline']": 13,
+    "['civil', 'electrical', 'multi_discipline', 'structural']": 1,
+    "['multi_discipline', 'structural']": 2,
+    "['electrical', 'multi_discipline', 'plumbing']": 1,
+    "['multi_discipline', 'plumbing']": 2
+  },
+  "operational_system_entropy_per_discipline": {
+    "electrical": 1.72547667816053,
+    "civil": 0.8852801326143881,
+    "structural": 0.0,
+    "multi_discipline": 1.9290714965307447,
+    "plumbing": 0.0
+  }
+}

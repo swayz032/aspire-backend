@@ -1,0 +1,175 @@
+{
+  "wave": "20.14.5J",
+  "phase": "CSIR Phase 2 \u2014 Context Injection",
+  "summary": {
+    "total_ir_records": 1367,
+    "distinct_ir_signatures": 437,
+    "acceptance": {
+      "cross_disc_count": 15,
+      "cross_disc_resolved": 15,
+      "cross_disc_unresolved": 0,
+      "resolution_rate": 1.0,
+      "healthy_count": 239,
+      "healthy_preserved": 221,
+      "healthy_broken": 18,
+      "preservation_rate": 0.9247,
+      "resolution_breakdown": [
+        {
+          "topology_sig": "696611dada",
+          "n_instances": 5,
+          "disciplines": [
+            "electrical",
+            "site_lighting"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "c2cf3c6c70",
+          "n_instances": 16,
+          "disciplines": [
+            "electrical",
+            "site_lighting"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "e24d411dc0",
+          "n_instances": 4,
+          "disciplines": [
+            "electrical",
+            "site_lighting"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "fcf9ae1793",
+          "n_instances": 42,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "2374574bfd",
+          "n_instances": 6,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "f63ccc80ef",
+          "n_instances": 8,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "dfd4e5f538",
+          "n_instances": 24,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "6aa43000d8",
+          "n_instances": 7,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "e315435b19",
+          "n_instances": 13,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "9ab788a1e3",
+          "n_instances": 5,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "f7578ad1ae",
+          "n_instances": 18,
+          "disciplines": [
+            "MEP",
+            "civil"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "07ff1e726b",
+          "n_instances": 111,
+          "disciplines": [
+            "MEP",
+            "electrical",
+            "structural"
+          ],
+          "ir_signatures_after": 4,
+          "resolved": true
+        },
+        {
+          "topology_sig": "a279e36dc7",
+          "n_instances": 3,
+          "disciplines": [
+            "electrical",
+            "mechanical_shop"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "b618c3cdfa",
+          "n_instances": 5,
+          "disciplines": [
+            "electrical",
+            "plumbing"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        },
+        {
+          "topology_sig": "ec3673f8b1",
+          "n_instances": 3,
+          "disciplines": [
+            "electrical",
+            "mechanical_shop"
+          ],
+          "ir_signatures_after": 2,
+          "resolved": true
+        }
+      ]
+    },
+    "gates": {
+      "gate_2_twin_resolution": true,
+      "anti_overfit_healthy_preservation": true
+    }
+  }
+}

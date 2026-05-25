@@ -1,0 +1,2250 @@
+{
+  "wave": "20.14.5J-V3-SCV-r2",
+  "v27_gates": {
+    "gate_1_follows_content": {
+      "pass": false,
+      "rate": 0.0108
+    },
+    "gate_2_canonical_bias": {
+      "pass": false,
+      "rate": 0.914
+    }
+  },
+  "avg_channels": {
+    "heterogeneity": 0.24301075268817207,
+    "density_profile": 0.40860215053763466,
+    "text_role": 0.3317204301075266,
+    "position": 0.9027193548387081
+  },
+  "per_pdf": [
+    {
+      "pdf_name": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.2553,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.7,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM (1).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.4271,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2518,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM.pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.4271,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2518,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG_Rev1 240801_Signed.pdf",
+      "n_pages": 13,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.8178,
+          "baseline_winner_template": "canonical_br_corner_small",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.6696,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.4,
+            "position": 0.9813
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 1,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7855,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 2,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 3,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7752,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4617,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.6,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.6,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 4,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.6697,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 5,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 6,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 7,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 8,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 9,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9116,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4771,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 10,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7855,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.6697,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 11,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7855,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.5894,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 12,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7855,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.5894,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "29187P-ES (3).pdf",
+      "n_pages": 12,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 1,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1488,
+          "baseline_winner_template": "canonical_br_corner_small",
+          "post_swap_winner_in_canonical": false,
+          "post_swap_winner_score": 0.0868,
+          "post_swap_winner_template": "line_cluster_12_7",
+          "follows_content": true,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9813
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.0015
+          }
+        },
+        {
+          "page_idx": 2,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1488,
+          "baseline_winner_template": "canonical_br_corner_small",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3247,
+          "post_swap_winner_template": "line_cluster_17_15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9813
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.8491
+          }
+        },
+        {
+          "page_idx": 3,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1494,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.1494,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 4,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3296,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 5,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2546,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 6,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.146,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 7,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.146,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 8,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 9,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3331,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 10,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3331,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 11,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3331,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Concrete blueprints Mangonia Park.pdf",
+      "n_pages": 2,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1073,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 1,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.4551,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.4,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-1 (1).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-2 (1).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-3 (1).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1487,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-4 (1).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "GAVNN_ADDENDUM_1.pdf",
+      "n_pages": 39,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.3598,
+          "baseline_winner_template": "content_cluster_7_11",
+          "post_swap_winner_in_canonical": false,
+          "post_swap_winner_score": 0.3253,
+          "post_swap_winner_template": "content_cluster_8_12",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.0293
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.1152
+          }
+        },
+        {
+          "page_idx": 1,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3331,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.146,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 1.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 2,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9105,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.6696,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 3,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.8239,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.5886,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 4,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9105,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.5886,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 5,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.5386,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 6,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.5391,
+          "post_swap_winner_template": "content_cluster_22_14",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.6,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9498
+          }
+        },
+        {
+          "page_idx": 7,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.6964,
+          "baseline_winner_template": "canonical_br_30x15",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.6696,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.7,
+            "position": 0.9329
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 8,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.6964,
+          "baseline_winner_template": "canonical_br_30x15",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.6696,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.7,
+            "position": 0.9329
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 9,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.5386,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 10,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9983,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4762,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 1.0,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 11,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.9983,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 1.0,
+            "text_role": 1.0,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 12,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.2553,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.4732,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.7,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 13,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.5386,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 14,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.7,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3824,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.3,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 1.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 15,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.4581,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.1488,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 16,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3468,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 17,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1756,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.4,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 18,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3804,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 19,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3804,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 20,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.4551,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.4,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 21,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3225,
+          "baseline_winner_template": "line_cluster_14_34",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.8138
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 22,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1073,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 23,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 24,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1431,
+          "baseline_winner_template": "line_cluster_22_35",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.8815
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 25,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1073,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 26,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1073,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 27,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 28,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 29,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 30,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0657,
+          "baseline_winner_template": "line_cluster_24_32",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9968
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 31,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1487,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 32,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0657,
+          "baseline_winner_template": "line_cluster_24_32",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3296,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9968
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 33,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.1488,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 34,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1073,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2518,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 35,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3324,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 36,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.0655,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 37,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3324,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 38,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.3753,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2545,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.4,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Open 29187P-ES (3).pdf",
+      "n_pages": 12,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.1488,
+          "post_swap_winner_template": "canonical_br_corner_small",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9813
+          }
+        },
+        {
+          "page_idx": 1,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.1897,
+          "baseline_winner_template": "line_cluster_3_9",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2545,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.0037
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 2,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.2253,
+          "baseline_winner_template": "line_cluster_9_11",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.4914
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 3,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 4,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2518,
+          "post_swap_winner_template": "canonical_br_30x15",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9329
+          }
+        },
+        {
+          "page_idx": 5,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.1487,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 6,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2545,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 7,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.2545,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 8,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 9,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.088,
+          "baseline_winner_template": "line_cluster_3_10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.0245
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        },
+        {
+          "page_idx": 10,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.1934,
+          "baseline_winner_template": "line_cluster_8_7",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.0623
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 11,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.193,
+          "baseline_winner_template": "line_cluster_8_5",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.058
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "P-1 (1).pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.0655,
+          "baseline_winner_template": "canonical_right_strip_w12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Precast Drainage.pdf",
+      "n_pages": 6,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.5386,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.7,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 1,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.2388,
+          "baseline_winner_template": "line_cluster_4_11",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.7117
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 2,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.2542,
+          "baseline_winner_template": "line_cluster_7_12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.975
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 3,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.1895,
+          "baseline_winner_template": "line_cluster_6_6",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.0006
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 4,
+          "baseline_winner_in_canonical": false,
+          "baseline_winner_score": 0.1895,
+          "baseline_winner_template": "line_cluster_6_6",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": false,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.7,
+            "text_role": 0.0,
+            "position": 0.0006
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        },
+        {
+          "page_idx": 5,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1484,
+          "baseline_winner_template": "line_cluster_7_12",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3331,
+          "post_swap_winner_template": "canonical_right_strip_w12",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.3,
+            "text_role": 0.0,
+            "position": 0.975
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9931
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Revised light pole plan.pdf",
+      "n_pages": 1,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "baseline_winner_in_canonical": true,
+          "baseline_winner_score": 0.1073,
+          "baseline_winner_template": "canonical_bottom_strip_h10",
+          "post_swap_winner_in_canonical": true,
+          "post_swap_winner_score": 0.3324,
+          "post_swap_winner_template": "canonical_bottom_strip_h10",
+          "follows_content": false,
+          "stays_at_position": true,
+          "baseline_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 0.0,
+            "text_role": 0.15,
+            "position": 0.9802
+          },
+          "post_swap_channels": {
+            "heterogeneity": 0.0,
+            "density_profile": 1.0,
+            "text_role": 0.0,
+            "position": 0.9802
+          }
+        }
+      ]
+    }
+  ]
+}

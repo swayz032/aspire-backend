@@ -1,0 +1,183 @@
+{
+  "wave": "20.14.5J-V3-SCV",
+  "v26_gate_results": {
+    "gate_1_adversarial_swaps": {
+      "total_pages_tested": 93,
+      "follows_content_rate": 0.0,
+      "stays_at_position_rate": 1.0,
+      "other_rate": 0.0,
+      "verdict": "POSITION_LOCKED",
+      "pass": false
+    },
+    "signal_ablation_summary": {
+      "position": {
+        "canonical_survival_rate": 1.0,
+        "n_canonical_wins": 93,
+        "n_broken": 0
+      },
+      "edge_adhesion": {
+        "canonical_survival_rate": 1.0,
+        "n_canonical_wins": 93,
+        "n_broken": 0
+      },
+      "ocr_anchors": {
+        "canonical_survival_rate": 1.0,
+        "n_canonical_wins": 93,
+        "n_broken": 0
+      },
+      "subdivision": {
+        "canonical_survival_rate": 1.0,
+        "n_canonical_wins": 93,
+        "n_broken": 0
+      },
+      "aspect_ratio": {
+        "canonical_survival_rate": 1.0,
+        "n_canonical_wins": 93,
+        "n_broken": 0
+      },
+      "size_cap": {
+        "canonical_survival_rate": 1.0,
+        "n_canonical_wins": 93,
+        "n_broken": 0
+      }
+    },
+    "ablation_pages_tested": 93
+  },
+  "per_pdf": [
+    {
+      "pdf_name": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM (1).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM.pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "21030 ENG_Rev1 240801_Signed.pdf",
+      "n_pages": 13,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 13,
+      "swap_other": 0,
+      "n_swap_valid": 13,
+      "n_ablation_valid": 13
+    },
+    {
+      "pdf_name": "29187P-ES (3).pdf",
+      "n_pages": 12,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 12,
+      "swap_other": 0,
+      "n_swap_valid": 12,
+      "n_ablation_valid": 12
+    },
+    {
+      "pdf_name": "Concrete blueprints Mangonia Park.pdf",
+      "n_pages": 2,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 2,
+      "swap_other": 0,
+      "n_swap_valid": 2,
+      "n_ablation_valid": 2
+    },
+    {
+      "pdf_name": "E-1 (1).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "E-2 (1).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "E-3 (1).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "E-4 (1).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "GAVNN_ADDENDUM_1.pdf",
+      "n_pages": 39,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 39,
+      "swap_other": 0,
+      "n_swap_valid": 39,
+      "n_ablation_valid": 39
+    },
+    {
+      "pdf_name": "Open 29187P-ES (3).pdf",
+      "n_pages": 12,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 12,
+      "swap_other": 0,
+      "n_swap_valid": 12,
+      "n_ablation_valid": 12
+    },
+    {
+      "pdf_name": "P-1 (1).pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    },
+    {
+      "pdf_name": "Precast Drainage.pdf",
+      "n_pages": 6,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 6,
+      "swap_other": 0,
+      "n_swap_valid": 6,
+      "n_ablation_valid": 6
+    },
+    {
+      "pdf_name": "Revised light pole plan.pdf",
+      "n_pages": 1,
+      "swap_follows_content": 0,
+      "swap_stays_at_position": 1,
+      "swap_other": 0,
+      "n_swap_valid": 1,
+      "n_ablation_valid": 1
+    }
+  ]
+}

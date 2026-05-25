@@ -1,0 +1,1648 @@
+{
+  "wave": "20.14.5J-V3-A-r2",
+  "total_pdfs": 15,
+  "total_pages": 93,
+  "canonical_localization_rate": 1.0,
+  "high_confidence_rate": 1.0,
+  "gate_1_pass": true,
+  "per_pdf": [
+    {
+      "pdf_name": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8526,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 92,
+            "n_lines": 92,
+            "n_rects": 0,
+            "ortho_share": 0.8043
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM (1).pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM (1)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30926,
+            "n_lines": 30920,
+            "n_rects": 0,
+            "ortho_share": 0.5251
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM.pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30926,
+            "n_lines": 30920,
+            "n_rects": 0,
+            "ortho_share": 0.5251
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG_Rev1 240801_Signed.pdf",
+      "pdf_key": "21030 ENG_Rev1 240801_Signed",
+      "n_pages": 13,
+      "n_pages_with_canonical_zone_winner": 13,
+      "n_pages_high_confidence": 13,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.859,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30060,
+            "n_lines": 30042,
+            "n_rects": 12,
+            "ortho_share": 0.3309
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8595,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 31606,
+            "n_lines": 31585,
+            "n_rects": 15,
+            "ortho_share": 0.3247
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8597,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 32271,
+            "n_lines": 32249,
+            "n_rects": 16,
+            "ortho_share": 0.3202
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.859,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30540,
+            "n_lines": 30522,
+            "n_rects": 12,
+            "ortho_share": 0.3281
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8595,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30998,
+            "n_lines": 30977,
+            "n_rects": 15,
+            "ortho_share": 0.3269
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8591,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30510,
+            "n_lines": 30491,
+            "n_rects": 13,
+            "ortho_share": 0.3305
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8591,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30696,
+            "n_lines": 30677,
+            "n_rects": 13,
+            "ortho_share": 0.329
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8591,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30773,
+            "n_lines": 30754,
+            "n_rects": 13,
+            "ortho_share": 0.3284
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8591,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30472,
+            "n_lines": 30453,
+            "n_rects": 13,
+            "ortho_share": 0.3311
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8591,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 30676,
+            "n_lines": 30657,
+            "n_rects": 13,
+            "ortho_share": 0.3293
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8591,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 32110,
+            "n_lines": 32091,
+            "n_rects": 13,
+            "ortho_share": 0.3209
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8595,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 32443,
+            "n_lines": 32422,
+            "n_rects": 15,
+            "ortho_share": 0.3198
+          }
+        },
+        {
+          "page_idx": 12,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8595,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 32629,
+            "n_lines": 32608,
+            "n_rects": 15,
+            "ortho_share": 0.3184
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "29187P-ES (3).pdf",
+      "pdf_key": "29187P-ES (3)",
+      "n_pages": 12,
+      "n_pages_with_canonical_zone_winner": 12,
+      "n_pages_high_confidence": 12,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.171,
+            "n_prims": 3296,
+            "n_lines": 3296,
+            "n_rects": 0,
+            "ortho_share": 0.5828
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2808,
+            "n_lines": 2808,
+            "n_rects": 0,
+            "ortho_share": 0.4192
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2870,
+            "n_lines": 2870,
+            "n_rects": 0,
+            "ortho_share": 0.4174
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2800,
+            "n_lines": 2800,
+            "n_rects": 0,
+            "ortho_share": 0.4189
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2779,
+            "n_lines": 2779,
+            "n_rects": 0,
+            "ortho_share": 0.4232
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2792,
+            "n_lines": 2792,
+            "n_rects": 0,
+            "ortho_share": 0.4219
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2781,
+            "n_lines": 2781,
+            "n_rects": 0,
+            "ortho_share": 0.4229
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2761,
+            "n_lines": 2761,
+            "n_rects": 0,
+            "ortho_share": 0.4245
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2826,
+            "n_lines": 2826,
+            "n_rects": 0,
+            "ortho_share": 0.4214
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2806,
+            "n_lines": 2806,
+            "n_rects": 0,
+            "ortho_share": 0.4191
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2803,
+            "n_lines": 2803,
+            "n_rects": 0,
+            "ortho_share": 0.4196
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.091,
+            "n_prims": 2790,
+            "n_lines": 2790,
+            "n_rects": 0,
+            "ortho_share": 0.4204
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Concrete blueprints Mangonia Park.pdf",
+      "pdf_key": "Concrete blueprints Mangonia Park",
+      "n_pages": 2,
+      "n_pages_with_canonical_zone_winner": 2,
+      "n_pages_high_confidence": 2,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 27657,
+            "n_lines": 26959,
+            "n_rects": 0,
+            "ortho_share": 0.2044
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_template": "bottom_strip_h15",
+          "winner_score": 0.7315,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.925,
+            "rel_area": 0.1425,
+            "aspect": 9.5,
+            "n_prims": 1170,
+            "n_lines": 1170,
+            "n_rects": 0,
+            "ortho_share": 0.3103
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-1 (1).pdf",
+      "pdf_key": "E-1 (1)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-2 (1).pdf",
+      "pdf_key": "E-2 (1)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-3 (1).pdf",
+      "pdf_key": "E-3 (1)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-4 (1).pdf",
+      "pdf_key": "E-4 (1)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "GAVNN_ADDENDUM_1.pdf",
+      "pdf_key": "GAVNN_ADDENDUM_1",
+      "n_pages": 39,
+      "n_pages_with_canonical_zone_winner": 39,
+      "n_pages_high_confidence": 39,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w18",
+          "winner_score": 0.7109,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.91,
+            "rel_cy": 0.55,
+            "rel_area": 0.162,
+            "aspect": 3.333,
+            "n_prims": 1990,
+            "n_lines": 1990,
+            "n_rects": 0,
+            "ortho_share": 0.1593
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.857,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 4558,
+            "n_lines": 4385,
+            "n_rects": 2,
+            "ortho_share": 0.2258
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 222,
+            "n_lines": 220,
+            "n_rects": 2,
+            "ortho_share": 0.1727
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 369,
+            "n_lines": 367,
+            "n_rects": 2,
+            "ortho_share": 0.406
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 233,
+            "n_lines": 231,
+            "n_rects": 2,
+            "ortho_share": 0.1342
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 221,
+            "n_lines": 219,
+            "n_rects": 2,
+            "ortho_share": 0.1689
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8241,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 751,
+            "n_lines": 736,
+            "n_rects": 15,
+            "ortho_share": 0.1889
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8383,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 60,
+            "n_lines": 55,
+            "n_rects": 5,
+            "ortho_share": 0.8545
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8369,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 58,
+            "n_lines": 54,
+            "n_rects": 4,
+            "ortho_share": 0.7037
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8195,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 4913,
+            "n_lines": 4740,
+            "n_rects": 2,
+            "ortho_share": 0.2158
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8369,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 58,
+            "n_lines": 54,
+            "n_rects": 4,
+            "ortho_share": 0.7037
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8507,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 83,
+            "n_lines": 75,
+            "n_rects": 8,
+            "ortho_share": 0.7867
+          }
+        },
+        {
+          "page_idx": 12,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8573,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 791,
+            "n_lines": 789,
+            "n_rects": 2,
+            "ortho_share": 0.3663
+          }
+        },
+        {
+          "page_idx": 13,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.8195,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 7.917,
+            "n_prims": 4913,
+            "n_lines": 4740,
+            "n_rects": 2,
+            "ortho_share": 0.2158
+          }
+        },
+        {
+          "page_idx": 14,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 147,
+            "n_lines": 145,
+            "n_rects": 2,
+            "ortho_share": 0.5448
+          }
+        },
+        {
+          "page_idx": 15,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 952,
+            "n_lines": 950,
+            "n_rects": 2,
+            "ortho_share": 0.1716
+          }
+        },
+        {
+          "page_idx": 16,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.8198,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 952,
+            "n_lines": 950,
+            "n_rects": 2,
+            "ortho_share": 0.1716
+          }
+        },
+        {
+          "page_idx": 17,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 18,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 311,
+            "n_lines": 216,
+            "n_rects": 0,
+            "ortho_share": 0.838
+          }
+        },
+        {
+          "page_idx": 19,
+          "winner_template": "bottom_strip_h15",
+          "winner_score": 0.694,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.925,
+            "rel_area": 0.1425,
+            "aspect": 9.5,
+            "n_prims": 22794,
+            "n_lines": 20308,
+            "n_rects": 0,
+            "ortho_share": 0.6795
+          }
+        },
+        {
+          "page_idx": 20,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.7088,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 18019,
+            "n_lines": 16644,
+            "n_rects": 0,
+            "ortho_share": 0.6415
+          }
+        },
+        {
+          "page_idx": 21,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 4885,
+            "n_lines": 4720,
+            "n_rects": 0,
+            "ortho_share": 0.6061
+          }
+        },
+        {
+          "page_idx": 22,
+          "winner_template": "bottom_strip_h15",
+          "winner_score": 0.694,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.925,
+            "rel_area": 0.1425,
+            "aspect": 9.5,
+            "n_prims": 470,
+            "n_lines": 462,
+            "n_rects": 0,
+            "ortho_share": 0.2078
+          }
+        },
+        {
+          "page_idx": 23,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 24,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 12163,
+            "n_lines": 9951,
+            "n_rects": 0,
+            "ortho_share": 0.8603
+          }
+        },
+        {
+          "page_idx": 25,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 540,
+            "n_lines": 498,
+            "n_rects": 0,
+            "ortho_share": 0.5663
+          }
+        },
+        {
+          "page_idx": 26,
+          "winner_template": "bottom_strip_h15",
+          "winner_score": 0.694,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.925,
+            "rel_area": 0.1425,
+            "aspect": 9.5,
+            "n_prims": 503,
+            "n_lines": 480,
+            "n_rects": 0,
+            "ortho_share": 0.7271
+          }
+        },
+        {
+          "page_idx": 27,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 28,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 29,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 30,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 31,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 32,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 33,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 34,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.7088,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 12350,
+            "n_lines": 12241,
+            "n_rects": 0,
+            "ortho_share": 0.4622
+          }
+        },
+        {
+          "page_idx": 35,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 36,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 37,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 38,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.7088,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 14.25,
+            "n_prims": 30793,
+            "n_lines": 28985,
+            "n_rects": 0,
+            "ortho_share": 0.4979
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Open 29187P-ES (3).pdf",
+      "pdf_key": "Open 29187P-ES (3)",
+      "n_pages": 12,
+      "n_pages_with_canonical_zone_winner": 12,
+      "n_pages_high_confidence": 12,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 2430,
+            "n_lines": 2430,
+            "n_rects": 0,
+            "ortho_share": 0.3379
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 753,
+            "n_lines": 753,
+            "n_rects": 0,
+            "ortho_share": 0.2669
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 1804,
+            "n_lines": 1804,
+            "n_rects": 0,
+            "ortho_share": 0.2639
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 1878,
+            "n_lines": 1878,
+            "n_rects": 0,
+            "ortho_share": 0.3222
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 2400,
+            "n_lines": 2400,
+            "n_rects": 0,
+            "ortho_share": 0.2925
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 2349,
+            "n_lines": 2349,
+            "n_rects": 0,
+            "ortho_share": 0.2946
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 2038,
+            "n_lines": 2038,
+            "n_rects": 0,
+            "ortho_share": 0.3106
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 2067,
+            "n_lines": 2067,
+            "n_rects": 0,
+            "ortho_share": 0.3087
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 717,
+            "n_lines": 717,
+            "n_rects": 0,
+            "ortho_share": 0.3026
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 159,
+            "n_lines": 159,
+            "n_rects": 0,
+            "ortho_share": 0.2704
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 159,
+            "n_lines": 159,
+            "n_rects": 0,
+            "ortho_share": 0.2704
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 15.368,
+            "n_prims": 159,
+            "n_lines": 159,
+            "n_rects": 0,
+            "ortho_share": 0.2704
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "P-1 (1).pdf",
+      "pdf_key": "P-1 (1)",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "bottom_right_30x15",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.85,
+            "rel_cy": 0.925,
+            "rel_area": 0.045,
+            "aspect": 3.0,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Precast Drainage.pdf",
+      "pdf_key": "Precast Drainage",
+      "n_pages": 6,
+      "n_pages_with_canonical_zone_winner": 6,
+      "n_pages_high_confidence": 6,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w18",
+          "winner_score": 0.7859,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.91,
+            "rel_cy": 0.55,
+            "rel_area": 0.162,
+            "aspect": 3.864,
+            "n_prims": 230,
+            "n_lines": 230,
+            "n_rects": 0,
+            "ortho_share": 0.5609
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 9.176,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 9.176,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 12.294,
+            "n_prims": 122,
+            "n_lines": 122,
+            "n_rects": 0,
+            "ortho_share": 0.0902
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_template": "bottom_strip_h10",
+          "winner_score": 0.6713,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.5,
+            "rel_cy": 0.95,
+            "rel_area": 0.095,
+            "aspect": 12.294,
+            "n_prims": 121,
+            "n_lines": 121,
+            "n_rects": 0,
+            "ortho_share": 0.0909
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.6566,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 9.176,
+            "n_prims": 0,
+            "n_lines": 0,
+            "n_rects": 0,
+            "ortho_share": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Revised light pole plan.pdf",
+      "pdf_key": "Revised light pole plan",
+      "n_pages": 1,
+      "n_pages_with_canonical_zone_winner": 1,
+      "n_pages_high_confidence": 1,
+      "canonical_localization_rate": 1.0,
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_template": "right_strip_w8",
+          "winner_score": 0.7066,
+          "winner_in_canonical_zone": true,
+          "winner_metrics": {
+            "rel_cx": 0.96,
+            "rel_cy": 0.575,
+            "rel_area": 0.076,
+            "aspect": 17.812,
+            "n_prims": 596,
+            "n_lines": 596,
+            "n_rects": 0,
+            "ortho_share": 0.3893
+          }
+        }
+      ]
+    }
+  ]
+}

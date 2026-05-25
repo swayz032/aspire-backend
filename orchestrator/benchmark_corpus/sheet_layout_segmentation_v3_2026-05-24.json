@@ -1,0 +1,2809 @@
+{
+  "wave": "20.14.5J-V3-A-r3",
+  "total_pdfs": 15,
+  "v25_gates": {
+    "gate_1_proposal_neutrality": {
+      "pass": true,
+      "canonical_share": 0.2667
+    },
+    "gate_2_adversarial_survival": {
+      "pass": true,
+      "canonical_winner_rate": 0.9785
+    },
+    "gate_4_ocr_parity": {
+      "pass": true,
+      "no_ocr_canonical_rate": 1.0
+    },
+    "gate_5_perturbation_stability": {
+      "pass": true,
+      "avg_stability": 1.0
+    },
+    "gate_8_entropy_bounds": {
+      "pass": true,
+      "avg_entropy": 3.4417
+    }
+  },
+  "per_pdf": [
+    {
+      "pdf_name": "2101LP-R1-LP1-1of1 (11) (7).pdf",
+      "pdf_key": "2101LP-R1-LP1-1of1 (11) (7)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0168,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.5,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0168,
+          "score_entropy": 3.4372,
+          "ocr_dependence": 0.5,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM (1).pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM (1)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0391,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.75,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4442,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG-C2.2 GSM.pdf",
+      "pdf_key": "21030 ENG-C2.2 GSM",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0391,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.75,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4442,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "21030 ENG_Rev1 240801_Signed.pdf",
+      "pdf_key": "21030 ENG_Rev1 240801_Signed",
+      "n_pages": 13,
+      "n_pages_winner_in_canonical_class": 12,
+      "canonical_winner_rate": 0.9230769230769231,
+      "avg_winner_margin": 0.0389,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.75,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 12
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4683,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0387,
+          "score_entropy": 3.4568,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0377,
+          "score_entropy": 3.3537,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4467,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0388,
+          "score_entropy": 3.4214,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.2833,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.2833,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.2833,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.2833,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.2833,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.4572,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.039,
+          "score_entropy": 3.4036,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "inject_dense_legend": {
+              "winner_class": null,
+              "class_changed": null
+            }
+          }
+        },
+        {
+          "page_idx": 12,
+          "error": "MemoryError: "
+        }
+      ]
+    },
+    {
+      "pdf_name": "29187P-ES (3).pdf",
+      "pdf_key": "29187P-ES (3)",
+      "n_pages": 12,
+      "n_pages_winner_in_canonical_class": 11,
+      "canonical_winner_rate": 0.9166666666666666,
+      "avg_winner_margin": 0.0391,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 11
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4636,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4733,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4732,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 11,
+          "error": "MemoryError: "
+        }
+      ]
+    },
+    {
+      "pdf_name": "Concrete blueprints Mangonia Park.pdf",
+      "pdf_key": "Concrete blueprints Mangonia Park",
+      "n_pages": 2,
+      "n_pages_winner_in_canonical_class": 2,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0335,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.375,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 2
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.5483,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0522,
+          "score_entropy": 3.5702,
+          "ocr_dependence": 0.5,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-1 (1).pdf",
+      "pdf_key": "E-1 (1)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0228,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.5472,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-2 (1).pdf",
+      "pdf_key": "E-2 (1)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0228,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.5349,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-3 (1).pdf",
+      "pdf_key": "E-3 (1)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0228,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.5143,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "E-4 (1).pdf",
+      "pdf_key": "E-4 (1)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0391,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4183,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "GAVNN_ADDENDUM_1.pdf",
+      "pdf_key": "GAVNN_ADDENDUM_1",
+      "n_pages": 39,
+      "n_pages_winner_in_canonical_class": 39,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0317,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.4295,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 39
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.1688,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4941,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.3823,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.419,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4445,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.3896,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0366,
+          "score_entropy": 3.3103,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0201,
+          "score_entropy": 3.4122,
+          "ocr_dependence": 1.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0187,
+          "score_entropy": 3.4058,
+          "ocr_dependence": 1.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0329,
+          "score_entropy": 3.4333,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0187,
+          "score_entropy": 3.4312,
+          "ocr_dependence": 1.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0322,
+          "score_entropy": 3.3291,
+          "ocr_dependence": 1.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 12,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4422,
+          "ocr_dependence": 1.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 13,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0329,
+          "score_entropy": 3.4205,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 14,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4253,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 15,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4438,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 16,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0394,
+          "score_entropy": 3.4222,
+          "ocr_dependence": 0.75,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 17,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0353,
+          "score_entropy": 3.4481,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 18,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.5167,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 19,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.4496,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 20,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0522,
+          "score_entropy": 3.4413,
+          "ocr_dependence": 0.5,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 21,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.5108,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 22,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.5408,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 23,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0283,
+          "score_entropy": 3.4628,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 24,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.4332,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 25,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.5066,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 26,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0147,
+          "score_entropy": 3.4359,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 27,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4747,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 28,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4783,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 29,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.5036,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 30,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.4444,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 31,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.4659,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 32,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.4444,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 33,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.5284,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 34,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0522,
+          "score_entropy": 3.4533,
+          "ocr_dependence": 0.5,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 35,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4544,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 36,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4091,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 37,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0391,
+          "score_entropy": 3.4367,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 38,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0522,
+          "score_entropy": 3.468,
+          "ocr_dependence": 0.5,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Open 29187P-ES (3).pdf",
+      "pdf_key": "Open 29187P-ES (3)",
+      "n_pages": 12,
+      "n_pages_winner_in_canonical_class": 12,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0173,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 12
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 6,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 7,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 8,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 9,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 10,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 11,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0173,
+          "score_entropy": 3.4331,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "P-1 (1).pdf",
+      "pdf_key": "P-1 (1)",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0228,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0228,
+          "score_entropy": 3.4869,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Precast Drainage.pdf",
+      "pdf_key": "Precast Drainage",
+      "n_pages": 6,
+      "n_pages_winner_in_canonical_class": 6,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0304,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.25,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 6
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_br_30x15",
+          "winner_margin": 0.0221,
+          "score_entropy": 3.3887,
+          "ocr_dependence": 1.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 1,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0167,
+          "score_entropy": 3.4805,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 2,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0172,
+          "score_entropy": 3.4995,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 3,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0547,
+          "score_entropy": 3.4874,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 4,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0547,
+          "score_entropy": 3.4874,
+          "ocr_dependence": 0.25,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        },
+        {
+          "page_idx": 5,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_bottom_strip_h10",
+          "winner_margin": 0.0172,
+          "score_entropy": 3.4995,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "pdf_name": "Revised light pole plan.pdf",
+      "pdf_key": "Revised light pole plan",
+      "n_pages": 1,
+      "n_pages_winner_in_canonical_class": 1,
+      "canonical_winner_rate": 1.0,
+      "avg_winner_margin": 0.0098,
+      "avg_rank_stability": 1.0,
+      "avg_ocr_dependence": 0.0,
+      "winner_class_distribution": {
+        "canonical_edge_strips": 1
+      },
+      "page_results": [
+        {
+          "page_idx": 0,
+          "winner_class": "canonical_edge_strips",
+          "winner_in_canonical": true,
+          "winner_template": "canonical_right_strip_w12",
+          "winner_margin": 0.0098,
+          "score_entropy": 3.5122,
+          "ocr_dependence": 0.0,
+          "rank_stability": 1.0,
+          "perturbation_summary": {
+            "mirror_page": {
+              "winner_class": null,
+              "class_changed": null
+            },
+            "remove_ocr": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_fake_schedule": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            },
+            "inject_dense_legend": {
+              "winner_class": "canonical_edge_strips",
+              "class_changed": false
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

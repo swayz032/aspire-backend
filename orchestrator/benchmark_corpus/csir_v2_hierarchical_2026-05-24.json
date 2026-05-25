@@ -1,0 +1,37 @@
+{
+  "wave": "20.14.5J-V2",
+  "n_records": 1367,
+  "gates": {
+    "Gate 1: within-project ARI <0.6": {
+      "pass": false,
+      "value": 0.8882
+    },
+    "Gate 2: within-discipline ARI <0.7": {
+      "pass": true,
+      "value": 0.4009
+    },
+    "Gate 3: preservation >92%": {
+      "pass": true,
+      "value": 1.0
+    },
+    "Gate 4: cross-project leakage <5%": {
+      "pass": false,
+      "value": 0.7647058823529411
+    },
+    "Gate 5: op_system entropy within discipline >1.5": {
+      "pass": false,
+      "value": 1.307374570589488
+    },
+    "Gate 6: scale\u2194position ARI <0.6": {
+      "pass": true,
+      "value": 0.0569
+    }
+  },
+  "gates_passed": "3/6",
+  "max_within_project_ari": 0.8882,
+  "max_within_discipline_ari": 0.4009,
+  "preservation": 1.0,
+  "cross_project_leakage": 0.7647058823529411,
+  "max_op_system_entropy": 1.307374570589488,
+  "scale_position_ari": 0.0569
+}
