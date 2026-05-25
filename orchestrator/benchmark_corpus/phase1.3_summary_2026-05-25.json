@@ -1,0 +1,56 @@
+{
+  "wave": "phase1.3_governance_receipts",
+  "pipeline_version": "srr_azure_v4_phase1.3",
+  "total_pages": 24,
+  "tier_distribution": {
+    "RED": 6,
+    "YELLOW": 13,
+    "GREEN": 5
+  },
+  "routing_distribution": {
+    "BLOCK_MANUAL": 6,
+    "ROUTE_TO_AVA": 13,
+    "AUTO_BIND": 5
+  },
+  "disqualifier_counts": {},
+  "idempotency": {
+    "idempotent": true,
+    "n_receipts": 24,
+    "unique_ids": 24,
+    "duplicates": []
+  },
+  "deterministic_replay_count": 24,
+  "gates_passed": 8,
+  "gates_total": 8,
+  "gates": {
+    "receipt_per_page": true,
+    "all_have_routing": true,
+    "idempotent_receipt_ids": true,
+    "deterministic_replay": true,
+    "jsonl_persisted": true,
+    "no_failure_default_BLOCK": true,
+    "green_routes_to_auto": true,
+    "tier_distribution_healthy": true
+  },
+  "total_cost_usd": 0.036,
+  "jsonl_audit_trail": "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\receipts\\srr_azure_v4_phase1.3_2026-05-25.jsonl",
+  "per_pdf_routing": {
+    "raster150_29187P-ES (3).pdf": {
+      "BLOCK_MANUAL": 3,
+      "ROUTE_TO_AVA": 3
+    },
+    "raster150_American_Farmhouse_201225.pdf": {
+      "ROUTE_TO_AVA": 5,
+      "BLOCK_MANUAL": 1
+    },
+    "raster150_GAVNN_ADDENDUM_1.pdf": {
+      "AUTO_BIND": 3,
+      "ROUTE_TO_AVA": 3
+    },
+    "raster150_Southern_Farmhouse_JayOsborne.pdf": {
+      "AUTO_BIND": 2,
+      "ROUTE_TO_AVA": 2,
+      "BLOCK_MANUAL": 2
+    }
+  }
+}
