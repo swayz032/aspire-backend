@@ -1,0 +1,56 @@
+{
+  "wave": "phase1.3.1_storyv2_namespace_correction",
+  "pipeline_version": "srr_azure_v5_phase1.3_storyv2",
+  "total_pages": 24,
+  "tier_distribution": {
+    "RED": 6,
+    "YELLOW": 13,
+    "GREEN": 5
+  },
+  "routing_distribution": {
+    "OPEN_QUESTION": 6,
+    "REVIEW_PENDING": 13,
+    "AUTO_POPULATE": 5
+  },
+  "disqualifier_counts": {},
+  "idempotency": {
+    "idempotent": true,
+    "n_receipts": 24,
+    "unique_ids": 24,
+    "duplicates": []
+  },
+  "deterministic_replay_count": 24,
+  "gates_passed": 8,
+  "gates_total": 8,
+  "gates": {
+    "receipt_per_page": true,
+    "all_have_routing": true,
+    "idempotent_receipt_ids": true,
+    "deterministic_replay": true,
+    "jsonl_persisted": true,
+    "no_failure_default_BLOCK": true,
+    "green_routes_to_auto": true,
+    "tier_distribution_healthy": true
+  },
+  "total_cost_usd": 0.036,
+  "jsonl_audit_trail": "C:\\Users\\tonio\\Projects\\myapp\\backend\\orchestrator\\benchmark_corpus\\receipts\\srr_azure_v5_phase1.3_storyv2_2026-05-25_phase1.3.1.jsonl",
+  "per_pdf_routing": {
+    "raster150_29187P-ES (3).pdf": {
+      "OPEN_QUESTION": 3,
+      "REVIEW_PENDING": 3
+    },
+    "raster150_American_Farmhouse_201225.pdf": {
+      "REVIEW_PENDING": 5,
+      "OPEN_QUESTION": 1
+    },
+    "raster150_GAVNN_ADDENDUM_1.pdf": {
+      "AUTO_POPULATE": 3,
+      "REVIEW_PENDING": 3
+    },
+    "raster150_Southern_Farmhouse_JayOsborne.pdf": {
+      "AUTO_POPULATE": 2,
+      "REVIEW_PENDING": 2,
+      "OPEN_QUESTION": 2
+    }
+  }
+}

@@ -1,22 +1,36 @@
-"""Phase 1.3 — Drew Extraction Receipt Schema + Authority Graph Routing.
+"""Phase 1.3 — Drew Extraction Receipt Schema + Story V2 Routing.
+
+CORRECTED 2026-05-25: prior version routed to Ava (wrong namespace —
+Ava lives in Service Hub front desk, not Estimate Studio). The actual
+Estimate Studio architecture is:
+  Drew (AI worker) -> populates BlueprintStoryV2 zones -> rendered in
+  ChapterLeftPane + StoryPanelV2. Tim is the Service Hub Manager rail
+  (right side) BUT TIM IS NOT BUILT YET. So YELLOW routing surfaces in
+  the "review pending" UI state; RED routing creates OpenQuestion entries
+  in the chapter's open_questions zone.
 
 Every blueprint page extraction produces an ExtractionReceipt. Receipts are:
   - Deterministic (receipt_id = SHA-1 of doc_hash + page_idx + pipeline_version)
   - Replay-able (JSONL on disk; load + reproduce routing decision)
   - Audit-grade (every routing action traceable to evidence)
-  - Fail-closed (any anomaly downgrades tier, BLOCK is the default)
+  - Fail-closed (any anomaly downgrades tier to OPEN_QUESTION)
 
-Authority Graph Routing:
-  GREEN  -> AUTO_BIND       (autonomous Material Story binding allowed)
-  YELLOW -> ROUTE_TO_AVA    (Ava confirms with user before binding)
-  RED    -> BLOCK_MANUAL    (no automation; explicit human review)
+Story V2 Routing (aligned with Aspire-desktop ChapterZones):
+  GREEN  -> AUTO_POPULATE   (add to in_scope/tasks/buy_list autonomously)
+  YELLOW -> REVIEW_PENDING  (add with confidence_low flag; Tim helps when built)
+  RED    -> OPEN_QUESTION   (add to chapter.open_questions for user resolution)
 
-Disqualifiers (override tier to BLOCK regardless of cluster metrics):
+Disqualifiers (override tier to OPEN_QUESTION regardless of cluster metrics):
   - No sheet_id extracted
   - Border ablation fails
   - Trajectory NULL_COLLAPSE / NO_BASELINE
   - OCR failure_mode set
   - Cost > budget cap (10x typical)
+
+Discipline chapter classification: maps sheet code prefix to one of
+  general | demolition | architectural | structural | plumbing |
+  mechanical | electrical | fire | civil
+matching the 9 discipline metas in blueprintsStoryV2.ts.
 """
 from __future__ import annotations
 
@@ -29,7 +43,125 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-PIPELINE_VERSION = "srr_azure_v4_phase1.3"
+PIPELINE_VERSION = "srr_azure_v5_phase1.3_storyv2"
+
+
+# ============================================================
+# Story V2 classifiers (Python ports of Aspire-desktop frontend)
+# ============================================================
+# Source of truth: Aspire-desktop/lib/api/blueprintsStoryV2.ts (DISCIPLINE_MAP,
+# disciplinePrefixFromCode) and Aspire-desktop/lib/scope/archetype.ts (TITLE_RULES,
+# codeNumberToArchetype). Drew emits identity; frontend renders zones from these.
+
+import re as _re
+
+# 9 chapter disciplines (matches DisciplineMeta.key in blueprintsStoryV2.ts)
+DISCIPLINE_KEYS = (
+    "general", "demolition", "architectural", "structural",
+    "plumbing", "mechanical", "electrical", "fire", "civil",
+)
+
+# Sheet code prefix -> discipline (mirrors DISCIPLINE_MAP in blueprintsStoryV2.ts)
+DISCIPLINE_PREFIX_MAP = {
+    "a": "architectural", "ad": "demolition", "d": "demolition", "ex": "demolition",
+    "p": "plumbing", "m": "mechanical", "h": "mechanical",
+    "e": "electrical", "ed": "electrical", "el": "electrical", "t": "electrical", "lv": "electrical",
+    "fp": "fire", "f": "fire", "fa": "fire",
+    "s": "structural",
+    "c": "civil", "l": "civil",
+    "g": "general", "cover": "general", "ls": "general",
+}
+
+# Same regex as disciplinePrefixFromCode() at blueprintsStoryV2.ts
+_SHEET_PREFIX_RE = _re.compile(r"^([A-Za-z]{1,3})(?:[-_\s]*\d|\d)")
+
+
+def classify_discipline(sheet_code: Optional[str]) -> str:
+    """Map sheet_code (e.g., 'A-301', 'FP1.0') -> discipline key. Defaults 'general'."""
+    if not sheet_code:
+        return "general"
+    code = sheet_code.strip()
+    if not code:
+        return "general"
+    m = _SHEET_PREFIX_RE.match(code)
+    if not m:
+        return "general"
+    prefix = m.group(1).lower()
+    return DISCIPLINE_PREFIX_MAP.get(prefix, "general")
+
+
+# 14 sheet archetypes (matches SheetArchetype in archetype.ts)
+ARCHETYPES = (
+    "cover", "index", "notes", "schedule", "plan", "rcp", "detail",
+    "section", "elevation", "demo", "lifesafety", "riser", "legend", "sheet",
+)
+
+# Title-substring rules (order matches archetype.ts TITLE_RULES — specific first)
+_TITLE_RULES = [
+    ((_re.compile(r"cover\s*sheet", _re.I), _re.compile(r"title\s*sheet", _re.I)), "cover"),
+    ((_re.compile(r"sheet\s*index", _re.I),), "index"),
+    ((_re.compile(r"life\s*safety", _re.I), _re.compile(r"\begress\b", _re.I)), "lifesafety"),
+    ((_re.compile(r"demolition", _re.I), _re.compile(r"existing\s*conditions", _re.I)), "demo"),
+    ((_re.compile(r"reflected\s*ceiling", _re.I), _re.compile(r"\brcp\b", _re.I)), "rcp"),
+    ((_re.compile(r"riser\s*diagram", _re.I), _re.compile(r"\briser\b", _re.I),
+      _re.compile(r"one[-\s]*line\s*diagram", _re.I)), "riser"),
+    ((_re.compile(r"\bschedule\b", _re.I),), "schedule"),
+    ((_re.compile(r"general\s*notes", _re.I), _re.compile(r"\bnotes\b", _re.I)), "notes"),
+    ((_re.compile(r"\blegend\b", _re.I), _re.compile(r"\bsymbols?\b", _re.I)), "legend"),
+    ((_re.compile(r"\bdetails?\b", _re.I),), "detail"),
+    ((_re.compile(r"\bsection\b", _re.I),), "section"),
+    ((_re.compile(r"\belevation\b", _re.I),), "elevation"),
+    ((_re.compile(r"\bplan\b", _re.I), _re.compile(r"floor\s*plan", _re.I)), "plan"),
+]
+
+
+def _code_number_to_archetype(sheet_code: Optional[str]) -> Optional[str]:
+    """Mirrors codeNumberToArchetype in archetype.ts. Returns archetype or None."""
+    if not sheet_code:
+        return None
+    m = _re.search(r"(\d+)", sheet_code)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    if n < 10:
+        return "notes"
+    if n < 100:
+        return "schedule"
+    if n < 200:
+        return "plan"
+    if n < 300:
+        return "riser"
+    if n < 400:
+        return "detail"
+    if n < 500:
+        return "section"
+    if n < 600:
+        return "elevation"
+    return None
+
+
+def classify_archetype(sheet_code: Optional[str], sheet_title: Optional[str]) -> str:
+    """Resolve archetype from title (priority) then code number. Defaults 'sheet'."""
+    title = (sheet_title or "").strip()
+    if title:
+        for patterns, archetype in _TITLE_RULES:
+            for pat in patterns:
+                if pat.search(title):
+                    return archetype
+    from_code = _code_number_to_archetype(sheet_code)
+    if from_code:
+        return from_code
+    return "sheet"
+
+
+# Story V2 routing actions (aligned with ChapterZones in blueprintsStoryV2.ts)
+ROUTING_AUTO_POPULATE = "AUTO_POPULATE"    # GREEN -> fills in_scope/tasks/buy_list autonomously
+ROUTING_REVIEW_PENDING = "REVIEW_PENDING"  # YELLOW -> low-confidence flag; surfaces in review state
+ROUTING_OPEN_QUESTION = "OPEN_QUESTION"    # RED / disqualified -> chapter.open_questions entry
+
 RECEIPT_DIR = Path(r"C:\Users\tonio\Projects\myapp\backend\orchestrator\benchmark_corpus\receipts")
 RECEIPT_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -59,8 +191,12 @@ class ExtractionReceipt:
 
     # ---- Extraction result ----
     sheet_id: Optional[str] = None
+    sheet_title: Optional[str] = None
+    page_number: Optional[int] = None
+    discipline_key: str = "general"
+    sheet_archetype: str = "sheet"
     confidence_tier: str = "RED"
-    routing_action: str = "BLOCK_MANUAL"
+    routing_action: str = "OPEN_QUESTION"
     routing_reason: str = ""
 
     # ---- Confidence metrics (the evidence triangle) ----
@@ -168,14 +304,19 @@ def compute_disqualifiers(metrics: dict, sheet_id: Optional[str],
 
 
 def compute_routing(tier: str, disqualifiers: list[str]) -> tuple[str, str]:
-    """Authority Graph routing decision. Disqualifiers override tier to BLOCK."""
+    """Story V2 routing decision. Disqualifiers override tier to OPEN_QUESTION (fail-closed).
+
+    GREEN -> AUTO_POPULATE: frontend fills chapter.in_scope / tasks / buy_list autonomously.
+    YELLOW -> REVIEW_PENDING: surfaces with confidence_low flag; Tim rail helps when built.
+    RED / disqualified -> OPEN_QUESTION: pushed to chapter.open_questions for user resolution.
+    """
     if disqualifiers:
-        return "BLOCK_MANUAL", f"Disqualifiers present: {','.join(disqualifiers)}"
+        return ROUTING_OPEN_QUESTION, f"Disqualifiers present: {','.join(disqualifiers)}"
     if tier == "GREEN":
-        return "AUTO_BIND", "GREEN tier — autonomous Material Story binding"
+        return ROUTING_AUTO_POPULATE, "GREEN tier — autonomous zone population"
     if tier == "YELLOW":
-        return "ROUTE_TO_AVA", "YELLOW tier — Ava confirms with user before binding"
-    return "BLOCK_MANUAL", "RED tier — explicit human review required"
+        return ROUTING_REVIEW_PENDING, "YELLOW tier — surfaces in review-pending state"
+    return ROUTING_OPEN_QUESTION, "RED tier — routed to chapter.open_questions"
 
 
 # ============================================================
@@ -214,8 +355,13 @@ def build_receipt(
     doc_hash = compute_doc_hash(pdf_path)
     receipt_id = compute_receipt_id(doc_hash, page_idx)
     sheet_id = metrics.get("sheet_id")
+    sheet_title = metrics.get("sheet_title")
     border_ablation = bool(metrics.get("ablation_survives", False))
     failure_mode = metrics.get("failure_mode") or metrics.get("error")
+
+    # Story V2 identity classification (drives chapter assignment + per-sheet story)
+    discipline_key = classify_discipline(sheet_id)
+    sheet_archetype = classify_archetype(sheet_id, sheet_title)
 
     # Classify and route
     disqualifiers = compute_disqualifiers(metrics, sheet_id, border_ablation, failure_mode)
@@ -262,6 +408,10 @@ def build_receipt(
         timestamp=datetime.now(timezone.utc).isoformat(),
         suite_id=suite_id,
         sheet_id=sheet_id,
+        sheet_title=sheet_title,
+        page_number=int(metrics.get("page_number", page_idx + 1)),
+        discipline_key=discipline_key,
+        sheet_archetype=sheet_archetype,
         confidence_tier=tier,
         routing_action=routing_action,
         routing_reason=tier_reason + " | " + routing_reason,
@@ -316,6 +466,18 @@ def load_receipts(jsonl_path: Path) -> list[ExtractionReceipt]:
             d.setdefault("evidence_ocr_tokens", [])
             d.setdefault("cluster_bbox_pt", [])
             d.setdefault("cluster_centroid_pt", [])
+            d.setdefault("sheet_title", None)
+            d.setdefault("page_number", None)
+            d.setdefault("discipline_key", "general")
+            d.setdefault("sheet_archetype", "sheet")
+            # Back-compat: legacy receipts used AVA-namespace routing actions.
+            legacy_map = {
+                "AUTO_BIND": ROUTING_AUTO_POPULATE,
+                "ROUTE_TO_AVA": ROUTING_REVIEW_PENDING,
+                "BLOCK_MANUAL": ROUTING_OPEN_QUESTION,
+            }
+            if d.get("routing_action") in legacy_map:
+                d["routing_action"] = legacy_map[d["routing_action"]]
             receipts.append(ExtractionReceipt(**d))
     return receipts
 
@@ -344,20 +506,29 @@ def verify_idempotency(receipts: list[ExtractionReceipt]) -> dict:
 
 
 # ============================================================
-# Material Story card export (Phase 1.3 integration data)
+# Story V2 payload export (Phase 1.3 integration data)
 # ============================================================
 
-def receipt_to_material_story_payload(receipt: ExtractionReceipt) -> dict:
-    """Compact JSON payload for the Material Story confidence badge.
-    Frontend consumes this to render:
-      - GREEN -> green badge "verified A-101"
-      - YELLOW -> yellow badge "ava confirm A-101?"
-      - RED -> red badge "review required"
+def receipt_to_story_v2_payload(receipt: ExtractionReceipt) -> dict:
+    """Compact JSON payload for the BlueprintStoryV2 frontend contract.
+
+    Frontend (Aspire-desktop/lib/api/blueprintsStoryV2.ts) uses this to:
+      - Group the sheet into a chapter via discipline_key (one of 9 metas)
+      - Pick per-sheet story template via sheet_archetype (one of 14 types)
+      - Render confidence_tier dot (GREEN/YELLOW/RED) on chapter + sheet cards
+      - Drive routing_action UI state:
+          AUTO_POPULATE -> fills chapter.in_scope/tasks/buy_list autonomously
+          REVIEW_PENDING -> surfaces with confidence_low flag
+          OPEN_QUESTION -> entry into chapter.open_questions
     """
     return {
         "sheet_id": receipt.sheet_id,
+        "sheet_title": receipt.sheet_title,
+        "page_number": receipt.page_number,
+        "discipline_key": receipt.discipline_key,
+        "sheet_archetype": receipt.sheet_archetype,
         "tier": receipt.confidence_tier,
-        "routing": receipt.routing_action,
+        "routing_action": receipt.routing_action,
         "evidence_summary": {
             "ocr_confidence_avg": round(
                 sum(t["confidence"] for t in receipt.evidence_ocr_tokens)
@@ -371,3 +542,7 @@ def receipt_to_material_story_payload(receipt: ExtractionReceipt) -> dict:
         "receipt_id": receipt.receipt_id,
         "audit_trail": f"receipts/{receipt.pipeline_version}.jsonl",
     }
+
+
+# Backward-compat alias — callers using the legacy name continue working.
+receipt_to_material_story_payload = receipt_to_story_v2_payload
