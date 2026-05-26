@@ -77,3 +77,15 @@ from .generator import (  # noqa: F401
     InMemoryLockProvider,
     LockProvider,
 )
+from .audit import (  # noqa: F401
+    AuditedEdge,
+    AuditReport,
+    AuditVerdict,
+    OracleVerifier,
+    PerTypeAudit,
+    RuleBasedVerifier,
+    Verifier,
+    audit_edges,
+    serialize_report,
+)
+from .fp_regression import FP_FIXTURES, FPFixture, fixtures_by_target  # noqa: F401
