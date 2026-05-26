@@ -62,11 +62,17 @@ from .fixture_class import (  # noqa: F401
     streams_share,
 )
 from .connectivity import ConnectivityConsistencyConstraint  # noqa: F401
+from .sheet_hierarchy import (  # noqa: F401
+    SheetHierarchyConstraint,
+    normalize_sheet_code,
+    parse_callout,
+)
 
 # The registry. Order matters: cheap → expensive.
-# M-5 will append additional constraint instances here.
+# Phase 4 closes with these four constraints. Phase 5 may extend.
 CONSTRAINT_REGISTRY: list[Constraint] = [
     DisciplineCompatibilityConstraint(),       # HARD — trade isolation
     LayerSeparationConstraint(),               # SOFT — demo/new-work review
     ConnectivityConsistencyConstraint(),       # SOFT — MEP connection sanity
+    SheetHierarchyConstraint(),                # SOFT — RFI-trigger detection
 ]

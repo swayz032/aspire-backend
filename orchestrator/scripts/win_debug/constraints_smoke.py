@@ -692,6 +692,184 @@ def main() -> int:
     except Exception as e:
         results["connectivity_applies_to_correct"] = f"FAIL: {e}"
 
+    # =====================================================
+    # M-5 SheetHierarchyConstraint
+    # =====================================================
+    from aspire_orchestrator.services.blueprint.semantic_edges.constraints import (
+        SheetHierarchyConstraint, normalize_sheet_code, parse_callout,
+    )
+
+    def make_callout_edge(*, callout_text=None, sheet_registry=None,
+                          target_sheet=None, edge_type=EdgeType.REFERENCES_DETAIL,
+                          confidence=0.85):
+        provenance = {
+            "extractor": "test", "wave": "20.14.5M", "pipeline_version": "1.0",
+            "sheet_id": "s1", "generator_window": "test",
+            "bbox": [0, 0, 10, 10],
+        }
+        if sheet_registry is not None:
+            provenance["project_sheet_codes"] = sheet_registry
+        evidence: dict[str, object] = {
+            "callout_text": callout_text or "",
+            "target_sheet_code": target_sheet or "",
+        }
+        return EdgeProposal(
+            edge_type=edge_type,
+            suite_id="s", project_id="p",
+            src_entity_id="p1", src_entity_type=EntityType.PRIMITIVE,
+            dst_entity_id="sheet-target",
+            dst_entity_type=EntityType.SHEET,
+            locality_scope=LocalityScope.CROSS_SHEET_REF,
+            spatial_distance=None, confidence=confidence,
+            evidence=evidence, provenance=provenance,
+            extraction_method="test_v1",
+        )
+
+    # Callout parser — basic formats
+    try:
+        assert parse_callout("4/A-501") == ("4", "A-501")
+        assert parse_callout("4/A501") == ("4", "A-501")  # normalized
+        assert parse_callout("4-A-501") == ("4", "A-501")
+        assert parse_callout("DETAIL 4 ON A-501") == ("4", "A-501")
+        assert parse_callout("SEE DETAIL 4 / A-501") == ("4", "A-501")
+        assert parse_callout("SEE A-501") == (None, "A-501")
+        assert parse_callout("A-501/4") == ("4", "A-501")
+        # alphanumeric sheet codes
+        assert parse_callout("3/M101.1") == ("3", "M-101.1") or \
+               parse_callout("3/M101.1") == ("3", "M101.1")
+        assert parse_callout("no callout here") is None
+        assert parse_callout("") is None
+        assert parse_callout(None) is None
+        results["sheet_callout_parser"] = "PASS"
+    except Exception as e:
+        results["sheet_callout_parser"] = f"FAIL: {e}"
+
+    # Sheet code normalizer
+    try:
+        assert normalize_sheet_code("a-501") == "A-501"
+        assert normalize_sheet_code("a501") == "A-501"
+        assert normalize_sheet_code("M101.1") == "M101.1"  # decimal preserved
+        assert normalize_sheet_code(" A-501 ") == "A-501"
+        results["sheet_code_normalizer"] = "PASS"
+    except Exception as e:
+        results["sheet_code_normalizer"] = f"FAIL: {e}"
+
+    sh = SheetHierarchyConstraint()
+
+    # Valid callout — sheet exists in registry
+    try:
+        proposal = make_callout_edge(
+            callout_text="4/A-501",
+            sheet_registry=["A-101", "A-201", "A-501", "M-101"],
+        )
+        result = sh.check(proposal)
+        assert result.passed is True, f"reason={result.reason}"
+        results["sheet_valid_callout_passes"] = "PASS"
+    except Exception as e:
+        results["sheet_valid_callout_passes"] = f"FAIL: {e}"
+
+    # Broken reference — sheet not in registry → SOFT violation (RFI candidate)
+    try:
+        proposal = make_callout_edge(
+            callout_text="4/A-999",  # A-999 doesn't exist
+            sheet_registry=["A-101", "A-201", "A-501"],
+        )
+        result = sh.check(proposal)
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert result.reason == "broken_sheet_reference"
+        assert result.evidence.get("rfi_recommended") is True
+        results["sheet_broken_reference_violation"] = "PASS"
+    except Exception as e:
+        results["sheet_broken_reference_violation"] = f"FAIL: {e}"
+
+    # Mismatched binding — callout says A-501 but generator bound to A-502
+    try:
+        proposal = make_callout_edge(
+            callout_text="4/A-501",
+            sheet_registry=["A-101", "A-501", "A-502"],
+            target_sheet="A-502",
+        )
+        result = sh.check(proposal)
+        assert result.passed is False
+        assert result.reason == "callout_dst_mismatch"
+        results["sheet_dst_mismatch_violation"] = "PASS"
+    except Exception as e:
+        results["sheet_dst_mismatch_violation"] = f"FAIL: {e}"
+
+    # Missing sheet registry → SOFT_SKIP
+    try:
+        proposal = make_callout_edge(callout_text="4/A-501")
+        result = sh.check(proposal)
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert result.reason == "missing_sheet_registry"
+        results["sheet_missing_registry_soft_skip"] = "PASS"
+    except Exception as e:
+        results["sheet_missing_registry_soft_skip"] = f"FAIL: {e}"
+
+    # Missing callout text → SOFT_SKIP
+    try:
+        proposal = make_callout_edge(sheet_registry=["A-501"])
+        result = sh.check(proposal)
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert result.reason == "missing_callout_text"
+        results["sheet_missing_text_soft_skip"] = "PASS"
+    except Exception as e:
+        results["sheet_missing_text_soft_skip"] = f"FAIL: {e}"
+
+    # Unrecognized format → SOFT_SKIP
+    try:
+        proposal = make_callout_edge(
+            callout_text="some random gibberish 12345 xyz",
+            sheet_registry=["A-501"],
+        )
+        result = sh.check(proposal)
+        assert result.passed is False
+        assert result.reason == "callout_text_format_unrecognized"
+        results["sheet_unrecognized_format_soft_skip"] = "PASS"
+    except Exception as e:
+        results["sheet_unrecognized_format_soft_skip"] = f"FAIL: {e}"
+
+    # validate_edge — broken reference at high conf → UR
+    try:
+        proposal = make_callout_edge(
+            callout_text="4/A-999",
+            sheet_registry=["A-101", "A-501"],
+            confidence=0.95,
+        )
+        r = validate_edge(proposal)
+        assert r.resolution_state == ResolutionState.UNKNOWN_REVIEW
+        soft_v = r.constraint.details.get("soft_violations", [])
+        assert any(v["name"] == "sheet_hierarchy" for v in soft_v)
+        results["sheet_validate_edge_broken_ref_downgrades"] = "PASS"
+    except Exception as e:
+        results["sheet_validate_edge_broken_ref_downgrades"] = f"FAIL: {e}"
+
+    # applies_to scoping
+    try:
+        assert EdgeType.REFERENCES_DETAIL in sh.applies_to
+        assert EdgeType.CALLS_OUT in sh.applies_to
+        assert EdgeType.BELONGS_TO_SHEET not in sh.applies_to
+        assert EdgeType.ANNOTATED_BY not in sh.applies_to
+        assert EdgeType.FEEDS not in sh.applies_to
+        results["sheet_applies_to_correct"] = "PASS"
+    except Exception as e:
+        results["sheet_applies_to_correct"] = f"FAIL: {e}"
+
+    # Registry now has 4 constraints
+    try:
+        names = {c.name for c in CONSTRAINT_REGISTRY}
+        assert "discipline_compatibility" in names
+        assert "layer_separation" in names
+        assert "connectivity_consistency" in names
+        assert "sheet_hierarchy" in names
+        assert len(names) == 4
+        results["sheet_registry_complete"] = "PASS"
+    except Exception as e:
+        results["sheet_registry_complete"] = f"FAIL: {e}"
+
     # --- Report ---
     print("=== M-1 + M-2 constraints smoke ===")
     n_pass = sum(1 for v in results.values() if v == "PASS")
