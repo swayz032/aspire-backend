@@ -226,9 +226,13 @@ class TestReceiptFieldMapping:
         mappings = {
             "success": "SUCCEEDED",
             "succeeded": "SUCCEEDED",
+            "resolved": "SUCCEEDED",
             "failed": "FAILED",
             "denied": "DENIED",
             "pending": "PENDING",
+            "succeeded_with_zero_output": "SUCCEEDED_WITH_ZERO_OUTPUT",
+            "unresolved": "SUCCEEDED_WITH_ZERO_OUTPUT",
+            "skipped": "SKIPPED",
         }
         for outcome, expected_status in mappings.items():
             row = _map_receipt_to_row({"id": "r1", "outcome": outcome})

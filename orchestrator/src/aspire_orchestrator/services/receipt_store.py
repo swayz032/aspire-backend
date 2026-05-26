@@ -158,14 +158,20 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
       receipt_hash bytea, signature text, created_at timestamptz
     """
     # Map outcome → status enum
+    # Domain-language outcomes (e.g. "resolved" from missing_input_cascade) are
+    # translated here so callers can use semantic verbs without having to know
+    # the receipts.status CHECK constraint allow-list.
     outcome = receipt.get("outcome", "unknown")
     status_map = {
         "success": "SUCCEEDED",
         "succeeded": "SUCCEEDED",
+        "resolved": "SUCCEEDED",
         "failed": "FAILED",
         "denied": "DENIED",
         "pending": "PENDING",
         "succeeded_with_zero_output": "SUCCEEDED_WITH_ZERO_OUTPUT",
+        "unresolved": "SUCCEEDED_WITH_ZERO_OUTPUT",
+        "skipped": "SKIPPED",
     }
     status = status_map.get(outcome.lower(), "PENDING") if outcome else "PENDING"
 
