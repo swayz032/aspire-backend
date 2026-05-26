@@ -122,3 +122,19 @@ from .constraints import (  # noqa: F401
     normalize_sheet_code,
     parse_callout,
 )
+from .binding import (  # noqa: F401
+    BaseScorer,
+    BindingEvaluator,
+    BindingProposal,
+    BindingScore,
+    BindingTier,
+    BindingWeights,
+    HardGateReason,
+    OCRAffinityScorer,
+    Scorer,
+    ScorerResult,
+    UNKNOWN_REVIEW_THRESHOLD,
+    VERIFIED_THRESHOLD,
+    compute_binding_replay_hash,
+    map_tier,
+)
