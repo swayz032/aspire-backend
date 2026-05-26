@@ -67,14 +67,34 @@ PENDING                      — in-progress
 
 ### Write-producing stage taxonomy
 
-| Stage receipt | Expected rows table | expected_min |
-|---|---|---|
-| `blueprint.ingest.azure_doc_intel_used` | blueprint_sheet_intelligence | 1 |
-| `drew.see.legend_extracted` | blueprint_project_legends | 0 (some sheets legitimately have none) |
-| `drew.see.11g2.page` | blueprint_primitives | 1 |
-| `drew.see.11g2.completed` | blueprint_composed_symbols + blueprint_primitives | both > 0 |
-| `blueprint.see.completed` | blueprint_primitives (project total) | 100 (sanity floor) |
-| `drew.see.spatial_binding` | symbol_memory rows or composed_symbols updates | 0 (advisory) |
+**CORRECTED 2026-05-26 per receipt-ledger-auditor findings.** The original plan
+had three table-name errors. Production Drew writes to `blueprint_symbols`, NOT
+`blueprint_primitives`. `blueprint_primitives` is a separate CSIR research table
+populated only by standalone scripts (extract_primitives_vtpl.py, sdpe_run.py,
+etc.) — not by the production pipeline.
+
+| Stage receipt | Expected rows table | expected_min | Notes |
+|---|---|---|---|
+| `provider.azure.sheet_layout` (RENAMED from `blueprint.ingest.azure_doc_intel_used`) | `blueprint_sheet_intelligence` | 1 | Per-sheet. `blueprint.ingest.azure_doc_intel_used` is OCR-text-extraction only; it doesn't write to `blueprint_sheet_intelligence`. The sheet-layout receipt is the correct anchor. |
+| `drew.see.legend_extracted` | `blueprint_project_legends` | 0 | Per-project. Projects without legend pages legitimately write 0. Gulfstream wrote 288. |
+| `drew.see.11g2.page` | `blueprint_symbols` (NOT blueprint_primitives) | 1 if `metadata.skipped != "raster_scan"`, else 0 | Per-page. RASTER_SCAN pages emit a receipt with 0 rows by design — need expected_min=0 exemption. Also, B-PRE-1/B-PRE-2 follow-ups: zero-primitive and zero-motif vector pages currently emit NO receipt — needs separate fix. |
+| `drew.see.11g2.completed` | `blueprint_symbols` | 0 | Per-project summary. Legitimate zero if all pages raster or no motifs meet min_frequency. |
+| `blueprint.see.completed` | `blueprint_symbols` (NOT blueprint_primitives) | 100 | Per-project total. Gulfstream = 1.28M symbols, trivially passes. |
+| `drew.see.spatial_binding` | `blueprint_symbol_memory` (advisory) | 0 | Per-project. Write count not currently captured in receipt metadata (B-PRE-3 follow-up). Assertion is advisory only. |
+
+### Follow-up bugs filed (NOT blocking Pass 1.C — file as separate tasks)
+
+- **B-PRE-1:** `wave_11g2_see.py:368` silently skips receipt emission for zero-primitive vector pages. Will create heartbeat gaps for Pass 3.A sweeper.
+- **B-PRE-2:** `wave_11g2_see.py:398` silently skips receipt emission for zero-motif pages. Same heartbeat impact.
+- **B-PRE-3:** `drew.see.spatial_binding` lacks `write_count` field. Advisory-only assertion until added.
+
+### What MUST happen before wire-in
+
+The implementing agent MUST use the corrected table names above. Wiring against
+the original `blueprint_primitives` references would cause every healthy
+SUCCEEDED receipt to flip to FAILED (delta=0 on a table the pipeline doesn't
+write to). Gulfstream's 1.28M `blueprint_symbols` rows are the actual write
+target — `blueprint_primitives` is empty for production projects.
 
 `expected_min = 0` stages emit `SUCCEEDED_WITH_ZERO_OUTPUT` instead of `SUCCEEDED`
 when they write zero rows — so the observability signal is preserved without

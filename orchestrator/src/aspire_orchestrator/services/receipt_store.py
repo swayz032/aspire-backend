@@ -165,6 +165,7 @@ def _map_receipt_to_row(receipt: dict[str, Any]) -> dict[str, Any]:
         "failed": "FAILED",
         "denied": "DENIED",
         "pending": "PENDING",
+        "succeeded_with_zero_output": "SUCCEEDED_WITH_ZERO_OUTPUT",
     }
     status = status_map.get(outcome.lower(), "PENDING") if outcome else "PENDING"
 
@@ -1038,3 +1039,116 @@ def clear_store() -> None:
     if _receipt_writer is not None:
         with _receipt_writer._buffer_lock:
             _receipt_writer._buffer.clear()
+
+
+# =============================================================================
+# Persistence Assertion Helper (Track B Pass 1.C)
+# =============================================================================
+
+
+async def emit_persistence_asserted_receipt(
+    *,
+    stage: str,
+    expected_table: str,
+    expected_min: int,
+    count_before: int,
+    count_after: int,
+    correlation_id: str,
+    suite_id: str,
+    office_id: str | None,
+    project_id: str,
+    redacted_outputs: dict[str, Any],
+) -> str:
+    """Emit a receipt whose status reflects whether the stage actually wrote rows.
+
+    Status decision:
+      delta = count_after - count_before
+      expected_min > 0 and delta >= expected_min  -> "SUCCEEDED"
+      expected_min == 0 and delta == 0            -> "SUCCEEDED_WITH_ZERO_OUTPUT"
+      expected_min == 0 and delta > 0             -> "SUCCEEDED"  (over-delivered)
+      otherwise                                   -> "FAILED"
+
+    For FAILED receipts the outcome carries a structured error_message:
+      "persistence_assertion: <table> delta=<N> < expected_min=<M>"
+
+    Reuses store_receipts (non-blocking, in-memory + async Supabase path).
+    Returns the outcome string for the caller's logging.
+
+    Law #2: every write-producing stage gets a receipt regardless of outcome.
+    Law #3: fail-closed — zero rows when >0 expected == FAILED, never SUCCEEDED.
+    """
+    delta = count_after - count_before
+
+    if expected_min > 0 and delta >= expected_min:
+        outcome = "succeeded"
+        error_message: str | None = None
+    elif expected_min == 0 and delta >= 0:
+        # delta == 0: legitimately wrote nothing (advisory signal)
+        # delta > 0:  over-delivered when none was required (still success)
+        outcome = "succeeded" if delta > 0 else "succeeded_with_zero_output"
+        error_message = None
+    else:
+        outcome = "failed"
+        error_message = (
+            f"persistence_assertion: {expected_table} "
+            f"delta={delta} < expected_min={expected_min}"
+        )
+
+    full_outputs: dict[str, Any] = {
+        **redacted_outputs,
+        "persistence_assertion": {
+            "table": expected_table,
+            "expected_min": expected_min,
+            "count_before": count_before,
+            "count_after": count_after,
+            "delta": delta,
+        },
+    }
+    if error_message:
+        full_outputs["error_message"] = error_message
+
+    receipt: dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "receipt_type": stage,
+        "action_type": stage,
+        "suite_id": suite_id,
+        "office_id": office_id,
+        "tenant_id": suite_id,
+        "outcome": outcome,
+        "tool_used": "persistence_assertion",
+        "risk_tier": "GREEN",
+        "actor_type": "SYSTEM",
+        "actor_id": _SYSTEM_ACTOR_UUID,
+        "correlation_id": correlation_id,
+        "created_at": _utc_now_iso(),
+        "redacted_inputs": {"project_id": project_id, "stage": stage},
+        "redacted_outputs": full_outputs,
+    }
+    if error_message:
+        receipt["error_message"] = error_message
+        receipt["reason_code"] = "PERSISTENCE_ASSERTION_FAILED"
+
+    store_receipts([receipt])
+
+    if outcome == "failed":
+        logger.error(
+            "persistence_assertion FAILED stage=%s table=%s delta=%d expected_min=%d "
+            "project=%s corr=%s",
+            stage,
+            expected_table,
+            delta,
+            expected_min,
+            project_id[:8] if len(project_id) >= 8 else project_id,
+            correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
+        )
+    elif outcome == "succeeded_with_zero_output":
+        logger.info(
+            "persistence_assertion SUCCEEDED_WITH_ZERO_OUTPUT stage=%s table=%s "
+            "project=%s corr=%s",
+            stage,
+            expected_table,
+            project_id[:8] if len(project_id) >= 8 else project_id,
+            correlation_id[:8] if len(correlation_id) >= 8 else correlation_id,
+        )
+
+    return outcome

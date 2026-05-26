@@ -2427,6 +2427,17 @@ async def _async_universal_sheet_intel_pipeline(
             )
             return {"sheet_id": sheet_id, "success": True, "azure_ms": azure_ms}
 
+    # Capture row count before writes for persistence assertion (Track B Pass 1.C)
+    try:
+        from aspire_orchestrator.services.supabase_client import count_table_rows as _count_rows
+        _intel_count_before = await _count_rows(
+            "blueprint_sheet_intelligence",
+            project_id=project_id,
+            suite_id=suite_id,
+        )
+    except Exception:
+        _intel_count_before = 0
+
     # Dispatch all sheets concurrently under semaphore cap
     tasks = [_process_one_sheet(sheet) for sheet in active_sheets]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -2459,6 +2470,37 @@ async def _async_universal_sheet_intel_pipeline(
         total_azure_ms, status,
         correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
     )
+
+    # Persistence assertion — blueprint_sheet_intelligence must have gained rows (Track B Pass 1.C)
+    try:
+        from aspire_orchestrator.services.supabase_client import count_table_rows as _count_rows_after
+        from aspire_orchestrator.services.receipt_store import emit_persistence_asserted_receipt as _pa
+        _intel_count_after = await _count_rows_after(
+            "blueprint_sheet_intelligence",
+            project_id=project_id,
+            suite_id=suite_id,
+        )
+        await _pa(
+            stage="blueprint.ingest.azure_doc_intel_used",
+            expected_table="blueprint_sheet_intelligence",
+            expected_min=1,
+            count_before=_intel_count_before,
+            count_after=_intel_count_after,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            project_id=project_id,
+            redacted_outputs={
+                "sheets_total": sheets_total,
+                "sheets_succeeded": sheets_succeeded,
+                "sheets_failed": sheets_failed,
+            },
+        )
+    except Exception as _pa_exc:  # noqa: BLE001
+        _log.warning(
+            "drew.universal_intel: persistence assertion failed (%s) — proceeding",
+            type(_pa_exc).__name__,
+        )
 
     return {
         "status": status,

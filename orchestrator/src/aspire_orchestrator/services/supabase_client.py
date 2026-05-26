@@ -416,6 +416,44 @@ async def supabase_update(table: str, match_filters: str, data: dict[str, Any]) 
         raise SupabaseClientError(f"update/{table}", detail=str(e))
 
 
+async def count_table_rows(
+    table: str,
+    *,
+    project_id: str,
+    suite_id: str,
+) -> int:
+    """Return the row count for (project_id, suite_id) in a Supabase table.
+
+    Uses PostgREST ``Prefer: count=exact`` with a HEAD request so that no rows
+    are transferred — only the ``Content-Range`` response header (which carries
+    the total count) is read.
+
+    Returns 0 on any error (Supabase unavailable, table doesn't exist, etc.) so
+    that callers can always proceed — a failed count is surfaced via the
+    persistence-assertion receipt, not a raised exception.
+    """
+    try:
+        url = (
+            f"{_base_url()}/{table}"
+            f"?project_id=eq.{project_id}&suite_id=eq.{suite_id}&select=id"
+        )
+        hdrs = _headers()
+        hdrs["Prefer"] = "count=exact"
+        hdrs.pop("Content-Type", None)
+        client = _get_async_pool()
+        resp = await client.head(url, headers=hdrs)
+        # PostgREST returns Content-Range: 0-N/TOTAL or */TOTAL when count=exact.
+        content_range = resp.headers.get("Content-Range", "")
+        # Format: "0-9/42" or "*/42" or "*/*"
+        if "/" in content_range:
+            total_part = content_range.split("/")[-1].strip()
+            if total_part.isdigit():
+                return int(total_part)
+        return 0
+    except Exception:
+        return 0
+
+
 async def supabase_delete(table: str, match_filters: str) -> None:
     """DELETE rows from a Supabase table matching filters.
 
