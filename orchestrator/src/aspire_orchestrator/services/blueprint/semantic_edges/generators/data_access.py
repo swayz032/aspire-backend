@@ -37,6 +37,36 @@ class EntityRecord:
 
 
 @dataclass
+class OcrSpanRecord:
+    """OCR span surfaced from blueprint_sheet_intelligence.paragraphs[i].
+
+    OCR spans aren't an independent table — they live as JSON inside the
+    sheet_intelligence row. We synthesize a stable UUID from
+    (sheet_intelligence_id, paragraph_index) so polymorphic edge refs
+    have something durable to point at.
+    """
+    span_id: str                                # deterministic UUID5
+    sheet_id: str
+    project_id: str
+    suite_id: str
+    text: str
+    bbox: list[float]                           # axis-aligned [x0,y0,x1,y1]
+    role: Optional[str] = None
+    confidence: float = 1.0
+
+
+@dataclass
+class ZoneRecord:
+    """Semantic zone polygon on a sheet (title_block, legend, schedule, etc.)."""
+    zone_id: str
+    sheet_id: str
+    project_id: str
+    suite_id: str
+    zone_type: str                              # 'title_block'|'legend'|'schedule'|'notes'|'plan'
+    bbox: list[float]                           # axis-aligned [x0,y0,x1,y1]
+
+
+@dataclass
 class CompositionRecord:
     """A composed_symbol's constituent → composed relationship.
 
@@ -69,6 +99,19 @@ class EntitiesQueryClient(Protocol):
         self, *, project_id: str, suite_id: str
     ) -> list[CompositionRecord]: ...
 
+    def list_primitives_on_sheet(
+        self, *, project_id: str, suite_id: str, sheet_id: str,
+        max_rows: int = 10_000,
+    ) -> list[EntityRecord]: ...
+
+    def list_ocr_spans_on_sheet(
+        self, *, project_id: str, suite_id: str, sheet_id: str,
+    ) -> list[OcrSpanRecord]: ...
+
+    def list_zones_on_sheet(
+        self, *, project_id: str, suite_id: str, sheet_id: str,
+    ) -> list[ZoneRecord]: ...
+
 
 # ============================================================
 # In-memory client (tests)
@@ -85,11 +128,17 @@ class InMemoryQueryClient:
         legends: Optional[list[EntityRecord]] = None,
         sheets: Optional[list[EntityRecord]] = None,
         compositions: Optional[list[CompositionRecord]] = None,
+        primitives: Optional[list[EntityRecord]] = None,
+        ocr_spans: Optional[list[OcrSpanRecord]] = None,
+        zones: Optional[list[ZoneRecord]] = None,
     ) -> None:
         self._composed = composed_symbols or []
         self._legends = legends or []
         self._sheets = sheets or []
         self._compositions = compositions or []
+        self._primitives = primitives or []
+        self._ocr_spans = ocr_spans or []
+        self._zones = zones or []
 
     def _filter(self, rows: list, project_id: str, suite_id: str) -> list:
         return [
@@ -108,6 +157,31 @@ class InMemoryQueryClient:
 
     def list_compositions(self, *, project_id: str, suite_id: str) -> list[CompositionRecord]:
         return self._filter(self._compositions, project_id, suite_id)
+
+    def list_primitives_on_sheet(
+        self, *, project_id: str, suite_id: str, sheet_id: str, max_rows: int = 10_000,
+    ) -> list[EntityRecord]:
+        out = [
+            p for p in self._primitives
+            if p.project_id == project_id and p.suite_id == suite_id and p.sheet_id == sheet_id
+        ]
+        return out[:max_rows]
+
+    def list_ocr_spans_on_sheet(
+        self, *, project_id: str, suite_id: str, sheet_id: str,
+    ) -> list[OcrSpanRecord]:
+        return [
+            s for s in self._ocr_spans
+            if s.project_id == project_id and s.suite_id == suite_id and s.sheet_id == sheet_id
+        ]
+
+    def list_zones_on_sheet(
+        self, *, project_id: str, suite_id: str, sheet_id: str,
+    ) -> list[ZoneRecord]:
+        return [
+            z for z in self._zones
+            if z.project_id == project_id and z.suite_id == suite_id and z.sheet_id == sheet_id
+        ]
 
 
 # ============================================================
