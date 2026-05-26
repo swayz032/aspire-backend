@@ -254,18 +254,143 @@ async def _sweep_stale_blueprint_projects_loop() -> None:
 # Per-stage staleness thresholds in minutes (P0-5).
 # Slightly larger than the hard timeouts in routes/blueprint_dispatch.py:_STAGE_TIMEOUTS
 # so we only sweep projects whose worker is truly dead (not running slowly).
-_SWEEP_STAGE_THRESHOLDS_MINUTES: dict[str, int] = {
-    # Wave 9j fix: sweeper MUST be > stage hard timeout. The sweeper is a "worker
-    # died entirely" safety net; if it fires BEFORE the stage's own asyncio.wait_for
-    # timeout, it races and kills work that was on track to finish.
-    # Rule: sweeper_threshold = stage_timeout + 50% safety buffer (minimum 3 min).
-    "ingest": 15,    # stage timeout 8 min  → sweeper 15 min  (88% buffer)
-    "classify": 6,   # stage timeout 3 min  → sweeper 6 min   (100% buffer)
-    "see": 8,        # Wave 10b: stage timeout 5 min → sweeper 8 min (60% buffer)
-    "reason": 8,     # Wave 10b: stage timeout 5 min → sweeper 8 min (60% buffer)
-    "procure": 5,    # stage timeout 2 min  → sweeper 5 min   (150% buffer)
+# Track B Pass 3.A — heartbeat-aware orphan detection (replaces the old
+# elapsed-since-creation rule that false-positive-killed Mangonia at 11 min
+# while drew.see.11g2.page receipts were still arriving every 2-3 min).
+#
+# Rule: a stage is orphaned only if:
+#   1. NO progress receipt arrived within the heartbeat window, AND
+#      total_elapsed > heartbeat_min (or no receipts ever and total > heartbeat), OR
+#   2. total_elapsed > absolute_max_min (hard ceiling — truly dead workers)
+#
+# Knobs (env var, all minutes, applied per stage):
+#   ASPIRE_SWEEPER_<STAGE>_HEARTBEAT_MIN     default per _HEARTBEAT_DEFAULTS below
+#   ASPIRE_SWEEPER_<STAGE>_ABSOLUTE_MAX_MIN  default per _ABSOLUTE_MAX_DEFAULTS below
+STAGE_PROGRESS_RECEIPT_PATTERNS: dict[str, list[str]] = {
+    "ingest":   ["provider.azure.sheet_layout", "blueprint.ingest.azure_doc_intel_used",
+                 "blueprint.ingest.dlp_scanned"],
+    "classify": ["drew.classify.atlas.matched", "drew.classify.verified"],
+    "see":      ["drew.see.11g2.page", "drew.see.spatial_binding",
+                 "blueprint.see.vgse.completed", "blueprint.see.completed"],
+    "reason":   ["reason.sheet_intelligence_context", "drew.reason.assembly_typed"],
+    "procure":  ["drew.procure.supplier_lookup"],
+}
+_HEARTBEAT_DEFAULTS: dict[str, int] = {
+    "ingest": 5, "classify": 3, "see": 5, "reason": 3, "procure": 2,
+}
+_ABSOLUTE_MAX_DEFAULTS: dict[str, int] = {
+    "ingest": 30, "classify": 10, "see": 60, "reason": 15, "procure": 10,
 }
 _SWEEP_STAGES_ORDER: tuple[str, ...] = ("ingest", "classify", "see", "reason", "procure")
+
+
+async def _latest_progress_receipt(
+    suite_id: str,
+    action_types: list[str],
+    since: "datetime",
+) -> "tuple[datetime | None, str | None]":
+    """Return (timestamp, action_type) of the most recent receipt matching any
+    action_type for the given suite, created after `since`. Scoped by suite_id
+    (Law #6). Returns (None, None) on any query failure (fail-safe — let
+    absolute_max catch truly dead workers; do not false-positive kill healthy ones)."""
+    from aspire_orchestrator.services.supabase_client import (
+        SupabaseClientError, supabase_select,
+    )
+    try:
+        # PostgREST in.() filter for JSONB action->>action_type
+        in_list = ",".join(action_types)
+        filter_str = (
+            f"suite_id=eq.{suite_id}"
+            f"&action->>action_type=in.({in_list})"
+            f"&created_at=gte.{since.isoformat()}"
+        )
+        rows = await supabase_select(
+            "receipts",
+            filters=filter_str,
+            order_by="created_at.desc",
+            limit=1,
+        )
+        if not rows:
+            return None, None
+        row = rows[0]
+        created_at_raw = row.get("created_at")
+        if not created_at_raw:
+            return None, None
+        ts = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        action_blob = row.get("action") or {}
+        action_type = action_blob.get("action_type") if isinstance(action_blob, dict) else None
+        return ts, action_type
+    except SupabaseClientError as exc:
+        logger.warning(
+            "[blueprint-sweeper] _latest_progress_receipt query failed: %s",
+            type(exc).__name__,
+        )
+        return None, None
+    except Exception as exc:
+        logger.warning(
+            "[blueprint-sweeper] _latest_progress_receipt unexpected error: %s",
+            type(exc).__name__,
+        )
+        return None, None
+
+
+async def is_orphaned(
+    project_id: str,
+    stage: str,
+    suite_id: str,
+    stage_started_at: "datetime",
+) -> "tuple[bool, str, str | None]":
+    """Heartbeat-aware orphan detection.
+
+    Returns: (is_orphaned, reason, last_action_type)
+
+    Fail-safe: on query error or unknown stage, returns (False, ...). Prefers
+    leaving a potentially-dead worker alive over killing a healthy one.
+    Absolute_max ceiling catches genuinely dead workers regardless.
+    """
+    from datetime import timedelta
+    import os
+    now_utc = datetime.now(timezone.utc)
+    total_elapsed = now_utc - stage_started_at
+
+    abs_max = int(os.getenv(
+        f"ASPIRE_SWEEPER_{stage.upper()}_ABSOLUTE_MAX_MIN",
+        str(_ABSOLUTE_MAX_DEFAULTS.get(stage, 60)),
+    ))
+    if total_elapsed > timedelta(minutes=abs_max):
+        return True, f"absolute_max_exceeded ({abs_max} min)", None
+
+    heartbeat = int(os.getenv(
+        f"ASPIRE_SWEEPER_{stage.upper()}_HEARTBEAT_MIN",
+        str(_HEARTBEAT_DEFAULTS.get(stage, 5)),
+    ))
+    action_types = STAGE_PROGRESS_RECEIPT_PATTERNS.get(stage, [])
+    if not action_types:
+        return False, "no_progress_patterns_defined", None
+
+    latest_ts, latest_action = await _latest_progress_receipt(
+        suite_id, action_types, stage_started_at,
+    )
+
+    if latest_ts is None:
+        if total_elapsed > timedelta(minutes=heartbeat):
+            return True, f"no_heartbeat_since_start ({heartbeat} min)", None
+        return False, "in_progress_no_heartbeat_yet", None
+
+    silence = now_utc - latest_ts
+    if silence > timedelta(minutes=heartbeat):
+        return (
+            True,
+            f"silent_{int(silence.total_seconds())}s (heartbeat={heartbeat} min)",
+            latest_action,
+        )
+    return (
+        False,
+        f"healthy_last_heartbeat_{int(silence.total_seconds())}s_ago",
+        latest_action,
+    )
 
 
 async def _sweep_stale_blueprint_projects() -> None:
@@ -333,15 +458,26 @@ async def _sweep_stale_blueprint_projects() -> None:
         if not isinstance(stage_progress_blob, dict):
             continue
 
+        # Track B Pass 3.A — heartbeat-aware orphan detection.
+        # A stage is orphaned only if NO progress receipt arrived within the
+        # heartbeat window, OR total elapsed > absolute_max ceiling.
         stalled_stage: str | None = None
+        orphan_reason: str = ""
+        last_action_type: str | None = None
         for stage in _SWEEP_STAGES_ORDER:
             if stage_progress_blob.get(stage) != "in_progress":
                 continue
-            threshold_minutes = _SWEEP_STAGE_THRESHOLDS_MINUTES.get(stage, 15)
-            if created_dt >= now_utc - timedelta(minutes=threshold_minutes):
-                continue  # still within grace window for this stage
-            stalled_stage = stage
-            break
+            killed, reason, seen_action = await is_orphaned(
+                project_id=project_id,
+                stage=stage,
+                suite_id=suite_id,
+                stage_started_at=created_dt,  # proxy until stage_started_at column exists
+            )
+            if killed:
+                stalled_stage = stage
+                orphan_reason = reason
+                last_action_type = seen_action
+                break
 
         if stalled_stage is None:
             continue
@@ -381,10 +517,12 @@ async def _sweep_stale_blueprint_projects() -> None:
                     "stage": stalled_stage,
                     "error_class": "OrphanTimeout",
                     "error_message": (
-                        f"Stage '{stalled_stage}' stuck in-progress for >"
-                        f"{_SWEEP_STAGE_THRESHOLDS_MINUTES.get(stalled_stage, 15)} min; "
-                        f"worker assumed dead (Railway redeploy / OOM / signal)"
+                        f"Stage '{stalled_stage}' orphaned: {orphan_reason}. "
+                        f"Last progress receipt: {last_action_type or 'none'}. "
+                        f"Elapsed: {elapsed_minutes} min."
                     ),
+                    "orphan_reason": orphan_reason,
+                    "last_progress_action_type": last_action_type,
                     "created_at": created_at_raw,
                     "elapsed_minutes": elapsed_minutes,
                 },
