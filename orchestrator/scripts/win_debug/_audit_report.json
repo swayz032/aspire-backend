@@ -553,143 +553,805 @@
   "ur_samples": [
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0b44359e",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0d46adec",
       "legend_symbol_id": "DP",
       "legend_label": "- DIMENSION POINT",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "unknown",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "83e15db3",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "bb620c92",
       "legend_symbol_id": "BLDG",
       "legend_label": "- BUILDING",
-      "score": 0.6,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "unknown",
+      "final_score": 0.6,
+      "ocr_score": 0.6,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.60)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0b44359e",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0d46adec",
       "legend_symbol_id": "DP",
       "legend_label": "- DIMENSION POINT",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "unknown",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "83e15db3",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "bb620c92",
       "legend_symbol_id": "BLDG",
       "legend_label": "- BUILDING",
-      "score": 0.6,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "unknown",
+      "final_score": 0.6,
+      "ocr_score": 0.6,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.60)"
+      ]
     },
     {
       "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "motif_geom": "point",
+      "legend_id": "0b44359e",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "motif_geom": "point",
+      "legend_id": "34706ab0",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "motif_geom": "point",
+      "legend_id": "83e15db3",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "motif_geom": "point",
+      "legend_id": "9a11734b",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "motif_geom": "point",
+      "legend_id": "ad5af100",
       "legend_symbol_id": "X\n:selected:",
       "legend_label": "EXHAUST FAN",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "histogram_cosine_near_identical",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "34706ab0",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "385c3def",
       "legend_symbol_id": "EE",
       "legend_label": "- FIRE EXTINGUISHER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "9a11734b",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "bbbd9fc1",
       "legend_symbol_id": "FP",
       "legend_label": "- FIRE PROTECTION",
-      "score": 0.6,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "unknown",
+      "final_score": 0.6,
+      "ocr_score": 0.6,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.60)"
+      ]
     },
     {
       "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "087cfb26",
       "legend_symbol_id": "350A",
       "legend_label": "500 MCM",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "unknown",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "0b44359e",
       "legend_symbol_id": "P4",
       "legend_label": "SQUARE SHOWER",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
     },
     {
       "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "34706ab0",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "36de3441",
+      "legend_symbol_id": "MECHANICAL",
+      "legend_label": "",
+      "legend_geom": "unknown",
+      "final_score": 0.595,
+      "ocr_score": 0.85,
+      "ocr_reason": "symbol_id_substring_in_ocr",
+      "topo_score": 0.7,
+      "topo_reason": "histogram_cosine_moderate",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "MOTIF_GEOM_UNKNOWN",
+        "LEGEND_GEOM_UNKNOWN",
+        "LEGEND_LABEL_NULL"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "4932b7e7",
+      "legend_symbol_id": "RD",
+      "legend_label": "ROOF DRAIN",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "533f14f8",
+      "legend_symbol_id": "VTR",
+      "legend_label": "VENT TO ROOF",
+      "legend_geom": "polygon",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "54fc9bba",
+      "legend_symbol_id": "P8",
+      "legend_label": "WALL CLEANOUT",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "80716d71",
+      "legend_symbol_id": "G-006",
+      "legend_label": "WALL TYPES",
+      "legend_geom": "polygon",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "83e15db3",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "9a11734b",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "b6b02277",
+      "legend_symbol_id": "CL",
+      "legend_label": "\u00b7 CENTER LINE",
+      "legend_geom": "linear",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "motif_geom": "unknown",
+      "legend_id": "fcab95ee",
+      "legend_symbol_id": "300A",
+      "legend_label": "350 MCM",
+      "legend_geom": "unknown",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "MOTIF_GEOM_UNKNOWN",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0b44359e",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0d46adec",
+      "legend_symbol_id": "DP",
+      "legend_label": "- DIMENSION POINT",
+      "legend_geom": "unknown",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "83e15db3",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "bb620c92",
+      "legend_symbol_id": "BLDG",
+      "legend_label": "- BUILDING",
+      "legend_geom": "unknown",
+      "final_score": 0.6,
+      "ocr_score": 0.6,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.60)"
+      ]
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "34706ab0",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "385c3def",
+      "legend_symbol_id": "EE",
+      "legend_label": "- FIRE EXTINGUISHER",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "9a11734b",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "motif_geom": "point",
+      "legend_id": "bbbd9fc1",
+      "legend_symbol_id": "FP",
+      "legend_label": "- FIRE PROTECTION",
+      "legend_geom": "unknown",
+      "final_score": 0.6,
+      "ocr_score": 0.6,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.60)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0b44359e",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "0d46adec",
+      "legend_symbol_id": "DP",
+      "legend_label": "- DIMENSION POINT",
+      "legend_geom": "unknown",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "83e15db3",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "legend_geom": "point",
+      "final_score": 0.5,
+      "ocr_score": 0.5,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "OCR_WEAK(0.50)"
+      ]
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "motif_geom": "point",
+      "legend_id": "bb620c92",
+      "legend_symbol_id": "BLDG",
+      "legend_label": "- BUILDING",
+      "legend_geom": "unknown",
+      "final_score": 0.6,
+      "ocr_score": 0.6,
+      "ocr_reason": "label_keyword_overlap",
+      "topo_score": 1.0,
+      "topo_reason": "insufficient_data",
+      "conn_score": 1.0,
+      "primary_cause": [
+        "LEGEND_HIST_EMPTY",
+        "LEGEND_GEOM_UNKNOWN",
+        "OCR_WEAK(0.60)"
+      ]
     }
   ]
 }

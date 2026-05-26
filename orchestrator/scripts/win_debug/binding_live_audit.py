@@ -214,6 +214,49 @@ def main() -> int:
                         if ocr_result and ocr_result.score >= 0.8 and topo_result.score < 0.5:
                             topology_kill_count += 1
 
+            # ---- N-4.5 UNKNOWN_REVIEW FORENSICS — capture FULL diagnostic ----
+            # No cap — we want every single UR case classified
+            if score.tier == BindingTier.UNKNOWN_REVIEW:
+                ocr_r = score.per_factor_scores.get("ocr_affinity")
+                topo_r = score.per_factor_scores.get("topology")
+                conn_r = score.per_factor_scores.get("connectivity")
+                # Classify primary cause
+                cause = []
+                if not motif["histogram"]:
+                    cause.append("MOTIF_HIST_MISSING")
+                lh = legend_histograms.get(legend["legend_id"], {})
+                if not lh or sum(lh.values()) == 0:
+                    cause.append("LEGEND_HIST_EMPTY")
+                if motif["geometry"] == "unknown":
+                    cause.append("MOTIF_GEOM_UNKNOWN")
+                if legend_geom_cache[legend["legend_id"]] == "unknown":
+                    cause.append("LEGEND_GEOM_UNKNOWN")
+                if ocr_r and ocr_r.score < 0.7:
+                    cause.append(f"OCR_WEAK({ocr_r.score:.2f})")
+                # Detect long-paragraph symbol_id artifact
+                sid = legend.get("legend_symbol_id") or ""
+                if len(sid) > 30:
+                    cause.append("LEGEND_SYMID_PARAGRAPH")
+                # Empty legend label
+                if not (legend.get("legend_label") or "").strip():
+                    cause.append("LEGEND_LABEL_NULL")
+                ur_samples.append({
+                    "motif_sheet": motif.get("sheet_code") or motif["motif_sheet_id"][:8],
+                    "motif_discipline": motif["discipline"],
+                    "motif_geom": motif["geometry"],
+                    "legend_id": legend["legend_id"][:8],
+                    "legend_symbol_id": (legend.get("legend_symbol_id") or "")[:60],
+                    "legend_label": (legend.get("legend_label") or "")[:60],
+                    "legend_geom": legend_geom_cache[legend["legend_id"]],
+                    "final_score": round(score.final_score, 3),
+                    "ocr_score": round(ocr_r.score, 3) if ocr_r else None,
+                    "ocr_reason": ocr_r.reasoning if ocr_r else None,
+                    "topo_score": round(topo_r.score, 3) if topo_r else None,
+                    "topo_reason": topo_r.reasoning if topo_r else None,
+                    "conn_score": round(conn_r.score, 3) if conn_r else None,
+                    "primary_cause": cause,
+                })
+
             if score.tier == BindingTier.VERIFIED and len(verified_samples) < 50:
                 verified_samples.append({
                     "motif_sheet": motif.get("sheet_code") or motif["motif_sheet_id"][:8],
@@ -231,17 +274,8 @@ def main() -> int:
                         if "ocr_affinity" in score.per_factor_scores else {}
                     ),
                 })
-            elif score.tier == BindingTier.UNKNOWN_REVIEW and len(ur_samples) < 20:
-                ur_samples.append({
-                    "motif_sheet": motif.get("sheet_code") or motif["motif_sheet_id"][:8],
-                    "legend_symbol_id": legend.get("legend_symbol_id"),
-                    "legend_label": legend.get("legend_label"),
-                    "score": round(score.final_score, 3),
-                    "reasoning": (
-                        score.per_factor_scores["ocr_affinity"].reasoning
-                        if "ocr_affinity" in score.per_factor_scores else ""
-                    ),
-                })
+            # (UR captured above in forensics block)
+            pass
 
     # ---- Report ---------------------------------------------------------
     print("\n" + "=" * 70)
@@ -313,8 +347,8 @@ def main() -> int:
     if not ur_samples:
         print("    (none)")
     for s in ur_samples[:20]:
-        print(f"    [{s['score']}] motif@{s['motif_sheet']}"
-              f" -> {s['legend_symbol_id']!r} ({s['reasoning']})")
+        print(f"    [{s['final_score']}] motif@{s['motif_sheet']}"
+              f" -> {s['legend_symbol_id']!r} causes={s['primary_cause']}")
 
     # Write JSON report alongside for L-7 receipt persistence later
     report = {
