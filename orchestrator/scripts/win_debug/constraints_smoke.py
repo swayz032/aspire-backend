@@ -359,12 +359,40 @@ def main() -> int:
     except Exception as e:
         results["layer_validate_edge_downgrades_to_ur"] = f"FAIL: {e}"
 
-    # validate_edge — compatible verifies
+    # validate_edge — compatible verifies. NOTE: with M-4 now in the
+    # registry, a FEEDS edge also needs fixture context. Provide a
+    # M-4-compatible pair (Panel→Conduit; Conduit is DISTRIBUTION so
+    # direction is waived per Option C).
     try:
-        proposal = make_feeds_edge(src_state="new", dst_state="new",
-                                    confidence=0.95)
+        ev = {
+            "flow_direction": "downstream",
+            "discipline": "electrical",
+            "src_legend_label": "PANEL",
+            "dst_legend_label": "CONDUIT",
+        }
+        prov = {
+            "extractor": "test", "wave": "20.14.5M", "pipeline_version": "1.0",
+            "sheet_id": "s1", "generator_window": "test",
+            "bbox": [0, 0, 10, 10],
+            "source_discipline": "electrical",
+            "destination_discipline": "electrical",
+            "source_layer_state": "new",
+            "destination_layer_state": "new",
+        }
+        proposal = EdgeProposal(
+            edge_type=EdgeType.FEEDS,
+            suite_id="s", project_id="p",
+            src_entity_id="p1", src_entity_type=EntityType.PRIMITIVE,
+            dst_entity_id="p2", dst_entity_type=EntityType.PRIMITIVE,
+            locality_scope=LocalityScope.SAME_SHEET,
+            spatial_distance=None, confidence=0.95,
+            evidence=ev, provenance=prov,
+            extraction_method="test_v1",
+        )
         r = validate_edge(proposal)
-        assert r.resolution_state == ResolutionState.VERIFIED
+        assert r.resolution_state == ResolutionState.VERIFIED, (
+            f"got {r.resolution_state}; soft={r.constraint.details.get('soft_violations')}"
+        )
         results["layer_validate_edge_compatible_verifies"] = "PASS"
     except Exception as e:
         results["layer_validate_edge_compatible_verifies"] = f"FAIL: {e}"
@@ -379,6 +407,290 @@ def main() -> int:
         results["layer_applies_to_correct"] = "PASS"
     except Exception as e:
         results["layer_applies_to_correct"] = f"FAIL: {e}"
+
+    # =====================================================
+    # M-4 ConnectivityConsistencyConstraint
+    # =====================================================
+    from aspire_orchestrator.services.blueprint.semantic_edges.constraints import (
+        ConnectivityConsistencyConstraint, FixtureRole, FlowStream,
+        classify_fixture,
+    )
+    from aspire_orchestrator.services.blueprint.semantic_edges.constraints.fixture_class import (
+        SUPPLY_STREAMS, RETURN_STREAMS, role_compatible_for_feeds,
+    )
+
+    def make_mep_edge(*, edge_type=EdgeType.FEEDS, src_label=None,
+                       dst_label=None, src_role=None, dst_role=None,
+                       src_streams=None, dst_streams=None,
+                       confidence=0.85,
+                       src_discipline="plumbing", dst_discipline="plumbing"):
+        provenance = {
+            "extractor": "test", "wave": "20.14.5M", "pipeline_version": "1.0",
+            "sheet_id": "s1", "generator_window": "test",
+            "bbox": [0, 0, 10, 10],
+            # Bypass M-2 by setting compatible disciplines
+            "source_discipline": src_discipline,
+            "destination_discipline": dst_discipline,
+        }
+        if src_role:
+            provenance["src_fixture_role"] = src_role
+        if dst_role:
+            provenance["dst_fixture_role"] = dst_role
+        if src_streams:
+            provenance["src_streams"] = src_streams
+        if dst_streams:
+            provenance["dst_streams"] = dst_streams
+        evidence = {"flow_direction": "downstream", "discipline": "plumbing"}
+        if src_label:
+            evidence["src_legend_label"] = src_label
+        if dst_label:
+            evidence["dst_legend_label"] = dst_label
+        return EdgeProposal(
+            edge_type=edge_type,
+            suite_id="s", project_id="p",
+            src_entity_id="p1", src_entity_type=EntityType.PRIMITIVE,
+            dst_entity_id="p2", dst_entity_type=EntityType.PRIMITIVE,
+            locality_scope=LocalityScope.SAME_SHEET,
+            spatial_distance=None, confidence=confidence,
+            evidence=evidence, provenance=provenance,
+            extraction_method="test_v1",
+        )
+
+    # Fixture classifier — coverage check
+    try:
+        p = classify_fixture("QUAD RECEPTACLE")
+        assert p is not None
+        assert FixtureRole.SUPPLY_TERMINAL in p.roles
+        assert FlowStream.POWER_HIGH_VOLT in p.streams
+
+        p = classify_fixture("EXISTING UPRIGHT SPRINKLER")
+        assert p is not None
+        assert FixtureRole.SUPPLY_TERMINAL in p.roles
+        assert FlowStream.SUPPLY_WATER_COLD in p.streams
+
+        p = classify_fixture("RETURN GRILLE")
+        assert p is not None
+        assert FixtureRole.RETURN_TERMINAL in p.roles
+        assert FlowStream.RETURN_AIR in p.streams
+
+        p = classify_fixture("FLOOR DRAIN")
+        assert p is not None
+        assert FixtureRole.RETURN_TERMINAL in p.roles
+        assert FlowStream.WASTE_WATER in p.streams
+
+        p = classify_fixture("LAVATORY SINK")  # matches LAVATORY first
+        assert p is not None
+        assert FixtureRole.SUPPLY_TERMINAL in p.roles
+        assert FixtureRole.RETURN_TERMINAL in p.roles
+        assert FlowStream.SUPPLY_WATER_HOT in p.streams
+        assert FlowStream.WASTE_WATER in p.streams
+
+        assert classify_fixture("RANDOM-NON-MEP-TEXT") is None
+        assert classify_fixture("") is None
+        assert classify_fixture(None) is None
+        results["fixture_classifier"] = "PASS"
+    except Exception as e:
+        results["fixture_classifier"] = f"FAIL: {e}"
+
+    cc = ConnectivityConsistencyConstraint()
+
+    # Compatible FEEDS — Panel feeds Receptacle
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.FEEDS,
+            src_label="PANEL", dst_label="RECEPTACLE",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is True, f"got {result.reason}"
+        results["connectivity_panel_feeds_receptacle_passes"] = "PASS"
+    except Exception as e:
+        results["connectivity_panel_feeds_receptacle_passes"] = f"FAIL: {e}"
+
+    # Stream-disjoint FEEDS — Supply Duct FEEDS Return Grille
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.FEEDS,
+            src_label="SUPPLY DUCT", dst_label="RETURN GRILLE",
+            src_discipline="mechanical", dst_discipline="mechanical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert "feeds_streams_disjoint" in result.reason
+        results["connectivity_supply_duct_to_return_grille_violation"] = "PASS"
+    except Exception as e:
+        results["connectivity_supply_duct_to_return_grille_violation"] = f"FAIL: {e}"
+
+    # Stream-disjoint plumbing — Waste Pipe FEEDS Faucet (supply only)
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.FEEDS,
+            src_label="WASTE PIPE", dst_label="FAUCET",
+        )
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert "feeds_streams_disjoint" in result.reason
+        results["connectivity_waste_to_supply_faucet_violation"] = "PASS"
+    except Exception as e:
+        results["connectivity_waste_to_supply_faucet_violation"] = f"FAIL: {e}"
+
+    # Direction enforcement (Option C) — Receptacle FEEDS Panel (wrong direction)
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.FEEDS,
+            src_label="RECEPTACLE", dst_label="PANEL",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert "feeds_role_direction_wrong" in result.reason
+        results["connectivity_direction_outlet_to_panel"] = "PASS"
+    except Exception as e:
+        results["connectivity_direction_outlet_to_panel"] = f"FAIL: {e}"
+
+    # Option C: when DISTRIBUTION involved, direction NOT enforced
+    # Panel FEEDS Conduit (DISTRIBUTION) — Conduit role unknown direction
+    # Should PASS (Option C waives direction check)
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.FEEDS,
+            src_label="PANEL", dst_label="CONDUIT",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is True
+        results["connectivity_distribution_waives_direction"] = "PASS"
+    except Exception as e:
+        results["connectivity_distribution_waives_direction"] = f"FAIL: {e}"
+
+    # PROTECTED_BY — outlet protected by breaker
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.PROTECTED_BY,
+            src_label="RECEPTACLE", dst_label="BREAKER",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is True
+        results["connectivity_protected_by_breaker_passes"] = "PASS"
+    except Exception as e:
+        results["connectivity_protected_by_breaker_passes"] = f"FAIL: {e}"
+
+    # PROTECTED_BY violation — dst is NOT a protection device
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.PROTECTED_BY,
+            src_label="RECEPTACLE", dst_label="LIGHT FIXTURE",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert "protected_by_dst_not_protection" in result.reason
+        results["connectivity_protected_by_invalid_dst"] = "PASS"
+    except Exception as e:
+        results["connectivity_protected_by_invalid_dst"] = f"FAIL: {e}"
+
+    # CONTROLS — switch controls light fixture
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.CONTROLS,
+            src_label="SWITCH", dst_label="LIGHT FIXTURE",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is True
+        results["connectivity_switch_controls_light_passes"] = "PASS"
+    except Exception as e:
+        results["connectivity_switch_controls_light_passes"] = f"FAIL: {e}"
+
+    # CONTROLS violation — src is not a CONTROL
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.CONTROLS,
+            src_label="RECEPTACLE", dst_label="LIGHT FIXTURE",
+            src_discipline="electrical", dst_discipline="electrical",
+        )
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert "controls_src_not_control" in result.reason
+        results["connectivity_controls_invalid_src"] = "PASS"
+    except Exception as e:
+        results["connectivity_controls_invalid_src"] = f"FAIL: {e}"
+
+    # RETURNS_TO — Floor drain returns to grease trap
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.RETURNS_TO,
+            src_label="FLOOR DRAIN", dst_label="GREASE TRAP",
+        )
+        result = cc.check(proposal)
+        assert result.passed is True
+        results["connectivity_returns_floor_drain_to_grease_trap"] = "PASS"
+    except Exception as e:
+        results["connectivity_returns_floor_drain_to_grease_trap"] = f"FAIL: {e}"
+
+    # Missing context → SOFT_SKIP
+    try:
+        proposal = make_mep_edge(edge_type=EdgeType.FEEDS)  # no labels
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert result.reason == "missing_fixture_context"
+        results["connectivity_missing_context_soft_skip"] = "PASS"
+    except Exception as e:
+        results["connectivity_missing_context_soft_skip"] = f"FAIL: {e}"
+
+    # Partial context → SOFT_SKIP
+    try:
+        proposal = make_mep_edge(edge_type=EdgeType.FEEDS, src_label="PANEL")
+        result = cc.check(proposal)
+        assert result.passed is False
+        assert result.reason == "partial_fixture_context"
+        results["connectivity_partial_context_soft_skip"] = "PASS"
+    except Exception as e:
+        results["connectivity_partial_context_soft_skip"] = f"FAIL: {e}"
+
+    # validate_edge integration — wrong direction at high confidence → UR
+    try:
+        proposal = make_mep_edge(
+            edge_type=EdgeType.FEEDS,
+            src_label="RECEPTACLE", dst_label="PANEL",
+            src_discipline="electrical", dst_discipline="electrical",
+            confidence=0.95,
+        )
+        r = validate_edge(proposal)
+        assert r.resolution_state == ResolutionState.UNKNOWN_REVIEW
+        soft_v = r.constraint.details.get("soft_violations", [])
+        assert any(v["name"] == "connectivity_consistency" for v in soft_v)
+        results["connectivity_validate_edge_downgrades_wrong_direction"] = "PASS"
+    except Exception as e:
+        results["connectivity_validate_edge_downgrades_wrong_direction"] = f"FAIL: {e}"
+
+    # Registry now 3 constraints
+    try:
+        names = {c.name for c in CONSTRAINT_REGISTRY}
+        assert "discipline_compatibility" in names
+        assert "layer_separation" in names
+        assert "connectivity_consistency" in names
+        results["connectivity_registry_updated"] = "PASS"
+    except Exception as e:
+        results["connectivity_registry_updated"] = f"FAIL: {e}"
+
+    # applies_to scoping for M-4
+    try:
+        assert EdgeType.FEEDS in cc.applies_to
+        assert EdgeType.RETURNS_TO in cc.applies_to
+        assert EdgeType.CONNECTED_TO in cc.applies_to
+        assert EdgeType.PROTECTED_BY in cc.applies_to
+        assert EdgeType.CONTROLS in cc.applies_to
+        assert EdgeType.TERMINATES_AT in cc.applies_to
+        assert EdgeType.ANNOTATED_BY not in cc.applies_to
+        assert EdgeType.ADJACENT_TO not in cc.applies_to
+        assert EdgeType.BELONGS_TO_SHEET not in cc.applies_to
+        results["connectivity_applies_to_correct"] = "PASS"
+    except Exception as e:
+        results["connectivity_applies_to_correct"] = f"FAIL: {e}"
 
     # --- Report ---
     print("=== M-1 + M-2 constraints smoke ===")

@@ -112,4 +112,10 @@ from .constraints import (  # noqa: F401
     LayerState,
     classify_layer_name,
     classify_layer_text,
+    ConnectivityConsistencyConstraint,
+    FIXTURE_KEYWORDS,
+    FixtureProfile,
+    FixtureRole,
+    FlowStream,
+    classify_fixture,
 )

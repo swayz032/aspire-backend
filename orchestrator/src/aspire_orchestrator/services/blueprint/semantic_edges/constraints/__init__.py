@@ -49,10 +49,24 @@ from .layer import (  # noqa: F401
     classify_layer_text,
     layer_states_incompatible,
 )
+from .fixture_class import (  # noqa: F401
+    FIXTURE_KEYWORDS,
+    FixtureProfile,
+    FixtureRole,
+    FlowStream,
+    RETURN_STREAMS,
+    SUPPLY_STREAMS,
+    classify_fixture,
+    role_compatible_for_feeds,
+    role_compatible_for_returns,
+    streams_share,
+)
+from .connectivity import ConnectivityConsistencyConstraint  # noqa: F401
 
 # The registry. Order matters: cheap → expensive.
-# M-4, M-5 will append additional constraint instances here.
+# M-5 will append additional constraint instances here.
 CONSTRAINT_REGISTRY: list[Constraint] = [
-    DisciplineCompatibilityConstraint(),  # HARD — trade isolation
-    LayerSeparationConstraint(),          # SOFT — demo/new-work review
+    DisciplineCompatibilityConstraint(),       # HARD — trade isolation
+    LayerSeparationConstraint(),               # SOFT — demo/new-work review
+    ConnectivityConsistencyConstraint(),       # SOFT — MEP connection sanity
 ]
