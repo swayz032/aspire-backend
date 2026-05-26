@@ -140,4 +140,81 @@ END (all PDFs successful)
   key (or confirms Railway already updated). Upload phase will resume on next
   message.
 
-### Iteration 5 — TBD: resume upload loop when Azure unblocked
+### Iteration 5 — Azure rotated, uploads starting (2026-05-26)
+- User logged into new Azure tenant `tonioscott39@yahoo.com` and approved
+  resource creation. Provisioned:
+    Resource Group: aspire-prod-rg
+    Resource: aspire-docintel-prod
+    Region: eastus
+    Tier: Free F0 (500 pages/month, 20 calls/min)
+    Subscription: Azure subscription 1 ($200 credit on file)
+- Endpoint: https://aspire-docintel-prod.cognitiveservices.azure.com/
+- Key 1 set on Ava-Brain Railway service. Railway auto-restarts on var change.
+- User going to sleep; resuming autonomous upload loop.
+- Hard cap unchanged: 20 ingest attempts, ~$35 spend ceiling (free tier
+  preserves Azure cost; OpenAI cost only).
+
+### Iteration 6 — Upload loop PAUSED on Chrome MCP regression (2026-05-26 ~14:35 UTC)
+
+**What shipped tonight (real value, committed):**
+- Track B Pass 1.C (persistence-asserted receipts) — `eb7bbce` + `6e53073`
+- Track B Pass 2.B (page parallelism) — `14a097d` + `06c90c7`
+- Track B Pass 3.A (sweeper heartbeat) — `374fa8a`
+- Azure DocIntel resource provisioned in new tenant:
+  - Resource: `aspire-docintel-prod` in `aspire-prod-rg`, `eastus`, Free F0
+  - Endpoint: `https://aspire-docintel-prod.cognitiveservices.azure.com/`
+  - Key 1 LIVE on Ava-Brain Railway (verified via `railway variables`)
+- $200 Azure credit on file; F0 covers 7 PDFs × ~40pp = 280pp (well under 500/mo)
+
+**Why upload loop paused (3 real blockers, ranked):**
+
+1. **Chrome MCP `file_upload` regression** — the tool no longer accepts host
+   filesystem paths. Error message: "file_upload no longer accepts host
+   filesystem paths. The MCP controller must read the file and pass its
+   contents via the `files` parameter." Schema still shows `paths` param;
+   appears to be a tool version drift between desktop app and MCP server.
+   Workaround would be a local-HTTP-server + JS File-API DataTransfer
+   approach (~30 min eng, untested with this app's React drop handler).
+
+2. **Corpus file mismatch** — loop state lists `Concrete blueprints Mangonia
+   Park.pdf` but it's NOT in `C:\Users\tonio\Projects\myapp\blueprints\`. The
+   5 PDFs present: 29187P-ES (3).pdf, American_Farmhouse_201225.pdf,
+   GAVNN_ADDENDUM_1.pdf, Southern_Farmhouse_JayOsborne.pdf, 21030
+   ENG_Rev1 240801_Signed.pdf. Either the concrete PDF was renamed/removed
+   or 29187P-ES is the Mangonia one (it's 2.8MB, plausible).
+
+3. **Address-reading requirement** — user correction 2026-05-26: "look at
+   blueprints each time and get correct address". Need to PyMuPDF-extract
+   page-1 title block for each PDF before upload. Doable but adds to the
+   workaround surface area.
+
+**Recommended morning resume path (10-min user effort):**
+
+Option A (fastest — user manually uploads):
+1. Open https://www.aspireos.app/service-hub/estimate-studio/plans-photos in
+   any browser (already logged in via Yahoo SSO).
+2. For each of the 5 PDFs in blueprints/:
+   - Type the address from that PDF's title block in the right rail.
+   - Drag the PDF into the dropzone.
+   - Wait ~5-10 min for SEE→REASON→PROCURE to finish (Track B sweeper now
+     heartbeat-aware so it won't false-kill dense structural sheets).
+3. Audit: Supabase MCP `SELECT id, address, status, stage_progress FROM
+   blueprint_projects ORDER BY created_at DESC LIMIT 6;`
+
+Option B (resume autonomous via HTTP API, ~30 min eng):
+1. Build `scripts/win_debug/upload_loop_http.py` that:
+   - Uses PyMuPDF to read page-1 title block per PDF → address string
+   - Calls `POST https://api.aspireos.app/v1/blueprint-projects/upload`
+     (need to confirm exact route; see `routes/blueprint_dispatch.py`)
+   - Polls Supabase blueprint_projects.stage_progress every 60s
+   - Audits final receipt coverage per project
+2. Run via `railway run python scripts/win_debug/upload_loop_http.py`.
+3. This bypasses Chrome but uses the SAME prod HTTP path users hit — Track B
+   persistence assertions catch any divergence.
+
+Option C (fix the Chrome MCP regression):
+1. Update Claude desktop app per the error message hint.
+2. Re-run loop with `file_upload({paths: [...]})` working again.
+
+**Loop FSM final state:** TRACK_B_DONE → AZURE_ROTATED → UPLOAD_BLOCKED.
+Zero ingest attempts used. Zero Azure spend. Zero data contamination.
