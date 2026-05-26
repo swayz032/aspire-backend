@@ -122,12 +122,13 @@ def main() -> int:
     except Exception as e:
         results["ocr_substring_band"] = f"FAIL: {e}"
 
-    # ---- token match band — 0.70 ----
+    # ---- token match band — 0.70 (post-tiny-id-guard) ----
     try:
-        # symbol_id = "QR 1A" tokenizes to {QR, 1A}; OCR text contains QR
+        # symbol_id "FCO PIPE" tokenizes to {FCO, PIPE} — both len>=3.
+        # OCR text contains "FCO" → token-band hits at 0.70.
         p = make_proposal(
-            ocr_texts=("QR PROTOTYPE",),
-            legend_symbol_id="QR 1A", legend_label="something else",
+            ocr_texts=("FCO PROTOTYPE",),
+            legend_symbol_id="FCO PIPE", legend_label="something else",
         )
         r = scorer.compute(p)
         assert r.score == 0.70, f"got {r.score} ({r.reasoning})"
@@ -135,15 +136,43 @@ def main() -> int:
     except Exception as e:
         results["ocr_token_band"] = f"FAIL: {e}"
 
-    # ---- keyword-overlap band (0.40-0.60) ----
+    # ---- token band DROPS 2-char ids (tiny-id guard) ----
     try:
-        # OCR has 1 of 2 label tokens → ratio 0.5 → 0.40 + 0.20*0.5 = 0.50
+        # symbol_id "QR" — len=2 < MIN_TOKEN_LEN. Substring band must
+        # NOT fire; token band tokenizes to {} (QR dropped). Result: 0.0
         p = make_proposal(
-            ocr_texts=("PENDANT HEAD",),
-            legend_symbol_id="UNRELATED", legend_label="QR PENDANT",
+            ocr_texts=("QR-1 EXISTING",),
+            legend_symbol_id="QR", legend_label=None,
         )
         r = scorer.compute(p)
-        # Expect 0.50: PENDANT is shared; QR is not in OCR; ratio = 1/2
+        assert r.score == 0.0, f"got {r.score} ({r.reasoning})"
+        results["ocr_tiny_id_guard_drops_2char"] = "PASS"
+    except Exception as e:
+        results["ocr_tiny_id_guard_drops_2char"] = f"FAIL: {e}"
+
+    # ---- substring band still works for len>=3 ----
+    try:
+        p = make_proposal(
+            ocr_texts=("FOOBAR EXISTING",),
+            legend_symbol_id="BAR", legend_label="STUFF",
+        )
+        r = scorer.compute(p)
+        assert r.score == 0.85, f"got {r.score} ({r.reasoning})"
+        assert "substring" in r.reasoning
+        results["ocr_substring_band_len3_ok"] = "PASS"
+    except Exception as e:
+        results["ocr_substring_band_len3_ok"] = f"FAIL: {e}"
+
+    # ---- keyword-overlap band (post-guard) ----
+    try:
+        # label="PENDANT SPRINKLER" -> tokens {PENDANT, SPRINKLER}, both >=3
+        # OCR "PENDANT HEAD" -> tokens {PENDANT, HEAD}; shared={PENDANT}; ratio=1/2
+        # → 0.40 + 0.20*0.5 = 0.50
+        p = make_proposal(
+            ocr_texts=("PENDANT HEAD",),
+            legend_symbol_id="UNRELATED", legend_label="PENDANT SPRINKLER",
+        )
+        r = scorer.compute(p)
         assert 0.49 <= r.score <= 0.51, f"got {r.score} ({r.reasoning})"
         results["ocr_keyword_overlap_band"] = "PASS"
     except Exception as e:

@@ -16,10 +16,18 @@ Returns the highest band that any (ocr_text, legend) pair triggers
 across all OCR spans near the motif. We take the MAX, not the AVG —
 one strong signal beats ten weak ones.
 
+Tiny-id guard (N-2.5 calibration, 2026-05-26):
+  Substring/token/keyword bands require len(token) >= MIN_TOKEN_LEN (3).
+  Live audit on Gulfstream (2,304 pairs) found 1-2 char legend
+  symbol_ids ('C', 'O', '-', '@', 'EL') were substring-matching every
+  OCR span. 88% of VERIFIED were false positives driven by this
+  pathology. The exact-match band is NOT guarded: an OCR span that
+  equals 'P14' verbatim IS a strong signal regardless of length.
+
 Implementation notes:
   - Case-insensitive comparison throughout
   - Tokens split on whitespace + dash + underscore + dot
-  - Tokens of length < 2 are dropped (filter "a" / "1" noise)
+  - Tokens of length < MIN_TOKEN_LEN are dropped (filter stop-word IDs)
   - 'NIC', 'EXISTING', 'DEMO' words are NOT special-cased here —
     those are the audit verifier's job (L-6 RuleBasedVerifier).
     Phase 5 cares about identity, not work-class.
@@ -33,14 +41,21 @@ from .base import BaseScorer, BindingProposal, ScorerResult
 
 _TOKEN_SPLIT = re.compile(r"[\s\-_./,]+")
 
+# Tiny-id guard threshold (N-2.5 calibration lock 2026-05-26).
+# Bands that match BY CONTAINMENT (substring / token / keyword) require
+# the legend side to have at least this many characters. The exact-match
+# band is unaffected because OCR span == legend value is informative
+# regardless of length.
+MIN_TOKEN_LEN: int = 3
+
 
 def _tokens(text: str) -> set[str]:
-    """Split text into normalized tokens (uppercase, len ≥ 2)."""
+    """Split text into normalized tokens (uppercase, len >= MIN_TOKEN_LEN)."""
     if not text:
         return set()
     out: set[str] = set()
     for raw in _TOKEN_SPLIT.split(text.upper()):
-        if len(raw) >= 2:
+        if len(raw) >= MIN_TOKEN_LEN:
             out.add(raw)
     return out
 
@@ -89,7 +104,9 @@ class OCRAffinityScorer(BaseScorer):
                 )
 
             # Band 2 — legend symbol_id appears as substring inside the OCR
-            if symbol_id and symbol_id in text:
+            # Tiny-id guard: symbol_id must be at least MIN_TOKEN_LEN chars.
+            # Otherwise single-char IDs ('C', '@', '-') match nearly everything.
+            if symbol_id and len(symbol_id) >= MIN_TOKEN_LEN and symbol_id in text:
                 if best_score < 0.85:
                     best_score = 0.85
                     best_reason = "symbol_id_substring_in_ocr"

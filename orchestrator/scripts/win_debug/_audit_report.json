@@ -1,0 +1,885 @@
+{
+  "project_id": "7a93d144-5d53-47d3-8b97-067ebe249d88",
+  "total_pairs": 2304,
+  "stage1_kills": {
+    "discipline_mismatch": 340,
+    "project_mismatch": 0,
+    "entity_geometry_incompatible": 0,
+    "superseded_legend": 0
+  },
+  "stage2_band_hits": {
+    "no_overlap": 1553,
+    "symbol_id_token_in_ocr": 59,
+    "label_keyword_overlap": 246,
+    "exact_symbol_id_match": 41,
+    "symbol_id_substring_in_ocr": 56,
+    "exact_label_match": 9
+  },
+  "tier_distribution": {
+    "verified": 165,
+    "unknown_review": 118,
+    "rejected": 2021
+  },
+  "verified_count": 165,
+  "unknown_review_count": 118,
+  "rejected_count": 2021,
+  "verified_samples": [
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "HOT WATER RECIRCULATING COLD WATER SUPPLY HOT WATER SUPPLY SANITARY SEWER LINE VENT LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "DOMESTIC SUPPLY PLAN GENERAL NOTES",
+        "matched_tokens": [
+          "SUPPLY"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
+      "legend_label": null,
+      "legend_sheet": null,
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "ALL REQUIRED VALVES NOT SHOWN.",
+        "matched_tokens": [
+          "ALL"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "TOTAL REQUIRED",
+      "legend_label": null,
+      "legend_sheet": null,
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "ALL REQUIRED VALVES NOT SHOWN.",
+        "matched_tokens": [
+          "REQUIRED"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "SANITARY\nVENT LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "SANITARY SEWER LINE VENT LINE",
+        "matched_tokens": [
+          "LINE",
+          "SANITARY",
+          "VENT"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "HOT WATER RECIRCULATING COLD WATER SUPPLY HOT WATER SUPPLY\nSEWER LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "DOMESTIC SUPPLY PLAN GENERAL NOTES",
+        "matched_tokens": [
+          "SUPPLY"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "CONT",
+      "legend_label": "CONTINUOUS",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ACMX CLIMATE CONTROL PARTS STORAGE",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "ADD",
+      "legend_label": "ADDITIONAL",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ADDENDUM A",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "CONTR",
+      "legend_label": "CONTRACTOR",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ACMX CLIMATE CONTROL PARTS STORAGE",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "EXIST",
+      "legend_label": "- EXISTING",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "= NEW TO EXISTING CONNECTION POINT",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "HOT WATER RECIRCULATING COLD WATER SUPPLY HOT WATER SUPPLY SANITARY SEWER LINE VENT LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "DOMESTIC SUPPLY PLAN GENERAL NOTES",
+        "matched_tokens": [
+          "SUPPLY"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
+      "legend_label": null,
+      "legend_sheet": null,
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "ALL REQUIRED VALVES NOT SHOWN.",
+        "matched_tokens": [
+          "ALL"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "TOTAL REQUIRED",
+      "legend_label": null,
+      "legend_sheet": null,
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "ALL REQUIRED VALVES NOT SHOWN.",
+        "matched_tokens": [
+          "REQUIRED"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "SANITARY\nVENT LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "SANITARY SEWER LINE VENT LINE",
+        "matched_tokens": [
+          "LINE",
+          "SANITARY",
+          "VENT"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "HOT WATER RECIRCULATING COLD WATER SUPPLY HOT WATER SUPPLY\nSEWER LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "DOMESTIC SUPPLY PLAN GENERAL NOTES",
+        "matched_tokens": [
+          "SUPPLY"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "CONT",
+      "legend_label": "CONTINUOUS",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ACMX CLIMATE CONTROL PARTS STORAGE",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "ADD",
+      "legend_label": "ADDITIONAL",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ADDENDUM A",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "CONTR",
+      "legend_label": "CONTRACTOR",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ACMX CLIMATE CONTROL PARTS STORAGE",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "EXIST",
+      "legend_label": "- EXISTING",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "= NEW TO EXISTING CONNECTION POINT",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P14",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "EXH",
+      "legend_label": "LED EXIT/EMERGENCY COMBO",
+      "legend_sheet": "C-596",
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ENLARGED OFFICE EXHAUST PLAN",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
+      "legend_label": null,
+      "legend_sheet": null,
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "UPS SAV TENANT INPROVEMENT",
+        "matched_tokens": [
+          "UPS"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "FP-101",
+      "legend_label": "FIRE PROTECTION SUGGESTED HEAD LAYOUT",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_tokens": [
+          "101"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "AD-101",
+      "legend_label": "EXISTING CONDITIONS & DEMOLITION FLOOR PLAN - FIRST FLOOR",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_tokens": [
+          "101"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "P-102",
+      "legend_label": "PLUMBING BUILDING 1 DOMESTIC SUPPLY PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-102",
+        "matched_tokens": [
+          "102"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "MECHANICAL",
+      "legend_label": null,
+      "legend_sheet": "E-301",
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ENLARGED GSE MECHANICAL PLAN",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "101",
+      "legend_label": "ROOM NUMBER",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "E-101",
+      "legend_label": "OVERALL LIGHTING PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_tokens": [
+          "101"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "P-101",
+      "legend_label": "PLUMBING BUILDING 1 WASTE/VENT PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_tokens": [
+          "101"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "E-102",
+      "legend_label": "ENLARGED OFFICE LIGHTING PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-102",
+        "matched_tokens": [
+          "102"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "G-101",
+      "legend_label": "OVERALL LIFE SAFETY PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_tokens": [
+          "101"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "E-103",
+      "legend_label": "OVERALL POWER PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "A-103",
+        "matched_tokens": [
+          "103"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "CONT",
+      "legend_label": "CONTINUOUS",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ACMX CLIMATE CONTROL PARTS STORAGE",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "GENERAL",
+      "legend_label": null,
+      "legend_sheet": "E-301",
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "MECHANICAL PLAN GENERAL NOTES",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "ADD",
+      "legend_label": "ADDITIONAL",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ADDENDUM A",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "P-103",
+      "legend_label": "PLUMBING ENLARGED PLANS",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "A-103",
+        "matched_tokens": [
+          "103"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "M-103",
+      "legend_label": "ENLARGED OFFICE EXHAUST PLAN",
+      "legend_sheet": "E-301",
+      "score": 1.0,
+      "reasoning": "exact_label_match",
+      "evidence": {
+        "ocr_text": "ENLARGED OFFICE EXHAUST PLAN",
+        "matched_field": "label"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "CONTR",
+      "legend_label": "CONTRACTOR",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "ACMX CLIMATE CONTROL PARTS STORAGE",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "M-102",
+      "legend_label": "ENLARGED OFFICE MECHANICAL PLAN",
+      "legend_sheet": "E-301",
+      "score": 1.0,
+      "reasoning": "exact_label_match",
+      "evidence": {
+        "ocr_text": "ENLARGED OFFICE MECHANICAL PLAN",
+        "matched_field": "label"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "ELECTRICAL",
+      "legend_label": null,
+      "legend_sheet": "E-301",
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "EXISTING ELECTRICAL PANELS & TRANSFORMERS",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "A-101",
+      "legend_label": "OVERALL FIRST FLOOR PLAN",
+      "legend_sheet": "E-301",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_tokens": [
+          "101"
+        ]
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "M-101",
+      "legend_label": "OVERALL MECHANICAL PLAN",
+      "legend_sheet": "E-301",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "M-101",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "M-101",
+      "motif_discipline": "mechanical",
+      "legend_symbol_id": "EXIST",
+      "legend_label": "- EXISTING",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "EXISTING ELECTRICAL PANELS & TRANSFORMERS",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "legend_symbol_id": "HOT WATER RECIRCULATING COLD WATER SUPPLY HOT WATER SUPPLY SANITARY SEWER LINE VENT LINE",
+      "legend_label": null,
+      "legend_sheet": "P-201",
+      "score": 0.7,
+      "reasoning": "symbol_id_token_in_ocr",
+      "evidence": {
+        "ocr_text": "\u00b7 REFER TO FIRE PROTECTION SHOP DRAWINGS FOR HYDRAULIC CALCULATIONS, FINAL LINE AND HEAD LOCATIONS.",
+        "matched_tokens": [
+          "LINE"
+        ]
+      }
+    }
+  ],
+  "ur_samples": [
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "DP",
+      "legend_label": "- DIMENSION POINT",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "101",
+      "legend_label": "ROOM NUMBER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "P7",
+      "legend_label": "HOT WATER RE-CIRCULATION PUMP",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "CL",
+      "legend_label": "\u00b7 CENTER LINE",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "BLDG",
+      "legend_label": "- BUILDING",
+      "score": 0.6,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "(E)",
+      "legend_label": "- EXISTING",
+      "score": 0.6,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "04",
+      "legend_label": "STORAGE AREA 01",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "06",
+      "legend_label": "STORAGE AREA 02",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "DP",
+      "legend_label": "- DIMENSION POINT",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "101",
+      "legend_label": "ROOM NUMBER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "P7",
+      "legend_label": "HOT WATER RE-CIRCULATION PUMP",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "CL",
+      "legend_label": "\u00b7 CENTER LINE",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "BLDG",
+      "legend_label": "- BUILDING",
+      "score": 0.6,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "(E)",
+      "legend_label": "- EXISTING",
+      "score": 0.6,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "04",
+      "legend_label": "STORAGE AREA 01",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "P14",
+      "legend_symbol_id": "06",
+      "legend_label": "STORAGE AREA 02",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    }
+  ]
+}
