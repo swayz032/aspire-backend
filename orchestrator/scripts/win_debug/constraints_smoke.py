@@ -203,12 +203,182 @@ def main() -> int:
 
     # --- Registry ---
     try:
-        assert len(CONSTRAINT_REGISTRY) >= 1
-        assert any(c.name == "discipline_compatibility"
-                   for c in CONSTRAINT_REGISTRY)
+        assert len(CONSTRAINT_REGISTRY) >= 2
+        names = {c.name for c in CONSTRAINT_REGISTRY}
+        assert "discipline_compatibility" in names
+        assert "layer_separation" in names
         results["constraint_registry_loaded"] = "PASS"
     except Exception as e:
         results["constraint_registry_loaded"] = f"FAIL: {e}"
+
+    # =====================================================
+    # M-3 LayerSeparationConstraint
+    # =====================================================
+    from aspire_orchestrator.services.blueprint.semantic_edges.constraints import (
+        LayerSeparationConstraint, LayerState, classify_layer_name,
+        classify_layer_text,
+    )
+    from aspire_orchestrator.services.blueprint.semantic_edges.constraints.layer import (
+        layer_states_incompatible,
+    )
+
+    def make_feeds_edge(*, src_state=None, dst_state=None, src_layer=None,
+                       dst_layer=None, ocr_text=None, confidence=0.85):
+        provenance = {
+            "extractor": "test", "wave": "20.14.5M", "pipeline_version": "1.0",
+            "sheet_id": "s1", "generator_window": "test",
+            "bbox": [0, 0, 10, 10],
+            "source_discipline": "plumbing",
+            "destination_discipline": "plumbing",
+        }
+        if src_state:
+            provenance["source_layer_state"] = src_state
+        if dst_state:
+            provenance["destination_layer_state"] = dst_state
+        evidence = {"flow_direction": "downstream", "discipline": "plumbing"}
+        if src_layer:
+            evidence["src_layer"] = src_layer
+        if dst_layer:
+            evidence["dst_layer"] = dst_layer
+        if ocr_text:
+            evidence["ocr_text"] = ocr_text
+        return EdgeProposal(
+            edge_type=EdgeType.FEEDS,
+            suite_id="s", project_id="p",
+            src_entity_id="p1", src_entity_type=EntityType.PRIMITIVE,
+            dst_entity_id="p2", dst_entity_type=EntityType.PRIMITIVE,
+            locality_scope=LocalityScope.SAME_SHEET,
+            spatial_distance=None, confidence=confidence,
+            evidence=evidence, provenance=provenance,
+            extraction_method="test_v1",
+        )
+
+    # CAD parser
+    try:
+        assert classify_layer_name("P-PIPE-DEMO") == LayerState.DEMO
+        assert classify_layer_name("E-LITE-EXST") == LayerState.EXISTING
+        assert classify_layer_name("P-PIPE-NEW") == LayerState.NEW
+        assert classify_layer_name("DEMO-EXST") == LayerState.DEMO  # DEMO wins
+        assert classify_layer_name("P-PIPE-RELO") == LayerState.RELOCATE
+        assert classify_layer_name("RANDOM") == LayerState.UNKNOWN
+        results["layer_cad_name_parser"] = "PASS"
+    except Exception as e:
+        results["layer_cad_name_parser"] = f"FAIL: {e}"
+
+    # OCR shorthand
+    try:
+        assert classify_layer_text("(E)") == LayerState.EXISTING
+        assert classify_layer_text("(D)") == LayerState.DEMO
+        assert classify_layer_text("(N)") == LayerState.NEW
+        assert classify_layer_text("T.B.D.") == LayerState.DEMO
+        assert classify_layer_text("EXISTING WALL") == LayerState.EXISTING
+        assert classify_layer_text("NEW WORK") == LayerState.NEW
+        assert classify_layer_text("RELOCATE") == LayerState.RELOCATE
+        results["layer_ocr_shorthand_parser"] = "PASS"
+    except Exception as e:
+        results["layer_ocr_shorthand_parser"] = f"FAIL: {e}"
+
+    # Incompatibility logic
+    try:
+        assert layer_states_incompatible(LayerState.DEMO, LayerState.NEW)
+        assert layer_states_incompatible(LayerState.NEW, LayerState.DEMO)
+        assert layer_states_incompatible(LayerState.EXISTING, LayerState.NEW)
+        assert not layer_states_incompatible(LayerState.NEW, LayerState.NEW)
+        assert not layer_states_incompatible(LayerState.DEMO, LayerState.EXISTING)
+        assert not layer_states_incompatible(LayerState.RELOCATE, LayerState.NEW)
+        assert not layer_states_incompatible(LayerState.UNKNOWN, LayerState.NEW)
+        results["layer_incompatibility_rules"] = "PASS"
+    except Exception as e:
+        results["layer_incompatibility_rules"] = f"FAIL: {e}"
+
+    # Constraint direct check — SOFT violation
+    lc = LayerSeparationConstraint()
+    try:
+        result = lc.check(make_feeds_edge(src_state="demo", dst_state="new"))
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert "incompatible_layers" in result.reason
+        results["layer_demo_to_new_soft"] = "PASS"
+    except Exception as e:
+        results["layer_demo_to_new_soft"] = f"FAIL: {e}"
+
+    # Compatible same-state
+    try:
+        result = lc.check(make_feeds_edge(src_state="new", dst_state="new"))
+        assert result.passed is True
+        results["layer_same_state_passes"] = "PASS"
+    except Exception as e:
+        results["layer_same_state_passes"] = f"FAIL: {e}"
+
+    # DEMO ↔ EXISTING passes (both pre-bid scope)
+    try:
+        result = lc.check(make_feeds_edge(src_state="demo", dst_state="existing"))
+        assert result.passed is True
+        results["layer_demo_to_existing_passes"] = "PASS"
+    except Exception as e:
+        results["layer_demo_to_existing_passes"] = f"FAIL: {e}"
+
+    # RELOCATE compatible with NEW
+    try:
+        result = lc.check(make_feeds_edge(src_state="relocate", dst_state="new"))
+        assert result.passed is True
+        results["layer_relocate_passes"] = "PASS"
+    except Exception as e:
+        results["layer_relocate_passes"] = f"FAIL: {e}"
+
+    # CAD layer name fallback path
+    try:
+        result = lc.check(make_feeds_edge(
+            src_layer="P-PIPE-DEMO", dst_layer="P-PIPE-NEW",
+        ))
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        results["layer_cad_path_violation"] = "PASS"
+    except Exception as e:
+        results["layer_cad_path_violation"] = f"FAIL: {e}"
+
+    # Missing context → SOFT_SKIP
+    try:
+        result = lc.check(make_feeds_edge())
+        assert result.passed is False
+        assert result.severity == ConstraintSeverity.SOFT
+        assert result.reason == "missing_layer_context"
+        results["layer_missing_context_soft_skip"] = "PASS"
+    except Exception as e:
+        results["layer_missing_context_soft_skip"] = f"FAIL: {e}"
+
+    # validate_edge integration — DEMO→NEW at high conf → UR
+    try:
+        proposal = make_feeds_edge(src_state="demo", dst_state="new",
+                                    confidence=0.95)
+        r = validate_edge(proposal)
+        assert r.resolution_state == ResolutionState.UNKNOWN_REVIEW
+        soft_v = r.constraint.details.get("soft_violations", [])
+        assert any(v["name"] == "layer_separation" for v in soft_v)
+        results["layer_validate_edge_downgrades_to_ur"] = "PASS"
+    except Exception as e:
+        results["layer_validate_edge_downgrades_to_ur"] = f"FAIL: {e}"
+
+    # validate_edge — compatible verifies
+    try:
+        proposal = make_feeds_edge(src_state="new", dst_state="new",
+                                    confidence=0.95)
+        r = validate_edge(proposal)
+        assert r.resolution_state == ResolutionState.VERIFIED
+        results["layer_validate_edge_compatible_verifies"] = "PASS"
+    except Exception as e:
+        results["layer_validate_edge_compatible_verifies"] = f"FAIL: {e}"
+
+    # applies_to scoping — adjacent_to NOT in applies_to
+    try:
+        assert EdgeType.ADJACENT_TO not in lc.applies_to
+        assert EdgeType.ANNOTATED_BY not in lc.applies_to
+        assert EdgeType.INSIDE_ZONE not in lc.applies_to
+        assert EdgeType.FEEDS in lc.applies_to
+        assert EdgeType.MEMBER_OF_FAMILY in lc.applies_to
+        results["layer_applies_to_correct"] = "PASS"
+    except Exception as e:
+        results["layer_applies_to_correct"] = f"FAIL: {e}"
 
     # --- Report ---
     print("=== M-1 + M-2 constraints smoke ===")

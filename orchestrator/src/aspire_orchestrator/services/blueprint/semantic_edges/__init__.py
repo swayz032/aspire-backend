@@ -108,4 +108,8 @@ from .constraints import (  # noqa: F401
     DISCIPLINE_TOKENS,
     DisciplineCompatibilityConstraint,
     HARD_INCOMPATIBLE_DISCIPLINES,
+    LayerSeparationConstraint,
+    LayerState,
+    classify_layer_name,
+    classify_layer_text,
 )

@@ -42,9 +42,17 @@ from .discipline import (  # noqa: F401
     HARD_INCOMPATIBLE_DISCIPLINES,
     DisciplineCompatibilityConstraint,
 )
+from .layer import (  # noqa: F401
+    LayerSeparationConstraint,
+    LayerState,
+    classify_layer_name,
+    classify_layer_text,
+    layer_states_incompatible,
+)
 
 # The registry. Order matters: cheap → expensive.
-# M-3, M-4, M-5 will append additional constraint instances here.
+# M-4, M-5 will append additional constraint instances here.
 CONSTRAINT_REGISTRY: list[Constraint] = [
-    DisciplineCompatibilityConstraint(),
+    DisciplineCompatibilityConstraint(),  # HARD — trade isolation
+    LayerSeparationConstraint(),          # SOFT — demo/new-work review
 ]
