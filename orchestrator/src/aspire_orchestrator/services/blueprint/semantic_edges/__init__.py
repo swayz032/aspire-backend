@@ -89,3 +89,13 @@ from .audit import (  # noqa: F401
     serialize_report,
 )
 from .fp_regression import FP_FIXTURES, FPFixture, fixtures_by_target  # noqa: F401
+from .audit_persistor import (  # noqa: F401
+    ALLOWED_WRITER_AUTHORITIES,
+    AuditReceiptPersistor,
+    InMemoryAuditReceiptPersistor,
+    SupabaseAuditReceiptPersistor,
+    UnauthorizedAuditWrite,
+    WriterAuthority,
+    persist_audit_report,
+    report_to_db_row,
+)
