@@ -225,13 +225,14 @@ class RuleBasedVerifier:
         "BY OTHERS", "FUTURE",
     }
 
-    DISCIPLINE_TOKENS = {
-        "plumbing": {"PLUMBING", "PIPE", "VALVE", "DRAIN", "SEWER", "WASTE", "VENT"},
-        "electrical": {"ELECTRICAL", "PANEL", "CIRCUIT", "RECEPTACLE", "OUTLET",
-                       "BREAKER", "CONDUIT"},
-        "mechanical": {"HVAC", "DUCT", "DIFFUSER", "RTU", "REGISTER"},
-        "fire": {"SPRINKLER", "FIRE", "ALARM", "SMOKE"},
-    }
+    # Shared with constraints.discipline — DRY. The audit verifier and
+    # the Phase 4 constraint MUST use the same canonical token sets so
+    # we don't get drift between detection and rejection. Lazy module
+    # property avoids a circular import at package init time.
+    @classmethod
+    def _discipline_tokens(cls) -> dict[str, frozenset[str]]:
+        from .constraints.discipline import DISCIPLINE_TOKENS as _CANONICAL
+        return _CANONICAL
 
     def verify(self, edge: EdgeProposal) -> tuple[AuditVerdict, str]:
         # We only judge annotated_by + adjacent_to for now; expand in L-7
@@ -264,10 +265,11 @@ class RuleBasedVerifier:
 
         # Rule 1: discipline mismatch (cross-contamination)
         src_disc = (edge.provenance.get("source_discipline") or "").lower()
-        if src_disc in self.DISCIPLINE_TOKENS:
-            allowed_tokens = self.DISCIPLINE_TOKENS[src_disc]
+        discipline_tokens = self._discipline_tokens()
+        if src_disc in discipline_tokens:
+            allowed_tokens = discipline_tokens[src_disc]
             other_tokens: set[str] = set()
-            for disc, toks in self.DISCIPLINE_TOKENS.items():
+            for disc, toks in discipline_tokens.items():
                 if disc != src_disc:
                     other_tokens |= toks
             ocr_words = set(ocr_text.split())

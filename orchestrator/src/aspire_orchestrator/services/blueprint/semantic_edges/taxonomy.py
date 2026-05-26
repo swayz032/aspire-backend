@@ -638,24 +638,48 @@ def validate_constraint(
     proposal: EdgeProposal,
     contract: EdgeContract,
 ) -> TierResult:
-    """Tier 3: Phase 4 hookpoint. In Phase 3 this returns PASS unconditionally.
+    """Tier 3: Phase 4 — iterate CONSTRAINT_REGISTRY.
 
-    Phase 4 (CSIR Constraint Extraction) will inject:
-      - discipline compatibility (plumbing primitive cannot bind electrical legend)
-      - connectivity consistency (conduit must terminate at compatible fixture)
-      - cardinality (legend family expected frequency)
-      - orientation consistency
-      - layer/zone separation (demo vs new-work)
-      - sheet hierarchy (detail references resolve)
-
-    Until Phase 4 lands, this tier is a no-op. Wave 20.14.5L acceptance
-    does NOT require constraint logic — it requires the hookpoint to exist.
+    HARD violation → tier FAILS → REJECTED at top-level resolver.
+    SOFT violation → tier PASSES but soft_violations recorded in
+    details → top-level resolver forces UR even if confidence verifies.
     """
-    # Reserved: Phase 4 will populate this. Do NOT add constraint logic here.
+    # Lazy import — constraints package depends back on this module
+    from .constraints import CONSTRAINT_REGISTRY
+
+    reasons: list[RejectionReason] = []
+    hard_violations: list[dict[str, Any]] = []
+    soft_violations: list[dict[str, Any]] = []
+    constraints_evaluated: list[str] = []
+
+    for constraint in CONSTRAINT_REGISTRY:
+        if proposal.edge_type not in constraint.applies_to:
+            continue
+        constraints_evaluated.append(constraint.name)
+        result = constraint.check(proposal)
+        if result.passed:
+            continue
+        record = {
+            "name": result.constraint_name,
+            "reason": result.reason,
+            "evidence": result.evidence,
+        }
+        if result.is_hard_violation():
+            hard_violations.append(record)
+            reasons.append(RejectionReason.CONSTRAINT_VIOLATION)
+        else:  # SOFT
+            soft_violations.append(record)
+
+    details: dict[str, Any] = {
+        "constraints_evaluated": constraints_evaluated,
+        "hard_violations": hard_violations,
+        "soft_violations": soft_violations,
+    }
     return TierResult(
         tier="constraint",
-        passed=True,
-        details={"phase4_pending": True},
+        passed=not hard_violations,
+        rejection_reasons=tuple(reasons),
+        details=details,
     )
 
 
@@ -673,7 +697,10 @@ def validate_edge(
     Resolution logic:
       - structural FAIL                                    -> REJECTED
       - semantic FAIL                                      -> REJECTED
-      - constraint FAIL                                    -> REJECTED
+      - constraint HARD FAIL                               -> REJECTED
+      - all 3 pass AND SOFT constraint violation           -> UNKNOWN_REVIEW
+        (Phase 4 — SOFT constraints downgrade verifiable
+        edges to UR even if confidence is above floor)
       - all 3 pass AND confidence >= contract.confidence_floor          -> VERIFIED
       - all 3 pass AND ambiguity_floor <= confidence < confidence_floor -> UNKNOWN_REVIEW
       - all 3 pass AND confidence < ambiguity_floor                     -> REJECTED
@@ -725,10 +752,22 @@ def validate_edge(
             provenance_missing=provenance_missing,
         )
 
-    # Tiers all pass — confidence decides between VERIFIED / UNKNOWN_REVIEW / REJECTED
-    if proposal.confidence >= contract.confidence_floor:
+    # Phase 4 SOFT constraint check — forces UR even if confidence verifies.
+    # Locked by reviewer 2026-05-26: HARD = REJECT (handled above);
+    # SOFT = UR-downgrade so the GC sees the flag instead of a silent ship.
+    soft_violations = constraint.details.get("soft_violations", []) or []
+
+    # Tiers all pass — confidence + SOFT-constraint state decide resolution
+    if soft_violations:
+        # SOFT constraint trumps confidence-pass — explicit UR with
+        # CONSTRAINT_VIOLATION reason so audits can trace the cause.
+        state = ResolutionState.UNKNOWN_REVIEW
+        reasons: tuple[RejectionReason, ...] = (
+            RejectionReason.CONSTRAINT_VIOLATION,
+        )
+    elif proposal.confidence >= contract.confidence_floor:
         state = ResolutionState.VERIFIED
-        reasons: tuple[RejectionReason, ...] = ()
+        reasons = ()
     elif proposal.confidence >= contract.ambiguity_floor:
         state = ResolutionState.UNKNOWN_REVIEW
         reasons = (RejectionReason.SEMANTIC_AMBIGUITY,)

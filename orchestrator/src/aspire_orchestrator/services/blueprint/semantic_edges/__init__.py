@@ -99,3 +99,13 @@ from .audit_persistor import (  # noqa: F401
     persist_audit_report,
     report_to_db_row,
 )
+from .constraints import (  # noqa: F401
+    CONSTRAINT_REGISTRY,
+    BaseConstraint,
+    Constraint,
+    ConstraintResult,
+    ConstraintSeverity,
+    DISCIPLINE_TOKENS,
+    DisciplineCompatibilityConstraint,
+    HARD_INCOMPATIBLE_DISCIPLINES,
+)
