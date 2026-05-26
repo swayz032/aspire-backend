@@ -146,4 +146,10 @@ from .binding import (  # noqa: F401
     compute_binding_replay_hash,
     geometry_gate_compatible,
     map_tier,
+    HISTOGRAM_KEYS,
+    LEGEND_HISTOGRAM_KEY,
+    MOTIF_HISTOGRAM_KEY,
+    PrimitiveHistogram,
+    TopologySimilarityScorer,
+    cosine_similarity,
 )

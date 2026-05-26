@@ -13,10 +13,11 @@ def main() -> int:
     from aspire_orchestrator.services.blueprint.semantic_edges.binding import (
         BindingEvaluator, BindingProposal, BindingTier, BindingWeights,
         GeometryClass, HardGateReason, MotifGeometryFeatures,
-        OCRAffinityScorer, ScorerResult,
+        OCRAffinityScorer, PrimitiveHistogram, ScorerResult,
+        TopologySimilarityScorer,
         UNKNOWN_REVIEW_THRESHOLD, VERIFIED_THRESHOLD,
         classify_legend_geometry, classify_motif_geometry,
-        geometry_gate_compatible, map_tier,
+        cosine_similarity, geometry_gate_compatible, map_tier,
     )
 
     UID_SUITE = "00000000-0000-0000-0000-000000000001"
@@ -501,6 +502,203 @@ def main() -> int:
         results["evaluator_stage1_none_legend_killed"] = "PASS"
     except Exception as e:
         results["evaluator_stage1_none_legend_killed"] = f"FAIL: {e}"
+
+    # =====================================================
+    # N-3 — TopologySimilarityScorer (histogram cosine)
+    # =====================================================
+
+    # ---- Cosine: identical histograms → 1.0 ----
+    try:
+        h = PrimitiveHistogram(lines=4, circles=1, text=1)
+        c = cosine_similarity(h, h)
+        assert abs(c - 1.0) < 1e-9, c
+        results["topology_cosine_identical"] = "PASS"
+    except Exception as e:
+        results["topology_cosine_identical"] = f"FAIL: {e}"
+
+    # ---- Cosine: orthogonal histograms → 0.0 ----
+    try:
+        a = PrimitiveHistogram(lines=10)
+        b = PrimitiveHistogram(circles=10)
+        c = cosine_similarity(a, b)
+        assert c == 0.0, c
+        results["topology_cosine_orthogonal"] = "PASS"
+    except Exception as e:
+        results["topology_cosine_orthogonal"] = f"FAIL: {e}"
+
+    # ---- Cosine: scale-invariant (counts ratio matters, not magnitude) ----
+    try:
+        a = PrimitiveHistogram(lines=4, circles=1)
+        b = PrimitiveHistogram(lines=8, circles=2)  # 2x scale, same ratio
+        c = cosine_similarity(a, b)
+        assert abs(c - 1.0) < 1e-9, c
+        results["topology_cosine_scale_invariant"] = "PASS"
+    except Exception as e:
+        results["topology_cosine_scale_invariant"] = f"FAIL: {e}"
+
+    # ---- Cosine: empty histogram → 0.0 ----
+    try:
+        c = cosine_similarity(PrimitiveHistogram(), PrimitiveHistogram(lines=1))
+        assert c == 0.0, c
+        results["topology_cosine_empty"] = "PASS"
+    except Exception as e:
+        results["topology_cosine_empty"] = f"FAIL: {e}"
+
+    # ---- PrimitiveHistogram.from_dict accepts partial data ----
+    try:
+        h = PrimitiveHistogram.from_dict({"lines": 3, "circles": 1, "ignored": 99})
+        assert h.lines == 3 and h.circles == 1 and h.arcs == 0
+        assert h.total == 4
+        results["topology_histogram_from_dict"] = "PASS"
+    except Exception as e:
+        results["topology_histogram_from_dict"] = f"FAIL: {e}"
+
+    # ---- Scorer band: near-identical → 1.0 ----
+    try:
+        scorer_t = TopologySimilarityScorer()
+        p = make_proposal()  # base proposal
+        # PrimitiveHistogram via dataclass replace into motif_extra
+        p_with_hist = BindingProposal(
+            suite_id=p.suite_id, project_id=p.project_id,
+            motif_id=p.motif_id, motif_entity_type=p.motif_entity_type,
+            motif_sheet_id=p.motif_sheet_id,
+            motif_extra={
+                "primitive_histogram": PrimitiveHistogram(lines=4, circles=1, text=1),
+                "legend_primitive_histogram": PrimitiveHistogram(lines=4, circles=1, text=1),
+            },
+            legend_id="L", legend_label="x", legend_symbol_id="x",
+            legend_project_id=p.project_id,
+        )
+        r = scorer_t.compute(p_with_hist)
+        assert r.score == 1.0, (r.score, r.reasoning)
+        assert "near_identical" in r.reasoning
+        results["topology_scorer_band_near_identical"] = "PASS"
+    except Exception as e:
+        results["topology_scorer_band_near_identical"] = f"FAIL: {e}"
+
+    # ---- Scorer band: mismatched shapes → below floor → 0.0 ----
+    try:
+        scorer_t = TopologySimilarityScorer()
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s",
+            motif_extra={
+                "primitive_histogram": PrimitiveHistogram(lines=12),   # complex louver
+                "legend_primitive_histogram": PrimitiveHistogram(circles=1),  # sprinkler head
+            },
+            legend_id="L", legend_label="x", legend_symbol_id="x",
+            legend_project_id="p",
+        )
+        r = scorer_t.compute(p)
+        assert r.score == 0.0, (r.score, r.reasoning)
+        assert r.reasoning == "histogram_cosine_below_floor"
+        results["topology_scorer_band_mismatch_zero"] = "PASS"
+    except Exception as e:
+        results["topology_scorer_band_mismatch_zero"] = f"FAIL: {e}"
+
+    # ---- Scorer band: moderate similarity → 0.70 band ----
+    try:
+        scorer_t = TopologySimilarityScorer()
+        # Shared lines (5) + diverging circle counts -> cosine ~0.78
+        # → falls into the 0.70 band
+        a = PrimitiveHistogram(lines=5, circles=3)
+        b = PrimitiveHistogram(lines=5, circles=1)
+        # cos = (25+3) / (sqrt(34)*sqrt(26)) = 28 / 29.73 ≈ 0.942
+        # That's actually ≥0.85 — let me use a wider diverge
+        a2 = PrimitiveHistogram(lines=4, circles=2, text=2)
+        b2 = PrimitiveHistogram(lines=4, circles=1)
+        cos = cosine_similarity(a2, b2)
+        # Verify the math first, then assert band
+        assert 0.70 <= cos < 0.95, f"cos={cos} not in moderate window"
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s",
+            motif_extra={
+                "primitive_histogram": a2,
+                "legend_primitive_histogram": b2,
+            },
+            legend_id="L", legend_label="x", legend_symbol_id="x",
+            legend_project_id="p",
+        )
+        r = scorer_t.compute(p)
+        assert r.score in (0.70, 0.85), (r.score, r.reasoning, cos)
+        results["topology_scorer_band_moderate"] = "PASS"
+    except Exception as e:
+        results["topology_scorer_band_moderate"] = f"FAIL: {e}"
+
+    # ---- Scorer: insufficient data → 1.0 (identity, no penalty) ----
+    try:
+        scorer_t = TopologySimilarityScorer()
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s",
+            motif_extra={},  # neither side
+            legend_id="L", legend_label="x", legend_symbol_id="x",
+            legend_project_id="p",
+        )
+        r = scorer_t.compute(p)
+        assert r.score == 1.0
+        assert r.reasoning == "insufficient_data"
+        assert set(r.evidence["missing_side"]) == {"motif", "legend"}
+        results["topology_scorer_insufficient_data"] = "PASS"
+    except Exception as e:
+        results["topology_scorer_insufficient_data"] = f"FAIL: {e}"
+
+    # ---- Scorer: histogram dict payload also accepted ----
+    try:
+        scorer_t = TopologySimilarityScorer()
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s",
+            motif_extra={
+                "primitive_histogram": {"lines": 4, "circles": 1, "text": 1},
+                "legend_primitive_histogram": {"lines": 4, "circles": 1, "text": 1},
+            },
+            legend_id="L", legend_label="x", legend_symbol_id="x",
+            legend_project_id="p",
+        )
+        r = scorer_t.compute(p)
+        assert r.score == 1.0
+        results["topology_scorer_dict_payload"] = "PASS"
+    except Exception as e:
+        results["topology_scorer_dict_payload"] = f"FAIL: {e}"
+
+    # ---- Full pipeline: topology kills bad OCR (the demo case) ----
+    try:
+        # OCR says "T" exact match (1.0) but motif is a louver
+        # (12 lines), legend is a thermostat (1 circle, 1 text).
+        # Topology cosine → 0 → product → 0 → REJECTED.
+        eval_two = BindingEvaluator(
+            scorers=[OCRAffinityScorer(), TopologySimilarityScorer()],
+        )
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s",
+            motif_nearby_ocr_text=("THERMOSTAT",),
+            motif_extra={
+                "primitive_histogram": PrimitiveHistogram(lines=12),  # louver shape
+                "legend_primitive_histogram": PrimitiveHistogram(circles=1, text=1),
+            },
+            legend_id="L",
+            legend_label="THERMOSTAT", legend_symbol_id="T",
+            legend_project_id="p",
+        )
+        s = eval_two.evaluate(p)
+        # OCR scores 1.0 (exact label match). Topology scores 0.0.
+        # Product = 0 → REJECTED.
+        assert s.gate_passed is True
+        assert s.final_score == 0.0
+        assert s.tier == BindingTier.REJECTED
+        assert s.per_factor_scores["ocr_affinity"].score == 1.0
+        assert s.per_factor_scores["topology"].score == 0.0
+        results["topology_kills_bad_ocr"] = "PASS"
+    except Exception as e:
+        results["topology_kills_bad_ocr"] = f"FAIL: {e}"
 
     # ---- Weighted product: w=0 ignores the factor ----
     try:

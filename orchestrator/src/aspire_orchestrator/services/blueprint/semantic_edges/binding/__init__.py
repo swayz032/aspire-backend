@@ -61,3 +61,11 @@ from .geometry import (  # noqa: F401
     classify_motif_geometry,
     geometry_gate_compatible,
 )
+from .topology import (  # noqa: F401
+    HISTOGRAM_KEYS,
+    LEGEND_HISTOGRAM_KEY,
+    MOTIF_HISTOGRAM_KEY,
+    PrimitiveHistogram,
+    TopologySimilarityScorer,
+    cosine_similarity,
+)
