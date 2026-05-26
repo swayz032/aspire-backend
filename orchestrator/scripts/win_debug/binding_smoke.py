@@ -14,7 +14,7 @@ def main() -> int:
         BindingEvaluator, BindingProposal, BindingTier, BindingWeights,
         GeometryClass, HardGateReason, MotifGeometryFeatures,
         OCRAffinityScorer, PrimitiveHistogram, ScorerResult,
-        TopologySimilarityScorer,
+        SheetCoordinateTransform, TopologySimilarityScorer,
         UNKNOWN_REVIEW_THRESHOLD, VERIFIED_THRESHOLD,
         classify_legend_geometry, classify_motif_geometry,
         cosine_similarity, geometry_gate_compatible, map_tier,
@@ -699,6 +699,167 @@ def main() -> int:
         results["topology_kills_bad_ocr"] = "PASS"
     except Exception as e:
         results["topology_kills_bad_ocr"] = f"FAIL: {e}"
+
+    # =====================================================
+    # N-3.2 — SheetCoordinateTransform
+    # =====================================================
+
+    # ---- Rotation 0 — identity-like (just normalize + rescale) ----
+    try:
+        t = SheetCoordinateTransform(
+            raster_w=1000, raster_h=500,
+            pdf_w=2000, pdf_h=1000, rotation=0,
+        )
+        # Point at raster (500, 250) → midpoint → PDF (1000, 500)
+        px, py = t.raster_point_to_pdf(500, 250)
+        assert abs(px - 1000.0) < 1e-9, (px, py)
+        assert abs(py - 500.0) < 1e-9, (px, py)
+        results["coords_rotation_0_midpoint"] = "PASS"
+    except Exception as e:
+        results["coords_rotation_0_midpoint"] = f"FAIL: {e}"
+
+    # ---- Rotation 90 — axis swap (the Gulfstream case) ----
+    try:
+        # Landscape raster (1000 x 500) -> portrait PDF (500 x 1000)
+        t = SheetCoordinateTransform(
+            raster_w=1000, raster_h=500,
+            pdf_w=500, pdf_h=1000, rotation=90,
+        )
+        # Raster top-left (0, 0) under 90° CW → PDF top-right (500, 0)
+        px, py = t.raster_point_to_pdf(0, 0)
+        assert abs(px - 500.0) < 1e-9, (px, py)
+        assert abs(py - 0.0) < 1e-9, (px, py)
+        # Raster top-right (1000, 0) → PDF bottom-right (500, 1000)
+        px, py = t.raster_point_to_pdf(1000, 0)
+        assert abs(px - 500.0) < 1e-9, (px, py)
+        assert abs(py - 1000.0) < 1e-9, (px, py)
+        # Raster bottom-left (0, 500) → PDF top-left (0, 0)
+        px, py = t.raster_point_to_pdf(0, 500)
+        assert abs(px - 0.0) < 1e-9, (px, py)
+        assert abs(py - 0.0) < 1e-9, (px, py)
+        results["coords_rotation_90_corners"] = "PASS"
+    except Exception as e:
+        results["coords_rotation_90_corners"] = f"FAIL: {e}"
+
+    # ---- Rotation 180 — flip both axes ----
+    try:
+        t = SheetCoordinateTransform(
+            raster_w=1000, raster_h=500,
+            pdf_w=2000, pdf_h=1000, rotation=180,
+        )
+        px, py = t.raster_point_to_pdf(0, 0)
+        assert abs(px - 2000.0) < 1e-9
+        assert abs(py - 1000.0) < 1e-9
+        results["coords_rotation_180_origin"] = "PASS"
+    except Exception as e:
+        results["coords_rotation_180_origin"] = f"FAIL: {e}"
+
+    # ---- Rotation 270 — opposite of 90 ----
+    try:
+        t = SheetCoordinateTransform(
+            raster_w=1000, raster_h=500,
+            pdf_w=500, pdf_h=1000, rotation=270,
+        )
+        # Raster (0,0) under 270° CW → PDF (0, 1000)
+        px, py = t.raster_point_to_pdf(0, 0)
+        assert abs(px - 0.0) < 1e-9
+        assert abs(py - 1000.0) < 1e-9
+        results["coords_rotation_270_origin"] = "PASS"
+    except Exception as e:
+        results["coords_rotation_270_origin"] = f"FAIL: {e}"
+
+    # ---- Bbox transform produces AABB covering rotated quad ----
+    try:
+        t = SheetCoordinateTransform(
+            raster_w=1000, raster_h=500,
+            pdf_w=500, pdf_h=1000, rotation=90,
+        )
+        # Small raster bbox near top-left -> small PDF bbox near top-right
+        px_min, py_min, px_max, py_max = t.raster_bbox_to_pdf_aabb(
+            (100, 50, 200, 100),
+        )
+        assert px_max <= 500 and px_min >= 0
+        assert py_max <= 1000 and py_min >= 0
+        # Width and height should be positive
+        assert px_max > px_min and py_max > py_min
+        results["coords_bbox_aabb"] = "PASS"
+    except Exception as e:
+        results["coords_bbox_aabb"] = f"FAIL: {e}"
+
+    # ---- 8-coord polygon transform ----
+    try:
+        t = SheetCoordinateTransform(
+            raster_w=1000, raster_h=500,
+            pdf_w=500, pdf_h=1000, rotation=90,
+        )
+        # 8-coord polygon: 4 corners of a small square
+        poly = (100, 50, 200, 50, 200, 100, 100, 100)
+        px_min, py_min, px_max, py_max = t.raster_polygon_to_pdf_aabb(poly)
+        assert px_max > px_min and py_max > py_min
+        assert 0 <= px_min and px_max <= 500
+        assert 0 <= py_min and py_max <= 1000
+        results["coords_polygon_aabb"] = "PASS"
+    except Exception as e:
+        results["coords_polygon_aabb"] = f"FAIL: {e}"
+
+    # ---- Invalid rotation rejected ----
+    try:
+        try:
+            SheetCoordinateTransform(
+                raster_w=100, raster_h=100, pdf_w=100, pdf_h=100,
+                rotation=45,
+            )
+            results["coords_invalid_rotation_rejected"] = "FAIL: 45 accepted"
+        except ValueError:
+            results["coords_invalid_rotation_rejected"] = "PASS"
+    except Exception as e:
+        results["coords_invalid_rotation_rejected"] = f"FAIL: {e}"
+
+    # ---- Invalid dimensions rejected ----
+    try:
+        try:
+            SheetCoordinateTransform(
+                raster_w=-1, raster_h=100, pdf_w=100, pdf_h=100, rotation=0,
+            )
+            results["coords_invalid_dim_rejected"] = "FAIL: negative accepted"
+        except ValueError:
+            results["coords_invalid_dim_rejected"] = "PASS"
+    except Exception as e:
+        results["coords_invalid_dim_rejected"] = f"FAIL: {e}"
+
+    # ---- Polygon with wrong arity rejected ----
+    try:
+        t = SheetCoordinateTransform(
+            raster_w=100, raster_h=100, pdf_w=100, pdf_h=100, rotation=0,
+        )
+        try:
+            t.raster_polygon_to_pdf_aabb((1, 2, 3, 4))  # only 4 coords
+            results["coords_polygon_arity_rejected"] = "FAIL: 4 coords accepted"
+        except ValueError:
+            results["coords_polygon_arity_rejected"] = "PASS"
+    except Exception as e:
+        results["coords_polygon_arity_rejected"] = f"FAIL: {e}"
+
+    # ---- Gulfstream-like real transform produces plausible PDF coords ----
+    try:
+        # Gulfstream FP-101: portrait PDF (1728 x 2592), landscape raster (~7200 x 4800), rotation=90
+        t = SheetCoordinateTransform(
+            raster_w=7200, raster_h=4800,
+            pdf_w=1728, pdf_h=2592, rotation=90,
+        )
+        # Test: VICTAULIC legend raster bbox ~(5842, 4269) - (6071, 4362)
+        px_min, py_min, px_max, py_max = t.raster_bbox_to_pdf_aabb(
+            (5842, 4269, 6071, 4362),
+        )
+        # Should land somewhere on the page (not necessarily at original coords)
+        assert 0 <= px_min and px_max <= 1728, f"px out of range {px_min}-{px_max}"
+        assert 0 <= py_min and py_max <= 2592, f"py out of range {py_min}-{py_max}"
+        # Bbox should be small (legend cell is small in PDF too)
+        assert (px_max - px_min) < 200, f"bbox too wide {px_max - px_min}"
+        assert (py_max - py_min) < 200, f"bbox too tall {py_max - py_min}"
+        results["coords_gulfstream_real_transform"] = "PASS"
+    except Exception as e:
+        results["coords_gulfstream_real_transform"] = f"FAIL: {e}"
 
     # ---- Weighted product: w=0 ignores the factor ----
     try:
