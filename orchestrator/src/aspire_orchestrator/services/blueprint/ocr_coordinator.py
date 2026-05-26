@@ -319,6 +319,8 @@ async def extract_sheet_corpus(
                                 correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                             )
                             # Law #2: emit per-sheet Azure usage receipt for observability.
+                            # Write to redacted_outputs (NOT metadata) so the receipt mapper
+                            # harvests into receipts.result jsonb and the data is queryable.
                             try:
                                 from aspire_orchestrator.services.receipt_store import store_receipts as _sr
                                 _sr([{
@@ -332,7 +334,7 @@ async def extract_sheet_corpus(
                                     "actor_id": "skillpack:drew-blueprint",
                                     "correlation_id": correlation_id,
                                     "suite_id": suite_id,
-                                    "metadata": {
+                                    "redacted_outputs": {
                                         "page_number": page_num,
                                         "page_hash": extract.page_hash[:8],
                                         "native_char_count": native_char_count,
@@ -344,12 +346,40 @@ async def extract_sheet_corpus(
                             except Exception:
                                 pass  # Receipt emission is best-effort; never block OCR
                         else:
+                            _err_code = az_response.error_code.value if az_response.error_code else "unknown"
                             logger.warning(
                                 "ocr_coordinator: page=%d azure failed (%s), using pymupdf native, corr=%s",
                                 page_num,
-                                az_response.error_code.value if az_response.error_code else "unknown",
+                                _err_code,
                                 correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                             )
+                            # Law #2: emit FAILED receipt so silent Azure failures are observable.
+                            try:
+                                from aspire_orchestrator.services.receipt_store import store_receipts as _sr_f
+                                _sr_f([{
+                                    "id": str(_uuid_mod.uuid4()),
+                                    "outcome": "failed",
+                                    "action_type": "blueprint.ingest.azure_doc_intel_failed",
+                                    "receipt_type": "blueprint.ingest.azure_doc_intel_failed",
+                                    "created_at": _datetime_mod.now(_timezone_mod.utc).isoformat(),
+                                    "risk_tier": "GREEN",
+                                    "actor_type": "WORKER",
+                                    "actor_id": "skillpack:drew-blueprint",
+                                    "correlation_id": correlation_id,
+                                    "suite_id": suite_id,
+                                    "reason_code": _err_code,
+                                    "error_message": f"azure_doc_intel returned success=False (code={_err_code})",
+                                    "redacted_outputs": {
+                                        "page_number": page_num,
+                                        "page_hash": extract.page_hash[:8],
+                                        "native_char_count": native_char_count,
+                                        "scanned": native_char_count < 50,
+                                        "attempt": _az_attempts + 1,
+                                        "failure_mode": "response_success_false",
+                                    },
+                                }])
+                            except Exception:
+                                pass
                         break  # success or non-retryable failure — exit retry loop
                     except Exception as exc:
                         if _az_attempts == 0 and _is_transient_provider_error(exc):
@@ -370,6 +400,34 @@ async def extract_sheet_corpus(
                             _az_attempts + 1,
                             correlation_id[:8] if len(correlation_id) > 8 else correlation_id,
                         )
+                        # Law #2: emit FAILED receipt for exception path too.
+                        try:
+                            from aspire_orchestrator.services.receipt_store import store_receipts as _sr_e
+                            _sr_e([{
+                                "id": str(_uuid_mod.uuid4()),
+                                "outcome": "failed",
+                                "action_type": "blueprint.ingest.azure_doc_intel_failed",
+                                "receipt_type": "blueprint.ingest.azure_doc_intel_failed",
+                                "created_at": _datetime_mod.now(_timezone_mod.utc).isoformat(),
+                                "risk_tier": "GREEN",
+                                "actor_type": "WORKER",
+                                "actor_id": "skillpack:drew-blueprint",
+                                "correlation_id": correlation_id,
+                                "suite_id": suite_id,
+                                "reason_code": "PROVIDER_EXCEPTION",
+                                "error_message": f"azure_doc_intel raised {type(exc).__name__}",
+                                "redacted_outputs": {
+                                    "page_number": page_num,
+                                    "page_hash": extract.page_hash[:8],
+                                    "native_char_count": native_char_count,
+                                    "scanned": native_char_count < 50,
+                                    "attempt": _az_attempts + 1,
+                                    "exception_type": type(exc).__name__,
+                                    "failure_mode": "provider_exception",
+                                },
+                            }])
+                        except Exception:
+                            pass
                         break  # Fall through to PyMuPDF
 
         # Path C: Last resort — PyMuPDF native text (already extracted by splitter)
