@@ -24,7 +24,9 @@ sys.path.insert(0, str(HERE.parent.parent / "src"))
 
 from aspire_orchestrator.services.blueprint.semantic_edges.binding import (  # noqa: E402
     BindingEvaluator, BindingProposal, BindingTier, HardGateReason,
-    MotifGeometryFeatures, OCRAffinityScorer,
+    LEGEND_HISTOGRAM_KEY, MOTIF_HISTOGRAM_KEY,
+    MotifGeometryFeatures, OCRAffinityScorer, PrimitiveHistogram,
+    TopologySimilarityScorer,
     classify_legend_geometry, classify_motif_geometry,
 )
 
@@ -67,10 +69,24 @@ def main() -> int:
     legends = json.loads((HERE / "_legends.json").read_text(encoding="utf-8"))
     ocr_by_sheet = json.loads((HERE / "_ocr.json").read_text(encoding="utf-8"))
 
-    print(f"loaded {len(motifs)} motifs, {len(legends)} legends, "
-          f"{len(ocr_by_sheet)} sheets with OCR")
+    # N-3.1 — motif primitive histograms (legend side blocked on coord transform)
+    motif_hist_path = HERE / "_motif_histograms.json"
+    motif_histograms = (
+        json.loads(motif_hist_path.read_text(encoding="utf-8"))
+        if motif_hist_path.exists() else {}
+    )
+    # Strip the _mapping comment if present
+    motif_histograms = {k: v for k, v in motif_histograms.items() if not k.startswith("_")}
 
-    evaluator = BindingEvaluator(scorers=[OCRAffinityScorer()])
+    print(f"loaded {len(motifs)} motifs, {len(legends)} legends, "
+          f"{len(ocr_by_sheet)} sheets with OCR, "
+          f"{len(motif_histograms)} motif histograms")
+
+    # N-3.1 — evaluator now runs OCR + Topology
+    evaluator = BindingEvaluator(scorers=[
+        OCRAffinityScorer(),
+        TopologySimilarityScorer(),
+    ])
 
     counts = Counter()
     gate_hits = Counter()
@@ -89,12 +105,25 @@ def main() -> int:
             bbox_height=float(bbox.get("h", 0.0)),
         )
         motif_geom = classify_motif_geometry(feats)
+        hist_data = motif_histograms.get(m["motif_id"])
+        motif_hist = PrimitiveHistogram.from_dict(hist_data) if hist_data else None
         enriched_motifs.append({
             **m,
             "discipline": infer_discipline(m.get("sheet_code")),
             "ocr_texts": tuple(sheet_ocr),
             "geometry": motif_geom.value,
+            "histogram": motif_hist,
         })
+
+    motif_hist_coverage = sum(
+        1 for m in enriched_motifs if m["histogram"] is not None
+    )
+    legend_hist_coverage = 0  # N-3.1: legend side blocked on coord transform
+    print(f"\nHistogram coverage:")
+    print(f"  motifs  : {motif_hist_coverage}/{len(enriched_motifs)} "
+          f"({100*motif_hist_coverage/len(enriched_motifs):.0f}%)")
+    print(f"  legends : {legend_hist_coverage}/{len(legends)} "
+          f"(0% — blocked on raster->PDF coord transform, N-3.2 scope)")
 
     # Pre-classify all legends (cache geometry for speed)
     legend_geom_cache = {}
@@ -116,9 +145,17 @@ def main() -> int:
 
     # Cross product
     total_pairs = 0
+    # N-3.1 telemetry
+    topology_scores_by_tier: dict[BindingTier, list[float]] = {t: [] for t in BindingTier}
+    topology_kill_count = 0  # OCR >= 0.8 AND topology < 0.5
+    topology_signal_pairs = 0  # pairs where topology actually had data
     for motif in enriched_motifs:
         for legend in legends:
             total_pairs += 1
+            extra: dict = {}
+            if motif["histogram"] is not None:
+                extra[MOTIF_HISTOGRAM_KEY] = motif["histogram"]
+            # legend histogram: deferred to N-3.2 (coord transform)
             proposal = BindingProposal(
                 suite_id=SUITE_ID,
                 project_id=PROJECT_ID,
@@ -128,6 +165,7 @@ def main() -> int:
                 motif_entity_geometry=motif["geometry"],
                 motif_discipline=motif["discipline"],
                 motif_nearby_ocr_text=motif["ocr_texts"],
+                motif_extra=extra,
                 legend_id=legend["legend_id"],
                 legend_label=legend.get("legend_label"),
                 legend_symbol_id=legend.get("legend_symbol_id"),
@@ -150,6 +188,14 @@ def main() -> int:
                 ocr_result = score.per_factor_scores.get("ocr_affinity")
                 if ocr_result:
                     band_hits[ocr_result.reasoning] += 1
+                # N-3.1 telemetry — separate topology score by tier
+                topo_result = score.per_factor_scores.get("topology")
+                if topo_result:
+                    topology_scores_by_tier[score.tier].append(topo_result.score)
+                    if topo_result.reasoning != "insufficient_data":
+                        topology_signal_pairs += 1
+                        if ocr_result and ocr_result.score >= 0.8 and topo_result.score < 0.5:
+                            topology_kill_count += 1
 
             if score.tier == BindingTier.VERIFIED and len(verified_samples) < 50:
                 verified_samples.append({
@@ -211,6 +257,25 @@ def main() -> int:
         c = counts.get(tier, 0)
         pct = (c / total_pairs * 100.0) if total_pairs else 0.0
         print(f"    {tier.value:<20} : {c:>5}  ({pct:5.1f}%)")
+
+    # ---- N-3.1 TOPOLOGY TELEMETRY ----
+    print("\n--- Topology telemetry (N-3.1) ---")
+    print(f"  Pairs with topology signal      : {topology_signal_pairs:>5}  "
+          f"({100*topology_signal_pairs/max(survived,1):.1f}% of survivors)")
+    print(f"  Topology kills (OCR>=0.8 & topo<0.5): {topology_kill_count:>5}")
+    if topology_signal_pairs == 0:
+        print("  (No topology signal recorded — legend histograms blocked")
+        print("   on raster->PDF coord transform; scorer fell back to")
+        print("   insufficient_data=1.0 identity for all pairs. Audit is")
+        print("   the N-2.7 baseline, NOT a topology-active measurement.)")
+    print("\n  Mean topology score by tier:")
+    for tier in BindingTier:
+        scores = topology_scores_by_tier.get(tier, [])
+        if scores:
+            mean = sum(scores) / len(scores)
+            print(f"    {tier.value:<20} : mean={mean:.3f}  n={len(scores)}")
+        else:
+            print(f"    {tier.value:<20} : n=0")
 
     # Force ASCII-safe stdout on Windows cp1252
     try:
