@@ -50,3 +50,14 @@ from .base import (  # noqa: F401
 )
 from .ocr_affinity import OCRAffinityScorer  # noqa: F401
 from .evaluator import BindingEvaluator  # noqa: F401
+from .geometry import (  # noqa: F401
+    GeometryClass,
+    LINEAR_KEYWORDS,
+    NONE_KEYWORDS,
+    POINT_KEYWORDS,
+    POLYGON_KEYWORDS,
+    MotifGeometryFeatures,
+    classify_legend_geometry,
+    classify_motif_geometry,
+    geometry_gate_compatible,
+)

@@ -36,6 +36,7 @@ from .base import (
     compute_binding_replay_hash,
     map_tier,
 )
+from .geometry import GeometryClass, geometry_gate_compatible
 
 
 class BindingEvaluator:
@@ -143,13 +144,13 @@ class BindingEvaluator:
             if disciplines_hard_incompatible(p.motif_discipline, p.legend_discipline):
                 return HardGateReason.DISCIPLINE_MISMATCH
 
-        # Gate 4 — entity-geometry incompatibility
-        # 'unknown' on either side → fail open
-        if (
-            p.motif_entity_geometry != "unknown"
-            and p.legend_entity_geometry != "unknown"
-            and p.motif_entity_geometry != p.legend_entity_geometry
-        ):
+        # Gate 4 — entity-geometry incompatibility (N-2.7 matrix)
+        # Includes NONE class for glossary rows (always reject) and
+        # fail-open posture on UNKNOWN. Uses the reviewer-locked matrix
+        # in geometry.geometry_gate_compatible().
+        motif_geom = GeometryClass(p.motif_entity_geometry)
+        legend_geom = GeometryClass(p.legend_entity_geometry)
+        if not geometry_gate_compatible(motif_geom, legend_geom):
             return HardGateReason.ENTITY_GEOMETRY_INCOMPATIBLE
 
         return None

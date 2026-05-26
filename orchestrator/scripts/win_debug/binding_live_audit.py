@@ -24,7 +24,8 @@ sys.path.insert(0, str(HERE.parent.parent / "src"))
 
 from aspire_orchestrator.services.blueprint.semantic_edges.binding import (  # noqa: E402
     BindingEvaluator, BindingProposal, BindingTier, HardGateReason,
-    OCRAffinityScorer,
+    MotifGeometryFeatures, OCRAffinityScorer,
+    classify_legend_geometry, classify_motif_geometry,
 )
 
 PROJECT_ID = "7a93d144-5d53-47d3-8b97-067ebe249d88"
@@ -77,15 +78,41 @@ def main() -> int:
     ur_samples = []
     band_hits = Counter()
 
-    # Enrich motifs with inferred discipline + sheet OCR
+    # Enrich motifs with inferred discipline + sheet OCR + geometry class
     enriched_motifs = []
     for m in motifs:
         sheet_ocr = ocr_by_sheet.get(m["motif_sheet_id"], [])
+        bbox = m.get("motif_bbox") or {}
+        feats = MotifGeometryFeatures(
+            primitive_count=m.get("primitive_count", 0),
+            bbox_width=float(bbox.get("w", 0.0)),
+            bbox_height=float(bbox.get("h", 0.0)),
+        )
+        motif_geom = classify_motif_geometry(feats)
         enriched_motifs.append({
             **m,
             "discipline": infer_discipline(m.get("sheet_code")),
             "ocr_texts": tuple(sheet_ocr),
+            "geometry": motif_geom.value,
         })
+
+    # Pre-classify all legends (cache geometry for speed)
+    legend_geom_cache = {}
+    for legend in legends:
+        legend_geom_cache[legend["legend_id"]] = classify_legend_geometry(
+            symbol_id=legend.get("legend_symbol_id"),
+            label=legend.get("legend_label"),
+        ).value
+
+    # Print motif geometry distribution + a sample of legend classification
+    print("\nMotif geometry distribution:")
+    mg = Counter(m["geometry"] for m in enriched_motifs)
+    for g, c in mg.most_common():
+        print(f"  {g:<12} : {c}")
+    print("\nLegend geometry distribution (288 legends):")
+    lg = Counter(legend_geom_cache.values())
+    for g, c in lg.most_common():
+        print(f"  {g:<12} : {c}")
 
     # Cross product
     total_pairs = 0
@@ -98,7 +125,7 @@ def main() -> int:
                 motif_id=motif["motif_id"],
                 motif_entity_type="composed_symbol",
                 motif_sheet_id=motif["motif_sheet_id"],
-                motif_entity_geometry="unknown",  # not classified yet
+                motif_entity_geometry=motif["geometry"],
                 motif_discipline=motif["discipline"],
                 motif_nearby_ocr_text=motif["ocr_texts"],
                 legend_id=legend["legend_id"],
@@ -109,7 +136,7 @@ def main() -> int:
                     if legend.get("legend_discipline") not in (None, "unknown")
                     else infer_discipline(legend.get("legend_sheet_code"))
                 ),
-                legend_entity_geometry="unknown",
+                legend_entity_geometry=legend_geom_cache[legend["legend_id"]],
                 legend_project_id=PROJECT_ID,
                 legend_superseded=False,
             )

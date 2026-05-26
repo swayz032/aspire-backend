@@ -12,8 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 def main() -> int:
     from aspire_orchestrator.services.blueprint.semantic_edges.binding import (
         BindingEvaluator, BindingProposal, BindingTier, BindingWeights,
-        HardGateReason, OCRAffinityScorer, ScorerResult,
-        UNKNOWN_REVIEW_THRESHOLD, VERIFIED_THRESHOLD, map_tier,
+        GeometryClass, HardGateReason, MotifGeometryFeatures,
+        OCRAffinityScorer, ScorerResult,
+        UNKNOWN_REVIEW_THRESHOLD, VERIFIED_THRESHOLD,
+        classify_legend_geometry, classify_motif_geometry,
+        geometry_gate_compatible, map_tier,
     )
 
     UID_SUITE = "00000000-0000-0000-0000-000000000001"
@@ -340,6 +343,164 @@ def main() -> int:
         results["tier_rejected"] = "PASS"
     except Exception as e:
         results["tier_rejected"] = f"FAIL: {e}"
+
+    # =====================================================
+    # N-2.7 — Geometry classifier + Gate #4 matrix
+    # =====================================================
+
+    # ---- Legend classifier: POINT keyword wins ----
+    try:
+        c = classify_legend_geometry(symbol_id="P14", label="SERVICE SINK")
+        assert c == GeometryClass.POINT, c
+        results["legend_classifier_point"] = "PASS"
+    except Exception as e:
+        results["legend_classifier_point"] = f"FAIL: {e}"
+
+    # ---- Legend classifier: LINEAR ----
+    try:
+        c = classify_legend_geometry(
+            symbol_id="HWS", label="HOT WATER SUPPLY LINE",
+        )
+        assert c == GeometryClass.LINEAR, c
+        results["legend_classifier_linear"] = "PASS"
+    except Exception as e:
+        results["legend_classifier_linear"] = f"FAIL: {e}"
+
+    # ---- Legend classifier: POLYGON ----
+    try:
+        c = classify_legend_geometry(symbol_id="ROOM 101", label="OFFICE AREA")
+        assert c == GeometryClass.POLYGON, c
+        results["legend_classifier_polygon"] = "PASS"
+    except Exception as e:
+        results["legend_classifier_polygon"] = f"FAIL: {e}"
+
+    # ---- Legend classifier: NONE (glossary) ----
+    try:
+        c = classify_legend_geometry(symbol_id="EXIST", label="- EXISTING")
+        assert c == GeometryClass.NONE, c
+        c2 = classify_legend_geometry(symbol_id="CONT", label="CONTINUOUS")
+        assert c2 == GeometryClass.NONE, c2
+        c3 = classify_legend_geometry(symbol_id="NIC", label="NOT IN CONTRACT")
+        assert c3 == GeometryClass.NONE, c3
+        results["legend_classifier_none_glossary"] = "PASS"
+    except Exception as e:
+        results["legend_classifier_none_glossary"] = f"FAIL: {e}"
+
+    # ---- Legend classifier: physical wins over glossary modifier ----
+    try:
+        # "EXISTING SINK" — has both NONE-kw 'existing' and POINT-kw 'sink'
+        # Physical entity wins.
+        c = classify_legend_geometry(symbol_id="EX-SINK", label="EXISTING SINK")
+        assert c == GeometryClass.POINT, c
+        results["legend_classifier_physical_wins_glossary"] = "PASS"
+    except Exception as e:
+        results["legend_classifier_physical_wins_glossary"] = f"FAIL: {e}"
+
+    # ---- Legend classifier: UNKNOWN (no keyword hit) ----
+    try:
+        c = classify_legend_geometry(symbol_id="XYZ", label="ZOOGNARF")
+        assert c == GeometryClass.UNKNOWN, c
+        results["legend_classifier_unknown"] = "PASS"
+    except Exception as e:
+        results["legend_classifier_unknown"] = f"FAIL: {e}"
+
+    # ---- Motif classifier: small + few primitives → POINT ----
+    try:
+        f = MotifGeometryFeatures(
+            primitive_count=7, bbox_width=27.0, bbox_height=38.0,
+        )
+        c = classify_motif_geometry(f)
+        assert c == GeometryClass.POINT, c
+        results["motif_classifier_point"] = "PASS"
+    except Exception as e:
+        results["motif_classifier_point"] = f"FAIL: {e}"
+
+    # ---- Motif classifier: high aspect → LINEAR ----
+    try:
+        f = MotifGeometryFeatures(
+            primitive_count=20, bbox_width=600.0, bbox_height=8.0,
+        )
+        c = classify_motif_geometry(f)
+        assert c == GeometryClass.LINEAR, c
+        results["motif_classifier_linear"] = "PASS"
+    except Exception as e:
+        results["motif_classifier_linear"] = f"FAIL: {e}"
+
+    # ---- Motif classifier: closed-area dominance → POLYGON ----
+    try:
+        f = MotifGeometryFeatures(
+            primitive_count=120, bbox_width=200.0, bbox_height=150.0,
+            closed_area_ratio=0.8,
+        )
+        c = classify_motif_geometry(f)
+        assert c == GeometryClass.POLYGON, c
+        results["motif_classifier_polygon"] = "PASS"
+    except Exception as e:
+        results["motif_classifier_polygon"] = f"FAIL: {e}"
+
+    # ---- Motif classifier: ambiguous → UNKNOWN ----
+    try:
+        f = MotifGeometryFeatures(
+            primitive_count=50, bbox_width=80.0, bbox_height=80.0,
+        )
+        c = classify_motif_geometry(f)
+        assert c == GeometryClass.UNKNOWN, c
+        results["motif_classifier_unknown"] = "PASS"
+    except Exception as e:
+        results["motif_classifier_unknown"] = f"FAIL: {e}"
+
+    # ---- Gate matrix: legend=NONE always rejected ----
+    try:
+        assert not geometry_gate_compatible(GeometryClass.POINT, GeometryClass.NONE)
+        assert not geometry_gate_compatible(GeometryClass.LINEAR, GeometryClass.NONE)
+        assert not geometry_gate_compatible(GeometryClass.POLYGON, GeometryClass.NONE)
+        assert not geometry_gate_compatible(GeometryClass.UNKNOWN, GeometryClass.NONE)
+        results["gate_matrix_none_always_rejected"] = "PASS"
+    except Exception as e:
+        results["gate_matrix_none_always_rejected"] = f"FAIL: {e}"
+
+    # ---- Gate matrix: UNKNOWN fail-open ----
+    try:
+        assert geometry_gate_compatible(GeometryClass.UNKNOWN, GeometryClass.POINT)
+        assert geometry_gate_compatible(GeometryClass.POINT, GeometryClass.UNKNOWN)
+        assert geometry_gate_compatible(GeometryClass.UNKNOWN, GeometryClass.UNKNOWN)
+        results["gate_matrix_unknown_fail_open"] = "PASS"
+    except Exception as e:
+        results["gate_matrix_unknown_fail_open"] = f"FAIL: {e}"
+
+    # ---- Gate matrix: physical mismatch rejected ----
+    try:
+        assert not geometry_gate_compatible(GeometryClass.POINT, GeometryClass.LINEAR)
+        assert not geometry_gate_compatible(GeometryClass.LINEAR, GeometryClass.POLYGON)
+        assert not geometry_gate_compatible(GeometryClass.POLYGON, GeometryClass.POINT)
+        results["gate_matrix_physical_mismatch_rejected"] = "PASS"
+    except Exception as e:
+        results["gate_matrix_physical_mismatch_rejected"] = f"FAIL: {e}"
+
+    # ---- Gate matrix: physical match allowed ----
+    try:
+        assert geometry_gate_compatible(GeometryClass.POINT, GeometryClass.POINT)
+        assert geometry_gate_compatible(GeometryClass.LINEAR, GeometryClass.LINEAR)
+        assert geometry_gate_compatible(GeometryClass.POLYGON, GeometryClass.POLYGON)
+        results["gate_matrix_physical_match_ok"] = "PASS"
+    except Exception as e:
+        results["gate_matrix_physical_match_ok"] = f"FAIL: {e}"
+
+    # ---- Evaluator Stage 1: glossary legend now short-circuits ----
+    try:
+        e = BindingEvaluator(scorers=[OCRAffinityScorer()])
+        p = make_proposal(
+            ocr_texts=("EXISTING",),
+            legend_symbol_id="EXIST", legend_label="- EXISTING",
+            legend_geom="none",
+        )
+        s = e.evaluate(p)
+        assert s.gate_passed is False
+        assert s.gate_reason == HardGateReason.ENTITY_GEOMETRY_INCOMPATIBLE
+        assert s.per_factor_scores == {}
+        results["evaluator_stage1_none_legend_killed"] = "PASS"
+    except Exception as e:
+        results["evaluator_stage1_none_legend_killed"] = f"FAIL: {e}"
 
     # ---- Weighted product: w=0 ignores the factor ----
     try:

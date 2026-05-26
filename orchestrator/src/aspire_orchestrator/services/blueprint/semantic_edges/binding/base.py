@@ -67,6 +67,7 @@ ENTITY_GEOMETRY_VALUES: frozenset[str] = frozenset({
     "point",     # zero-dimensional fixture symbol
     "linear",    # one-dimensional line / curve (pipe, duct, conduit)
     "polygon",   # two-dimensional area (room, zone, slab)
+    "none",      # NOT a graphical entity — glossary / abbreviation row
     "unknown",   # cannot determine — passes the gate (fail open)
 })
 
