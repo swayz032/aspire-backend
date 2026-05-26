@@ -16,32 +16,17 @@
     "exact_label_match": 9
   },
   "tier_distribution": {
-    "verified": 85,
-    "unknown_review": 80,
-    "rejected": 2139
+    "verified": 39,
+    "unknown_review": 41,
+    "rejected": 2224
   },
-  "verified_count": 85,
-  "unknown_review_count": 80,
-  "rejected_count": 2139,
+  "verified_count": 39,
+  "unknown_review_count": 41,
+  "rejected_count": 2224,
   "verified_samples": [
     {
       "motif_sheet": "P14",
       "motif_discipline": "plumbing",
-      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
-      "legend_label": null,
-      "legend_sheet": null,
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "ALL REQUIRED VALVES NOT SHOWN.",
-        "matched_tokens": [
-          "ALL"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "P14",
-      "motif_discipline": "plumbing",
       "legend_symbol_id": "P14",
       "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
       "legend_sheet": null,
@@ -89,21 +74,6 @@
       "evidence": {
         "ocr_text": "P14",
         "matched_field": "symbol_id"
-      }
-    },
-    {
-      "motif_sheet": "P14",
-      "motif_discipline": "plumbing",
-      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
-      "legend_label": null,
-      "legend_sheet": null,
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "ALL REQUIRED VALVES NOT SHOWN.",
-        "matched_tokens": [
-          "ALL"
-        ]
       }
     },
     {
@@ -173,220 +143,6 @@
       }
     },
     {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
-      "legend_label": null,
-      "legend_sheet": null,
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "UPS SAV TENANT INPROVEMENT",
-        "matched_tokens": [
-          "UPS"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "FP-101",
-      "legend_label": "FIRE PROTECTION SUGGESTED HEAD LAYOUT",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "M-101",
-        "matched_tokens": [
-          "101"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "MECHANICAL",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "ENLARGED GSE MECHANICAL PLAN",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "E-101",
-      "legend_label": "OVERALL LIGHTING PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "M-101",
-        "matched_tokens": [
-          "101"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "E-102",
-      "legend_label": "ENLARGED OFFICE LIGHTING PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "M-102",
-        "matched_tokens": [
-          "102"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "G-101",
-      "legend_label": "OVERALL LIFE SAFETY PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "M-101",
-        "matched_tokens": [
-          "101"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "E-103",
-      "legend_label": "OVERALL POWER PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "A-103",
-        "matched_tokens": [
-          "103"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "GENERAL",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "MECHANICAL PLAN GENERAL NOTES",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "P-103",
-      "legend_label": "PLUMBING ENLARGED PLANS",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "A-103",
-        "matched_tokens": [
-          "103"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "M-103",
-      "legend_label": "ENLARGED OFFICE EXHAUST PLAN",
-      "legend_sheet": "E-301",
-      "score": 1.0,
-      "reasoning": "exact_label_match",
-      "evidence": {
-        "ocr_text": "ENLARGED OFFICE EXHAUST PLAN",
-        "matched_field": "label"
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "M-102",
-      "legend_label": "ENLARGED OFFICE MECHANICAL PLAN",
-      "legend_sheet": "E-301",
-      "score": 1.0,
-      "reasoning": "exact_label_match",
-      "evidence": {
-        "ocr_text": "ENLARGED OFFICE MECHANICAL PLAN",
-        "matched_field": "label"
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "ELECTRICAL",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "EXISTING ELECTRICAL PANELS & TRANSFORMERS",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "M-101",
-      "motif_discipline": "mechanical",
-      "legend_symbol_id": "M-101",
-      "legend_label": "OVERALL MECHANICAL PLAN",
-      "legend_sheet": "E-301",
-      "score": 1.0,
-      "reasoning": "exact_symbol_id_match",
-      "evidence": {
-        "ocr_text": "M-101",
-        "matched_field": "symbol_id"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
-      "legend_label": null,
-      "legend_sheet": null,
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "\u00b7 FLEXIBLE PENDANT HEAD CONNECTIONS TO BE UTILIZED FOR SIMPLICITY OF INSTALLATION PER FIRE PROTECTION CONTRACTORS SUBMITTAL.",
-        "matched_tokens": [
-          "INSTALLATION"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "FP-101",
-      "legend_label": "FIRE PROTECTION SUGGESTED HEAD LAYOUT",
-      "legend_sheet": "E-301",
-      "score": 1.0,
-      "reasoning": "exact_symbol_id_match",
-      "evidence": {
-        "ocr_text": "FP-101",
-        "matched_field": "symbol_id"
-      }
-    },
-    {
       "motif_sheet": "d481444f",
       "motif_discipline": null,
       "legend_symbol_id": "DEMO",
@@ -396,117 +152,6 @@
       "reasoning": "symbol_id_substring_in_ocr",
       "evidence": {
         "ocr_text": "1. EXISTING UPRIGHT HEAD TO BE DEMO'D. REPLACE WITH PENDANT SPRINKLER ON SPRIG IN EXISTING OUTLET.",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "MECHANICAL",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "4. CUT EXISTING BRANCH LINE WITH FIRELOCK DB65 MECHANICAL T BOLTED COUPLING WITH SPRINKLER OUTLET.",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "3",
-      "legend_label": "EXISTING UPRIGHT SPRINKLER",
-      "legend_sheet": null,
-      "score": 1.0,
-      "reasoning": "exact_label_match",
-      "evidence": {
-        "ocr_text": "EXISTING UPRIGHT SPRINKLER",
-        "matched_field": "label"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "E-101",
-      "legend_label": "OVERALL LIGHTING PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "FP-101",
-        "matched_tokens": [
-          "101"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "\u00ae",
-      "legend_label": "RELOCATED UPRIGHT SPRINKLER",
-      "legend_sheet": null,
-      "score": 1.0,
-      "reasoning": "exact_label_match",
-      "evidence": {
-        "ocr_text": "RELOCATED UPRIGHT SPRINKLER",
-        "matched_field": "label"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "FIRE PROTECTION",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "\u00b7 FLEXIBLE PENDANT HEAD CONNECTIONS TO BE UTILIZED FOR SIMPLICITY OF INSTALLATION PER FIRE PROTECTION CONTRACTORS SUBMITTAL.",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "G-101",
-      "legend_label": "OVERALL LIFE SAFETY PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "FP-101",
-        "matched_tokens": [
-          "101"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "33",
-      "legend_label": "YES",
-      "legend_sheet": null,
-      "score": 1.0,
-      "reasoning": "exact_symbol_id_match",
-      "evidence": {
-        "ocr_text": "33",
-        "matched_field": "symbol_id"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "GENERAL",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "FIRE PROTECTION PLAN GENERAL NOTES",
         "matched_field": "symbol_id",
         "match_kind": "substring"
       }
@@ -530,26 +175,11 @@
       "legend_symbol_id": "O",
       "legend_label": "VICTAULIC",
       "legend_sheet": null,
-      "score": 1.0,
+      "score": 0.85,
       "reasoning": "exact_label_match",
       "evidence": {
         "ocr_text": "VICTAULIC",
         "matched_field": "label"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "M-101",
-      "legend_label": "OVERALL MECHANICAL PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "FP-101",
-        "matched_tokens": [
-          "101"
-        ]
       }
     },
     {
@@ -564,19 +194,6 @@
         "ocr_text": "\u00b7 REFER TO FIRE PROTECTION SHOP DRAWINGS FOR HYDRAULIC CALCULATIONS, FINAL LINE AND HEAD LOCATIONS.",
         "matched_field": "symbol_id",
         "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "d481444f",
-      "motif_discipline": null,
-      "legend_symbol_id": "REMOVED 31 UPRIGHT SPRINKLERS",
-      "legend_label": null,
-      "legend_sheet": null,
-      "score": 1.0,
-      "reasoning": "exact_symbol_id_match",
-      "evidence": {
-        "ocr_text": "REMOVED 31 UPRIGHT SPRINKLERS",
-        "matched_field": "symbol_id"
       }
     },
     {
@@ -611,22 +228,6 @@
     {
       "motif_sheet": "76b9d05a",
       "motif_discipline": null,
-      "legend_symbol_id": "NOTE: PC TO VERIFY ALL FIXTURE SCHEDULES WITH UPS / ARCHITECT PRIOR TO PURCHASE AND INSTALLATION.",
-      "legend_label": null,
-      "legend_sheet": null,
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "1. MC TO COORDINATE WITH GC AND EC LOCATION OF HP BEFORE START OF WORK.",
-        "matched_tokens": [
-          "AND",
-          "WITH"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "76b9d05a",
-      "motif_discipline": null,
       "legend_symbol_id": "P-102",
       "legend_label": "PLUMBING BUILDING 1 DOMESTIC SUPPLY PLAN",
       "legend_sheet": "E-301",
@@ -642,20 +243,6 @@
     {
       "motif_sheet": "76b9d05a",
       "motif_discipline": null,
-      "legend_symbol_id": "MECHANICAL",
-      "legend_label": null,
-      "legend_sheet": "E-301",
-      "score": 0.85,
-      "reasoning": "symbol_id_substring_in_ocr",
-      "evidence": {
-        "ocr_text": "ENLARGED OFFICE MECHANICAL PLAN",
-        "matched_field": "symbol_id",
-        "match_kind": "substring"
-      }
-    },
-    {
-      "motif_sheet": "76b9d05a",
-      "motif_discipline": null,
       "legend_symbol_id": "SANITARY\nVENT LINE",
       "legend_label": null,
       "legend_sheet": "P-201",
@@ -665,21 +252,6 @@
         "ocr_text": "1/2\" AIR LINE",
         "matched_tokens": [
           "LINE"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "76b9d05a",
-      "motif_discipline": null,
-      "legend_symbol_id": "E-102",
-      "legend_label": "ENLARGED OFFICE LIGHTING PLAN",
-      "legend_sheet": "E-301",
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "M-102",
-        "matched_tokens": [
-          "102"
         ]
       }
     },
@@ -701,21 +273,6 @@
     {
       "motif_sheet": "76b9d05a",
       "motif_discipline": null,
-      "legend_symbol_id": "150 SF -",
-      "legend_label": "ROOM AREA (IF APPLICABLE)",
-      "legend_sheet": null,
-      "score": 0.7,
-      "reasoning": "symbol_id_token_in_ocr",
-      "evidence": {
-        "ocr_text": "150",
-        "matched_tokens": [
-          "150"
-        ]
-      }
-    },
-    {
-      "motif_sheet": "76b9d05a",
-      "motif_discipline": null,
       "legend_symbol_id": "SANITARY SEWER LINE VENT LINE",
       "legend_label": null,
       "legend_sheet": "FP-101",
@@ -726,6 +283,270 @@
         "matched_tokens": [
           "LINE"
         ]
+      }
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "legend_symbol_id": "COORD",
+      "legend_label": "\u00b7 COORDINATE",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "1. MC TO COORDINATE WITH GC AND EC LOCATION OF HP BEFORE START OF WORK.",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "motif_discipline": null,
+      "legend_symbol_id": "CAT",
+      "legend_label": "CATEGORY",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "1. MC TO COORDINATE WITH GC AND EC LOCATION OF HP BEFORE START OF WORK.",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P10",
+      "legend_label": "BARRIER-TYPE TRAP PRIMER",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P10",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P9",
+      "legend_label": "FLOOR DRAIN",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P9",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P13B",
+      "legend_label": "AIR ADMITTANCE VALVE",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P13B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "legend_symbol_id": "DEMO",
+      "legend_label": "\u00b7 DEMOLITION",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "1. EXISTING UPRIGHT HEAD TO BE DEMO'D. REPLACE WITH PENDANT SPRINKLER ON SPRIG IN EXISTING OUTLET.",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "legend_symbol_id": "FIN",
+      "legend_label": "FINISH",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "FIN",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "legend_symbol_id": "O",
+      "legend_label": "VICTAULIC",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_label_match",
+      "evidence": {
+        "ocr_text": "VICTAULIC",
+        "matched_field": "label"
+      }
+    },
+    {
+      "motif_sheet": "d481444f",
+      "motif_discipline": null,
+      "legend_symbol_id": "CAT",
+      "legend_label": "CATEGORY",
+      "legend_sheet": null,
+      "score": 0.85,
+      "reasoning": "symbol_id_substring_in_ocr",
+      "evidence": {
+        "ocr_text": "\u00b7 REFER TO FIRE PROTECTION SHOP DRAWINGS FOR HYDRAULIC CALCULATIONS, FINAL LINE AND HEAD LOCATIONS.",
+        "matched_field": "symbol_id",
+        "match_kind": "substring"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P10",
+      "legend_label": "BARRIER-TYPE TRAP PRIMER",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P10",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P5B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P9",
+      "legend_label": "FLOOR DRAIN",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P9",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P13B",
+      "legend_label": "AIR ADMITTANCE VALVE",
+      "legend_sheet": null,
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P13B",
+        "matched_field": "symbol_id"
+      }
+    },
+    {
+      "motif_sheet": "P-201",
+      "motif_discipline": "plumbing",
+      "legend_symbol_id": "P14",
+      "legend_label": "EYEWASH/ EMERGENCY EYE & SHOWER STATION",
+      "legend_sheet": "P-102",
+      "score": 1.0,
+      "reasoning": "exact_symbol_id_match",
+      "evidence": {
+        "ocr_text": "P14",
+        "matched_field": "symbol_id"
       }
     }
   ],
@@ -795,50 +616,8 @@
     },
     {
       "motif_sheet": "M-101",
-      "legend_symbol_id": "M-001",
-      "legend_label": "MECHANICAL NOTES",
-      "score": 0.6,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
-      "legend_symbol_id": "E-105",
-      "legend_label": "OVERALL LV CAMERA/ACCESS PLAN",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
-      "legend_symbol_id": "A-702",
-      "legend_label": "ENLARGED RESTROOM FINISH PLAN",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
-      "legend_symbol_id": "M-201",
-      "legend_label": "MECHANICAL SCHEDULES",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
-      "legend_symbol_id": "M-301",
-      "legend_label": "MECHANICAL DETAILS",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
-      "legend_symbol_id": "E-201",
-      "legend_label": "ELECTRICAL SCHEDULES",
       "score": 0.5,
       "reasoning": "label_keyword_overlap"
     },
@@ -851,13 +630,6 @@
     },
     {
       "motif_sheet": "M-101",
-      "legend_symbol_id": "P-001",
-      "legend_label": "PLUMBING NOTES",
-      "score": 0.5,
-      "reasoning": "label_keyword_overlap"
-    },
-    {
-      "motif_sheet": "M-101",
       "legend_symbol_id": "P5B",
       "legend_label": "SERVICE SINK",
       "score": 0.5,
@@ -865,8 +637,57 @@
     },
     {
       "motif_sheet": "M-101",
-      "legend_symbol_id": "E-001",
-      "legend_label": "ELECTRICAL NOTES",
+      "legend_symbol_id": "X\n:selected:",
+      "legend_label": "EXHAUST FAN",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "d481444f",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "d481444f",
+      "legend_symbol_id": "EE",
+      "legend_label": "- FIRE EXTINGUISHER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "d481444f",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "d481444f",
+      "legend_symbol_id": "FP",
+      "legend_label": "- FIRE PROTECTION",
+      "score": 0.6,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "legend_symbol_id": "350A",
+      "legend_label": "500 MCM",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "legend_symbol_id": "P4",
+      "legend_label": "SQUARE SHOWER",
+      "score": 0.5,
+      "reasoning": "label_keyword_overlap"
+    },
+    {
+      "motif_sheet": "76b9d05a",
+      "legend_symbol_id": "P5B",
+      "legend_label": "SERVICE SINK",
       "score": 0.5,
       "reasoning": "label_keyword_overlap"
     }

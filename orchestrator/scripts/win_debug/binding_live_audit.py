@@ -69,18 +69,25 @@ def main() -> int:
     legends = json.loads((HERE / "_legends.json").read_text(encoding="utf-8"))
     ocr_by_sheet = json.loads((HERE / "_ocr.json").read_text(encoding="utf-8"))
 
-    # N-3.1 — motif primitive histograms (legend side blocked on coord transform)
+    # N-3.1 — motif primitive histograms
     motif_hist_path = HERE / "_motif_histograms.json"
     motif_histograms = (
         json.loads(motif_hist_path.read_text(encoding="utf-8"))
         if motif_hist_path.exists() else {}
     )
-    # Strip the _mapping comment if present
     motif_histograms = {k: v for k, v in motif_histograms.items() if not k.startswith("_")}
 
+    # N-3.3 — legend primitive histograms (via SheetCoordinateTransform)
+    legend_hist_path = HERE / "_legend_histograms.json"
+    legend_histograms = (
+        json.loads(legend_hist_path.read_text(encoding="utf-8"))
+        if legend_hist_path.exists() else {}
+    )
+
     print(f"loaded {len(motifs)} motifs, {len(legends)} legends, "
-          f"{len(ocr_by_sheet)} sheets with OCR, "
-          f"{len(motif_histograms)} motif histograms")
+          f"{len(ocr_by_sheet)} sheets with OCR")
+    print(f"motif histograms: {len(motif_histograms)} | "
+          f"legend histograms: {len(legend_histograms)}")
 
     # N-3.1 — evaluator now runs OCR + Topology
     evaluator = BindingEvaluator(scorers=[
@@ -118,12 +125,17 @@ def main() -> int:
     motif_hist_coverage = sum(
         1 for m in enriched_motifs if m["histogram"] is not None
     )
-    legend_hist_coverage = 0  # N-3.1: legend side blocked on coord transform
+    legend_hist_total = len(legend_histograms)
+    legend_hist_nonzero = sum(
+        1 for v in legend_histograms.values() if sum(v.values()) > 0
+    )
     print(f"\nHistogram coverage:")
-    print(f"  motifs  : {motif_hist_coverage}/{len(enriched_motifs)} "
+    print(f"  motifs  (non-empty)  : {motif_hist_coverage}/{len(enriched_motifs)} "
           f"({100*motif_hist_coverage/len(enriched_motifs):.0f}%)")
-    print(f"  legends : {legend_hist_coverage}/{len(legends)} "
-          f"(0% — blocked on raster->PDF coord transform, N-3.2 scope)")
+    print(f"  legends (any)        : {legend_hist_total}/{len(legends)} "
+          f"({100*legend_hist_total/len(legends):.0f}%)")
+    print(f"  legends (non-empty)  : {legend_hist_nonzero}/{len(legends)} "
+          f"({100*legend_hist_nonzero/len(legends):.0f}%)")
 
     # Pre-classify all legends (cache geometry for speed)
     legend_geom_cache = {}
@@ -155,7 +167,10 @@ def main() -> int:
             extra: dict = {}
             if motif["histogram"] is not None:
                 extra[MOTIF_HISTOGRAM_KEY] = motif["histogram"]
-            # legend histogram: deferred to N-3.2 (coord transform)
+            # N-3.3 — legend histogram attached when non-empty
+            lh = legend_histograms.get(legend["legend_id"])
+            if lh and sum(lh.values()) > 0:
+                extra[LEGEND_HISTOGRAM_KEY] = lh
             proposal = BindingProposal(
                 suite_id=SUITE_ID,
                 project_id=PROJECT_ID,
