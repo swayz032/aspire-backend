@@ -536,21 +536,51 @@ async def run_wave_11g2_see_for_project(
             summary["rows_failed"] += failed
             summary["pages_processed"] += 1
 
-            _emit_receipt(
-                action_type="drew.see.11g2.page",
-                suite_id=suite_id,
-                office_id=office_id,
-                correlation_id=correlation_id,
-                metadata={
-                    "project_id": project_id,
-                    "page_idx": page_number,
-                    "mode": mode,
-                    "n_primitives": len(primitives),
-                    "n_motifs": page_motif_count,
-                    "n_instance_rows": inserted,
-                    "n_insert_failures": failed,
-                },
-            )
+            # Persistence assertion for this page (Track B Pass 1.C).
+            # blueprint_symbols has no project_id column so we use the local
+            # insert counter as the delta (count_before=0, count_after=inserted).
+            # RASTER_SCAN pages legitimately write 0 rows — expected_min=0 for them.
+            try:
+                from aspire_orchestrator.services.receipt_store import (
+                    emit_persistence_asserted_receipt as _emit_pa,
+                )
+                _page_expected_min = 0 if mode == "RASTER_SCAN" else 1
+                _emit_pa(
+                    stage="drew.see.11g2.page",
+                    expected_table="blueprint_symbols",
+                    expected_min=_page_expected_min,
+                    count_before=0,
+                    count_after=inserted,
+                    correlation_id=correlation_id,
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    project_id=project_id,
+                    redacted_outputs={
+                        "page_idx": page_number,
+                        "mode": mode,
+                        "n_primitives": len(primitives),
+                        "n_motifs": page_motif_count,
+                        "n_instance_rows": inserted,
+                        "n_insert_failures": failed,
+                    },
+                )
+            except Exception as _pa_exc:  # noqa: BLE001
+                logger.debug("wave_11g2_see: persistence assertion emit failed (%s)", type(_pa_exc).__name__)
+                _emit_receipt(
+                    action_type="drew.see.11g2.page",
+                    suite_id=suite_id,
+                    office_id=office_id,
+                    correlation_id=correlation_id,
+                    metadata={
+                        "project_id": project_id,
+                        "page_idx": page_number,
+                        "mode": mode,
+                        "n_primitives": len(primitives),
+                        "n_motifs": page_motif_count,
+                        "n_instance_rows": inserted,
+                        "n_insert_failures": failed,
+                    },
+                )
             summary["page_outcomes"].append({
                 "page_number": page_number,
                 "mode": mode,
@@ -568,37 +598,79 @@ async def run_wave_11g2_see_for_project(
     elapsed_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
     summary["elapsed_ms"] = elapsed_ms
 
-    # Project-level completion receipt.
-    _emit_receipt(
-        action_type="drew.see.11g2.completed",
-        suite_id=suite_id,
-        office_id=office_id,
-        correlation_id=correlation_id,
-        metadata={
-            "project_id": project_id,
-            "pages_classified": summary["pages_classified"],
-            "pages_processed": summary["pages_processed"],
-            "pages_skipped_raster": summary["pages_skipped_raster"],
-            "pages_skipped_no_sheet": summary["pages_skipped_no_sheet"],
-            "total_primitives": summary["total_primitives"],
-            "primitives_truncated_pages": summary["primitives_truncated_pages"],
-            "total_motifs": summary["total_motifs"],
-            "total_instances": summary["total_instances"],
-            "rows_inserted": summary["rows_inserted"],
-            "rows_failed": summary["rows_failed"],
-            "mode_distribution": summary["mode_distribution"],
-            "resolution_distribution": summary["resolution_distribution"],
-            "memory_upserts": summary["memory_upserts"],
-            "elapsed_ms": elapsed_ms,
-            "limits": {
-                "max_primitives_per_page": MAX_PRIMITIVES_PER_PAGE,
-                "max_instances_per_motif": MAX_INSTANCES_PER_MOTIF,
-                "k_hops": _K_HOPS,
-                "wl_iterations": _WL_ITERATIONS,
-                "min_frequency": _MIN_FREQUENCY,
+    # Project-level completion receipt with persistence assertion (Track B Pass 1.C).
+    # Uses locally-tracked rows_inserted as delta (blueprint_symbols has no project_id).
+    # expected_min=0: a PDF of all-raster pages legitimately writes 0 rows.
+    try:
+        from aspire_orchestrator.services.receipt_store import (
+            emit_persistence_asserted_receipt as _emit_pa_completed,
+        )
+        _emit_pa_completed(
+            stage="drew.see.11g2.completed",
+            expected_table="blueprint_symbols",
+            expected_min=0,
+            count_before=0,
+            count_after=summary["rows_inserted"],
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            project_id=project_id,
+            redacted_outputs={
+                "pages_classified": summary["pages_classified"],
+                "pages_processed": summary["pages_processed"],
+                "pages_skipped_raster": summary["pages_skipped_raster"],
+                "pages_skipped_no_sheet": summary["pages_skipped_no_sheet"],
+                "total_primitives": summary["total_primitives"],
+                "primitives_truncated_pages": summary["primitives_truncated_pages"],
+                "total_motifs": summary["total_motifs"],
+                "total_instances": summary["total_instances"],
+                "rows_inserted": summary["rows_inserted"],
+                "rows_failed": summary["rows_failed"],
+                "mode_distribution": summary["mode_distribution"],
+                "resolution_distribution": summary["resolution_distribution"],
+                "memory_upserts": summary["memory_upserts"],
+                "elapsed_ms": elapsed_ms,
+                "limits": {
+                    "max_primitives_per_page": MAX_PRIMITIVES_PER_PAGE,
+                    "max_instances_per_motif": MAX_INSTANCES_PER_MOTIF,
+                    "k_hops": _K_HOPS,
+                    "wl_iterations": _WL_ITERATIONS,
+                    "min_frequency": _MIN_FREQUENCY,
+                },
             },
-        },
-    )
+        )
+    except Exception as _pa_exc:  # noqa: BLE001
+        logger.debug("wave_11g2_see: completed assertion emit failed (%s)", type(_pa_exc).__name__)
+        _emit_receipt(
+            action_type="drew.see.11g2.completed",
+            suite_id=suite_id,
+            office_id=office_id,
+            correlation_id=correlation_id,
+            metadata={
+                "project_id": project_id,
+                "pages_classified": summary["pages_classified"],
+                "pages_processed": summary["pages_processed"],
+                "pages_skipped_raster": summary["pages_skipped_raster"],
+                "pages_skipped_no_sheet": summary["pages_skipped_no_sheet"],
+                "total_primitives": summary["total_primitives"],
+                "primitives_truncated_pages": summary["primitives_truncated_pages"],
+                "total_motifs": summary["total_motifs"],
+                "total_instances": summary["total_instances"],
+                "rows_inserted": summary["rows_inserted"],
+                "rows_failed": summary["rows_failed"],
+                "mode_distribution": summary["mode_distribution"],
+                "resolution_distribution": summary["resolution_distribution"],
+                "memory_upserts": summary["memory_upserts"],
+                "elapsed_ms": elapsed_ms,
+                "limits": {
+                    "max_primitives_per_page": MAX_PRIMITIVES_PER_PAGE,
+                    "max_instances_per_motif": MAX_INSTANCES_PER_MOTIF,
+                    "k_hops": _K_HOPS,
+                    "wl_iterations": _WL_ITERATIONS,
+                    "min_frequency": _MIN_FREQUENCY,
+                },
+            },
+        )
 
     logger.info(
         "wave_11g2_see: project=%s pages=%d processed=%d primitives=%d motifs=%d "

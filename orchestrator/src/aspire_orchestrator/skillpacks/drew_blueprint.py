@@ -2429,8 +2429,8 @@ async def _async_universal_sheet_intel_pipeline(
 
     # Capture row count before writes for persistence assertion (Track B Pass 1.C)
     try:
-        from aspire_orchestrator.services.supabase_client import count_table_rows as _count_rows
-        _intel_count_before = await _count_rows(
+        from aspire_orchestrator.services.receipt_store import count_table_rows as _count_rows
+        _intel_count_before = _count_rows(
             "blueprint_sheet_intelligence",
             project_id=project_id,
             suite_id=suite_id,
@@ -2473,15 +2473,17 @@ async def _async_universal_sheet_intel_pipeline(
 
     # Persistence assertion — blueprint_sheet_intelligence must have gained rows (Track B Pass 1.C)
     try:
-        from aspire_orchestrator.services.supabase_client import count_table_rows as _count_rows_after
-        from aspire_orchestrator.services.receipt_store import emit_persistence_asserted_receipt as _pa
-        _intel_count_after = await _count_rows_after(
+        from aspire_orchestrator.services.receipt_store import (
+            count_table_rows as _count_rows_after,
+            emit_persistence_asserted_receipt as _pa,
+        )
+        _intel_count_after = _count_rows_after(
             "blueprint_sheet_intelligence",
             project_id=project_id,
             suite_id=suite_id,
         )
-        await _pa(
-            stage="blueprint.ingest.azure_doc_intel_used",
+        _pa(
+            stage="provider.azure.sheet_layout",
             expected_table="blueprint_sheet_intelligence",
             expected_min=1,
             count_before=_intel_count_before,
@@ -3370,31 +3372,59 @@ async def _async_see_pipeline(
     # `receipts WHERE receipt_type='blueprint.see.completed' AND metadata->>'project_id'=...`
     # to determine real completion. Aligned with 2026 outbox-pattern recommendation:
     # the entity emits a domain event first, the state writer runs separately with retries.
+    #
+    # Track B Pass 1.C: persistence assertion — total_symbols is the net delta after
+    # the idempotency clear (which deletes all symbols before re-inserting).
+    # expected_min=100 is a sanity floor; a legitimate project must have >100 symbols.
     try:
-        store_receipts([{
-            "id": str(uuid.uuid4()),
-            "outcome": "success",
-            "action_type": "blueprint.see.completed",
-            "receipt_type": "blueprint.see.completed",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "risk_tier": "GREEN",
-            "actor_type": "WORKER",
-            "actor_id": ACTOR_DREW,
-            "correlation_id": correlation_id,
-            "suite_id": suite_id,
-            "office_id": office_id,
-            "metadata": {
-                "project_id": project_id,
+        from aspire_orchestrator.services.receipt_store import (
+            emit_persistence_asserted_receipt as _emit_pa_see,
+        )
+        _emit_pa_see(
+            stage="blueprint.see.completed",
+            expected_table="blueprint_symbols",
+            expected_min=100,
+            count_before=0,
+            count_after=total_symbols,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            project_id=project_id,
+            redacted_outputs={
                 "sheet_count": len(sheets),
                 "symbol_count": total_symbols,
                 "mean_confidence": round(mean_conf, 4),
                 "seal_sheets": seal_sheets,
                 "missing_inputs": missing_inputs,
             },
-            "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
-        }])
+        )
     except Exception as _rec_exc:  # noqa: BLE001 — receipt emission must never block stage completion
-        _log.warning("drew.see: completed receipt emission failed (%s)", type(_rec_exc).__name__)
+        _log.warning("drew.see: completed persistence assertion failed (%s)", type(_rec_exc).__name__)
+        try:
+            store_receipts([{
+                "id": str(uuid.uuid4()),
+                "outcome": "success",
+                "action_type": "blueprint.see.completed",
+                "receipt_type": "blueprint.see.completed",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "risk_tier": "GREEN",
+                "actor_type": "WORKER",
+                "actor_id": ACTOR_DREW,
+                "correlation_id": correlation_id,
+                "suite_id": suite_id,
+                "office_id": office_id,
+                "metadata": {
+                    "project_id": project_id,
+                    "sheet_count": len(sheets),
+                    "symbol_count": total_symbols,
+                    "mean_confidence": round(mean_conf, 4),
+                    "seal_sheets": seal_sheets,
+                    "missing_inputs": missing_inputs,
+                },
+                "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
+            }])
+        except Exception as _fallback_exc:  # noqa: BLE001
+            _log.warning("drew.see: completed fallback receipt emission failed (%s)", type(_fallback_exc).__name__)
 
     # P0-3: mark see done in the async pipeline (dispatch path)
     # Wave 10c: retry once on transient Supabase errors so a single hiccup doesn't

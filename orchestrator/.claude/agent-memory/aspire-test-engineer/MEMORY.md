@@ -21,6 +21,15 @@ See `c3-rotation-bugs.md` for full bug list. Key findings:
 - BUG-11 LOW: `store_receipts_strict` accesses `_receipt_writer._loop` (private attr) — fragile
 - BUG-12 LOW: Approval binding check 7 (request_id match) comes AFTER the key is marked used
 
+## Track B Pass 1.C — Persistence Assertion Tests (2026-05-26)
+- All 4 test files committed at HEAD 45571bf (prior agent wave did this)
+- tests/services/test_receipt_persistence_assertion.py — 20 unit tests, all 4 status branches
+- tests/services/test_receipt_count_table_rows.py — 8 unit tests, tenant isolation + return value
+- tests/blueprint/test_persistence_assertion_integration.py — 4 integration tests (@pytest.mark.integration)
+- tests/blueprint/test_persistence_assertion_synthetic_failure.py — 11 failure-injection tests
+- CRITICAL: tests use `blueprint_primitives` but plan correction (commit 45571bf) says prod Drew writes to `blueprint_symbols`. Tests are correct for the SPEC as written; architect must confirm final table names.
+- Table name discrepancy: blueprint_primitives (CSIR research table) vs blueprint_symbols (prod Drew table)
+
 ## Key Architecture Notes
 - Admin auth: X-Admin-Token (HS256 JWT with ASPIRE_ADMIN_JWT_SECRET) — no dev bypass
 - Tenant isolation: enforced in receipt_store.query_receipts via suite_id filter

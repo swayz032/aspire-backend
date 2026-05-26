@@ -90,9 +90,24 @@ END (all PDFs successful)
 
 (append per iteration)
 
-### Iteration 1 — initial dispatch (2026-05-26)
+### Iteration 1 — initial dispatch (2026-05-26 ~09:30 UTC)
 - Dispatched 3 Pass 1.C agents.
-- Wake-up scheduled.
+- Wake-up scheduled for 30 min fallback.
 - State: WAITING_PASS_1C.
 
-### Iteration 2 — TBD
+### Iteration 1.1 — auditor returned (2026-05-26 ~09:35 UTC)
+- CRITICAL plan errors caught: 3 table-name errors (blueprint_primitives vs
+  blueprint_symbols). Patched plan, committed at 45571bf.
+- SendMessage to architect (ad796c311c29b4ce9) with corrected wire-targets.
+
+### Iteration 1.2 — test-engineer returned (2026-05-26 ~09:55 UTC)
+- 43 tests committed at 45571bf:
+  - 20 unit tests in test_receipt_persistence_assertion.py (all 4 status branches)
+  - 8 unit tests in test_receipt_count_table_rows.py (tenant isolation)
+  - 4 integration tests (@pytest.mark.integration, Gulfstream replay)
+  - 11 synthetic-failure tests (RLS silent rejection, partial batch, zero-write)
+- Spec ambiguities flagged for architect (table name, sync/async, return type,
+  Supabase-disabled fallback). Architect can resolve from code conventions.
+- State: WAITING_PASS_1C (architect still in flight).
+
+### Iteration 2 — TBD when architect completes or 30-min wakeup fires

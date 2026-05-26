@@ -113,6 +113,18 @@ async def run_vgse_for_project(
     }
     discipline_by_page = discipline_by_page or {}
 
+    # Capture legend row count before any work — for persistence assertion (Track B Pass 1.C).
+    _legend_count_before: int = 0
+    try:
+        from aspire_orchestrator.services.receipt_store import count_table_rows as _count_rows_vgse
+        _legend_count_before = _count_rows_vgse(
+            "blueprint_project_legends",
+            project_id=project_id,
+            suite_id=suite_id,
+        )
+    except Exception:
+        _legend_count_before = 0
+
     with fitz.open(pdf_path) as doc:
         # ─── Wave 17b.4 PASS 1 ────────────────────────────────────────────
         # Extract legend signatures from EVERY page first. A legend on page 2
@@ -329,22 +341,30 @@ async def run_vgse_for_project(
         0, len(project_legend_map) - len(signatures_matched)
     )
 
-    # Wave 17b.4 — emit legend extraction receipt (Law #2). Best-effort.
+    # Wave 17b.4 — emit legend extraction receipt with persistence assertion (Track B Pass 1.C).
+    # Uses DB count of blueprint_project_legends. expected_min=0 because many sheets
+    # legitimately have no legend regions (structural, MEP legend-free sheets).
     try:
-        from aspire_orchestrator.services.receipt_store import store_receipts as _sr_legend
-        _sr_legend([{
-            "id": str(uuid.uuid4()),
-            "outcome": "success",
-            "action_type": "drew.see.legend_extracted",
-            "receipt_type": "drew.see.legend_extracted",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "risk_tier": "GREEN",
-            "actor_type": "WORKER",
-            "actor_id": "skillpack:drew-blueprint",
-            "correlation_id": correlation_id,
-            "suite_id": suite_id,
-            "metadata": {
-                "project_id": project_id,
+        from aspire_orchestrator.services.receipt_store import (
+            count_table_rows as _count_rows_leg,
+            emit_persistence_asserted_receipt as _emit_pa_legend,
+        )
+        _legend_count_after = _count_rows_leg(
+            "blueprint_project_legends",
+            project_id=project_id,
+            suite_id=suite_id,
+        )
+        _emit_pa_legend(
+            stage="drew.see.legend_extracted",
+            expected_table="blueprint_project_legends",
+            expected_min=0,
+            count_before=_legend_count_before,
+            count_after=_legend_count_after,
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            project_id=project_id,
+            redacted_outputs={
                 "legend_regions_found": summary["legend_regions_found"],
                 "legend_pages_with_region": summary["legend_pages_with_region"],
                 "legend_pairs_extracted": summary["legend_pairs_extracted"],
@@ -353,27 +373,29 @@ async def run_vgse_for_project(
                 "legend_memory_upserts": summary["legend_memory_upserts"],
                 "motif_legend_resolutions": summary["legend_hits"],
             },
-        }])
+        )
     except Exception:  # noqa: BLE001
         pass
 
-    # Wave 17b.2 — emit spatial binding receipt (Law #2). Best-effort: never block
-    # the pipeline on receipt persistence.
+    # Wave 17b.2 — emit spatial binding receipt with persistence assertion (Track B Pass 1.C).
+    # advisory: expected_min=0 because spatial binding may write 0 rows on raster-only PDFs.
+    # Uses legend_memory_upserts as a proxy for memory writes (blueprint_symbol_memory lacks
+    # a direct project_id column for efficient counting).
     try:
-        from aspire_orchestrator.services.receipt_store import store_receipts as _sr
-        _sr([{
-            "id": str(uuid.uuid4()),
-            "outcome": "success",
-            "action_type": "drew.see.spatial_binding",
-            "receipt_type": "drew.see.spatial_binding",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "risk_tier": "GREEN",
-            "actor_type": "WORKER",
-            "actor_id": "skillpack:drew-blueprint",
-            "correlation_id": correlation_id,
-            "suite_id": suite_id,
-            "metadata": {
-                "project_id": project_id,
+        from aspire_orchestrator.services.receipt_store import (
+            emit_persistence_asserted_receipt as _emit_pa_binding,
+        )
+        _emit_pa_binding(
+            stage="drew.see.spatial_binding",
+            expected_table="blueprint_symbol_memory",
+            expected_min=0,
+            count_before=0,
+            count_after=summary["legend_memory_upserts"],
+            correlation_id=correlation_id,
+            suite_id=suite_id,
+            office_id=office_id,
+            project_id=project_id,
+            redacted_outputs={
                 "symbols_total": summary["total_motifs_found"],
                 "spatial_ocr_bound": summary["spatial_ocr_hits"],
                 "unbound": summary["unanchored"],
@@ -381,7 +403,7 @@ async def run_vgse_for_project(
                 "legend_hits": summary["legend_hits"],
                 "by_discipline": summary["spatial_binding_by_discipline"],
             },
-        }])
+        )
     except Exception:  # noqa: BLE001
         pass  # receipt emission is best-effort
 

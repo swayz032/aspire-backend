@@ -1046,7 +1046,45 @@ def clear_store() -> None:
 # =============================================================================
 
 
-async def emit_persistence_asserted_receipt(
+def count_table_rows(
+    table: str,
+    *,
+    project_id: str,
+    suite_id: str,
+) -> int:
+    """Return the row count for (project_id, suite_id) in a Supabase table.
+
+    Uses the sync Supabase client's .table().select("*", count="exact").eq().execute()
+    chain so that the count is retrieved without transferring row data.
+
+    Returns 0 when Supabase is not configured.
+    Raises SupabaseClientError (or the underlying exception) when Supabase IS
+    configured but the query fails — callers must catch this if they want a
+    safe fallback (Law #3: fail-closed on unknown state).
+
+    Law #6: always filters on BOTH project_id AND suite_id.
+    """
+    if not _supabase_enabled():
+        return 0
+
+    client = _get_supabase_client()
+    if client is None:
+        return 0
+
+    response = (
+        client.table(table)
+        .select("*", count="exact")
+        .eq("project_id", project_id)
+        .eq("suite_id", suite_id)
+        .execute()
+    )
+    count = getattr(response, "count", None)
+    if count is None:
+        return 0
+    return int(count)
+
+
+def emit_persistence_asserted_receipt(
     *,
     stage: str,
     expected_table: str,
@@ -1096,6 +1134,7 @@ async def emit_persistence_asserted_receipt(
 
     full_outputs: dict[str, Any] = {
         **redacted_outputs,
+        "project_id": project_id,
         "persistence_assertion": {
             "table": expected_table,
             "expected_min": expected_min,
