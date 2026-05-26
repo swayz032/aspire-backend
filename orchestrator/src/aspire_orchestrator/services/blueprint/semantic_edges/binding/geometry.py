@@ -165,6 +165,18 @@ NONE_KEYWORDS: frozenset[str] = frozenset({
     "required", "total required", "total",
     # Quantity/measurement words that aren't fixtures
     "net total", "subtotal", "sum",
+    # N-4.7 TITLE-BLOCK additions — discipline/division abbreviations
+    # that the N-4.5 forensics surfaced as residual UR cases.
+    "bldg", "building",
+    "fp",                       # "FP = - FIRE PROTECTION" discipline header
+    "fire protection",          # discipline label, not a fixture
+    "discipline",
+    "drawing", "drawings", "dwg",
+    "project", "project info", "info",
+    "scale",                    # title-block scale field
+    "scope of work", "scope",
+    "name", "title",
+    "room area", "if applicable",   # the '150 SF - ROOM AREA' near-miss
 })
 
 
