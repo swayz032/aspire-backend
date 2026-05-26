@@ -170,16 +170,32 @@ def main() -> int:
     except Exception as e:
         results["ocr_substring_band_len3_ok"] = f"FAIL: {e}"
 
-    # ---- keyword-overlap band (post-guard) ----
+    # ---- keyword-overlap band (post-N-4.6 calibration) ----
     try:
-        # label="PENDANT SPRINKLER" -> tokens {PENDANT, SPRINKLER}, both >=3
+        # N-4.6: 0.30 + 0.30 * ratio
+        # label="PENDANT SPRINKLER" -> tokens {PENDANT, SPRINKLER}
         # OCR "PENDANT HEAD" -> tokens {PENDANT, HEAD}; shared={PENDANT}; ratio=1/2
-        # → 0.40 + 0.20*0.5 = 0.50
+        # → 0.30 + 0.30*0.5 = 0.45 (no longer enters UR; falls below 0.50)
         p = make_proposal(
             ocr_texts=("PENDANT HEAD",),
             legend_symbol_id="UNRELATED", legend_label="PENDANT SPRINKLER",
         )
         r = scorer.compute(p)
+        assert 0.44 <= r.score <= 0.46, f"got {r.score} ({r.reasoning})"
+        results["ocr_keyword_overlap_band_1of2"] = "PASS"
+    except Exception as e:
+        results["ocr_keyword_overlap_band_1of2"] = f"FAIL: {e}"
+
+    # ---- keyword-overlap band: 2-of-2 still produces UR-tier signal ----
+    try:
+        # 2 shared / 2 label tokens → 0.30 + 0.30*1.0 = 0.60
+        p = make_proposal(
+            ocr_texts=("PENDANT SPRINKLER",),
+            legend_symbol_id="UNRELATED",
+            legend_label="PENDANT SPRINKLER ASSEMBLY",
+        )
+        r = scorer.compute(p)
+        # 2 of 3 tokens shared → 0.30 + 0.30*(2/3) = 0.50
         assert 0.49 <= r.score <= 0.51, f"got {r.score} ({r.reasoning})"
         results["ocr_keyword_overlap_band"] = "PASS"
     except Exception as e:

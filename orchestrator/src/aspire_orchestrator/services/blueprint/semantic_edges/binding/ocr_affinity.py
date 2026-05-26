@@ -128,13 +128,18 @@ class OCRAffinityScorer(BaseScorer):
                         "matched_tokens": sorted(shared_sym),
                     }
 
-            # Band 4 — keyword overlap with legend label (0.40 + 0.20 × ratio)
+            # Band 4 — keyword overlap with legend label (N-4.6 calibration:
+            # 0.30 + 0.30 × ratio so 1-of-2 token overlap = 0.45 → REJECTED,
+            # 2-of-2 = 0.60 → UR, 3-of-3 = 0.60 → UR. Forensics on N-3.3
+            # showed weak single-token matches like "SHOWER", "BUILDING" were
+            # parking in UR at the old 0.50 score; this tightens the band so
+            # only meaningful multi-token overlap survives into UR.)
             if label_tokens:
                 ocr_tokens = _tokens(text)
                 shared_lbl = label_tokens & ocr_tokens
                 if shared_lbl:
                     ratio = len(shared_lbl) / max(len(label_tokens), 1)
-                    candidate = 0.40 + 0.20 * ratio        # → 0.40 .. 0.60
+                    candidate = 0.30 + 0.30 * ratio        # → 0.30 .. 0.60
                     if candidate > best_score:
                         best_score = candidate
                         best_reason = "label_keyword_overlap"
