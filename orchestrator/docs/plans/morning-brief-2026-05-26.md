@@ -105,3 +105,55 @@ The autonomous monitoring loop is still active and watching for new uploads. If 
 3. **Decide on civil-discipline strategy** — does v9 Wave 20.6 (Construction Semantic Compiler) need a civil-specific track, or do we explicitly punt on civil/landscape for the Founder Quarter and focus on MEP + architectural?
 
 Sleep well.
+
+---
+
+## ADDENDUM — 3-discipline matrix completed 2026-05-26 ~20:50 UTC
+
+User re-uploaded both metal-building (dedup hit on prior project `86851603`) and residential farmhouse (new project `5373b87e`). Combined with civil from earlier, we now have a complete discipline matrix:
+
+| Discipline | Project | Materials | Assemblies | Quantities | Symbols | Primitives | Legends | Edges | Missing |
+|---|---|---|---|---|---|---|---|---|---|
+| Civil (21030 signed) | `73d70ed2` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 16 |
+| Metal Building (29187P-ES) | `86851603` | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 36 |
+| Residential (farmhouse) | `5373b87e` | **12** | **14** | **2** | 0 | 0 | 0 | 0 | 117 |
+| MEP Gulfstream baseline | `7a93d144` | full | full | full | 234+ | yes | yes | yes | — |
+
+### What this proves
+
+**Drew has two extraction paths and they fail independently:**
+
+1. **Text path** (Azure OCR → REASON LLM → schedules/notes → typed assemblies + materials) → **discipline-general**. Output scales with text richness in the PDF, not with discipline match.
+2. **Vision path** (Wave 11g-v2 motifs → legend graphs → resolved symbols → semantic edges) → **MEP-specialized**. Zero output on every non-MEP corpus regardless of text richness.
+
+### Concrete residential output Drew produced (no Wave 20.6 needed)
+
+**Assemblies typified — full multi-discipline coverage:**
+- Electrical: `electrical_branch_circuit_20a_120v`, `electrical_light_fixture_recessed_led`, `electrical_receptacle_duplex`, `electrical_receptacle_gfci`
+- Plumbing: `plumbing_fixture_lav`, `plumbing_fixture_shower`, `plumbing_fixture_sink`, `plumbing_fixture_wc`, `plumbing_water_heater_electric`
+- HVAC: `hvac_ahu`
+- Walls: `wall_partition_gwb_both_sides`, `wall_exterior_brick_veneer`
+- Finishes: `floor_finish_porcelain_tile`
+- General: `general_demo`
+
+**Materials with QUANTITIES** (first time on non-MEP corpus):
+- `Plumbing — Shower fixture: 1.0 each`
+- `Plumbing — Water closet fixture: 5.0 each`
+
+Plus 10 more typed materials awaiting quantification.
+
+### Reordered priority stack
+
+1. **Ship text-path-only takeoff v1** — residential contractors get real value from the existing pipeline TODAY. Surface assemblies/materials/quantities Drew already extracts on the Scope/Takeoff/Materials tabs even when SEE produces zero.
+2. **Fix quantity extraction on the other 10 typed materials** — Drew named them all correctly but only counted 2. The remaining 10 have schedules with quantities in the OCR; the LLM extraction prompt needs a quantity-extraction pass.
+3. **Patch `stage_progress.see` controller** — currently flips to `failed` (civil) or stays `not_started` (residential) when substages are all `SUCCEEDED_WITH_ZERO_OUTPUT`. Add a `skipped_empty_by_design` state so the UI doesn't show false failure on residential takeoffs.
+4. **Wave 20.6 Construction Semantic Compiler — DEFERRED in priority** — it's the path to MEP-rich precision (5,000+ symbols on Gulfstream) but not the path to "any blueprint". Text path already serves the long tail of residential/architectural at lower precision but real value.
+
+### Updated answer to "What classes of construction documents can Drew actually read today?"
+
+- **Civil engineering**: NO useful output (continuous linework, no parseable schedules)
+- **Metal building structural**: minimal (2 components, no quantities)
+- **Residential architectural**: **REAL TAKEOFF VALUE** (14 assemblies across 4 disciplines, 12 materials, 2 counted) — production-ready for v1 if we wire the existing tabs to surface it
+- **MEP commercial**: full graph + symbols + quantities (Gulfstream baseline)
+
+Drew is functional on 2 of 4 discipline classes today. That's a v1-shippable claim, narrower than "any blueprint" but real and customer-deliverable.
