@@ -110,4 +110,25 @@ END (all PDFs successful)
   Supabase-disabled fallback). Architect can resolve from code conventions.
 - State: WAITING_PASS_1C (architect still in flight).
 
-### Iteration 2 — TBD when architect completes or 30-min wakeup fires
+### Iteration 2 — Pass 2.B shipped (2026-05-26 ~10:00 UTC)
+- aspire-rnd-engineer committed page parallelism (`14a097d`) + benchmark
+  harness (`06c90c7`). Race-condition review clean. Default concurrency=4
+  provisional pending live benchmark.
+- State: WAITING_PASS_3A.
+
+### Iteration 3 — Pass 3.A architect returned with plan-only (2026-05-26 ~10:30 UTC)
+- aspire-architect (aec64e3) produced a 7-section implementation plan but
+  did not write code. Two-subagent pattern of plan-instead-of-code emerged.
+- Orchestrator (me) implemented Pass 3.A directly in server.py (~156 lines):
+  - STAGE_PROGRESS_RECEIPT_PATTERNS constant
+  - _latest_progress_receipt() Supabase query helper (fail-safe)
+  - is_orphaned() state machine (heartbeat + absolute_max)
+  - Detection block in _sweep_stale_blueprint_projects() rewired
+  - Enriched blueprint.pipeline.timed_out receipt with orphan_reason +
+    last_progress_action_type
+- Mangonia ca3a21b7 historical replay (analytical): under new rule,
+  silence at sweep tick was 4m32s < heartbeat=5min → NOT killed. Fix verified.
+- Shipped at `374fa8a`. TRACK B COMPLETE.
+- State: TRACK_B_DONE → ready for START_UPLOAD_LOOP.
+
+### Iteration 4 — TBD: Chrome upload loop kickoff
