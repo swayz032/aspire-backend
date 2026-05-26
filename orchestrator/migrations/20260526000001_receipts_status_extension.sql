@@ -2,17 +2,20 @@
 -- SUCCEEDED_WITH_ZERO_OUTPUT for write-producing stages that legitimately
 -- wrote zero rows (e.g., legend_extracted on sheets with no legend elements).
 --
--- Old constraint: status IN ('PENDING','SUCCEEDED','FAILED','DENIED')
--- New constraint: status IN ('PENDING','SUCCEEDED','FAILED','DENIED','SUCCEEDED_WITH_ZERO_OUTPUT')
+-- Old constraint (declared): status IN ('PENDING','SUCCEEDED','FAILED','DENIED')
+-- Production reality:        SKIPPED was also in active use (17,989 rows at
+--                            apply time) — bypassed the original CHECK somehow.
+-- New constraint:            status IN ('PENDING','SUCCEEDED','FAILED','DENIED',
+--                            'SKIPPED','SUCCEEDED_WITH_ZERO_OUTPUT')
 --
 -- Applied 2026-05-26.
+-- Follow-up FU-TRACK-B-PRE-4: audit how SKIPPED bypassed the original CHECK.
 
--- Drop the old check constraint (name from 20260210000001_trust_spine_bundle.sql).
--- PostgREST / Supabase names CHECK constraints as <table>_<column>_check by default
--- when defined inline; we use ALTER TABLE to be safe regardless of generated name.
 ALTER TABLE public.receipts
   DROP CONSTRAINT IF EXISTS receipts_status_check;
 
 ALTER TABLE public.receipts
   ADD CONSTRAINT receipts_status_check
-  CHECK (status IN ('PENDING','SUCCEEDED','FAILED','DENIED','SUCCEEDED_WITH_ZERO_OUTPUT'));
+  CHECK (status IN (
+    'PENDING','SUCCEEDED','FAILED','DENIED','SKIPPED','SUCCEEDED_WITH_ZERO_OUTPUT'
+  ));
