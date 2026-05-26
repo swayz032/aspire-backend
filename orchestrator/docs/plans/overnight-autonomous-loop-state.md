@@ -131,4 +131,13 @@ END (all PDFs successful)
 - Shipped at `374fa8a`. TRACK B COMPLETE.
 - State: TRACK_B_DONE → ready for START_UPLOAD_LOOP.
 
-### Iteration 4 — TBD: Chrome upload loop kickoff
+### Iteration 4 — Upload loop PAUSED (2026-05-26)
+- Track B fully deployed on Railway (boot at 14:06:58, log confirms).
+- Started Chrome browser tools and opened azure portal to fetch new credentials.
+- BLOCKED: user got a new Azure account; portal.azure.com redirected to MSA
+  login. Cannot autonomously authenticate to user's Microsoft account.
+- N-4.12 filed. Loop paused until user provides new Azure DocIntel endpoint +
+  key (or confirms Railway already updated). Upload phase will resume on next
+  message.
+
+### Iteration 5 — TBD: resume upload loop when Azure unblocked
