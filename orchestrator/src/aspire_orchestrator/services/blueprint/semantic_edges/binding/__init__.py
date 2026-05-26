@@ -73,3 +73,14 @@ from .coords import (  # noqa: F401
     VALID_ROTATIONS,
     SheetCoordinateTransform,
 )
+from .functional import (  # noqa: F401
+    ConnectivityScorer,
+    DISTRIBUTION_KEYWORDS,
+    FunctionalRole,
+    JUNCTION_KEYWORDS,
+    SINK_KEYWORDS,
+    SOURCE_KEYWORDS,
+    classify_legend_function,
+    classify_motif_function,
+    functional_compatibility,
+)

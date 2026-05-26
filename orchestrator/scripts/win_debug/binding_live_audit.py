@@ -23,7 +23,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent / "src"))
 
 from aspire_orchestrator.services.blueprint.semantic_edges.binding import (  # noqa: E402
-    BindingEvaluator, BindingProposal, BindingTier, HardGateReason,
+    BindingEvaluator, BindingProposal, BindingTier, ConnectivityScorer,
+    HardGateReason,
     LEGEND_HISTOGRAM_KEY, MOTIF_HISTOGRAM_KEY,
     MotifGeometryFeatures, OCRAffinityScorer, PrimitiveHistogram,
     TopologySimilarityScorer,
@@ -89,10 +90,11 @@ def main() -> int:
     print(f"motif histograms: {len(motif_histograms)} | "
           f"legend histograms: {len(legend_histograms)}")
 
-    # N-3.1 — evaluator now runs OCR + Topology
+    # N-4 — evaluator now runs OCR + Topology + Connectivity
     evaluator = BindingEvaluator(scorers=[
         OCRAffinityScorer(),
         TopologySimilarityScorer(),
+        ConnectivityScorer(),
     ])
 
     counts = Counter()

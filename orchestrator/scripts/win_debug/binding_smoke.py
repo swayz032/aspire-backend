@@ -12,12 +12,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 def main() -> int:
     from aspire_orchestrator.services.blueprint.semantic_edges.binding import (
         BindingEvaluator, BindingProposal, BindingTier, BindingWeights,
+        ConnectivityScorer, FunctionalRole,
         GeometryClass, HardGateReason, MotifGeometryFeatures,
         OCRAffinityScorer, PrimitiveHistogram, ScorerResult,
         SheetCoordinateTransform, TopologySimilarityScorer,
         UNKNOWN_REVIEW_THRESHOLD, VERIFIED_THRESHOLD,
-        classify_legend_geometry, classify_motif_geometry,
-        cosine_similarity, geometry_gate_compatible, map_tier,
+        classify_legend_function, classify_legend_geometry,
+        classify_motif_function, classify_motif_geometry,
+        cosine_similarity, functional_compatibility,
+        geometry_gate_compatible, map_tier,
     )
 
     UID_SUITE = "00000000-0000-0000-0000-000000000001"
@@ -860,6 +863,154 @@ def main() -> int:
         results["coords_gulfstream_real_transform"] = "PASS"
     except Exception as e:
         results["coords_gulfstream_real_transform"] = f"FAIL: {e}"
+
+    # =====================================================
+    # N-4 — FunctionalRole + ConnectivityScorer
+    # =====================================================
+
+    # ---- Legend functional classifier ----
+    try:
+        assert classify_legend_function(symbol_id="P14", label="SERVICE SINK") == FunctionalRole.SINK
+        assert classify_legend_function(symbol_id="HWS", label="HOT WATER LINE") == FunctionalRole.DISTRIBUTION
+        assert classify_legend_function(symbol_id="GV", label="GATE VALVE") == FunctionalRole.JUNCTION
+        assert classify_legend_function(symbol_id="P", label="ELECTRICAL PANEL") == FunctionalRole.SOURCE
+        assert classify_legend_function(symbol_id="XYZ", label="ZOOG") == FunctionalRole.UNKNOWN
+        results["functional_legend_classifier"] = "PASS"
+    except Exception as e:
+        results["functional_legend_classifier"] = f"FAIL: {e}"
+
+    # ---- Motif functional classifier ----
+    try:
+        assert classify_motif_function(GeometryClass.POINT) == FunctionalRole.SINK
+        assert classify_motif_function(GeometryClass.LINEAR) == FunctionalRole.DISTRIBUTION
+        assert classify_motif_function(GeometryClass.POLYGON) == FunctionalRole.UNKNOWN
+        assert classify_motif_function(GeometryClass.UNKNOWN) == FunctionalRole.UNKNOWN
+        results["functional_motif_classifier"] = "PASS"
+    except Exception as e:
+        results["functional_motif_classifier"] = f"FAIL: {e}"
+
+    # ---- Compatibility matrix: same role allowed ----
+    try:
+        for r in [FunctionalRole.SOURCE, FunctionalRole.SINK,
+                  FunctionalRole.JUNCTION, FunctionalRole.DISTRIBUTION]:
+            assert functional_compatibility(r, r) == 1.0, r
+        results["functional_compat_same_role"] = "PASS"
+    except Exception as e:
+        results["functional_compat_same_role"] = f"FAIL: {e}"
+
+    # ---- Compatibility matrix: SINK <-> JUNCTION allowed ----
+    try:
+        assert functional_compatibility(FunctionalRole.SINK, FunctionalRole.JUNCTION) == 1.0
+        assert functional_compatibility(FunctionalRole.JUNCTION, FunctionalRole.SINK) == 1.0
+        results["functional_compat_sink_junction"] = "PASS"
+    except Exception as e:
+        results["functional_compat_sink_junction"] = f"FAIL: {e}"
+
+    # ---- Compatibility matrix: hard mismatches rejected ----
+    try:
+        # SINK motif × DISTRIBUTION legend = 0
+        assert functional_compatibility(FunctionalRole.SINK, FunctionalRole.DISTRIBUTION) == 0.0
+        assert functional_compatibility(FunctionalRole.DISTRIBUTION, FunctionalRole.SINK) == 0.0
+        assert functional_compatibility(FunctionalRole.SOURCE, FunctionalRole.SINK) == 0.0
+        assert functional_compatibility(FunctionalRole.SOURCE, FunctionalRole.DISTRIBUTION) == 0.0
+        results["functional_compat_hard_mismatch"] = "PASS"
+    except Exception as e:
+        results["functional_compat_hard_mismatch"] = f"FAIL: {e}"
+
+    # ---- Compatibility matrix: UNKNOWN fail-open ----
+    try:
+        for r in FunctionalRole:
+            assert functional_compatibility(r, FunctionalRole.UNKNOWN) == 1.0, r
+            assert functional_compatibility(FunctionalRole.UNKNOWN, r) == 1.0, r
+        results["functional_compat_unknown_open"] = "PASS"
+    except Exception as e:
+        results["functional_compat_unknown_open"] = f"FAIL: {e}"
+
+    # ---- ConnectivityScorer end-to-end ----
+    try:
+        scorer_c = ConnectivityScorer()
+        # POINT motif × SINK legend → 1.0
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s", motif_entity_geometry="point",
+            legend_id="L",
+            legend_label="SERVICE SINK", legend_symbol_id="P5B",
+            legend_project_id="p",
+        )
+        r = scorer_c.compute(p)
+        assert r.score == 1.0, (r.score, r.reasoning)
+        assert "sink" in r.reasoning
+        results["connectivity_scorer_match"] = "PASS"
+    except Exception as e:
+        results["connectivity_scorer_match"] = f"FAIL: {e}"
+
+    # ---- ConnectivityScorer: hard mismatch ----
+    try:
+        # POINT motif (classified SINK) × DISTRIBUTION legend → 0.0
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s", motif_entity_geometry="point",
+            legend_id="L",
+            legend_label="HOT WATER LINE", legend_symbol_id="HWS",
+            legend_project_id="p",
+        )
+        r = scorer_c.compute(p)
+        assert r.score == 0.0, (r.score, r.reasoning)
+        assert "mismatch" in r.reasoning
+        results["connectivity_scorer_mismatch"] = "PASS"
+    except Exception as e:
+        results["connectivity_scorer_mismatch"] = f"FAIL: {e}"
+
+    # ---- ConnectivityScorer: fail-open on UNKNOWN motif geometry ----
+    try:
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s", motif_entity_geometry="unknown",
+            legend_id="L",
+            legend_label="HOT WATER LINE", legend_symbol_id="HWS",
+            legend_project_id="p",
+        )
+        r = scorer_c.compute(p)
+        assert r.score == 1.0
+        assert r.reasoning == "insufficient_data"
+        results["connectivity_scorer_unknown_motif"] = "PASS"
+    except Exception as e:
+        results["connectivity_scorer_unknown_motif"] = f"FAIL: {e}"
+
+    # ---- N-4 in evaluator: kills the bad pipe-vs-sink case ----
+    try:
+        eval_three = BindingEvaluator(scorers=[
+            OCRAffinityScorer(),
+            TopologySimilarityScorer(),
+            ConnectivityScorer(),
+        ])
+        # POINT sink-motif tries to bind to a LINE legend.
+        # Gate #4 should have killed this (point vs linear) — but here
+        # legend_entity_geometry='unknown' so Gate #4 fails open.
+        # N-4 catches it: motif=SINK × legend=DISTRIBUTION → 0.0
+        p = BindingProposal(
+            suite_id="s", project_id="p",
+            motif_id="m", motif_entity_type="composed_symbol",
+            motif_sheet_id="s",
+            motif_entity_geometry="point",
+            motif_nearby_ocr_text=("HOT WATER",),
+            legend_id="L",
+            legend_label="HOT WATER LINE", legend_symbol_id="HWS",
+            legend_entity_geometry="unknown",
+            legend_project_id="p",
+        )
+        s = eval_three.evaluate(p)
+        assert s.gate_passed is True
+        assert s.per_factor_scores["connectivity"].score == 0.0
+        # Product = 0 → REJECTED regardless of OCR/topology
+        assert s.final_score == 0.0
+        assert s.tier == BindingTier.REJECTED
+        results["n4_kills_pipe_vs_sink"] = "PASS"
+    except Exception as e:
+        results["n4_kills_pipe_vs_sink"] = f"FAIL: {e}"
 
     # ---- Weighted product: w=0 ignores the factor ----
     try:
