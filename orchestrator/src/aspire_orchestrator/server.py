@@ -299,10 +299,21 @@ async def _latest_progress_receipt(
     try:
         # PostgREST in.() filter for JSONB action->>action_type
         in_list = ",".join(action_types)
+        # 2026-05-27: URL-encode the timestamp's '+' (timezone offset). When
+        # `since.isoformat()` produces e.g. `2026-05-27T04:42:48.475106+00:00`
+        # and that string is interpolated into the URL query string as-is,
+        # PostgREST decodes `+` as a space, then Postgres rejects the value
+        # with "invalid input syntax for type timestamp with time zone:
+        # '...475106 00:00'" (error code 22007). That failure cascaded into
+        # the orphan sweeper hot-looping on every tick, starving the worker
+        # pool and serving 504s on user-facing endpoints. quote_plus encodes
+        # `+` as `%2B`, so PostgREST sees the literal `+` after decode.
+        from urllib.parse import quote as _url_quote
+        _since_iso = _url_quote(since.isoformat(), safe="")
         filter_str = (
             f"suite_id=eq.{suite_id}"
             f"&action->>action_type=in.({in_list})"
-            f"&created_at=gte.{since.isoformat()}"
+            f"&created_at=gte.{_since_iso}"
         )
         rows = await supabase_select(
             "receipts",
