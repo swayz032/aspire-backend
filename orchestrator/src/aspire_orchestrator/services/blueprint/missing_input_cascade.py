@@ -720,8 +720,32 @@ async def resolve_batch(
         for row in validated_rows
     ]
 
+    # 2026-05-27 — bound LLM-backed resolver concurrency.
+    #
+    # Previously `gather(*[resolve_or_emit(c) ...])` ran unbounded. On
+    # the 39-sheet Gulfstream re-run this dispatched ~30+ resolvers in
+    # parallel, each making its own gpt-5.4-mini call. The concurrent
+    # burst exhausted the OpenAI per-org TPM quota: every call returned
+    # empty (prompt_tokens=0/completion_tokens=0) and REASON downstream
+    # failed because it had no resolved discipline/scale context to
+    # work with. Same pattern as the May 24 Gulfstream copy 7a93d144
+    # (SEE=failed).
+    #
+    # Knob: ASPIRE_DREW_CASCADE_CONCURRENCY. Default 6 — safe under
+    # gpt-5.4-mini's 5K RPM at small org tiers while still parallel
+    # enough to finish 40-sheet batches in <2 min. Track B Pass 2.B
+    # used 8 for SEE (Azure Doc Intel, S0 supports 15 t/s); cascade
+    # uses LLM dispatch with a tighter cap.
+    import os as _os_cc
+    _cascade_concurrency = max(1, int(_os_cc.getenv("ASPIRE_DREW_CASCADE_CONCURRENCY", "6")))
+    _cascade_sem = asyncio.Semaphore(_cascade_concurrency)
+
+    async def _gated_resolve(c: MissingInputCandidate) -> ResolutionOutcome:
+        async with _cascade_sem:
+            return await resolve_or_emit(c, correlation_id)
+
     outcomes_raw = await asyncio.gather(
-        *[resolve_or_emit(c, correlation_id) for c in candidates],
+        *[_gated_resolve(c) for c in candidates],
         return_exceptions=True,
     )
 
