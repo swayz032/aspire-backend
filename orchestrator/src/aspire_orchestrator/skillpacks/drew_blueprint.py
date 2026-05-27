@@ -1640,13 +1640,20 @@ async def _async_ingest_pipeline(
 
             if ocr_sheet.image_bytes:
                 # 1. Thumbnail upload (signed URL for UI display)
-                signed_url = await upload_sheet_thumbnail(
+                # 2026-05-26: use the detailed variant so the FAILED receipt
+                # carries reason_code + error_message instead of a bare
+                # "thumbnail upload failed" with no diagnostic info.
+                from aspire_orchestrator.services.blueprint.thumbnail_storage import (
+                    upload_sheet_thumbnail_detailed,
+                )
+                thumb_res = await upload_sheet_thumbnail_detailed(
                     suite_id=suite_id,
                     project_id=project_id,
                     sheet_id=sheet_id,
                     png_bytes=ocr_sheet.image_bytes,
                     correlation_id=correlation_id,
                 )
+                signed_url = thumb_res.signed_url
                 if signed_url:
                     try:
                         await supabase_update(
@@ -1660,7 +1667,10 @@ async def _async_ingest_pipeline(
                             sheet_id[:8],
                         )
                 else:
-                    # Thumbnail upload failed — emit receipt for observability (Law #2)
+                    # Thumbnail upload failed — emit Law #2 receipt with
+                    # full diagnostic detail (reason_code + error_message +
+                    # attempts + last_status + size_bytes) so the failure
+                    # is actually debuggable.
                     result["thumbnail_failure"] = True
                     store_receipts([{
                         "id": str(uuid.uuid4()),
@@ -1675,9 +1685,15 @@ async def _async_ingest_pipeline(
                         "suite_id": suite_id,
                         "inputs_hash": _compute_inputs_hash({"sheet_id": sheet_id}),
                         "policy": {"decision": "allow", "policy_id": "drew-blueprint-v1", "reasons": []},
-                        "metadata": {
+                        "reason_code": thumb_res.reason_code or "UPLOAD_FAILED_UNKNOWN",
+                        "error_message": thumb_res.error_message or "thumbnail upload failed",
+                        "redacted_outputs": {
                             "sheet_id": sheet_id,
                             "project_id": project_id,
+                            "page_number": ocr_sheet.page_number,
+                            "attempts": thumb_res.attempts,
+                            "last_status": thumb_res.last_status,
+                            "size_bytes": thumb_res.size_bytes,
                         },
                     }])
 
